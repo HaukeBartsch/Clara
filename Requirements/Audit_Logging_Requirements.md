@@ -30,6 +30,9 @@ Defines the requirements for the system's audit trail: the two append-only audit
 | REQ-AUD-010 | **Project structure events.** Every change to arms, events, instruments, fields (including renames, reordering, and deletion with cascaded values), the instrument-event mapping, and project metadata MUST be recorded with the acting user, the target project, and old/new values where applicable (plan \"Logged Events\", REQ-API-043, REQ-VAL-014). |
 | REQ-AUD-011 | **Export events.** Every data export — data API (`content=record&action=export`) or administration API (`GET /api/v1/projects/{id}/export`) — MUST be recorded with the acting user/token, the project, the sensitivity level (full / anonymized / non-sensitive), and the filters supplied (REQ-API-076, BR-008). |
 | REQ-AUD-012 | **Administration events.** Every user account change (create, re-enable, disable), every membership/role change, and every token issuance, rotation, and revocation MUST be recorded with the acting administrator, the target user, and the target project (REQ-AUTH-030, REQ-API-043/054/055). |
+| REQ-AUD-021 | **Survey events.** Every survey link submission (success and failure) MUST be recorded with the link token, the project, the record, the instrument, the changed values, and the timestamp (UTC); link issuance and revocation MUST be recorded as administration events (GD-9, REQ-AUTH-039/040). |
+| REQ-AUD-022 | **Data access group events.** Every group creation and deletion, every member group assignment change, every active-group switch, and every record group assignment/reassignment MUST be recorded with the acting user, the project, the affected group(s) and record(s), and the timestamp (UTC) (GD-10, REQ-AUTH-046/048). |
+| REQ-AUD-023 | **Calculated field updates.** Every system-driven recomputation MUST be recorded with the triggering user, the project, the record, the calculated field, the old and new values, and the timestamp (UTC) (REQ-VAL-038). |
 
 ## 4. Record View Log — `audit_record_views`
 
@@ -51,8 +54,8 @@ Defines the requirements for the system's audit trail: the two append-only audit
 
 | ID | Requirement |
 |---|---|
-| REQ-AUD-019 | The audit trail MUST be readable only through `GET /api/v1/audit` (read-only, paginated; REQ-API-077); a non-admin acting user MUST see only entries for projects they are a member of, and an `is_admin` user MAY query all projects (REQ-API-078). |
-| REQ-AUD-020 | The audit tables MUST be indexed to support the read access patterns: time range, project, user, and event type (REQ-API-077 pagination at the reference scale of REQ-DB-025; DEV-AUD-2). |
+| REQ-AUD-019 | The audit trail MUST be readable only through `GET /api/v1/audit` (REQ-API-077) and the record history endpoint (REQ-API-079); both MUST be read-only and paginated; a non-admin acting user MUST see only entries for projects they are a member of, and an `is_admin` user MAY query all projects (REQ-API-078). |
+| REQ-AUD-020 | The audit tables MUST be indexed to support the read access patterns: time range, project, user, event type, and record (REQ-API-077 pagination, REQ-API-079 record history, at the reference scale of REQ-DB-025; DEV-AUD-2). |
 
 ## 7. Assumptions
 

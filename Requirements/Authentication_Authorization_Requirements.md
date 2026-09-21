@@ -7,7 +7,7 @@
 
 ## 1. Purpose
 
-Defines the authentication (OAuth2 with LDAP fallback) and authorization (RBAC, seven permissions) requirements. `Design/Authentication_Authorization_Design.md` contains the login sequences, session schema, and trust model.
+Defines the authentication (OAuth2 with LDAP fallback) and authorization (RBAC, per-arm permission levels) requirements. `Design/Authentication_Authorization_Design.md` contains the login sequences, session schema, and trust model.
 
 ## 2. Authentication Requirements
 
@@ -41,18 +41,18 @@ Defines the authentication (OAuth2 with LDAP fallback) and authorization (RBAC, 
 
 | ID | Requirement |
 |---|---|
-| REQ-AUTH-017 | The permission set MUST be exactly: `view`, `change`, `add`, `export_all`, `export_anonymized`, `export_non_sensitive`, `project_admin`. |
-| REQ-AUTH-018 | Permission semantics: `view` = read project structure and record values; `change` = modify existing record values (update, delete); `add` = create new records/values; `export_all` = full (unredacted) export; `export_anonymized` = export with anonymization rules; `export_non_sensitive` = export with sensitive fields excluded entirely; `project_admin` = modify project structure and metadata. |
+| REQ-AUTH-017 | The permission set MUST be exactly (GD-2, revised 2026-09-19): per arm — a **data access level** (`no_access`, `read_only`, `view_edit`, `delete`, `edit_survey_responses`) and an **export level** (`export_none`, `export_de_identified`, `export_no_identifiers`, `export_full`); plus the project-level `project_admin`. An arm not listed in a role defaults to `no_access` / `export_none` (no implicit access, REQ-AUTH-019). The former seven permissions (view/change/add/export_*) are superseded by these levels. |
+| REQ-AUTH-018 | Permission semantics (per arm, ordered — a higher level includes everything below): **data access** — `no_access` = the arm and its data are hidden (absent from the UI, REQ-AUTH-027; rejected by the API); `read_only` = read the arm's record values and the project structure; `view_edit` = additionally enter and change record values on the arm; `delete` = additionally delete values/records on the arm; `edit_survey_responses` = additionally modify responses collected via a survey link (GD-9). **Export** — `export_none` = no export of the arm's data; `export_de_identified` = direct identifiers removed, personal fields hashed, dates shifted (`Data_Export_Anonymization_Requirements.md`); `export_no_identifiers` = all identifier fields removed; `export_full` = full dataset. **Project** — `project_admin` = modify project structure and metadata. |
 | REQ-AUTH-019 | Every API operation and every UI action MUST require an explicit permission (see mapping tables in the API and UI requirement documents); there MUST be no implicit access. |
 
 ### 3.2 Roles
 
 | ID | Requirement |
 |---|---|
-| REQ-AUTH-020 | Built-in roles MUST exist per project: `data-manager` (default: `view, change, add, project_admin`), `data-entry` (default: `view, change, add`), `controller` (default: `view`). Defaults are editable when a project copies them into custom roles. |
-| REQ-AUTH-021 | Administrators MUST be able to create custom roles per project with any mixture of the seven permissions. |
-| REQ-AUTH-022 | A project member without an assigned role MUST have all seven permissions for that project only (master spec, BR-002). |
-| REQ-AUTH-023 | A user with `is_admin = true` MUST have all seven permissions on every project and MUST see every project in the dashboard (BR-010). |
+| REQ-AUTH-020 | Roles are defined per project, and a project MAY have none at all (role-less members then hold full permissions, REQ-AUTH-022). `data-manager` (suggested: per arm `delete` + `export_full`, plus `project_admin`), `data-entry` (per arm `view_edit` + `export_none`), and `controller` (per arm `read_only` + `export_none`) are examples/presets that a project MAY create — they are not mandatory built-ins; a project MAY create its own variants with different names, arms, and level combinations (DEV-AUTH-4, DEV-AUTH-5). |
+| REQ-AUTH-021 | An administrator MUST be able to create roles per project with any name and any combination of per-arm data access and export levels (REQ-AUTH-017), optionally with `project_admin`; role creation MUST NOT be limited to the example presets of REQ-AUTH-020. |
+| REQ-AUTH-022 | A project member without an assigned role MUST hold the highest levels on every arm (`edit_survey_responses` + `export_full`) plus `project_admin`, for that project only (master spec, BR-002). |
+| REQ-AUTH-023 | A user with `is_admin = true` MUST hold all permission levels on every arm of every project (including `project_admin`) and MUST see every project in the dashboard (BR-010). |
 | REQ-AUTH-024 | Roles are project-scoped: a role on project A grants nothing on project B. |
 | REQ-AUTH-025 | Assigning a role to a member MUST replace the member's effective permissions for that project (no permission union across multiple roles in phase 1). |
 
@@ -74,6 +74,27 @@ Defines the authentication (OAuth2 with LDAP fallback) and authorization (RBAC, 
 | REQ-AUTH-032 | Token validation MUST be a single indexed lookup (token → user, project, role); an invalid token MUST produce the REDCap-style error response without disclosing whether the token exists. |
 | REQ-AUTH-033 | Token permissions MUST be the effective permissions of the (user, project) assignment at call time (role changes take effect immediately, no token refresh needed). |
 
+### 3.5 Surveys (decision GD-9)
+
+| ID | Requirement |
+|---|---|
+| REQ-AUTH-038 | An instrument MAY be marked as a survey (`is_survey`, REQ-DB-011); ONLY survey-marked instruments can be filled out via a public survey link (GD-9). |
+| REQ-AUTH-039 | A survey link MUST be a stable, record-specific public web URL carrying an opaque link token; it MUST grant a person without a login fill-only access to exactly that (record, survey instrument): read the instrument's field definitions for that record, and submit or change values for it. It MUST grant nothing else (no other record or instrument, no export, no structure, no administration API). |
+| REQ-AUTH-040 | Link tokens MUST be revocable; revocation MUST take effect immediately for all further calls and MUST be audit-logged (REQ-AUD-021). |
+| REQ-AUTH-041 | Survey link submissions MUST pass the same field validation as any other write (REQ-VAL-001/004) and MUST be audit-logged with the link token as the acting principal (REQ-AUD-021). |
+| REQ-AUTH-042 | A member modifying survey-originated responses in the UI requires the data access level `edit_survey_responses` on the arm (GD-2); the respondent's own re-submission through the link is not restricted by member permissions. |
+
+### 3.6 Data Access Groups (decision GD-10)
+
+| ID | Requirement |
+|---|---|
+| REQ-AUTH-043 | A project MAY have none, one, or several data access groups; a group name MUST be unique within the project (GD-10, REQ-DB-028). |
+| REQ-AUTH-044 | A member MAY be assigned to none, one, or several groups of the project; with one or more assigned, exactly one MUST be active. Assignments are managed by `is_admin` (membership management, REQ-API-054 context); a member's own active group is visible to and switchable by the member (REQ-AUTH-046). |
+| REQ-AUTH-045 | Visibility rule: a member with an active group G MUST see and access (read, export, record status, history) only the records whose data access group is G; a member without a group MUST see all records of the project regardless of their assignment; an `is_admin` user sees all records (REQ-AUTH-023). The rule is orthogonal to the permission levels (GD-2): the level governs which actions are allowed, the group governs which records they apply to. |
+| REQ-AUTH-046 | A member with one or more groups MUST be able to switch the active group (self-service); the switch MUST take effect immediately for subsequent calls and MUST be audit-logged (REQ-AUD-022). |
+| REQ-AUTH-047 | A record created by a member MUST be assigned to the creator's active group, or to no group if the creator has none; a record holds exactly one group (REQ-DB-029); a later import into the record MUST NOT change its group. |
+| REQ-AUTH-048 | A record's group MUST be assignable or changeable after creation (GD-10); the action requires the project-level permission `project_admin` (ASM-AUTH-4) and MUST be audit-logged (REQ-AUD-022). |
+
 ## 4. Non-Functional Security Requirements
 
 | ID | Requirement |
@@ -82,6 +103,7 @@ Defines the authentication (OAuth2 with LDAP fallback) and authorization (RBAC, 
 | REQ-AUTH-035 | Brute-force protection: after 5 failed logins for the same email within 10 minutes, further attempts for that email MUST be rejected for 15 minutes (per host, in memory or session store); failures are audit-logged. |
 | REQ-AUTH-036 | The system MUST NOT store user passwords; authentication is delegated to the IdP or LDAP bind. |
 | REQ-AUTH-037 | CSRF protection: all state-changing browser requests MUST carry a per-session CSRF token; the API's admin surface is additionally protected by the service-token boundary (GD-1). |
+| REQ-AUTH-049 | The reverse proxy and web server MUST NOT log query strings of `/api/` requests (the bearer token may ride in them per REQ-API-009); token values in access logs MUST be redacted (REQ-API-005). |
 
 ## 5. Assumptions
 
@@ -90,11 +112,17 @@ Defines the authentication (OAuth2 with LDAP fallback) and authorization (RBAC, 
 | ASM-AUTH-1 | The OAuth2 provider exposes standard authorization-code endpoints (authorize, token, userinfo or ID token with email). Provider-specific quirks are out of scope beyond generic OAuth2. |
 | ASM-AUTH-2 | LDAP servers accept simple bind for authentication (bind-as-user); directory reads use a configured bind DN. |
 | ASM-AUTH-3 | The "administrator group" of the master spec is realized by `is_admin` (GD-4), not by an IdP group. |
+| ASM-AUTH-4 | Data access group details: a record's group is per `record_id` (across all its events); a member with one or more groups always has exactly one active; a record created by a member without a group is unassigned (visible only to members without a group and to administrators); reassignment requires `project_admin` (REQ-AUTH-048); deleting a group that still has assigned records is rejected. |
+| ASM-AUTH-5 | The authorization decision is a single explicit function over attributes — subject, `is_admin`, role, arm, data access level, export level, active data access group (REQ-AUTH-045) — i.e. an ABAC-style evaluation implemented in the Go API; no external policy engine is required, and every decision stays explicit and auditable (REQ-AUTH-019). |
 
 ## 6. Deviations from Plan
 
 | ID | Deviation | Rationale |
 |---|---|---|
-| DEV-AUTH-1 | `export_non_sensitive` added to the permission set | Decision GD-2 (user-confirmed: seven permissions). |
+| DEV-AUTH-1 | (superseded by DEV-AUTH-5) `export_non_sensitive` added to the permission set | Decision GD-2 (user-confirmed: seven permissions); the seven-permission model was reworked into per-arm levels on 2026-09-19. |
 | DEV-AUTH-2 | Session ownership fixed to the PHP layer; API is stateless w.r.t. admin sessions | Decision GD-1 (user-confirmed). The plan's `POST /api/v1/auth/login` is re-interpreted as a PHP→API call establishing user state + audit, not a browser-facing session endpoint. |
-| DEV-AUTH-3 | Built-in role default permission sets made explicit | The plan names roles but not their default permission sets; defaults chosen conservatively and overridable via custom roles. |
+| DEV-AUTH-3 | Suggested permission sets recorded for the example presets | The plan names roles but not their permission sets; suggested defaults are documented in REQ-AUTH-020, where the presets are optional. |
+| DEV-AUTH-4 | The named roles are optional presets, not mandatory built-ins | Owner decision (2026-09-19): `data-entry`/`data-manager`/`controller` are examples; a project MAY define none or different versions, and permissions MUST be matchable to any defined role (REQ-AUTH-021). |
+| DEV-AUTH-5 | Permission model reworked to per-arm levels (data access + export), superseding the seven atomic permissions | Owner decision (2026-09-19): make GD-2 more explicit — per-arm data viewing levels (No Access/hidden, Read Only, View & Edit, Delete, Edit survey responses) and export levels (no access, de-identified, remove all identifier fields, full dataset). |
+| DEV-AUTH-6 | Surveys in scope in limited form (link-filled survey instruments), narrowing the charter's survey out-of-scope | Owner decision (2026-09-19, GD-9): instruments marked as surveys are fillable via a record-specific public link without login. |
+| DEV-AUTH-7 | Data access groups added (record-level visibility grouping, orthogonal to the permission levels) | Owner decision (2026-09-19, GD-10): projects MAY have groups; a member's active group scopes the visible records; group-less members see all records. |

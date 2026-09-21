@@ -411,3 +411,16 @@ Create a projects "record status dashboard" that lists all record_ids in a proje
 # Projects
 
 A project should only be visible to a user if they are in the administrator group, or if they are a member of the project. All members of a project that are not assigned to a project role should have full permissions. The interface should only present objects to sub-pages if the role/permission of the user allows them to use it.
+
+# Export formats
+
+Support two export formats. a) "Export as csv (raw)" and b) "Export as csv (labels)". For the raw format multiple-choice fields should export with their numeric values. For export type "labels" instead save the text of the field choice. 
+
+To save a multi-valued field such as a checkbox type field (multiple answers) save one column for each choice. Use the fields name (lower-case with underscores and warning if over 26 characters) followed by two underscores and the numeric value. Here an example. A checkbox field called "demo_habits" with two choices coding 
+
+```
+1, smoking
+2, drinking
+```
+
+would be written in the csv exported file as one column "demo_habits__1" and a second column "demo_habits__2" for the two choices (1/0 coding, export type "raw").

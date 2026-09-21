@@ -30,17 +30,17 @@ Defines the persistent data model requirements. `Design/Database_Schema_Design.m
 
 | ID | Requirement |
 |---|---|
-| REQ-DB-008 | Store user accounts: email (unique), display name, enabled flag, authentication source (`oauth2`|`ldap`), and the `is_admin` flag (GD-4). |
-| REQ-DB-009 | Store project roles: role name (unique per project), project-scoped, with an explicit permission set drawn from the seven permissions (GD-2). Built-in roles `data-manager`, `data-entry`, `controller` MUST be seedable per project. |
+| REQ-DB-008 | Store user accounts: email (unique), display name, enabled flag, authentication source (`oauth2`|`ldap`), the `is_admin` flag (GD-4), and the UI language setting (default `en`, GD-12). |
+| REQ-DB-009 | Store project roles: role name (unique per project), project-scoped, with per-arm permission assignments — a data access level and an export level for each arm (GD-2) — plus the project-level `project_admin` flag; an arm not listed in a role defaults to `no_access` / `export_none`. The example presets `data-manager`, `data-entry`, `controller` MAY be seeded per project; a project MAY have zero roles (REQ-AUTH-020). |
 | REQ-DB-010 | Store user-project assignments: unique per (user, project), nullable role (role-less = full permissions for that project), and the project token (UUID) unique across the database. |
 
 ### 2.3 Project Structure
 
 | ID | Requirement |
 |---|---|
-| REQ-DB-011 | Store arms (1-based `arm_num`, name), events (label, unique name `<label>_arm_<n>`, period in days, safe region start/end in days, position), and instruments (name unique per project, position for ordering). |
+| REQ-DB-011 | Store arms (1-based `arm_num`, name), events (label, unique name `<label>_arm_<n>`, period in days, safe region start/end in days, position), and instruments (name unique per project, position for ordering, `is_survey` flag: the instrument can be filled out via a public record link, GD-9, and an optional branching logic expression, GD-13). |
 | REQ-DB-012 | Store the instrument-by-event mapping as unique (instrument, event) pairs; an instrument becomes active for data entry only while mapped to at least one event. |
-| REQ-DB-013 | Store the data dictionary per field: name (unique per project, lower-case alphanumeric + underscore), label, type (`text`, `dropdown`, `radio`, `matrix`, `description`, `header`), section header, choices (code/label pairs), field note, validation type + min/max, required flag, branching logic, matrix group, personal-information flag, export-approval flag (for free text, see `Data_Export_Anonymization_Requirements.md`), position. |
+| REQ-DB-013 | Store the data dictionary per field: name (unique per project, lower-case alphanumeric + underscore), label, type (`text`, `dropdown`, `radio`, `matrix`, `description`, `header`, `calculated`), calculation expression (when type is `calculated`, GD-11), section header, choices (code/label pairs), field note, validation type + min/max, required flag, branching logic expression (optional, GD-13), matrix group, personal-information flag, export-approval flag (for free text, see `Data_Export_Anonymization_Requirements.md`), position. |
 | REQ-DB-014 | Matrix rows MUST be stored as individual field rows sharing the same `matrix_group`, choices, and validation, differing in `field_name` and `field_label` (REDCap-compatible metadata expansion). |
 
 ### 2.4 Data (Records)
@@ -53,6 +53,7 @@ Defines the persistent data model requirements. `Design/Database_Schema_Design.m
 | REQ-DB-018 | Adding a new field or a new project MUST NOT change the data table layout (no per-project or per-field columns). |
 | REQ-DB-019 | `value` MUST hold very long text; `repeating_instance_number` starts at 1 and is 1 for non-repeating entries. |
 | REQ-DB-020 | `record_id` is the value of the record identifier field (GD-8); the API MUST enforce identifier-field rules on import (see `Data_Validation_Requirements.md`). |
+| REQ-DB-030 | Store the materialized value of a calculated field as a regular EAV row, unique per (project, record_id, event, arm, repeating instrument, repeating instance) (REQ-DB-015): one row at each position where the field is active, i.e. where the field's instrument is mapped to the event; where the instrument is unmapped, no value is stored (inactive, REQ-DB-012). The rows are rewritten by recomputation (REQ-VAL-037). |
 
 ### 2.5 Audit and Anonymization Support
 
@@ -62,6 +63,25 @@ Defines the persistent data model requirements. `Design/Database_Schema_Design.m
 | REQ-DB-022 | Audit tables MUST support yearly rollover: MariaDB partitioned by year; SQLite per-year tables behind a stable view name. |
 | REQ-DB-023 | A table MUST persist per-record anonymization date offsets (record_id → offset days) so anonymized exports are consistent across time (see `Data_Export_Anonymization_Requirements.md`). |
 | REQ-DB-024 | Audit tables MUST NOT be reachable for UPDATE/DELETE by the application's database account (privilege-level immutability on MariaDB; the API simply provides no such operation). |
+
+### 2.6 Survey Links
+
+| ID | Requirement |
+|---|---|
+| REQ-DB-027 | Store survey link tokens: opaque unique token, project, record, survey instrument, created by, created at, and a revoked flag; the token is stable per (project, record, instrument) until revoked (GD-9, REQ-API-082/085). |
+
+### 2.7 Data Access Groups
+
+| ID | Requirement |
+|---|---|
+| REQ-DB-028 | Store data access groups: id, project, name (unique per project), creation time; store member assignments as (user-project assignment, group) pairs with exactly one active per assignment when one or more are present (GD-10, REQ-AUTH-044). |
+| REQ-DB-029 | Store a record entity per (project, record_id): nullable data access group, creator, creation time — one group per record (GD-10, REQ-AUTH-047); the EAV value table is unchanged (REQ-DB-018). |
+
+### 2.8 UI Translations
+
+| ID | Requirement |
+|---|---|
+| REQ-DB-031 | Store UI translations (GD-12): a **languages** table (code unique, e.g. `en`/`nb`/`nn`, display name, enabled flag) and a **strings mapping** table (language code, stable key, translated text), unique per (language, key). English strings are the source of truth in the application and are NOT stored in this table; a missing translation MUST fall back to English, never to a blank or a raw key (REQ-UI-008). Keys are stable identifiers, not English text, so rewording English MUST NOT invalidate existing translations. Adding a language is an insert into these tables, not a schema change. Norwegian Bokmål and Nynorsk are the first targets; the tables admit further languages. |
 
 ## 3. Capacity and Performance
 

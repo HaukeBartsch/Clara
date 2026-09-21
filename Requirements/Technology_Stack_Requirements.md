@@ -55,6 +55,7 @@ Defines the mandatory technology constraints and the non-functional requirements
 | REQ-TECH-018 | The administration API MUST be unreachable from the public network; only the REDCap-compatible `/api/` endpoint is exposed externally (see `Authentication_Authorization_Requirements.md`). |
 | REQ-TECH-019 | Session cookies MUST be `HttpOnly`, `Secure` (production), `SameSite=Lax`. |
 | REQ-TECH-020 | All user-supplied content rendered in the UI MUST be escaped server-side; a Content-Security-Policy header MUST be sent by the web application. |
+| REQ-TECH-024 | All queries built from user-supplied data MUST use parameterization or allowlists: bound SQL values, escaped LDAP filters, validated redirect URIs; user-supplied values MUST NOT be concatenated into SQL, LDAP filters, or similar constructs. Names used as SQL identifiers MUST first be validated against the data dictionary and identifier grammar (REQ-VAL-011). |
 
 ### 3.5 Maintainability
 
