@@ -63,3 +63,204 @@ Format tokens (REDCap-style): `Y` = 4-digit year, `m` = 2-digit month, `d` = 2-d
 - Calendar validation: month 1–12; day 1–last-day-of-month (leap-year aware); hour 0–23; minute 0–59
 - **Canonical storage** (resolves ASM-VAL-1, matches `Database_Schema_Design.md` §1): dates `YYYY-MM-DD`; date-times `YYYY-MM-DD HH:MM` — the API converts from the accepted format to canonical on store and back on export
 - Examples: format `m-d-Y` accepts `02-30-2026`? No — `2026-02-30` is not a calendar date, so both `30-02-2026` and `2026-02-30` are rejected; `25:00` rejected for `datetime`
+
+## 5. Free-form Text Content Policy (REQ-VAL-030/031/032)
+
+A single, centralized policy is applied to every free-form text value (a `text` field with no `validation_type`, and the free-text portion of any value) at the storage choke point, identically on all entry paths (REQ-VAL-001/004). It runs after the type validator (step 6 of §2) and before the write. It is deterministic and stateless.
+
+
+### 5.1 Pipeline
+
+| Step | Rule | On failure |
+|---|---|---|
+| 1 | value is valid UTF-8 | `CONTENT_INVALID` |
+| 2 | C0 control characters (U+0000–U+001F) are rejected **except** tab (U+0009) and line feed (U+000A); carriage return (U+000D) is accepted and normalized to line feed | `CONTENT_INVALID` |
+| 3 | length ≤ `MAX_VALUE_BYTES` (default: no application cap; the storage type `TEXT`/`LONGTEXT` is the bound — REQ-VAL-021/ASM-VAL-2; a finite cap MAY be set in configuration, see `System_Configuration_Design.md`) | `CONTENT_INVALID` (only when a cap is configured) |
+| 4 | HTML sanitization per §5.2 (strip disallowed markup, preserve text) | — (never errors; transforms) |
+
+The result of step 4 is the stored value. Steps 1–3 reject with `CONTENT_INVALID` (a step-7-style per-field error, all-or-nothing per record, §2).
+
+### 5.2 HTML allowlist and sanitization (normative)
+
+**Allowed elements** (the final list, resolves ASM-VAL-5): `a`, `b`, `br`, `code`, `em`, `i`, `li`, `ol`, `p`, `s`, `strong`, `u`, `ul`, `blockquote`.
+
+**Attributes:** none are allowed except `href` on `a`. The `href` value MUST be an absolute URI whose scheme is `http`, `https`, or `mailto`; any other scheme (or a relative URL) causes the `href` attribute to be removed (the link text is kept).
+
+
+**Sanitization algorithm** (applied at store):
+1. Parse the value as HTML (tolerant parse).
+2. Walk the resulting tree:
+   - Keep elements whose tag is in the allowlist.
+   - On `a`, keep only `href` (scheme-checked per above); drop all other attributes.
+   - On any other allowed element, drop all attributes.
+   - On a disallowed element that **carries display text** (e.g. `span`, `div`, `font`, `table`, `td`, `h1`–`h6`): replace the element by its flattened text content (the tag is stripped, the words are kept as plain text).
+   - On a disallowed element that **carries executable or external content** — `script`, `style`, `noscript`, `iframe`, `frame`, `object`, `embed`, `applet`, `link`, `meta`, `base`, `form`, `input`, `button`, `select`, `textarea` — remove the element **and** its entire content (nothing is preserved).
+3. Decode HTML entities in the surviving text; re-escape on serialization (`&`, `<`, `>`, and quotes) so the stored string is inert.
+4. Serialize the cleaned tree to the canonical stored string.
+
+**Worked examples:**
+
+| Stored input | Stored output |
+|---|---|
+| `hello <b>world</b>` | `hello <b>world</b>` |
+| `<div>note: <a href=\"https://x.no\">link</a></div>` | `note: <a href=\"https://x.no\">link</a>` |
+| `<a href=\"javascript:alert(1)\">x</a>` | `x` |
+| `<script>steal()</script>ok` | `ok` |
+| `<img src=x onerror=alert(1)>` | `` (removed, no text) |
+| `a &amp; b <script>bad()</script>` | `a &amp; b` |
+
+**Rendering (REQ-VAL-031):** the stored value is allowlist HTML and MAY be rendered as HTML in the UI (data entry form, record view, record history, audit views). **All other** user-supplied content (choice values, field labels, record names, user names, audit fields) is escaped server-side and never rendered as HTML (REQ-TECH-020). The `Content-Security-Policy` header is the backstop (REQ-TECH-020).
+
+### 5.3 CSV formula-injection neutralization (REQ-VAL-032)
+
+Applied **at CSV serialization only** (export, REQ-API-029), never at store and never for JSON: for each cell value `v`, after trimming leading whitespace,
+- if `v` is empty → emit empty;
+- else if `v` begins with `=` or `@` → emit `'` + `v`;
+- else if `v` begins with `+` or `-` **and** `v` is not itself a valid number (integer/floating-point grammar, §4) → emit `'` + `v`;
+- otherwise emit `v` unchanged.
+
+This blocks spreadsheet formula injection (`=CMD`, `@SUM(...)`, `+-x`) while leaving legitimate numeric data such as `-5` and `+3.14` intact. The stored value is unaffected; only the CSV cell is prefixed. (Refines REQ-VAL-032's "e.g. single-quote prefix" to avoid corrupting real numbers.)
+
+## 6. Calculated Fields (GD-11, REQ-VAL-033…038)
+
+### 6.1 Expression grammar
+
+A `calculated` field carries an expression (stored in `fields.calculation`, REQ-DB-013) over other fields of the same project. Tokens:
+
+- **Field reference:** `[<unique_event_name>][<field_name>]`
+- **Numeric constant:** integer or floating-point literal (§4 grammar)
+- **Operators:** `+`, `-`, `*`, `/`
+- **Grouping:** parentheses
+
+**Precedence and associativity:** standard arithmetic — `*` and `/` bind tighter than `+` and `-`; all four are left-associative; parentheses override. Whitespace is ignored. Examples: `[e1][a] + [e1][b] * 2`; `([e1][a] - [e1][b]) / [e2][c]`.
+
+### 6.2 Design-time validation (creation and update)
+
+An expression is rejected (design-time error, REQ-VAL-034, REQ-API-065/069) if:
+1. it is not well-formed (parse/precedence error); or
+2. any reference names a field that does not exist, is not a value-carrying field (description/header), or is not active at the referenced event (not present in the instrument-event mapping of that event, REQ-DB-012); or
+3. the reference graph would introduce a **cycle** — a calculated field may reference another calculated field only while the dependency graph stays acyclic (REQ-VAL-035). The API builds the directed graph (calculated field → referenced calculated fields) and rejects a cycle.
+
+A related design-time invariant: deleting a field (REQ-API-070) that is referenced by an existing calculated expression MUST be rejected while the reference is in use — the expression is updated first, keeping the invariant that every reference names an active field (REQ-VAL-034).
+
+On acceptance the API (re)populates `calculated_dependencies` for the field (REQ-DB-030 support) so recomputation can find affected fields without re-parsing every expression.
+
+### 6.3 Evaluation (runtime)
+
+Evaluation produces a single value (or empty) for one record, in the transaction that triggered it.
+
+1. **Resolve** each reference `[event][field]` to the record's stored value at that (record, event, instrument, instance) position — the instrument and instance of the calculated field being evaluated (empty string if absent).
+2. **Coerce** each operand to a number per the §4 grammars (integer or floating point); a choice field's stored code is used as-is (numeric by construction, REQ-VAL-022).
+3. **Evaluate** with the §6.1 precedence. If any operand is missing, empty, or non-numeric, or the divisor is 0, the result for that position is **empty** — not an error (REQ-VAL-038): the triggering import still succeeds (its own value was valid), and the evaluation problem is application-logged (REQ-TECH-016), never returned to the caller as an import failure.
+4. **Store** the result at each (record, event, instrument, instance) position where the calculated field is active (REQ-VAL-037, REQ-DB-030), overwriting the prior value. Format: the shortest exact decimal, no trailing zeros, no exponent (Go `strconv.FormatFloat(v, 'f', -1, 64)`); integer operands under `+ - *` yield an integer string.
+5. **Audit** every recomputation per REQ-AUD-023: triggering user, project, record, calculated field, old and new values, UTC timestamp. The JSON shape of the `details` payload is owned by `Audit_Logging_Design.md`.
+
+The recomputation runs in the transaction that triggered it (REQ-VAL-037, REQ-API-095); a rollback of that transaction rolls back the recomputation with it.
+
+**Triggers** (each in the transaction of the triggering write):
+
+| Trigger | Scope of recomputation |
+|---|---|
+| a referenced (event, field) value is changed or cleared for that record | all calculated fields that (transitively) reference that (event, field), found via `calculated_dependencies` (REQ-DB-030), evaluated in topological order of the dependency graph (acyclic by REQ-VAL-035) |
+| a calculated field's expression changes (REQ-API-069) | all records of the project, same transaction (ASM-VAL-4) |
+| a record is deleted (REQ-API-036) | none — the calculated values are removed with the record |
+
+**Worked examples** (record with `a = 5`, `b = 2`, `c = 0`, `d` unset, `n = "abc"`):
+
+| Expression | Result |
+|---|---|
+| `[e1][a] + [e1][b] * 2` | `9` |
+| `([e1][a] - [e1][b]) / [e1][c]` | empty (division by zero; application-logged) |
+| `[e1][d] * 3` | empty (missing operand) |
+| `[e1][n] + 1` | empty (non-numeric operand) |
+| `[e1][a] / [e1][b]` | `2.5` |
+
+### 6.4 Design-time test (REQ-API-096)
+
+`POST /api/v1/projects/{id}/records/{record}/fields/{fid}/test` evaluates the field's expression — or a draft expression supplied in the body — against the record's current stored values and returns the result with explicit flags for each evaluation problem (missing/empty referenced value, non-numeric operand, division by zero); it MUST NOT store anything. It shares the evaluation semantics of §6.3 and is the designer's "test calculation" action (REQ-UI-021).
+
+## 7. Branching Logic (GD-13, REQ-VAL-029/040)
+
+Branching logic is **display-only**: it decides which fields and which instruments are shown in the data entry form and on the survey page (GD-9). It MUST NOT affect import, export, or audit (DEV-VAL-5): the API applies no branching logic on any data path, and a value entered for a field whose logic currently evaluates false is stored normally. Expressions are stored in `fields.branching_logic` / `instruments.branching_logic` (REQ-DB-013), exposed in the data dictionary metadata, and evaluated by the UI (REQ-UI-025/028).
+
+### 7.1 Grammar
+
+Tokens (whitespace ignored):
+
+- **Field reference:** `[<unique_event_name>][<field_name>]`
+- **Constants:** a numeric literal (§4 grammar) or a double-quoted string (backslash escapes `\"` and `\\` only)
+- **Comparison operators:** `=`, `!=`, `<`, `>`, `<=`, `>=`
+- **Functions:** `text_contains(ref, "substring")`, `is_blank(ref)`, `is_not_blank(ref)`
+- **Logical:** `&&` (AND), `||` (OR) — final per ASM-VAL-6
+- **Grouping:** parentheses
+
+**Precedence** (tightest to loosest): function call → comparison → `&&` → `||`; parentheses override. Examples: `[ev][age] >= 18 && [ev][consent] = 1`; `([ev][status] = "done" || is_blank([ev][status]))`; `text_contains([ev][notes], "follow-up")`.
+
+### 7.2 Design-time validation
+
+A field's or instrument's (REQ-VAL-040) branching expression is rejected with a machine-readable reason (REQ-VAL-029; the designer displays the reason, REQ-UI-021) if:
+
+1. it is not well-formed (parse error, unbalanced parentheses, misplaced operator); or
+2. a reference names a field that does not exist, is not value-carrying (description/header), or is not active at the referenced event (REQ-DB-012); or
+3. a function is misspelled or has the wrong number of arguments.
+
+No cycle rule applies: branching logic produces no value, so no dependency graph arises.
+
+### 7.3 Evaluation semantics (normative)
+
+The semantics below are the single normative definition; every evaluator (data entry form, survey page) MUST implement them (REQ-VAL-004).
+
+- **Operand resolution.** A reference resolves to the record's stored value (empty if absent at the referenced event). A string constant that exactly matches a choice label of a choice field (dropdown/radio/matrix row) is resolved to that choice's code before comparison — the stored value remains the code (REQ-VAL-022). A radio reference used by itself evaluates to `1` when selected (a value is present) and `0` when not (REQ-VAL-029).
+- **Comparison.** If either operand is a missing/empty referenced value → `0` for every operator (ASM-VAL-6). Otherwise: both numeric → numeric comparison; both valid dates/date-times in the reference's `validation_format` (§4.1) → chronological comparison; otherwise → lexicographic (byte-wise UTF-8) comparison.
+- **Truthiness.** A reference used outside a comparison: empty → `0`; non-empty → `1` (ASM-VAL-6). For choice fields this is exactly "selected → `1`, not selected → `0`" (REQ-VAL-029), regardless of the code value; for numeric text fields the value `0`/`0.0` → `0`.
+- **Functions.** `is_blank(ref)` → `1` if the referenced value is missing/empty, else `0`; `is_not_blank(ref)` → its negation; `text_contains(ref, s)` → `1` if `s` is a substring of the referenced value, else `0` (missing/empty → `0`).
+- **Logical.** `&&` → `1` iff both sides are `1`; `||` → `1` if either side is `1`; sides that are not `1` coerce to `0`.
+
+A field (resp. instrument) is displayed only while its expression evaluates to `1` (REQ-VAL-029/040); a hidden instrument hides all of its fields regardless of their own logic (REQ-VAL-040).
+
+### 7.4 Re-evaluation
+
+The display state MUST be re-evaluated whenever a referenced field's value changes — in the data entry form (on change of any referenced field) and on the survey page (on load, and after each submit) (REQ-VAL-029, REQ-UI-025).
+
+## 8. Required Flag and Partial Records (REQ-VAL-028, ASM-VAL-3)
+
+- `fields.required` is exposed in the data dictionary metadata and the designer (REQ-DB-013, REQ-UI-021).
+- **Import:** a missing required value MUST NOT reject an import — partial records are first-class (ASM-VAL-3, DEV-VAL-5); completion is tracked by the record status dashboard, not enforced at import.
+- **Data entry form:** required fields are presented as such and validated before submission (REQ-VAL-028, REQ-UI-025) — client-side only (advisory, REQ-VAL-002).
+
+## 9. Data Dictionary Rules at Design Time (REQ-VAL-010…014)
+
+When creating or updating a field (REQ-API-068/069) or instrument (REQ-API-065/101), the API validates the dictionary entry itself:
+
+| Attribute | Rule |
+|---|---|
+| `field_name` | `^[a-z0-9_]+$` (REQ-VAL-011); unique within the project (REQ-VAL-012); longer than 26 characters accepted — the warning after 26 is UI-only (REQ-VAL-013); reserved (design decision — the flat export row would otherwise be ambiguous, REQ-API-028): `redcap_event_name`, `redcap_repeat_instrument`, `redcap_repeat_instance` MUST NOT be used |
+| `validation_type` | empty, or one of `integer`, `floating point`, `email`, `MRN`, `date`, `datetime` (REQ-VAL-010) |
+| `validation_min`/`max` | if present, a valid number per the field's type (integer → §4 integer grammar; floating point → decimal grammar) and min ≤ max; ignored for other types (REQ-VAL-020) |
+| `choices` | `code$label##code$label` (schema §1); codes non-empty, unique, numeric (REQ-VAL-022); labels non-empty |
+| `validation_format` | (date/datetime) composed of the §4.1 tokens — `Y`, `m`, `d`, plus `H`, `i` for datetime — with the specified separators; empty → the §4.1 defaults |
+| `calculation` | present and validated per §6.2 for `calculated` fields; empty for all other types |
+| `branching_logic` | if present, validated per §7.2 |
+
+Every rejection is a design-time error with a machine-readable reason (REQ-API-065/069; the designer displays the reason, REQ-UI-021).
+
+**Rename (REQ-VAL-014):** renaming a field atomically renames its stored values in the same transaction (a single key update on the EAV layout, DEV-VAL-4) and is audit-logged (REQ-API-043); the new name is validated by the rules above before the write.
+
+## 10. Resolved Deferred Items
+
+| Deferred in | Resolution here |
+|---|---|
+| ASM-VAL-1 (canonical date forms) | dates `YYYY-MM-DD`; date-times `YYYY-MM-DD HH:MM`; the API converts between the field's accepted format and the canonical form on store and on export (§4.1) |
+| ASM-VAL-2 (free-text length cap) | no application cap beyond the storage type by default (REQ-VAL-021); a finite cap MAY be set in configuration — the key is defined in `System_Configuration_Design.md` (§5.1) |
+| ASM-VAL-3 (partial records) | `required` is advisory at import; completion is tracked, not enforced (§8) |
+| ASM-VAL-4 (calculated-field details) | `*`/`/` before `+`/`-`, all left-associative, parentheses override; acyclic dependency graph; value stored at each active position; expression change → project-wide recomputation (§6) |
+| ASM-VAL-5 (free-form text details) | allowlist final (§5.2); disallowed markup is stripped with its text preserved; only `href` on `a`, schemes `http`/`https`/`mailto` |
+| ASM-VAL-6 (branching-logic details) | numeric / chronological / lexicographic comparison; missing referenced value → `0`; truthiness for bare references; `&&`/`||` as the logical operators; function set final (§7) |
+
+## 11. Open Items
+
+| Item | Owner |
+|---|---|
+| finite value-length cap configuration key (if set) | `System_Configuration_Design.md` |
+| `details` JSON shape of the calculated-field recomputation audit event (REQ-AUD-023) | `Audit_Logging_Design.md` |
+| advisory client-side validation attributes per field type (mirror of §4) | `User_Interface_Design.md` |
