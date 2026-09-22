@@ -52,7 +52,7 @@ Common conventions (REQ-UI-001…008), binding on every page:
 | `GET /projects/{id}/groups` | data access groups (§5.5) | read: data access ≥ `read_only`; create/delete: `project_admin` | `GET/POST …/data-access-groups`, `DELETE …/data-access-groups/{gid}` |
 | `GET /projects/{id}/records/{record}` | data entry / record view (§8) | data access ≥ `read_only` (per-action levels per §8) | `GET …/instruments/{iid}/fields`, `GET …/records/{record}/history`, token fetch + data-API import/delete (`§8.6`) |
 | `GET /projects/{id}/export` | export (streams the response) | a non-`export_none` level per arm (REQ-UI-020) | `GET …/export` (streamed, REQ-TECH-011) |
-| `GET /survey/{link}` | public survey page (§8.9) | none — no session, outside the login (GD-9, DEV-UI-1) | data API `content=metadata` + `content=record&action=import` with the link token (REQ-API-083) |
+| `GET /survey/{link}` | public survey page (§8.8) | none — no session, outside the login (GD-9, DEV-UI-1) | data API `content=metadata` + `content=record&action=import` with the link token (REQ-API-083) |
 
 There are no other browser-reachable routes. State-changing browser requests are `POST`s to the same routes with a `?action=<name>` parameter (or a dedicated `POST` route where noted); the table lists the read route each page is bound to. The browser never sees `/api/v1/*` (REQ-UI-002).
 
@@ -73,7 +73,7 @@ A user who is neither an administrator nor a member of any project MUST be shown
 
 ### 2.4 Application layout — sidebar + content panel (master spec, "User interface details")
 
-All authenticated pages (and the public survey page, §8.9, which renders a reduced shell) use a two-pane Bootstrap layout:
+All authenticated pages (and the public survey page, §8.8, which renders a reduced shell) use a two-pane Bootstrap layout:
 
 ```
 ┌────────────────────────────────────────────────────────────┐
@@ -96,7 +96,7 @@ All authenticated pages (and the public survey page, §8.9, which renders a redu
   3. **Project context** — shown only while the user is on a page of a specific project (the brand bar shows that project's name): Setup, Design, Record status, Export (gated per §6.1), and — for `is_admin` — Members, Roles; — for `project_admin` or better — Groups. Selecting one of these loads that page in the panel (the master spec's "selecting different functions (like setup) should load the corresponding page in the right hand panel").
   4. **Account**: the language selector (§9) and a "Sign out" action (`POST /logout`, CSRF token, REQ-UI-007).
 - **Responsive collapse** (REQ-UI-008): below the Bootstrap `lg` breakpoint the sidebar collapses to the standard off-canvas/overlay pattern (Bootstrap navbar + offcanvas); no mobile-specific optimization beyond Bootstrap defaults (ASM-UI-1).
-- The login page (§2.2) and the public survey page (§8.9) render **without** the sidebar (no session, no navigation) — the survey page is a single centered form panel (DEV-UI-1).
+- The login page (§2.2) and the public survey page (§8.8) render **without** the sidebar (no session, no navigation) — the survey page is a single centered form panel (DEV-UI-1).
 
 ## 3. Common Components and Rendering Rules
 
@@ -118,7 +118,7 @@ These rules apply on every page of §2.1 and are the single implementation of th
 - Every mutation is a browser `POST` (form submit or `fetch`) carrying the per-session `csrf_token`: hidden `csrf_token` field for forms, `X-CSRF-Token` header for `fetch`. No `GET` performs a write.
 - The PHP route validates the CSRF token first; on failure it renders the page again with an error alert and no API call is made.
 
-### 3.4 API errors → user messages (REQ-API-006, REQ-API-042)
+### 3.4 API errors → user messages (REQ-API-006, REQ-API-007)
 
 The PHP layer maps the stable `error` code of `API_Endpoints_Design.md` §4.2 to a **translated** user message; the API's `message` is shown only when it is a design-time reason the requirements mandate displaying (validation reasons, REQ-VAL-029). Mapping:
 
@@ -137,7 +137,7 @@ Success confirmations (created/updated/removed) are one translated alert line at
 
 ### 3.5 Confirmations and destructive actions (GD-3, REQ-UI-015/027)
 
-- Destructive or hard-to-reverse actions open a Bootstrap **modal** stating the consequence, requiring an explicit confirm click (which carries the CSRF token): delete record/scoped values (§8.8), remove member (§5.3), delete group (§5.5), delete field with stored values (§7.2), revoke survey link (§8.9), delete arm/event where supported.
+- Destructive or hard-to-reverse actions open a Bootstrap **modal** stating the consequence, requiring an explicit confirm click (which carries the CSRF token): delete record/scoped values (§8.7), remove member (§5.3), delete group (§5.5), delete field with stored values (§7.2), revoke survey link (§8.7), delete arm/event where supported.
 - Token display (add/rotate, §5.3): the new token appears **exactly once** in a read-only `<input readonly>` with a **copy** button and a warning line that it will not be shown again (REQ-API-055, REQ-UI-013). The admin's copy is the only copy — the member later self-serves their own copy per REQ-API-102 (§8.6).
 
 ### 3.6 Lists, pagination, empty states
@@ -348,5 +348,115 @@ Presentation of the result: the computed **value**, and — **every evaluation p
 
 Marking an instrument as a survey is the `is_survey` attribute in §6.2 block C / §7.2 (`PUT …/instruments/{iid}`). Consequences surfaced in the UI:
 
-- Only survey-marked instruments can be filled via a public link (REQ-AUTH-038); the record view (§8.9) then offers the copy/revoke link actions for it.
+- Only survey-marked instruments can be filled via a public link (REQ-AUTH-038); the record view (§8.7) then offers the copy/revoke link actions for it.
 - The "finished" completion dropdown (§8.5) is **not** shown on survey instruments (master spec: "not for surveys").
+
+## 8. Data Entry and Record View (`GET /projects/{id}/records/{record}`, REQ-UI-025…028)
+
+### 8.1 Navigation and selection
+
+Reached from the record status dashboard (§6.3): selecting a participant (record) opens this view; the user then selects the **event** and **instrument** (tabs/selects — the instrument must be mapped to the event, REQ-DB-012) to render the form. The unit of the form is a **(record, event, instrument)** triple (the "instrument display of a record", REQ-API-081).
+
+Gating: the view requires data access ≥ `read_only` on the record's arm + record visibility (REQ-AUTH-045); **changing values requires ≥ `view_edit`** — a `read_only` member sees the values but the submit control is absent (REQ-UI-003, REQ-API-033).
+
+### 8.2 Form rendering (REQ-UI-025)
+
+The instrument's fields for the selected (record, event) render in position order. Field-type → control mapping:
+
+| `field_type` | Control | Notes |
+|---|---|---|
+| `text` | `<input type=text>` (or `<textarea>` for free-text) | free-text values render as their allowlist HTML on display (§3.2); validation type drives input hints (integer/float/email/MRN/date/datetime) |
+| `dropdown` | `<select>` | choices as `code`/`label` (stored value = code, REQ-VAL-022) |
+| `radio` | radio group | one input per choice |
+| `matrix` | a row per matrix sub-field (rows expanded, REQ-DB-014), sharing the group's choices/validation | the matrix header states the coding once (master spec) |
+| `description` | static text (no input) | does not accept values (REQ-VAL `NON_VALUE_FIELD`) |
+| `header` | section heading (no input) | |
+| `calculated` | **read-only** value display (REQ-VAL-036) | never an input; `CALCULATED_READONLY` if submitted (REQ-API-095) |
+
+**Required fields** are marked (label suffix + control styling) and checked before submission (REQ-VAL-028, REQ-UI-025). **Branching logic** (field and instrument level) shows/hides fields and whole instruments while the expression evaluates to 1 — evaluated client-side per §8.4, re-evaluated when a referenced value changes (GD-13, REQ-VAL-040). A hidden instrument hides all its fields (REQ-VAL-040).
+
+### 8.3 Current values and per-field history (REQ-UI-026)
+
+Both come from the **record history endpoint** `GET …/records/{record}/history?instrument=&event=` (data access ≥ `read_only`; chronological, paginated, `API_Endpoints_Design.md` §4.16):
+
+- **Prefill**: each field's **current value** is the most recent non-null value for that field across the (instrument, event)-filtered history (a `create`/`update` entry's `new`; a trailing `delete` → empty). The form opens with existing values filled into all fields (master spec: "existing values filled into all fields").
+- **Per-field history panel** (REQ-UI-026, REQ-API-081): for each field, a read-only list — **who** (user display name), **when** (UTC), and the **old → new** values; for deletions the deleted value. Values escaped per §3.2. The panel is read-only with respect to the audit trail (REQ-AUD-002) — no control writes to it.
+- The UI pages through the filtered history with `limit`/`cursor` (§3.6) to derive the current values and the per-field lists. *Efficiency note (Open Item, §11): a most-recent-first read order would serve this better; the endpoint is chronological.*
+
+### 8.4 Client-side validation and branching (advisory, REQ-VAL-002)
+
+- **Advisory validation**: as the user types, `app.js` validates the value against the field's type/choices/min/max (`Data_Validation_Design.md` §4) and marks required empties (REQ-VAL-028). A client pass is **not** a guarantee — the API is authoritative and re-validates every value before storage (REQ-VAL-001/002); a server rejection is shown per §3.4/§8.6.
+- **Branching evaluator**: the same vanilla-JS evaluator implements the normative semantics of `Data_Validation_Design.md` §7.3 (operand resolution, choice-label→code, comparison kinds, truthiness, functions, `&&`/`||`) and re-runs on any referenced field's change (§7.4). It is **display-only**: it never blocks or alters the submitted values (DEV-VAL-5) — the API stores what is sent.
+
+### 8.5 Completion state per instrument (master spec)
+
+At the **end of each data-collection instrument's form** (not for surveys — §7.5) a **dropdown** lets the user set that (record, event, instrument)'s completion state: *no data / some data / finished*. Selecting "finished" is the user's completion assignment that drives the green color-code in §6.3. The dropdown is present when the member has data access ≥ `view_edit` on the arm.
+
+> **Backend dependency (Open Item 1, §11):** persisting this user-assigned state and exposing it via `record-status` is not yet in the baseline (which is binary, REQ-API-074). The UI contract is fixed here; the storage + endpoint are flagged.
+
+### 8.6 Submitting values — the data-API import path (ASM-API-3, REQ-API-031/035)
+
+The form `POST`s to the PHP route (CSRF token, §3.3). PHP then, server-side:
+
+1. **Obtain the member's project token.** From the session cache (`proj_token_{id}`) if present; otherwise call `GET /api/v1/projects/{id}/users/{uid}/token` (**self-service fetch, REQ-API-102** — `{uid}` is the acting member) and cache the result in the session for that (user, project). This is the only sanctioned source: the session stores it as a **cache** (invalidated per step 3), never as an authorization input (permissions stay API-derived, REQ-AUTH-033 — this refines, not overrides, `Authentication_Authorization_Design.md` §3).
+2. **Present it to the data API**: `content=record&action=import` with the form's values as `data[]` entries for the (record, instrument, event) (`API_Endpoints_Design.md` §3.7). The API validates every value (REQ-VAL-001), stores all-or-nothing per record (REQ-API-035), and recomputes calculated fields in the same transaction (REQ-API-095). A new record is assigned to the member's active data-access group or none (REQ-API-093).
+3. **Stale-token handling**: if the data API answers **401 `Invalid token`** (the token was rotated/revoked since the cache, REQ-AUTH-030), PHP discards the cached token, re-fetches per step 1, and **retries once**. A **403** is a permission result — it is surfaced per §3.4 and NOT retried.
+4. **Render the result** (`API_Endpoints_Design.md` §3.7.2): per record — `import_record_id` `1` (added) / `2` (updated) → a success line; `0` → the per-field validation detail from `import_form_name` (rule codes + messages, `Data_Validation_Design.md` §3) listed per field, with the offending inputs highlighted. The completion dropdown (§8.5) submits alongside, as part of the same PHP action.
+
+All successful imports are audit-logged with user, token, record, and changed fields (REQ-API-035, `Audit_Logging_Design.md` §3.2) — the UI shows no audit data for this (the per-field history panel, §8.3, is the read side).
+
+### 8.7 Record actions (REQ-UI-027)
+
+Present per the member's levels (REQ-UI-003):
+
+- **Delete** (data access ≥ `delete` on the arm): delete the whole record or scoped values (by instrument/event), behind an explicit confirmation naming the scope (GD-3, REQ-API-036). PHP presents the member's token to the data API `content=record&action=delete` (same acquisition/stale handling as §8.6). Deletions are audit-logged **with the deleted values** (REQ-AUD-009).
+- **Data access group** (record visibility, REQ-AUTH-045): show the record's current group; for `project_admin` — an assign/change control (group select incl. "none") → `PUT …/records/{record}/data-access-group` (REQ-API-091). Members who are not `project_admin` see the group read-only.
+- **Survey link** (survey-marked instruments, data access ≥ `view_edit` on the arm): **Copy link** → `GET …/instruments/{iid}/survey-link` — the stable URL in a read-only input + copy button (issued once per (record, instrument) until revoked, `Database_Schema_Design.md` §8); **Revoke link** → confirmation → `DELETE …/survey-link` (effective immediately, REQ-AUTH-040). Absent for non-survey instruments (REQ-AUTH-038).
+
+### 8.8 Public survey page (`GET /survey/{link}`, GD-9, REQ-UI-028)
+
+A standalone PHP route — **no login, outside the session** (GD-1, REQ-API-084, DEV-UI-1), rendered without the sidebar (§2.4). The link is `WEB_PUBLIC_URL + /survey/<link token>`.
+
+- **Render**: PHP calls the **data API** `content=metadata` with the link token — the API accepts a link token only for the calls that render and fill its (record, instrument) (REQ-API-083, `API_Endpoints_Design.md` §3.10); the page shows **only** that instrument's fields for that record (values prefilled from the respondent's prior submission, if any).
+- **Submit**: PHP → data API `content=record&action=import` with the link token. Submissions pass the **same validation and audit rules as any import** (REQ-AUTH-041, REQ-VAL-001; audit `survey_submitted` — success and failure, `Audit_Logging_Design.md` §3.6).
+- **Re-open to edit**: the respondent may re-open the link and change their responses (REQ-AUTH-042) — the page is idempotent for them; the API upserts (REQ-DB-016).
+- **Branching**: the same client-side evaluator (§8.4) applies — fields/instruments show or hide per their logic (GD-13, REQ-VAL-040).
+- **Revoked link**: the API rejects every call (403, REQ-AUTH-040) — the page shows a single translated "this link is no longer valid" state, no retry.
+- The browser **never** calls `/api/v1/*` from this page (REQ-UI-002, REQ-API-084); the CSRF/session rules of §3.3 do not apply (no session) — the link token is the sole credential, and it is scoped to this one (record, instrument) by the API (REQ-AUTH-039).
+
+## 9. Multilingual (GD-12, REQ-UI-008/029/030)
+
+- **Language selector** (footer/sidebar, §2.4): a `<select>` of the enabled languages (`GET /api/v1/i18n/languages` — code + display name; any authenticated user, REQ-API-097). Choosing one `POST`s to the PHP route → `PUT /api/v1/users/me/ui-language` (REQ-API-098); the setting persists across sessions (REQ-DB-008) and applies **from the next page load** (the current page is already rendered). Users without a setting get English (the default, REQ-API-098).
+- **Server-side resolution** (REQ-UI-008, REQ-TECH-001): every UI string — page text, labels, buttons, alerts, the §3.4 error messages — is resolved at render time via the mapping tables (REQ-DB-031) or **falls back to English**; a blank or a raw key is never rendered (REQ-UI-008). Translated strings are escaped on render (§3.2).
+- **JavaScript-originated messages** (REQ-UI-008: "including JavaScript-originated messages"): since no i18n library is allowed, the server injects the page's small set of JS-visible strings as a single JSON object in a `<script type="application/json" data-i18n>` element (values escaped/JSON-encoded server-side); `app.js` reads it and uses those strings for toasts, confirmation texts, and the advisory-validation hints of §8.4. The JSON contains **no** data values — only UI copy.
+- **Translation management**: §5.7 (add/change/clear per language, missing-key visibility, empty text = removal → English fallback).
+- The language setting applies to **UI strings only** — never to stored data, field labels, or choice values (GD-12, REQ-UI-008).
+
+## 10. Resolved Deferred Items
+
+| Deferred in | Resolution here |
+|---|---|
+| page layouts, component details, interaction specifications (`User_Interface_Requirements.md` §1) | this document — routes §2.1, layout §2.4, pages §4–§8 |
+| locale-specific date/number formatting (ASM-UI-1) | displayed as stored — canonical UTC `YYYY-MM-DD HH:MM:SS` (GD-7); no locale reformatting of stored data (§1) |
+| token source for UI data entry (ASM-API-3; conflict with `Authentication_Authorization_Design.md` §3 "never in the session") | the self-service fetch `GET …/users/{uid}/token` (REQ-API-102) + a **session cache** invalidated on 401/rotate (§8.6); the session stores it as a cache, never as an authorization input (owner decision, 2026-09-22, master spec "Details") |
+| where the data-entry form reads current values (not specified in the baseline) | the record-history endpoint (data-access gated per REQ-AUTH-018 `read_only` = "read the arm's record values"; untransformed values suitable for round-trip entry — unlike the export-gated surfaces, REQ-API-026) (§8.3) |
+| sidebar + panel layout, arm tabs (arm_1 default), mapping orientation (instruments × events) (master spec "User interface details") | §2.4, §6.2 (tabbed arm blocks; D = rows × columns checkbox matrix) |
+| participant overview + new-participant creation (master spec) | §6.3 (list + record_id/auto-name creation via REQ-API-023/033) |
+| project-home option list incl. "administer users in the project" (master spec) | §6.1 action cards + sidebar project context (§2.4); §5.3/§5.4 are project-scoped routes |
+
+## 11. Open Items and Backend Dependencies
+
+UI-side contracts above depend on these **backend changes that are not yet in the requirements baseline** — each needs a requirements + design decision before implementation (out of scope for this document):
+
+| # | Item (master spec source) | What is missing | Affected baseline |
+|---|---|---|---|
+| 1 | 3-state completion: no data / some data / **finished**, user-assigned per non-survey instrument (§6.3, §8.5) | a stored per-(record, event, instrument) completion state; an endpoint to set it; `record-status` returning the three states | binary "any field has a value" today — REQ-API-074, REQ-UI-019; `Database_Schema_Design.md` §6 |
+| 2 | "allow changing of event order" (§6.2 B) | an events-order endpoint (events carry `position`; instruments/fields have order endpoints, events do not) | REQ-DB-011 (position exists); no `PUT …/events/order` in `API_Endpoints_Design.md` |
+| 3 | record-history read order (§8.3) | a most-recent-first (or tail) read mode would serve the form's current-value derivation; the endpoint is chronological | `API_Endpoints_Design.md` §4.16 — efficiency note, not a blocker |
+| 4 | **time zones** — browser tz, per-project collection tz (master spec "Details") | conflicts with GD-7 (UTC), REQ-DB-005, and the tz-less canonical date form of `Data_Validation_Design.md` §4.1; needs a baseline decision (store tz with values? convert? which surface?) | GD-7, REQ-DB-005, REQ-API-004, validation §4.1 |
+| 5 | **simplify `projects`** — drop options / `end_provision` / `event_names`; keep PI + REK + institution; some into a `DataTransferProjects` instrument (master spec "Details") | conflicts with REQ-DB-006 (all fields stored), REQ-API-050 (creation body), REQ-UI-012 (creation form), BR-009 (end provision); `organization` already serves as the main supporting institution | REQ-DB-006, REQ-API-050/052, `Database_Schema_Design.md` §4 |
+| 6 | **table-based authentication** — local password account; bootstrap admin configures auth in the UI (master spec "Details") | conflicts with REQ-AUTH-036 ("MUST NOT store user passwords") and the startup rule requiring an OAuth2 provider or LDAP (`System_Configuration_Design.md` §4.1); needs a new auth sequence, a `users` password-hash column, and an auth-configuration UI | REQ-AUTH-001…003/036, REQ-CFG-011/012, `Authentication_Authorization_Design.md` §2/§7 |
+| 7 | **account validity (days; 0 = indefinite)** (master spec "Details") | no expiry column on `users`, no auth check, no field in the user form | `Database_Schema_Design.md` §4 (`users`), REQ-UI-011, auth evaluation §4.3 |
+| 8 | **auto-disable after N days (180) inactivity** + admin re-enable + display on the user overview (master spec "Details") | no `last_login` column, no disable rule, no config key; the user overview (REQ-UI-011) doesn't show it | `users` schema, REQ-AUTH-006 (enabled check), `System_Configuration_Design.md`, REQ-UI-011/§5.1 |
+
+Items 4–8 are owner-level baseline changes (they amend or supersede existing requirements); items 1–3 are additive. None blocks the UI contracts already fixed in this document — the affected controls (§6.2 B, §6.3, §8.5, §5.1) are specified against the **target** shape and will bind once the backend items land.

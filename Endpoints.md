@@ -457,3 +457,7 @@ User accounts should have a limited time (days) they are valid. That time can be
 User accounts that do not have a login in the last N days (180) should be "disabled". An admin user needs to "enable" them again before the user can gain access to the system again. Display such information for the admin user on the user overview screen (used to assign users to projects, etc.).
 
 The generateNextRecordName is only for projects with the property "auto-generate-record-names". Such a project uses integers (start with 1) as record_ids. The second options for projects is to be "user-defined-record-names". Such names are strings like "<project ackronym>_<numeric site code>_<numeric value with leading zeros>".
+
+For authentication with LDAP use ext-ldap native php and for OAuth workflows use a library such as jumbojett/OpenID-Connect-PHP.
+
+For project documentation purposes create a user view that shows the data dictionary of the project (list of instruments and their fields) as a table. Add a feature to export the data dictionary similar to the assets/Example_data_dictionary csv file.
