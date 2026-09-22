@@ -128,6 +128,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 | REQ-API-053 | `GET /api/v1/projects/{id}/users` MUST list the project's members with (user id, email, display name, role name or role-less, token present, enabled state); it requires `is_admin` (master spec: administrator users assign users to projects given a role). |
 | REQ-API-054 | `PUT /api/v1/projects/{id}/users/{uid}` MUST be the single mutation point for membership: add a member (with or without a role), change the role (including role-less = full permissions, REQ-AUTH-022), or remove a member; it requires `is_admin`. Every change MUST be audit-logged (REQ-API-043). |
 | REQ-API-055 | Token issuance and rotation MUST happen through REQ-API-054; the new token MUST be returned in the response (the UI displays it to the administrator), rotation MUST invalidate the previous token immediately, and member removal MUST invalidate the member's token immediately (REQ-AUTH-030). Token values MUST NOT appear in logs (REQ-API-005). |
+| REQ-API-102 | `GET /api/v1/projects/{id}/users/{uid}/token` MUST return the member's current project token for project `{id}`. It is **self-service only**: `{uid}` MUST equal the acting user (from `X-Internal-User-Id`) and the acting user MUST be a member of the project — otherwise a uniform 403 `forbidden` (never disclosed as missing, REQ-API-007). The token value MUST NOT appear in logs (REQ-API-005). The fetch is credential plumbing and is NOT audit-logged as a distinct event; the data-API calls that present the token carry it in the fixed `token` column (REQ-AUD-018). It exists so the PHP layer can present the member's own token to the data API for UI data entry (ASM-API-3). |
 
 ### 4.6 Roles
 
@@ -249,6 +250,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 | `GET /api/v1/projects/{id}` | data access ≥ `read_only` + visibility (REQ-API-007) |
 | `PUT /api/v1/projects/{id}` | `project_admin` |
 | `GET/PUT .../users`, `GET/POST .../roles` | `is_admin` |
+| `GET .../users/{uid}/token` | self-service: acting user is a member of the project (REQ-API-102) |
 | arms, events, instruments, fields, mapping — mutations (POST/PUT/DELETE) | `project_admin` |
 | arms, events, instruments, fields, mapping — reads (GET) | data access ≥ `read_only` |
 | `GET .../record-status` | data access ≥ `read_only` |

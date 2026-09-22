@@ -87,7 +87,7 @@ Defines the persistent data model requirements. `Design/Database_Schema_Design.m
 
 | ID | Requirement |
 |---|---|
-| REQ-DB-025 | Reference scale: 100 projects, 10,000 records, 200 fields, 10 events (≈20M data rows) MUST remain responsive for single-record reads (< 500 ms) and full-project exports under the limits in `Technology_Stack_Requirements.md`. |
+| REQ-DB-025 | Reference scale: 600 projects, 100,000 records, 2000 fields, 10 events (≈2000M data rows) MUST remain responsive for single-record reads (< 500 ms) and full-project exports under the limits in `Technology_Stack_Requirements.md`. |
 | REQ-DB-026 | The application MUST use one connection per request with an explicit transaction for multi-row writes (imports, structure changes). |
 
 ## 4. Assumptions

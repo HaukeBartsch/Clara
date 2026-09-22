@@ -357,7 +357,7 @@ A duplicate `project_name` → 409 `conflict`. Creation is single-arm (REQ-DB-01
 
 **`PUT /api/v1/projects/{id}`** — `project_admin` (an `is_admin` user is covered by REQ-AUTH-023). Body: any subset of the `POST` metadata fields — omitted fields are unchanged (idempotent, REQ-API-042). A duplicate `project_name` → 409 `conflict`. 200 — the updated project object (same shape as `GET`). Metadata changes are audit-logged with old and new values (`project_updated`, `Audit_Logging_Design.md` §3.3; REQ-API-052, REQ-API-043).
 
-### 4.6 Members and Tokens (REQ-API-053…055)
+### 4.6 Members and Tokens (REQ-API-053…055, 102)
 
 Both endpoints require `is_admin` (master spec: administrator users assign users to projects given a role).
 
@@ -385,6 +385,14 @@ Response shape for add and rotation:
 ```
 
 The token value appears only in the add/rotation response — never in logs (REQ-API-005) and never in audit `details` (`Audit_Logging_Design.md` §2, §3.4).
+
+**`GET /api/v1/projects/{id}/users/{uid}/token`** — self-service fetch of the member's own token (REQ-API-102). `{uid}` MUST equal the acting user (`X-Internal-User-Id`) and the acting user MUST be a member of the project; any other case is a uniform 403 `forbidden` (never disclosed as missing, REQ-API-007). 200:
+
+```json
+{ "token": "8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83" }
+```
+
+The value MUST NOT be logged (REQ-API-005). No audit event is written for the fetch itself — it is credential plumbing; the data-API calls that present the token carry it in the fixed `token` column (`Audit_Logging_Design.md` §2, REQ-AUD-018). This is the source the PHP layer uses to present the member's token to the data API for UI data entry (ASM-API-3; `User_Interface_Design.md` §8.6).
 
 ### 4.7 Roles (REQ-API-056…057)
 
@@ -651,6 +659,7 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirement.m
 | `GET /api/v1/projects/{id}` | data access ≥ `read_only` + visibility |
 | `PUT /api/v1/projects/{id}` | `project_admin` |
 | `GET/PUT …/users` (members), `GET/POST …/roles` | `is_admin` |
+| `GET …/users/{uid}/token` | self-service: acting user is a member (REQ-API-102) |
 | arms, events, instruments, fields, mapping — mutations (POST/PUT/DELETE) | `project_admin` |
 | arms, events, instruments, fields, mapping — reads (GET) | data access ≥ `read_only` |
 | `GET …/record-status`, `GET …/records/{record}/history` | data access ≥ `read_only` (+ record visibility) |

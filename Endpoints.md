@@ -444,3 +444,16 @@ Questions:
 But the session is specified to store identity only — Authentication_Authorization_Design.md:120: 'project tokens live in user_projects.token, never in the session' — and no admin-API endpoint returns a member's project token (only the one-time add/rotation response does)."
 Answer: Allow the admin-API endpoint to return a member's project token.
 
+Support different time zones for the internal storage of dates and times. Support projects that collect data in different time zones using the browser timezone information.
+
+Some "projects" table information is better stored in an instrument of a project "DataTransferProjects". Simplify the table projects and remove information such as the options (pathology, radiology, etc.), end_provision and event names. Keep information about the PI and the field for REK number. Keep also a field for the main supporting institution.
+
+Authentication ("users" table) should also support a table-based authentication options. If first installed and not linked to either LDAP or oauth a table-based admin account should allow the user to setup the research electronic data capture systems authentication and authorization in the user interface.
+
+To identify a user from oauth and LDAP use their institutional email address.
+
+User accounts should have a limited time (days) they are valid. That time can be "0" which is indefinite.
+
+User accounts that do not have a login in the last N days (180) should be "disabled". An admin user needs to "enable" them again before the user can gain access to the system again. Display such information for the admin user on the user overview screen (used to assign users to projects, etc.).
+
+The generateNextRecordName is only for projects with the property "auto-generate-record-names". Such a project uses integers (start with 1) as record_ids. The second options for projects is to be "user-defined-record-names". Such names are strings like "<project ackronym>_<numeric site code>_<numeric value with leading zeros>".
