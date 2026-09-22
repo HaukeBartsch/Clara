@@ -424,3 +424,23 @@ To save a multi-valued field such as a checkbox type field (multiple answers) sa
 ```
 
 would be written in the csv exported file as one column "demo_habits__1" and a second column "demo_habits__2" for the two choices (1/0 coding, export type "raw").
+
+# User interface details
+
+Use the latest bootstrap templates (v5.x). After logging in the main website should have functionality in a sidebar window. Selecting different functions (like setup) should load the corresponding page in the right hand panel.
+
+The use flow should start with a) login, b) present a list of the projects the user has access to and c) opening a projects home page.
+On the projects home page the user can select options to i) setup the project, ii) to design all instruments, iii) to create arms and events, to iv) assign instruments to arms and events and to v) administer users in the project (match roles to permissions) and to iv) export.
+After finalizing the setup of the project the "Record Status Dashboard" should be used to a) list all participants and to b) create a new participant. Creating a new participant (enter record_id string) that participants overview page should be shown, listing all arms, instruments and events with a color-code (no data, some data, finished data entry). Such color codes (dropdown) should be assigned by the user at the end of each data collection instrument (not for surveys).
+Selecting an instrument on the participant page should open the list of fields for that participant (existing values filled into all fields). Based on the users permission values can be changed in this view.
+
+As arms will be used rarely all arm dependent section can be hidden using a tab-interface. The information of the first arm (arm_1) should be displayed by default - for example the instrument-event mapping as instruments as rows and events as columns (table entries as checkboxes). An instrument can be assigned to none, one or several events. Adding a new event (allow changing of event order) should allow the user to assign more instruments to the new event.
+
+
+# Details
+
+Questions: 
+"ASM-API-3 (normative) + the audit design both say UI data entry submits as content=record&action=import against the data API, 'initiated by the PHP layer with the user's project token.'
+But the session is specified to store identity only — Authentication_Authorization_Design.md:120: 'project tokens live in user_projects.token, never in the session' — and no admin-API endpoint returns a member's project token (only the one-time add/rotation response does)."
+Answer: Allow the admin-API endpoint to return a member's project token.
+
