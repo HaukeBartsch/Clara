@@ -559,3 +559,110 @@ Reverse chronological (REQ-API-077). 200:
 ```
 
 Entries MAY carry the `token` column and payload values — the trail is the sole sanctioned carrier (REQ-AUD-007, `Audit_Logging_Design.md` §2). The endpoint is read-only: no endpoint exists that writes, updates, or deletes audit data (REQ-DB-024, REQ-API-077).
+
+### 4.16 Record history (REQ-API-079…081)
+
+**`GET /api/v1/projects/{id}/records/{record}/history`** — data access ≥ `read_only` on the record's arm (GD-2) + project visibility (REQ-API-007) + record visibility (REQ-AUTH-045). Query parameters: `instrument`, `event`, `field` (filters, REQ-API-080) and `limit`/`cursor` per §1. Chronological, covering all changes of the record since creation, transparent across the yearly rollover (REQ-AUD-006). 200:
+
+```json
+{ "entries": [ { "created_at": "2026-09-18 14:02:11", "user_id": 3, "user_display_name": "User",
+                 "action": "update", "instrument": "intake", "event": "baseline_arm_1",
+                 "fields": [ { "field": "age", "old": "41", "new": "42" } ] } ],
+  "next_cursor": null }
+```
+
+`action` ∈ `create | update | delete`; for `create`, `old` is `null`; for `delete`, `new` is `null` and the `old` values are the deleted values (REQ-AUD-009). The endpoint is read-only with respect to the audit trail (REQ-AUD-002). The data entry form presents this per-field history — who entered or changed the value, when, and the old → new values — fetched from this endpoint (REQ-API-081; User_Interface plan, data entry form).
+
+### 4.17 Survey links (GD-9, REQ-API-082…085)
+
+**`GET /api/v1/projects/{id}/records/{record}/instruments/{iid}/survey-link`** — data access ≥ `view_edit` on the arm (GD-2) + record visibility (REQ-AUTH-045). The instrument MUST be survey-marked (`is_survey = 1`) — otherwise 400 `invalid_request`. 200 — the stable public link (URL carrying the link token; stable per (project, record, instrument) until revoked, `Database_Schema_Design.md` §8):
+
+```json
+{ "url": "https://csms.example.org/s/8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "revoked": false }
+```
+
+Audit `survey_link_issued`.
+
+**`DELETE /api/v1/projects/{id}/records/{record}/instruments/{iid}/survey-link`** — revokes the link token; the revocation takes effect immediately (REQ-AUTH-040). 204. Audit `survey_link_revoked`.
+
+The data-API behaviour of a link token is fixed by §3.10 (render and fill that (record, instrument) only); the public survey page is served by the PHP application — the browser MUST NOT call `/api/v1/*` from it (GD-1, REQ-API-084).
+
+### 4.18 Data access groups (GD-10, REQ-API-086…094)
+
+**`GET /api/v1/projects/{id}/data-access-groups`** — data access ≥ `read_only`. 200 — the project's groups, possibly an empty array:
+
+```json
+[ { "id": 3, "name": "Center A" } ]
+```
+
+**`POST /api/v1/projects/{id}/data-access-groups`** — `project_admin` (an `is_admin` user is covered, REQ-AUTH-023). Body `{ "name": "Center A" }` — unique within the project (REQ-AUTH-043; a duplicate → 409 `conflict`). 201 — the group object. Audit `dag_created`.
+
+**`DELETE /api/v1/projects/{id}/data-access-groups/{gid}`** — `project_admin`. 204 — the group and its member assignments are removed; while records are still assigned → 409 `conflict` (ASM-AUTH-4; a rejected call writes no audit entry, REQ-AUD-004). Audit `dag_deleted`.
+
+**`PUT /api/v1/projects/{id}/users/{uid}/data-access-groups`** — `is_admin` (REQ-AUTH-044). Body — the member's group assignments and the active one; an empty list clears:
+
+```json
+{ "groups": [3, 7], "active_group_id": 3 }
+```
+
+Exactly one active group when `groups` is non-empty (otherwise 400 `invalid_request`). 200. Audit `dag_membership_changed`.
+
+**`PUT /api/v1/projects/{id}/active-data-access-group`** — self-service for the acting member (who holds a non-empty assignment). Body `{ "group_id": 7 }` — MUST be one of the member's assigned groups (otherwise 400 `invalid_request`). The switch takes effect immediately (REQ-AUTH-046). 200. Audit `dag_active_switched`.
+
+**`PUT /api/v1/projects/{id}/records/{record}/data-access-group`** — `project_admin` (REQ-AUTH-048); the record MUST be visible to the acting user (REQ-AUTH-045). Body `{ "group_id": 3 }` or `{ "group_id": null }` (unassign). 200. Audit `dag_record_assigned`.
+
+Record scope and transformation are orthogonal (REQ-API-092, REQ-AUTH-045): the group governs **which records** the holder sees on both export surfaces; the export level governs **how** the data is transformed (the §3.6.1 ladder). A record created via import takes the holder's active group, or none (REQ-API-093, §3.7.2).
+
+### 4.19 i18n (GD-12, REQ-API-097…100)
+
+**`GET /api/v1/i18n/languages`** — any authenticated user. 200 — the enabled languages (code, display name):
+
+```json
+[ { "code": "en", "display_name": "English" }, { "code": "nb", "display_name": "Norsk bokmål" } ]
+```
+
+**`PUT /api/v1/users/me/ui-language`** — any authenticated user (acting on themselves). Body `{ "language": "nb" }` — MUST be an enabled language (otherwise 400 `invalid_request`); the default is `en`. The setting persists across sessions (REQ-DB-008). 200 — the user object.
+
+**`GET /api/v1/i18n/strings?language=<code>`** — `is_admin`. 200 — the translation keys with the current translation and a missing flag (a missing key falls back to English, REQ-DB-031):
+
+```json
+[ { "key": "ui.dashboard.title", "text": "Oppsummering", "missing": false },
+  { "key": "ui.record.history", "text": "", "missing": true } ]
+```
+
+**`PUT /api/v1/i18n/strings`** — `is_admin`. Body — upsert of translations; an empty `text` removes the translation (fallback to English, REQ-DB-031):
+
+```json
+{ "language": "nb", "entries": [ { "key": "ui.dashboard.title", "text": "Oppsummering" } ] }
+```
+
+200. Audit `i18n_updated` per changed key.
+
+## 5. Permission summary
+
+The normative endpoint → permission mapping is in `API_Endpoints_Requirement.md` §4.19; it is reproduced here as an overview:
+
+| Endpoints | Required permission |
+|---|---|
+| data API `/api/` | the token's levels per §3 (data/export level per arm; link tokens scoped per §3.10) |
+| `GET/POST /api/v1/users`, `PUT /api/v1/users/{id}` | `is_admin` |
+| `POST /api/v1/projects` | `is_admin` |
+| `GET /api/v1/projects` | project visibility (REQ-API-007) |
+| `GET /api/v1/projects/{id}` | data access ≥ `read_only` + visibility |
+| `PUT /api/v1/projects/{id}` | `project_admin` |
+| `GET/PUT …/users` (members), `GET/POST …/roles` | `is_admin` |
+| arms, events, instruments, fields, mapping — mutations (POST/PUT/DELETE) | `project_admin` |
+| arms, events, instruments, fields, mapping — reads (GET) | data access ≥ `read_only` |
+| `GET …/record-status`, `GET …/records/{record}/history` | data access ≥ `read_only` (+ record visibility) |
+| `POST …/fields/{fid}/test` | `project_admin` + record visibility |
+| `GET …/export` | export level per arm (GD-2; `export_none` → 403) |
+| survey links (issue/revoke, §4.17) | data access ≥ `view_edit` on the arm (+ record visibility) |
+| `GET …/data-access-groups` | data access ≥ `read_only` |
+| `POST/DELETE …/data-access-groups`, `PUT …/records/{record}/data-access-group` | `project_admin` |
+| `PUT …/users/{uid}/data-access-groups` | `is_admin` |
+| `PUT …/active-data-access-group` | an assigned member (self-service) |
+| `GET /api/v1/audit` | `is_admin` (all projects) or a member of the queried project (REQ-API-078) |
+| `GET /i18n/languages`, `PUT /users/me/ui-language` | any authenticated user |
+| `GET/PUT /i18n/strings` | `is_admin` |
+
+`is_admin` users hold all permission levels on every arm of every project (REQ-AUTH-023), so a permission requirement never excludes an administrator.
