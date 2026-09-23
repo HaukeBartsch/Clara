@@ -26,6 +26,7 @@ The normative event catalog (event codes, `details` payload schemas), the record
 | `login_failure` | every failed login attempt | `{"source":"oauth2 or ldap","email":"…","reason":"provider_unavailable or state_mismatch or bad_credentials or account_not_found or account_disabled or rate_limited"}` |
 | `logout` | explicit logout (REQ-AUTH-015) | `{}` |
 | `admin_rejected` | rejected administration-API call (missing/invalid service token, unknown or disabled user — REQ-AUTH-011…013) | `{"path":"POST /api/v1/…","reason":"service_token_invalid or user_unknown or user_disabled"}` |
+| `account_auto_disabled` | inactivity auto-disable of the account active rule (GD-19, REQ-AUTH-053, REQ-AUD-024) — `enabled` set to `0` and the inactivity clock reset, same transaction as this entry; `source=system` | `{"email":"…","last_login_at":"…","inactivity_limit_days":180}` |
 
 No IdP tokens, LDAP passwords, or service-token values ever appear in payloads (REQ-AUD-007, REQ-API-005).
 
@@ -65,6 +66,7 @@ Rules: `old` is `null` for `create`; for `delete`, `new` is `null` and the `old`
 | `arm_deleted` | REQ-API-060 | `{"arm_num":2,"name":"…"}` |
 | `event_created` | REQ-API-062 | `{"event_name":"…","unique_event_name":"…","arm_num":1}` |
 | `event_updated` | REQ-API-063 | `{"event_id":7,"changes":{"label":{"old":"…","new":"…"},"period_days":{"old":0,"new":14}}}` |
+| `event_reordered` | `PUT …/events/order` (REQ-API-103) | `{"arm_num":1,"order":[9,4,7]}` |
 | `instrument_created` | REQ-API-065 | `{"name":"intake","position":1}` |
 | `instrument_updated` | REQ-API-101 | `{"name":"…","changes":{"is_survey":{"old":0,"new":1}}}` |
 | `instrument_reordered` | REQ-API-066 | `{"order":["intake","follow_up"]}` |
@@ -73,6 +75,7 @@ Rules: `old` is `null` for `create`; for `delete`, `new` is `null` and the `old`
 | `field_deleted` | REQ-API-070 | `{"instrument":"…","field":"…","values_removed":1234}` (DEV-API-5) |
 | `field_reordered` | REQ-API-071 | `{"instrument":"…","order":["a","b","c"]}` |
 | `mapping_updated` | REQ-API-073 | `{"arm_num":1,"pairs":{"intake":{"e1_arm_1":1,"e2_arm_1":0}}}` |
+| `project_ended` | the one-shot end-of-project provision action — `POST /api/v1/projects/{id}/end-provision` (BR-009, `API_Endpoints_Design.md` §4.20; rules `Data_Export_Anonymization_Design.md` §7.2) | `{"provision":"delete or anonymize","records_affected":42,"values_affected":1287}` |
 
 Field renames are `field_updated` with `"changes":{"name":{"old":"…","new":"…"}}` (REQ-VAL-014, DEV-VAL-4); the stored values are renamed in the same transaction (`Data_Validation_Design.md` §9).
 
@@ -230,4 +233,4 @@ Both endpoints are read-only; no endpoint exists that writes, updates, or delete
 
 | Item | Owner |
 |---|---|
-| `limit`/`cursor` encoding for `/api/v1/audit` and record history | `API_Endpoints_Design.md` |
+| ~~`limit`/`cursor` encoding for `/api/v1/audit` and record history~~ | **RESOLVED** — the pagination convention of `API_Endpoints_Design.md` §1 (opaque `cursor` encoding the last-seen `(created_at, id)`, `limit` default 50 / max 200, `next_cursor` `null` when exhausted) binds for both endpoints (§7) |

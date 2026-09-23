@@ -674,6 +674,24 @@ Record scope and transformation are orthogonal (REQ-API-092, REQ-AUTH-045): the 
 
 200. Audit `i18n_updated` per changed key.
 
+### 4.20 End-of-Project Provision (BR-009, `Data_Export_Anonymization_Design.md` §7)
+
+**`POST /api/v1/projects/{id}/end-provision`** — `is_admin` (otherwise 403 `forbidden`). The semantics are normative in `Data_Export_Anonymization_Design.md` §7; the endpoint is registered here for the completeness of this surface:
+
+- Body: `{ "provision": "delete" | "anonymize" }`; any other value → 400 `invalid_request`.
+- One-shot: a second execution for the same project → 409 `conflict` — the idempotency state is the `project_ended` audit event (`Audit_Logging_Design.md` §3.3).
+- Atomicity: the audit row and the data change are written by the same-transaction writer; no partial state on failure (§7.2).
+- `provision=delete` — removes the project's stored record data (EAV rows, `record_entities`, `survey_links`, `anon_offsets`); project metadata, structure, roles/memberships/tokens, and the audit trail are kept (§7.3).
+- `provision=anonymize` — applies the `export_de_identified` pipeline **in place** to the stored values; afterwards every read and export returns the anonymized form — irreversible (§7.4).
+
+200:
+
+```json
+{ "provision": "delete", "records_affected": 42, "values_affected": 1287 }
+```
+
+Audit: `project_ended` with the provision and the affected counts (`Audit_Logging_Design.md` §3.3; `Data_Export_Anonymization_Design.md` §8).
+
 ## 5. Permission summary
 
 The normative endpoint → permission mapping is in `API_Endpoints_Requirement.md` §4.19; it is reproduced here as an overview:
@@ -701,5 +719,6 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirement.m
 | `GET /api/v1/audit` | `is_admin` (all projects) or a member of the queried project (REQ-API-078) |
 | `GET /i18n/languages`, `PUT /users/me/ui-language` | any authenticated user |
 | `GET/PUT /i18n/strings` | `is_admin` |
+| `POST …/end-provision` (§4.20) | `is_admin` (BR-009) |
 
 `is_admin` users hold all permission levels on every arm of every project (REQ-AUTH-023), so a permission requirement never excludes an administrator.

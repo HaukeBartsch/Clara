@@ -262,7 +262,7 @@ No new variables — the canonical inventory is `System_Configuration_Design.md`
 
 | Item | Owner |
 |---|---|
-| register `POST /api/v1/projects/{id}/end-provision` in `API_Endpoints_Design.md` §4 and `openapi/openapi.json` (rules fixed in §7.2) | API design |
-| register the `project_ended` event type in the `Audit_Logging_Design.md` §3 event catalog (rules fixed in §7.2/§8) | audit logging design |
-| end-provision action card on the project screen for `is_admin` (`User_Interface_Design.md` §6) | UI design |
+| ~~register `POST /api/v1/projects/{id}/end-provision` in `API_Endpoints_Design.md` §4 and `openapi/openapi.json`~~ | **RESOLVED (2026-09-23)** — `API_Endpoints_Design.md` §4.20 (rules unchanged, §7.2); the path is in the scaffold's `api/openapi/openapi.json` |
+| ~~register the `project_ended` event type in the `Audit_Logging_Design.md` §3 event catalog~~ | **RESOLVED (2026-09-23)** — `Audit_Logging_Design.md` §3.3 (rules unchanged, §7.2/§8) |
+| ~~end-provision action card on the project screen for `is_admin`~~ | **RESOLVED (2026-09-23)** — `User_Interface_Design.md` §6.5 (rules unchanged, §7) |
 | the end-provision decision per project (delete vs. anonymize) — instrument data (e.g. `DataTransferProjects`) or an external record | operations / project owner |

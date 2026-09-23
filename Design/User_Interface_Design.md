@@ -274,6 +274,7 @@ Data: `GET /api/v1/projects/{id}` (full metadata + structure). Gating: project v
 | Export | §6.4 | a non-`export_none` level on the arm (REQ-API-075) | vi) export |
 | Members · Roles | §5.3 · §5.4 | `is_admin` | v) administer users in the project (match roles to permissions) |
 | Groups | §5.5 | data access ≥ `read_only` (mutate: `project_admin`) | (record scope) |
+| End provision | §6.5 | `is_admin` | (end of project — BR-009) |
 
 ### 6.2 Setup page (`GET /projects/{id}/setup`, `project_admin`, REQ-UI-018)
 
@@ -314,6 +315,17 @@ Data: `GET …/record-status` (data access ≥ `read_only` + record visibility, 
 - The download **streams** (REQ-TECH-011); the PHP route proxies the streamed response, so large exports do not buffer.
 - Gating: present only when the member holds a non-`export_none` level on the arm (REQ-UI-017/020, REQ-API-075); `export_none` → the card is absent (REQ-UI-003).
 - Every call is audit-logged with `surface:"ui"`, the project, and the sensitivity level (REQ-API-076, `Audit_Logging_Design.md` §3.5).
+
+### 6.5 End-of-Project Provision (project home card, `is_admin`, BR-009)
+
+Present on the project home (§6.1) **only** for `is_admin` (REQ-UI-003; the action is `is_admin`-gated at the API, `API_Endpoints_Design.md` §4.20). The operator's cue is the REK end date in the §6.1 summary (`rek_end_date`, `Data_Export_Anonymization_Design.md` §7.1) — nothing runs automatically (no scheduler, `Project_Charter_Design.md` §5).
+
+- **Action**: `POST` to the project route (CSRF, §3.3) → `POST /api/v1/projects/{id}/end-provision` (contract `API_Endpoints_Design.md` §4.20; rules `Data_Export_Anonymization_Design.md` §7).
+- **Choice** — a radio pair in the confirmation modal:
+  - `delete` — removes the project's stored record data (values, record entities, survey links, anonymization offsets); project metadata, structure, roles, and the audit trail remain (`Data_Export_Anonymization_Design.md` §7.3);
+  - `anonymize` — applies the de-identified pipeline **in place**; every later read and export of the project returns the anonymized form — irreversible (§7.4).
+- **Confirmation modal** (§3.5 — destructive and hard-to-reverse): states the chosen provision and the one-shot consequence, requires an explicit confirm click.
+- **Result**: on 200, a success line naming the provision and the affected records/values; on 409 (already executed) the conflict line per §3.4.
 
 ## 7. Instrument Designer (`project_admin`)
 

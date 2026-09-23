@@ -1,0 +1,18 @@
+# macOS AppleDouble metadata
+._*
+
+# secrets — never committed (REQ-CFG-001)
+.env
+
+# development database (REQ-CFG-009: per-developer SQLite file)
+data/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+# built API binary (Technology_Stack_Design.md §5)
+api-server
+
+# PHP session storage (REQ-CFG-017)
+web/sessions/
