@@ -136,6 +136,8 @@ The session is owned by the PHP web application: PHP-native session, file storag
 
 All page reads go through a single `require_login()` helper; a missing session redirects to `/login`. The session stores **identity only** — no permissions, no project tokens, no data: permissions are re-derived from the API on every request (REQ-AUTH-033), and project tokens live in `user_projects.token`, never in the session.
 
+The reference application's `AC.php` (master spec, "Details"; `assets/table_based_authentication_plus_user_management/AC.php`) is the model for this PHP session-establishment flow — a per-page access-control include that checks the session and redirects to login when it is absent, resolving the identity by name **or** institutional email. Only that *session pattern* is adopted (REQ-UI-032, REQ-TECH-025); the authentication mechanism itself (§2), the credential handling, and the storage (the database, not the reference's JSON file) follow this document and the fixed requirements (REQ-AUTH-036, REQ-TECH-020/024).
+
 ## 4. Authorization Evaluation (ASM-AUTH-5)
 
 A single explicit function in the Go API — no external policy engine. Inputs: subject, `is_admin`, role, arm, data access level, export level, active data access group (ASM-AUTH-5). Every decision is explicit and auditable (REQ-AUTH-019).

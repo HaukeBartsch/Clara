@@ -56,17 +56,17 @@ redcap-replacement/
 │   └── go.mod / go.sum
 ├── web/                            # PHP web application
 │   ├── public/index.php            # front controller (routes → app/)
-│   ├── app/                        # page controllers, session, CSRF, OAuth2/LDAP flow, API client
+│   ├── app/                        # page controllers, JSON endpoints (proxy the API), session, CSRF, OAuth2/LDAP flow, API client
 │   ├── views/                      # PHP templates (Bootstrap, escaped output)
 │   └── assets/
-│       ├── app.js                  # vanilla ES2020: branching evaluator, form behavior
+│       ├── app.js                  # vanilla ES2020: branching evaluator, form behavior, client-side data binding (fetch JSON → populate data regions)
 │       └── vendor/bootstrap/       # vendored Bootstrap 5.3.x
 ├── .env.example                    # complete variable inventory (System_Configuration_Design.md §5)
 ├── .gitignore                      # .env, SQLite files (REQ-CFG-001)
 └── ci/run.sh                       # go vet + unit + integration (SQLite) + Fiona fixtures
 ```
 
-Rules: the PHP layer contains **no** SQL and no direct data access (REQ-TECH-006); the Go API contains **no** session logic (GD-1); neither tree may import the other.
+Rules: the PHP layer contains **no** SQL and no direct data access (REQ-TECH-006); the Go API contains **no** session logic (GD-1); neither tree may import the other. The web app adopts the reference application's style and interfacing (REQ-TECH-025, REQ-UI-032, master spec "Details"; `assets/table_based_authentication_plus_user_management/`): PHP renders the shell and serves JSON endpoints that proxy the API, and the vanilla ES2020 client fetches that JSON and populates data regions (lists, tables, `<select>` options) without page switching; the reference's `AC.php` is the model for the PHP session flow (`Authentication_Authorization_Design.md` §3).
 
 ## 5. Build and Deployment
 

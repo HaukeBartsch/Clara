@@ -25,7 +25,7 @@ Common conventions (REQ-UI-001…008), binding on every page:
 - **CSRF** (REQ-UI-005, REQ-AUTH-037): every state-changing browser request is a `POST` (form or fetch) carrying the per-session `csrf_token` — hidden `csrf_token` form field for forms, `X-CSRF-Token` header for fetch calls.
 - **Language** (REQ-UI-008, GD-12): English is the default and fallback; `nb` and `nn` are the first targets. Translations are applied **server-side at render time** — no i18n JavaScript library (REQ-TECH-001); §9 covers how JavaScript-originated messages are translated.
 - **Time** (GD-7, GD-16): **system** timestamps (audit, history, account fields) are displayed as UTC, in the `YYYY-MM-DD HH:MM:SS` form the API returns. Clinical date/date-time **values** are displayed **exactly as stored** — canonical form **including the collection timezone offset** (e.g. `2026-03-01+01:00`, `2026-03-01 09:30+01:00`); the UI performs no locale reformatting of stored data and no timezone conversion (resolves ASM-UI-1). When the user enters a date/date-time in the data-entry form, the form submits it as typed (the field's `validation_format`) and the browser's timezone is sent as the collection zone (GD-16, REQ-VAL-041 — the PHP layer resolves the browser zone to the offset and passes `tz`).
-- **Layout** (master spec, "User interface details"): a **sidebar + content-panel** shell — the navigation lives in a left sidebar; selecting a function (e.g. *Setup*) renders the corresponding page in the right-hand content panel (§2.4). This is a shared multi-page layout, not a single-page app: each route of §2.1 renders the same sidebar and swaps the panel content (consistent with REQ-UI-001 — no framework).
+- **Layout** (master spec, "User interface details"): a **sidebar + content-panel** shell — the navigation lives in a left sidebar; selecting a function (e.g. *Setup*) renders the corresponding page in the right-hand content panel (§2.4). This is a shared multi-page layout, not a single-page app: each route of §2.1 renders the same sidebar and swaps the panel content (consistent with REQ-UI-001 — no framework). The shell, visual style, and interaction style follow the historic FIONA reference in `assets/table_based_authentication_plus_user_management/` (master spec, "Details"; REQ-UI-032, REQ-TECH-025): sidebar + panel, `table-sm` tables, responsive layout, and a client that populates data regions from JSON — realized in Bootstrap 5.3.x and vanilla ES2020.
 
 ## 2. Application Shell and Routes
 
@@ -144,6 +144,16 @@ Success confirmations (created/updated/removed) are one translated alert line at
 
 - Paginated endpoints (audit, record history) render a Bootstrap table + "Next/Prev" controls carrying the opaque `cursor` and the active `limit` (`API_Endpoints_Design.md` §1); the URL query string carries `cursor`/filters so a page is reloadable (GET-only).
 - Every list has a translated empty state that says what is empty and, when actionable, the one action that fills it (e.g. roles: "No roles yet — members without a role have full permissions (REQ-AUTH-022)").
+
+### 3.7 Client-side data binding (REQ-UI-032, REQ-TECH-025)
+
+The reference application's interfacing style (master spec, "Details"; `assets/table_based_authentication_plus_user_management/` — `/php/*.php` JSON endpoints, `js/all.js` fetch-and-populate) is adopted for the presentation layer, in vanilla ES2020:
+
+- **Server renders the shell and static content.** Each route of §2.1 returns the page shell — sidebar, headings, forms, empty data containers — fully rendered, permission-gated (REQ-UI-003), and with UI strings translated (REQ-UI-008).
+- **Client binds data regions.** `app.js` fetches JSON from the PHP endpoints (which proxy the API — REQ-TECH-006, GD-1) and populates data regions: list rows, table bodies, and `<select>` options. It writes with **safe DOM APIs** — `createElement`/`textContent` for all content except the stored free-text allowlist HTML (the §3.2 exception); `innerHTML` with user data is forbidden (REQ-UI-004, REQ-TECH-020).
+- **No page switching.** Data binding fills targets within the current page; navigation is still a full `GET` to a §2.1 route (no SPA — REQ-UI-001, REQ-TECH-001).
+- **Mutations are unchanged.** Every state-changing request is still a CSRF-protected `POST` to a PHP route (REQ-UI-005, §3.3); after a successful mutation the client re-fetches the affected data region rather than mutating the DOM by hand.
+- **Subordinate to the fixed conventions.** Where the reference diverges — its Bootstrap 2.x, jQuery, JSON-file store, and md5-in-transport password — it is **not** adopted (REQ-TECH-001, REQ-TECH-020/024, REQ-AUTH-036).
 
 ## 4. Dashboard (`GET /`)
 

@@ -25,7 +25,7 @@ The system is exactly these four components and no others. There is no scheduler
 
 ### 2.2 Boundaries and interfaces (normative)
 
-- **Browser ↔ PHP:** the browser talks only to the PHP web application, authenticated by the PHP-native session cookie. It never calls `/api/v1/*` and never holds a project token (GD-1, `Authentication_Authorization_Design.md` §3).
+- **Browser ↔ PHP:** the browser talks only to the PHP web application, authenticated by the PHP-native session cookie. It never calls `/api/v1/*` and never holds a project token (GD-1, `Authentication_Authorization_Design.md` §3). The browser's vanilla ES2020 client MAY bind data regions by pulling JSON from PHP endpoints that proxy the API (REQ-TECH-025, REQ-UI-032); it never writes and never reaches the API directly.
 - **PHP ↔ Go API:** server-side, presenting the shared service secret plus the authenticated user id in `X-Internal-Service-Token` / `X-Internal-User-Id` (GD-1, `API_Endpoints_Design.md` §4.1, `Authentication_Authorization_Design.md` §6). The proxy strips both headers from every externally-originated request.
 - **External caller ↔ Go API:** the REDCap data API (`POST/GET /api/`), the token passed as a body parameter, not a header (GD-5, `API_Endpoints_Design.md` §3.1).
 - **Single writer:** the Go API is the only component that opens a database connection. PHP MUST NOT open one (REQ-TECH-006, BR-006); no other code path writes to the store (success criterion 6).
