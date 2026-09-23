@@ -467,3 +467,5 @@ Bootstrap: For all tables use condensed tables (table-sm class).
 Use responsible tables and adjust to smaller screens like tablets and phones.
 
 Project name: CLARA - "Clinical Logbook for Automated Research Assistance", Related to a light-towers log-book
+
+The assets/table_based_authentication_plus_user_management/ folder contains a historic FIONA user management application (table-based authentication). "AC.php" is the corresponding authentication control script that all FIONA pages are using to establish a session. **If not against otherwise specified requirements** plan the development to utilize the example layout and style of interfacing php with the web-application - pull data using json from the backend, populate rendering targets on the client.
