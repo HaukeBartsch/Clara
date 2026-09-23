@@ -14,7 +14,7 @@ This document contains the **normative** logical schema and DDL. MariaDB is the 
 - All timestamps UTC (REQ-DB-005, GD-7): MariaDB `DATETIME`, SQLite `TEXT` (`YYYY-MM-DD HH:MM:SS`, UTC) — see §2
 - Foreign keys declared everywhere (REQ-DB-004); MariaDB `ENGINE=InnoDB`, SQLite `PRAGMA foreign_keys=ON` per connection
 - Identifiers: `snake_case`; string identifiers `VARCHAR(255)`; email `VARCHAR(254)`; UUIDs `CHAR(36)`
-- **Canonical value formats** (resolves ASM-VAL-1): dates `YYYY-MM-DD`; date-times `YYYY-MM-DD HH:MM` (no seconds, no timezone — these are clinical data, not system timestamps); choice lists use the REDCap encoding `code$label##code$label`; free-form text has **no application length cap** beyond the storage type (REQ-VAL-021), `LONGTEXT`/`TEXT`
+- **Canonical value formats** (resolves ASM-VAL-1; GD-16, REQ-VAL-041): dates `YYYY-MM-DD±HH:MM`; date-times `YYYY-MM-DD HH:MM±HH:MM` — no seconds, **with the timezone of collection** (`±HH:MM`, UTC = `+00:00`); values are stored as collected, never converted to UTC (clinical data, not system timestamps — system timestamps remain UTC per REQ-DB-005/GD-7); choice lists use the REDCap encoding `code$label##code$label`; free-form text has **no application length cap** beyond the storage type (REQ-VAL-021), `LONGTEXT`/`TEXT`
 - **Migrations** (REQ-DB-003): a `schema_version` table records applied versions; migrations are numbered `NNN_name.up.sql`, applied in order, idempotent (`CREATE TABLE IF NOT EXISTS`, guarded `ALTER`); the API applies them at startup
 
 ## 2. Logical Type Map
@@ -42,10 +42,10 @@ CREATE TABLE IF NOT EXISTS schema_version (
 ## 4. Projects, Users, Roles, Assignments
 
 ```sql
-CREATE TABLE IF NOT EXISTS projects (            -- REQ-DB-006
+CREATE TABLE IF NOT EXISTS projects (            -- REQ-DB-006 (simplified, GD-17)
     id                          INTEGER PRIMARY KEY,
     project_name                VARCHAR(255) NOT NULL UNIQUE,
-    organization                VARCHAR(16)  NOT NULL,   -- OTHER, VEST, HBE, SUS, FOR, FON, UIB, UIS, HVL, NAT EU
+    organization                VARCHAR(16)  NOT NULL,   -- main supporting institution: OTHER, VEST, HBE, SUS, FOR, FON, UIB, UIS, HVL, NAT EU
     pi_name                     VARCHAR(255) NOT NULL,
     pi_email                    VARCHAR(254) NOT NULL,
     dm_name                     VARCHAR(255),
@@ -55,24 +55,19 @@ CREATE TABLE IF NOT EXISTS projects (            -- REQ-DB-006
     rek_end_date                DATE,
     start_date                  DATE,
     end_date                    DATE,
-    end_provision               VARCHAR(16)  NOT NULL,   -- delete | anonymize
-    option_radiology            INTEGER NOT NULL DEFAULT 0,
-    option_pathology            INTEGER NOT NULL DEFAULT 0,
-    option_pathology_type       VARCHAR(255),
-    option_redcap_only          INTEGER NOT NULL DEFAULT 0,
-    option_data_collection_from_home INTEGER NOT NULL DEFAULT 0,
-    agreed_to_end_user_contract INTEGER NOT NULL DEFAULT 0,
     participant_names           VARCHAR(255) NOT NULL,   -- naming pattern (REQ-DB-007)
-    event_names                 TEXT,                     -- comma-separated initial events
     creation_time               DATETIME NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS users (               -- REQ-DB-008
+CREATE TABLE IF NOT EXISTS users (               -- REQ-DB-008 (GD-18/GD-19)
     id            INTEGER PRIMARY KEY,
     email         VARCHAR(254) NOT NULL UNIQUE,
     display_name  VARCHAR(255) NOT NULL,
     enabled       INTEGER NOT NULL DEFAULT 1,
-    auth_source   VARCHAR(8)  NOT NULL,          -- oauth2 | ldap
+    auth_source   VARCHAR(8)  NOT NULL,          -- oauth2 | ldap | local
+    password_hash VARCHAR(255),                  -- nullable; bcrypt; table-based auth (GD-18); never plaintext, never logged
+    valid_until   DATE,                          -- nullable; NULL = indefinite (validity days 0); GD-19
+    last_login_at DATETIME,                      -- nullable; UTC; set on every successful login; GD-19
     is_admin      INTEGER NOT NULL DEFAULT 0,    -- GD-4
     ui_language   VARCHAR(8)  NOT NULL DEFAULT 'en',  -- GD-12
     created_at    DATETIME NOT NULL
@@ -121,16 +116,16 @@ CREATE TABLE IF NOT EXISTS arms (                -- REQ-DB-011
     UNIQUE (project_id, arm_num)
 );
 
-CREATE TABLE IF NOT EXISTS events (              -- REQ-DB-011
+CREATE TABLE IF NOT EXISTS events (              -- REQ-DB-011 (GD-15)
     id                 INTEGER PRIMARY KEY,
     project_id         INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     arm_id             INTEGER NOT NULL REFERENCES arms(id) ON DELETE CASCADE,
     event_name         VARCHAR(255) NOT NULL,    -- label, e.g. baseline
     unique_event_name  VARCHAR(255) NOT NULL,    -- <label>_arm_<n>
-    period             INTEGER NOT NULL DEFAULT 0,          -- days after baseline
+    period             INTEGER,                  -- timepoint: days after baseline; NULL = no timepoint (GD-15)
     safe_region_start  INTEGER,                            -- days before (e.g. -2)
     safe_region_end    INTEGER,                            -- days after  (e.g. +3)
-    position           INTEGER NOT NULL DEFAULT 1,
+    position           INTEGER NOT NULL DEFAULT 1,         -- user order for no-timepoint events (and period ties)
     UNIQUE (project_id, unique_event_name),
     UNIQUE (project_id, arm_id, event_name)
 );
@@ -188,7 +183,7 @@ CREATE TABLE IF NOT EXISTS calculated_dependencies (   -- GD-11 support
 );
 ```
 
-Notes: matrix rows are ordinary `fields` rows sharing `matrix_group`/`choices`/validation (REQ-DB-014); the record identifier is the first field of the first instrument by `position` (GD-8 — enforced by the API, not the schema).
+Notes: matrix rows are ordinary `fields` rows sharing `matrix_group`/`choices`/validation (REQ-DB-014); the record identifier is the first field of the first instrument by `position` (GD-8 — enforced by the API, not the schema). **Event order (GD-15, REQ-DB-011):** within an arm, events with a `period` sort by it ascending (ties by `position`); events with `period = NULL` sort by `position` after them. `position` is set by the API at creation (end of list) and by the events-order endpoint (REQ-API-103); the canonical order is computed by the API (the schema stores the inputs only) and applies to the UI event table, the record-status dashboard, `content=event`, and `content=formEventMapping`.
 
 ## 6. Data (EAV) and Record Entities
 
@@ -309,7 +304,7 @@ CREATE TABLE IF NOT EXISTS i18n_strings (        -- REQ-DB-031
 ```
 
 Notes:
-- **Date-shift algorithm (REQ-DB-023):** on first anonymized export of a record, `offset_days = SHA-256(project_id || ':' || record_id || ':' || anon_salt) mod 365` (salt from configuration, `REQ-CFG-*`), stored in `anon_offsets`; every date/date-time value in that record's export is then shifted by exactly `offset_days` — consistent across time and across export levels (GD-6)
+- **Date-shift algorithm (REQ-DB-023):** on first anonymized export of a record, `offset_days = SHA-256(project_id || ':' || record_id || ':' || anon_salt) mod 365` (salt from configuration, `REQ-CFG-*`), stored in `anon_offsets`; every date/date-time value in that record's export is then shifted by exactly `offset_days` — consistent across time and across export levels (GD-6). The shift applies to the **date part** of the canonical value; the collection offset (`±HH:MM`, GD-16, REQ-VAL-041) is preserved
 - `survey_links.token` is the public bearer (128-bit random, REQ-AUTH-039); revocation is the `revoked` flag (REQ-API-085)
 - "Exactly one active group" per assignment is enforced in the API's transaction (portable partial unique indexes don't exist on MariaDB before 10.5); deleting a group with assigned records is rejected by the API (REQ-API-088)
 
@@ -348,11 +343,14 @@ Reference scale (REQ-DB-025): 100 projects × 10,000 records × 200 fields × 10
 
 | Deferred in | Resolution here |
 |---|---|
-| ASM-VAL-1 (canonical date forms) | dates `YYYY-MM-DD`; date-times `YYYY-MM-DD HH:MM` (§1); stored as data, never shifted by timezone rules |
+| ASM-VAL-1 (canonical date forms) | dates `YYYY-MM-DD±HH:MM`; date-times `YYYY-MM-DD HH:MM±HH:MM` — with the timezone of collection (GD-16, REQ-VAL-041); stored as collected, never converted to UTC (§1) |
 | REQ-VAL-030 (max length) | no application cap beyond storage — `LONGTEXT`/`TEXT` (§1, REQ-VAL-021 default) |
 | choices encoding | REDCap-style `code$label##code$label` (§1) |
-| REQ-DB-023 (date shift) | deterministic `offset_days` per (project, record) via salted SHA-256, persisted (§8) |
+| REQ-DB-023 (date shift) | deterministic `offset_days` per (project, record) via salted SHA-256, persisted (§8); date part shifted, collection offset preserved |
 | role level enums | `no_access`/`read_only`/`view_edit`/`delete`/`edit_survey_responses`; `export_none`/`export_de_identified`/`export_no_identifiers`/`export_full` (§4, REQ-AUTH-017) |
+| simplified `projects` (master spec "Details", GD-17) | `projects` keeps name, organization, PI, DM, REK, dates, naming pattern (§4); removed attributes are ordinary instrument data if wanted (REQ-DB-032) |
+| table-based authentication (master spec "Details", GD-18) | `users.password_hash` (nullable, bcrypt) + `auth_source = local` (§4); plaintext never stored |
+| account validity and inactivity (master spec "Details", GD-19) | `users.valid_until` (NULL = indefinite) + `users.last_login_at` (§4); auto-disable rule in `Authentication_Authorization_Design.md` §4.4 |
 
 ## 12. Open Items
 

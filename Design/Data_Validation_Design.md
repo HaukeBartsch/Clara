@@ -59,10 +59,16 @@ Codes are stable across versions (callers may branch on them); messages are huma
 
 Format tokens (REDCap-style): `Y` = 4-digit year, `m` = 2-digit month, `d` = 2-digit day, `H` = 2-digit hour, `i` = 2-digit minute; separators `-` between date parts, `:` between time parts, single space between date and time.
 
-- Accepted input format = the field's `validation_format` (DB column added for this; defaults `Y-m-d` for `date`, `Y-m-d H:i` for `datetime`)
+- Accepted input format = the field's `validation_format` (DB column added for this; defaults `Y-m-d` for `date`, `Y-m-d H:i` for `datetime`). A value already in canonical form (§4.1 canonical storage) is also accepted and its stored offset is kept.
 - Calendar validation: month 1–12; day 1–last-day-of-month (leap-year aware); hour 0–23; minute 0–59
-- **Canonical storage** (resolves ASM-VAL-1, matches `Database_Schema_Design.md` §1): dates `YYYY-MM-DD`; date-times `YYYY-MM-DD HH:MM` — the API converts from the accepted format to canonical on store and back on export
-- Examples: format `m-d-Y` accepts `02-30-2026`? No — `2026-02-30` is not a calendar date, so both `30-02-2026` and `2026-02-30` are rejected; `25:00` rejected for `datetime`
+- **Canonical storage** (resolves ASM-VAL-1, matches `Database_Schema_Design.md` §1; **timezone of collection** — GD-16, REQ-VAL-041):
+  - dates: `YYYY-MM-DD±HH:MM` — e.g. `2026-03-01+01:00`
+  - date-times: `YYYY-MM-DD HH:MM±HH:MM` — e.g. `2026-03-01 09:30+01:00`
+  - the offset is `±HH:MM` (UTC is `+00:00`); the API appends the collection offset on store and returns the canonical form (offset included) on export — values are **stored as collected, never converted** (GD-7 continues to govern system timestamps only)
+- **Collection offset** (normative — REQ-VAL-041), in order:
+  1. zone supplied with the import — the **browser's timezone** for UI data entry (the PHP layer resolves it to the offset of the value's date and passes it as `tz`), or the data-API import's optional `tz` parameter (IANA name, resolved to the offset at the value's date, or a direct `±HH:MM` offset);
+  2. else `APP_TIMEZONE` (configuration, `System_Configuration_Design.md` §3.10; default `UTC`).
+- Examples: format `m-d-Y` accepts `02-30-2026`? No — `2026-02-30` is not a calendar date, so both `30-02-2026` and `2026-02-30` are rejected; `25:00` rejected for `datetime`; `2026-03-01` (format `Y-m-d`, browser zone `Europe/Oslo`, March) stores as `2026-03-01+01:00`
 
 ## 5. Free-form Text Content Policy (REQ-VAL-030/031/032)
 
@@ -211,7 +217,7 @@ No cycle rule applies: branching logic produces no value, so no dependency graph
 The semantics below are the single normative definition; every evaluator (data entry form, survey page) MUST implement them (REQ-VAL-004).
 
 - **Operand resolution.** A reference resolves to the record's stored value (empty if absent at the referenced event). A string constant that exactly matches a choice label of a choice field (dropdown/radio/matrix row) is resolved to that choice's code before comparison — the stored value remains the code (REQ-VAL-022). A radio reference used by itself evaluates to `1` when selected (a value is present) and `0` when not (REQ-VAL-029).
-- **Comparison.** If either operand is a missing/empty referenced value → `0` for every operator (ASM-VAL-6). Otherwise: both numeric → numeric comparison; both valid dates/date-times in the reference's `validation_format` (§4.1) → chronological comparison; otherwise → lexicographic (byte-wise UTF-8) comparison.
+- **Comparison.** If either operand is a missing/empty referenced value → `0` for every operator (ASM-VAL-6). Otherwise: both numeric → numeric comparison; both valid dates/date-times (in the reference's `validation_format` or canonical form, §4.1) → chronological comparison of **absolute instants** (each value's wall time interpreted with its stored collection offset — GD-16, REQ-VAL-041); otherwise → lexicographic (byte-wise UTF-8) comparison.
 - **Truthiness.** A reference used outside a comparison: empty → `0`; non-empty → `1` (ASM-VAL-6). For choice fields this is exactly "selected → `1`, not selected → `0`" (REQ-VAL-029), regardless of the code value; for numeric text fields the value `0`/`0.0` → `0`.
 - **Functions.** `is_blank(ref)` → `1` if the referenced value is missing/empty, else `0`; `is_not_blank(ref)` → its negation; `text_contains(ref, s)` → `1` if `s` is a substring of the referenced value, else `0` (missing/empty → `0`).
 - **Logical.** `&&` → `1` iff both sides are `1`; `||` → `1` if either side is `1`; sides that are not `1` coerce to `0`.
@@ -250,7 +256,7 @@ Every rejection is a design-time error with a machine-readable reason (REQ-API-0
 
 | Deferred in | Resolution here |
 |---|---|
-| ASM-VAL-1 (canonical date forms) | dates `YYYY-MM-DD`; date-times `YYYY-MM-DD HH:MM`; the API converts between the field's accepted format and the canonical form on store and on export (§4.1) |
+| ASM-VAL-1 (canonical date forms) | dates `YYYY-MM-DD±HH:MM`; date-times `YYYY-MM-DD HH:MM±HH:MM` — the canonical form carries the timezone of collection (GD-16, REQ-VAL-041): offset from the import-supplied zone (browser tz / `tz` parameter) else `APP_TIMEZONE`; the API converts between the field's accepted format and the canonical form on store and on export; values are never converted to UTC (§4.1) |
 | ASM-VAL-2 (free-text length cap) | no application cap beyond the storage type by default (REQ-VAL-021); a finite cap MAY be set in configuration — the key is defined in `System_Configuration_Design.md` (§5.1) |
 | ASM-VAL-3 (partial records) | `required` is advisory at import; completion is tracked, not enforced (§8) |
 | ASM-VAL-4 (calculated-field details) | `*`/`/` before `+`/`-`, all left-associative, parentheses override; acyclic dependency graph; value stored at each active position; expression change → project-wide recomputation (§6) |

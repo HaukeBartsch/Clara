@@ -17,20 +17,20 @@ Defines the persistent data model requirements. `Design/Database_Schema_Design.m
 | REQ-DB-002 | The schema MUST be expressible on both SQLite and MariaDB using only SQL features common to both, with documented dialect exceptions (GD-6). |
 | REQ-DB-003 | A schema version table MUST record the applied schema version; migrations MUST be applied in order and MUST be idempotent. |
 | REQ-DB-004 | All primary keys MUST be integer, auto-generated. All foreign key relationships MUST be declared. |
-| REQ-DB-005 | Timestamps MUST be stored in UTC (GD-7). |
+| REQ-DB-005 | **System** timestamps MUST be stored in UTC (GD-7, as scoped 2026-09-22). Clinical date/date-time values in the data table carry their collection timezone instead (GD-16, REQ-VAL-041). |
 
 ### 2.1 Projects
 
 | ID | Requirement |
 |---|---|
-| REQ-DB-006 | Store all project creation fields from the master spec: project name (unique), organization (enumerated: OTHER, VEST, HBE, SUS, FOR, FON, UIB, UIS, HVL, NAT EU), PI name/email, data manager name/email, REK number, REK start/end dates, start/end dates, end provision (`delete`|`anonymize`), option flags (radiology, pathology, pathology type, redcap-only, data collection from home, agreed to end-user contract), participant naming pattern, initial event names (comma-separated), creation time. |
+| REQ-DB-006 | Store the project's identity and ethics metadata: project name (unique), organization (the main supporting institution; enumerated: OTHER, VEST, HBE, SUS, FOR, FON, UIB, UIS, HVL, NAT EU), PI name/email, data manager name/email, REK number, REK start/end dates, start/end dates, participant naming pattern, creation time (GD-17). The option flags (radiology, pathology, pathology type, redcap-only, data collection from home), the end-user-contract flag, the end provision, and the initial `event_names` list are **not stored** — see REQ-DB-032. |
 | REQ-DB-007 | `participant_names` MUST support two pattern styles for `generateNextRecordName`: REDCap-style digit placeholders (`8DISC[0-9][0-9][0-9]`) and a numeric counter prefix (`0001_01` → next `0002_01`, width preserved). |
 
 ### 2.2 Users and Administration
 
 | ID | Requirement |
 |---|---|
-| REQ-DB-008 | Store user accounts: email (unique), display name, enabled flag, authentication source (`oauth2`|`ldap`), the `is_admin` flag (GD-4), and the UI language setting (default `en`, GD-12). |
+| REQ-DB-008 | Store user accounts: email (unique), display name, enabled flag, authentication source (`oauth2`|`ldap`|`local`), the `is_admin` flag (GD-4), the UI language setting (default `en`, GD-12), the local password hash (nullable; bcrypt; table-based authentication — GD-18), the account validity end date `valid_until` (nullable date; `NULL` = indefinite; set as days with `0` = indefinite — GD-19), and the last successful login `last_login_at` (nullable UTC timestamp; updated on every successful login — GD-19). |
 | REQ-DB-009 | Store project roles: role name (unique per project), project-scoped, with per-arm permission assignments — a data access level and an export level for each arm (GD-2) — plus the project-level `project_admin` flag; an arm not listed in a role defaults to `no_access` / `export_none`. The example presets `data-manager`, `data-entry`, `controller` MAY be seeded per project; a project MAY have zero roles (REQ-AUTH-020). |
 | REQ-DB-010 | Store user-project assignments: unique per (user, project), nullable role (role-less = full permissions for that project), and the project token (UUID) unique across the database. |
 
@@ -38,7 +38,7 @@ Defines the persistent data model requirements. `Design/Database_Schema_Design.m
 
 | ID | Requirement |
 |---|---|
-| REQ-DB-011 | Store arms (1-based `arm_num`, name), events (label, unique name `<label>_arm_<n>`, period in days, safe region start/end in days, position), and instruments (name unique per project, position for ordering, `is_survey` flag: the instrument can be filled out via a public record link, GD-9, and an optional branching logic expression, GD-13). |
+| REQ-DB-011 | Store arms (1-based `arm_num`, name), events (label, unique name `<label>_arm_<n>`, **timepoint** `period` in days after baseline — nullable, `NULL` = no timepoint, GD-15), safe region start/end in days, position), and instruments (name unique per project, position for ordering, `is_survey` flag: the instrument can be filled out via a public record link, GD-9, and an optional branching logic expression, GD-13). **Canonical per-arm event order (GD-15):** events with a timepoint first, sorted by `period` ascending (ties broken by `position`); then events without a timepoint, sorted by `position` (user-orderable via the events-order endpoint, REQ-API-103). The order applies to the UI event table, the record-status dashboard, `content=event`, and `content=formEventMapping`. |
 | REQ-DB-012 | Store the instrument-by-event mapping as unique (instrument, event) pairs; an instrument becomes active for data entry only while mapped to at least one event. |
 | REQ-DB-013 | Store the data dictionary per field: name (unique per project, lower-case alphanumeric + underscore), label, type (`text`, `dropdown`, `radio`, `matrix`, `description`, `header`, `calculated`), calculation expression (when type is `calculated`, GD-11), section header, choices (code/label pairs), field note, validation type + min/max, required flag, branching logic expression (optional, GD-13), matrix group, personal-information flag, export-approval flag (for free text, see `Data_Export_Anonymization_Requirements.md`), position. |
 | REQ-DB-014 | Matrix rows MUST be stored as individual field rows sharing the same `matrix_group`, choices, and validation, differing in `field_name` and `field_label` (REDCap-compatible metadata expansion). |
@@ -83,6 +83,12 @@ Defines the persistent data model requirements. `Design/Database_Schema_Design.m
 |---|---|
 | REQ-DB-031 | Store UI translations (GD-12): a **languages** table (code unique, e.g. `en`/`nb`/`nn`, display name, enabled flag) and a **strings mapping** table (language code, stable key, translated text), unique per (language, key). English strings are the source of truth in the application and are NOT stored in this table; a missing translation MUST fall back to English, never to a blank or a raw key (REQ-UI-008). Keys are stable identifiers, not English text, so rewording English MUST NOT invalidate existing translations. Adding a language is an insert into these tables, not a schema change. Norwegian Bokmål and Nynorsk are the first targets; the tables admit further languages. |
 
+### 2.9 Project Data (simplified `projects`, GD-17)
+
+| ID | Requirement |
+|---|---|
+| REQ-DB-032 | The attributes removed from `projects` by GD-17 (option flags, end-user-contract flag, end provision, initial event names) are no longer project metadata and MUST NOT be stored in `projects`. The owner MAY hold them as **data** in an ordinary instrument of the project (master spec: a `DataTransferProjects` instrument): created, mapped, and filled through the ordinary designer/mapping/data-entry endpoints. The system MUST give such an instrument **no special handling** — no reserved name, no auto-creation, no special validation or export behavior. |
+
 ## 3. Capacity and Performance
 
 | ID | Requirement |
@@ -105,3 +111,6 @@ Defines the persistent data model requirements. `Design/Database_Schema_Design.m
 | DEV-DB-2 | Added `fields.export_approved` | `Data_Export_Anonymization` plan: free text excluded "unless explicitly approved for export" — approval must be storable. |
 | DEV-DB-3 | Added `anon_offsets` table | Anonymization plan: date shift "consistent for each patient" — offset must persist. |
 | DEV-DB-4 | Added `audit_events.source`, `audit_record_views.record_ids` | Audit plan: record views must capture which records/instruments and which token; source distinguishes API vs UI origin. |
+| DEV-DB-5 | `projects` simplified: option flags, end-user-contract flag, end provision, and `event_names` removed from the table | Owner decision (2026-09-22, GD-17; master spec "Details"): keep PI + REK + main supporting institution; removed attributes MAY live as data in a `DataTransferProjects` instrument (REQ-DB-032). |
+| DEV-DB-6 | `users` gains `password_hash`, `valid_until`, `last_login_at`; `auth_source` gains `local` | Owner decisions (2026-09-22, GD-18/GD-19; master spec "Details"): table-based authentication; account validity (days, 0 = indefinite); inactivity auto-disable (180 days) with admin re-enable. |
+| DEV-DB-7 | `events.period` becomes nullable (`NULL` = no timepoint) and gains the canonical per-arm ordering rule | Owner decision (2026-09-22, GD-15; master spec "Details" event ordering): timepoint events sorted by timepoint, non-timepoint events user-reorderable. |

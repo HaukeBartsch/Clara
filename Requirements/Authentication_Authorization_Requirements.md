@@ -7,7 +7,7 @@
 
 ## 1. Purpose
 
-Defines the authentication (OAuth2 with LDAP fallback) and authorization (RBAC, per-arm permission levels) requirements. `Design/Authentication_Authorization_Design.md` contains the login sequences, session schema, and trust model.
+Defines the authentication (OAuth2, LDAP fallback, and table-based local-password authentication — GD-18), account validity and inactivity rules (GD-19), and authorization (RBAC, per-arm permission levels) requirements. `Design/Authentication_Authorization_Design.md` contains the login sequences, session schema, and trust model.
 
 ## 2. Authentication Requirements
 
@@ -16,13 +16,22 @@ Defines the authentication (OAuth2 with LDAP fallback) and authorization (RBAC, 
 | REQ-AUTH-001 | The system MUST authenticate users against an external OAuth2 server using the authorization-code flow: redirect to provider → code returned → code exchanged for a token → local session established. |
 | REQ-AUTH-002 | The system MUST support multiple OAuth2 providers (generic integration) selected by configuration (REQ-CFG-011). |
 | REQ-AUTH-003 | If OAuth2 fails or is unavailable, the system MUST query up to 3 configured LDAP servers sequentially (server 1, then 2, then 3; stop at first successful bind+bind-verified bind). |
-| REQ-AUTH-004 | The user's identity MUST be mapped to a system user by email address from the provider assertion or LDAP directory attributes. |
-| REQ-AUTH-005 | The successful authentication source MUST be recorded on the user record (`auth_source` = `oauth2`|`ldap`) and in the audit log. |
-| REQ-AUTH-006 | A user account MUST exist and be `enabled` in the system for login to succeed; otherwise the login is rejected with "account not enabled" and the failure is audit-logged. |
-| REQ-AUTH-007 | On first login of the bootstrap admin email (`ADMIN_BOOTSTRAP_EMAIL`), the API MUST create/enable the account with `is_admin = true` (GD-4). |
+| REQ-AUTH-004 | The user's identity MUST be mapped to a system user by email address from the provider assertion, the LDAP directory attributes, or the local login's email (institutional email is the identity for all paths, master spec "Details"). |
+| REQ-AUTH-005 | The successful authentication source MUST be recorded on the user record (`auth_source` = `oauth2`|`ldap`|`local`) and in the audit log. |
+| REQ-AUTH-006 | A user account MUST exist and be **active** for login to succeed: `enabled = 1`, not expired (`valid_until`, REQ-AUTH-052), and not inactive (REQ-AUTH-053). Otherwise the login is rejected with the specific reason (`account_not_found` / `account_disabled` / `account_expired`) and the failure is audit-logged. The same active rule applies at every authentication check (login, administration-API calls, data-API token checks — REQ-API-048). |
+| REQ-AUTH-007 | On first login of the bootstrap admin email (`ADMIN_BOOTSTRAP_EMAIL`), the API MUST create/enable the account with `is_admin = true` (GD-4); with table-based authentication (GD-18) the bootstrap account's local password is provisioned as defined in REQ-AUTH-051. |
 | REQ-AUTH-008 | Login attempts (success and failure) and logouts MUST be audit-logged (see `Audit_Logging_Requirements.md`). |
 
-### 2.1 Session (decision GD-1)
+### 2.1 Table-based (local) authentication (decision GD-18)
+
+| ID | Requirement |
+|---|---|
+| REQ-AUTH-050 | The system MUST support a third authentication path: **table-based (local) login** with the user's email and password, verified against the account's stored bcrypt hash (`users.password_hash`, REQ-DB-008). A local password is the **only** credential the system MAY persist — never plaintext, never logged; the OAuth2 and LDAP paths remain passwordless (REQ-AUTH-036 revised). |
+| REQ-AUTH-051 | Local login MUST be attempted **first** on the email+password form (no external dependency), before the LDAP fallback of REQ-AUTH-003; a local failure (no stored hash or hash mismatch) falls through to LDAP when configured. The bootstrap admin (GD-4) MUST be usable on a first installation without any OAuth2 provider or LDAP server: when neither is configured, the API MUST provision the bootstrap account's local password from `ADMIN_BOOTSTRAP_PASSWORD` (configuration, REQ-CFG-025), and the system MUST refuse to start in that configuration without it (startup rule, `System_Configuration_Design.md` §4.1). An administrator MAY set, reset, or clear a user's local password through the users API (REQ-API-047/048); the password value MUST NOT appear in logs or audit details. |
+| REQ-AUTH-052 | **Account validity:** an account MAY carry a validity period, stored as the end date `valid_until` (date, UTC; `NULL` = indefinite). The period is supplied as days (`0` = indefinite) at account creation or update (REQ-API-047/048); `valid_until = today + valid_days`. An account whose `valid_until` is before today MUST be rejected at every authentication check with `account_expired` (the account stays enabled; an administrator restores access by setting a new validity period). |
+| REQ-AUTH-053 | **Inactivity auto-disable:** `last_login_at` (UTC) MUST be set on every successful login (any source). At an authentication check, an account whose `last_login_at` is older than `AUTH_INACTIVITY_LIMIT_DAYS` (configuration, REQ-CFG-024; default 180; `0` = rule off) MUST be **auto-disabled** — `enabled` set to `0`, the inactivity clock reset — the check MUST be rejected as `account_disabled`, and the event MUST be audit-logged as `account_auto_disabled` (REQ-AUD-024). An administrator MUST be able to re-enable such an account (REQ-API-048); re-enabling MUST reset the inactivity clock (the account is then usable until its next login ages out again). The user overview MUST show last login, validity end, and the account's status (REQ-UI-011). |
+
+### 2.2 Session (decision GD-1)
 
 | ID | Requirement |
 |---|---|
@@ -33,7 +42,7 @@ Defines the authentication (OAuth2 with LDAP fallback) and authorization (RBAC, 
 | REQ-AUTH-013 | The API MUST treat `X-Internal-User-Id` as authoritative for authorization on `/api/v1/*`; the user MUST exist and be enabled, else the call is rejected (403) and audit-logged. |
 | REQ-AUTH-014 | The reverse proxy MUST strip `X-Internal-Service-Token` and `X-Internal-User-Id` from all externally-originated requests; `/api/v1/*` MUST not be routable from the public network (REQ-TECH-018). |
 | REQ-AUTH-015 | Sessions MUST expire after a configurable inactivity timeout (default 8 h) and on explicit logout. Logout MUST call `POST /api/v1/auth/logout` (audit) before destroying the session. |
-| REQ-AUTH-016 | `POST /api/v1/auth/login` (called by PHP after successful IdP authentication) MUST: verify the user row exists and is enabled, apply the bootstrap-admin promotion (REQ-AUTH-007), record a login audit event, and return the user object including `is_admin`. |
+| REQ-AUTH-016 | `POST /api/v1/auth/login` (called by PHP after successful IdP authentication, **or with `source: "local"` and the password for table-based login** — REQ-AUTH-050) MUST: for local login, verify the stored hash in constant time before any other step (mismatch or absent hash → `bad_password`, no disclosure difference); then verify the user row exists and is active (REQ-AUTH-006), apply the bootstrap-admin promotion (REQ-AUTH-007), record a login audit event with the source, set `last_login_at`, and return the user object including `is_admin`. The local password MUST NOT be logged or stored anywhere except as the bcrypt hash. |
 
 ## 3. Authorization Requirements (RBAC)
 
@@ -101,7 +110,7 @@ Defines the authentication (OAuth2 with LDAP fallback) and authorization (RBAC, 
 |---|---|
 | REQ-AUTH-034 | All inter-component traffic between the web application and the API MUST be over a trusted path (loopback or internal network) or TLS. |
 | REQ-AUTH-035 | Brute-force protection: after 5 failed logins for the same email within 10 minutes, further attempts for that email MUST be rejected for 15 minutes (per host, in memory or session store); failures are audit-logged. |
-| REQ-AUTH-036 | The system MUST NOT store user passwords; authentication is delegated to the IdP or LDAP bind. |
+| REQ-AUTH-036 | User passwords MUST NOT be stored in plaintext and MUST NOT appear in logs or audit details. The **only** persisted credential is the one-way bcrypt hash of a local (table-based) account's password (`users.password_hash`, GD-18, REQ-AUTH-050); the OAuth2 and LDAP paths remain passwordless (the LDAP password goes to the directory and is never persisted). |
 | REQ-AUTH-037 | CSRF protection: all state-changing browser requests MUST carry a per-session CSRF token; the API's admin surface is additionally protected by the service-token boundary (GD-1). |
 | REQ-AUTH-049 | The reverse proxy and web server MUST NOT log query strings of `/api/` requests (the bearer token may ride in them per REQ-API-009); token values in access logs MUST be redacted (REQ-API-005). |
 
@@ -126,3 +135,5 @@ Defines the authentication (OAuth2 with LDAP fallback) and authorization (RBAC, 
 | DEV-AUTH-5 | Permission model reworked to per-arm levels (data access + export), superseding the seven atomic permissions | Owner decision (2026-09-19): make GD-2 more explicit — per-arm data viewing levels (No Access/hidden, Read Only, View & Edit, Delete, Edit survey responses) and export levels (no access, de-identified, remove all identifier fields, full dataset). |
 | DEV-AUTH-6 | Surveys in scope in limited form (link-filled survey instruments), narrowing the charter's survey out-of-scope | Owner decision (2026-09-19, GD-9): instruments marked as surveys are fillable via a record-specific public link without login. |
 | DEV-AUTH-7 | Data access groups added (record-level visibility grouping, orthogonal to the permission levels) | Owner decision (2026-09-19, GD-10): projects MAY have groups; a member's active group scopes the visible records; group-less members see all records. |
+| DEV-AUTH-8 | Table-based (local password) authentication added as a third login path; `REQ-AUTH-036` revised from "no password storage" to "no plaintext storage; bcrypt hash only" | Owner decision (2026-09-22, GD-18; master spec "Details"): first-install usability without an IdP; bootstrap admin password from `ADMIN_BOOTSTRAP_PASSWORD`; local tried first on the password form, LDAP remains the fallback (REQ-AUTH-050/051). |
+| DEV-AUTH-9 | Account validity period and inactivity auto-disable added (GD-19) | Owner decisions (2026-09-22; master spec "Details"): accounts valid for a limited time in days (`0` = indefinite); auto-disable after 180 days without login; admin re-enable; status visible on the user overview (REQ-AUTH-052/053). |

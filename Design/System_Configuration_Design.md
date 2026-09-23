@@ -46,6 +46,7 @@ Defines the complete configuration variable inventory, the defaults, and the sta
 |---|---|---|---|---|---|
 | `INTERNAL_SERVICE_TOKEN` | both (web sends, api verifies) | string (secret) | dev: `dev-internal-token` (accepted **only** when `APP_ENV=development`) | prod | shared secret for `X-Internal-Service-Token` (REQ-CFG-013, REQ-AUTH-011); no production default |
 | `ADMIN_BOOTSTRAP_EMAIL` | api | email | — | — | bootstrap administrator (GD-4, REQ-CFG-014); promoted on first login (REQ-AUTH-007) |
+| `ADMIN_BOOTSTRAP_PASSWORD` | api | string (secret) | — (no default) | if no OAuth2 provider **and** no LDAP server (§4.1) | local password of the bootstrap administrator (GD-18, REQ-CFG-025, REQ-AUTH-051); stored only as a bcrypt hash in `users.password_hash`; never logged (§4.4) |
 
 ### 3.4 OAuth2 (providers 1–3; at least one provider or one LDAP server required)
 
@@ -103,6 +104,13 @@ Per server `N` (1…3):
 | `RATE_LIMIT_ENABLED` | api | `0`\|`1` | `0` (disabled) | — | (REQ-CFG-020, REQ-API-038) |
 | `RATE_LIMIT_RPM` | api | integer ≥ 1 | `600` | — | requests per minute per token (REQ-CFG-020) |
 
+### 3.10 Account policy and time (api)
+
+| Variable | Component | Type | Default | Required | Description |
+|---|---|---|---|---|---|
+| `AUTH_INACTIVITY_LIMIT_DAYS` | api | integer ≥ 0 | `180` | — | inactivity auto-disable limit (GD-19, REQ-CFG-024, REQ-AUTH-053): `last_login_at` older than this → auto-disabled at the next authentication check; `0` = rule off |
+| `APP_TIMEZONE` | api | IANA timezone name | `UTC` | — | default collection timezone (GD-16, REQ-CFG-026, REQ-VAL-041): the offset used for date/date-time values imported without an explicit zone (no browser zone, no `tz` parameter); resolved to the `±HH:MM` offset at the value's date (DST-aware) |
+
 ## 4. Validation Rules and Startup Behavior
 
 ### 4.1 Required-at-startup matrix
@@ -113,11 +121,13 @@ Per server `N` (1…3):
 | `ANON_SALT` | default acceptable (§3.6) | **absent → refuse to start** (REQ-CFG-015) |
 | `WEB_PUBLIC_URL` | optional | **absent → refuse to start** (redirect URIs must be absolute) |
 | `DB_HOST`/`DB_USERNAME`/`DB_PASSWORD` (when `DB_CONNECTION=mariadb`) | required | required |
-| at least one of: `OAUTH2_1_ISSUER`, `LDAP_SERVER_1_URL` | **required** (some authentication path must exist) | **required** (REQ-CFG-011) |
+| an authentication path exists: at least one of `OAUTH2_N_ISSUER`, `LDAP_SERVER_N_URL` — **or** table-based bootstrap (GD-18, REQ-CFG-025): if **neither** an OAuth2 provider **nor** an LDAP server is configured, then `ADMIN_BOOTSTRAP_EMAIL` and `ADMIN_BOOTSTRAP_PASSWORD` | **required** (the system must be loggable-in on a first installation) | **required** |
 | `OAUTH2_N_CLIENT_ID`/`CLIENT_SECRET` for every provider with a set `ISSUER` | required | required |
 | `LDAP_SERVER_N_SEARCH_BASE` for every server with a set `URL` | required | required (REQ-CFG-012) |
 | `ANON_DATE_SHIFT_MIN ≤ ANON_DATE_SHIFT_MAX` | required | required |
 | `SESSION_DIR` is a directory path and not equal to `DB_DATABASE` | required (REQ-CFG-017) | required |
+| `AUTH_INACTIVITY_LIMIT_DAYS` is an integer ≥ 0 (default 180; 0 = rule off) | required | required (REQ-CFG-024) |
+| `APP_TIMEZONE` is a resolvable IANA timezone name (default `UTC`) | required | required (REQ-CFG-026) |
 
 The API refuses to start with a non-zero exit and a message naming each missing/invalid variable (REQ-CFG-004); the PHP app fails at entry-point boot with an operator-readable page and no stack trace in production (REQ-CFG-005).
 
@@ -131,7 +141,7 @@ Configuration is snapshotted at startup; there is no runtime mutation path and n
 
 ### 4.4 Startup dump and redaction (REQ-CFG-021/022)
 
-At `info` level both components log the effective **non-secret** configuration (env, engine, listen address, log level, rate-limit state, provider/server *names*, session lifetime). Secret values — `INTERNAL_SERVICE_TOKEN`, `OAUTH2_N_CLIENT_SECRET`, `LDAP_SERVER_N_BIND_PASSWORD`, `DB_PASSWORD`, `ANON_SALT` — are printed as `***` in any configuration dump (REQ-CFG-021) and never appear in logs otherwise (REQ-API-005).
+At `info` level both components log the effective **non-secret** configuration (env, engine, listen address, log level, rate-limit state, provider/server *names*, session lifetime, account policy, collection timezone). Secret values — `INTERNAL_SERVICE_TOKEN`, `OAUTH2_N_CLIENT_SECRET`, `LDAP_SERVER_N_BIND_PASSWORD`, `DB_PASSWORD`, `ANON_SALT`, `ADMIN_BOOTSTRAP_PASSWORD` — are printed as `***` in any configuration dump (REQ-CFG-021) and never appear in logs otherwise (REQ-API-005).
 
 ## 5. `.env.example` (complete)
 
@@ -150,8 +160,10 @@ DB_DATABASE=./data/app.sqlite
 # service boundary
 INTERNAL_SERVICE_TOKEN=dev-internal-token
 ADMIN_BOOTSTRAP_EMAIL=admin@example.org
+# required at startup when NO OAuth2 provider and NO LDAP server are configured (GD-18)
+ADMIN_BOOTSTRAP_PASSWORD=***
 
-# OAuth2 provider 1 (or LDAP_SERVER_1_URL — at least one authentication path)
+# OAuth2 provider 1 (optional — table-based authentication is always available, GD-18)
 OAUTH2_1_ISSUER=https://idp.example.org
 OAUTH2_1_CLIENT_ID=csms
 OAUTH2_1_CLIENT_SECRET=***
@@ -182,6 +194,10 @@ SESSION_COOKIE_SECURE=0
 # rate limiting (api)
 RATE_LIMIT_ENABLED=0
 RATE_LIMIT_RPM=600
+
+# account policy and time (api)
+AUTH_INACTIVITY_LIMIT_DAYS=180
+APP_TIMEZONE=UTC
 ```
 
 ## 6. Resolved Deferred Items
@@ -193,6 +209,9 @@ RATE_LIMIT_RPM=600
 | date-shift "sane defaults" (REQ-CFG-016) | 0…364 days, §3.6 |
 | rate-limit keys (REQ-CFG-020) | `RATE_LIMIT_ENABLED`/`RATE_LIMIT_RPM`, §3.9 |
 | session settings (REQ-CFG-017) | §3.8, 8 h default per REQ-AUTH-015 |
+| bootstrap local password (GD-18, master spec "Details") | `ADMIN_BOOTSTRAP_PASSWORD`, §3.3; startup rule §4.1; redaction §4.4 |
+| inactivity auto-disable rule key (GD-19, master spec "Details") | `AUTH_INACTIVITY_LIMIT_DAYS` (default 180, 0 = off), §3.10 |
+| default collection timezone (GD-16, master spec "Details") | `APP_TIMEZONE` (IANA name, default `UTC`), §3.10 |
 
 ## 7. Open Items
 

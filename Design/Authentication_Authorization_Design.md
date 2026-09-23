@@ -15,6 +15,7 @@
 | external data-API caller (Fiona/RIS) | `POST /api/` (public) | project token as `token` parameter (REQ-AUTH-031) | the token holder's per-arm levels (REQ-AUTH-033) |
 | survey respondent | PHP route `/survey/{link}` (public, no session — GD-9) | opaque link token | fill-only on exactly one (record, survey instrument) (REQ-AUTH-039) |
 | IdP / LDAP | outbound from PHP | OAuth2 client secret / LDAP bind DN | identity assertion (email) |
+| local (table-based) account | PHP login form → API | email + password (verified against `users.password_hash`) | the account's normal permissions (GD-18, REQ-AUTH-050) |
 
 ### 1.2 Network topology (normative rules)
 
@@ -50,7 +51,7 @@ Any failure at steps 3–5 falls through to the LDAP fallback (Sequence B); if n
 
 ### 2.2 Sequence B — LDAP fallback (up to 3 servers, REQ-AUTH-003)
 
-The PHP login form carries email + password **only** for this path; the password is sent to the directory and never stored or logged (REQ-AUTH-036). For server `N` = 1, 2, 3 (in order; stop at the first success — REQ-AUTH-003):
+The PHP login form carries email + password for the **local (Sequence F) and LDAP** paths; on the LDAP path the password is sent to the directory and never stored or logged (REQ-AUTH-036). Sequence B runs **after** the local attempt of Sequence F has failed (REQ-AUTH-051). For server `N` = 1, 2, 3 (in order; stop at the first success — REQ-AUTH-003):
 
 1. **Search** (using `LDAP_SERVER_N_BIND_DN`/`BIND_PASSWORD`, or anonymous): find the entry in `SEARCH_BASE` whose `UID_ATTR` matches the login name; read `EMAIL_ATTR` and `NAME_ATTR` (REQ-CFG-012).
 2. **Bind-as-user** (ASM-AUTH-2): simple bind with the entry DN and the supplied password. Success → identity is the entry's email (REQ-AUTH-004); bind failure → next server.
@@ -65,10 +66,15 @@ The PHP login form carries email + password **only** for this path; the password
 { "email": "user@example.org", "source": "oauth2", "provider": "https://idp.example.org" }
 ```
 
+```json
+{ "email": "user@example.org", "source": "local", "password": "***" }
+```
+
 API processing (in order):
-1. User row exists and `enabled = 1` (REQ-AUTH-006); otherwise reject (401 `account_not_found` / 403 `account_disabled`) and audit `login_failure`.
-2. **Bootstrap promotion** (REQ-AUTH-007, GD-4): if the email equals `ADMIN_BOOTSTRAP_EMAIL`, ensure the row exists, is enabled, and has `is_admin = 1` (idempotent).
-3. Update the row's `auth_source` to the call's `source` (REQ-AUTH-005).
+0. **Local verification** (only when `source = "local"`, GD-18, REQ-AUTH-050/051): the user row exists — otherwise 401 `account_not_found` + audit `login_failure`; its `password_hash` is present and the password matches it — constant-time comparison (bcrypt) — otherwise 401 `bad_password` + audit `login_failure` (the two cases are not distinguished to the caller, and the password value is never logged, REQ-AUTH-036).
+1. User row is **active** (REQ-AUTH-006, §4.4): `enabled = 1`, not expired (`valid_until`), not inactive — otherwise reject (403 `account_disabled` / 403 `account_expired`) and audit `login_failure` (the inactivity case first performs the auto-disable of §4.4, REQ-AUTH-053).
+2. **Bootstrap promotion** (REQ-AUTH-007, GD-4): if the email equals `ADMIN_BOOTSTRAP_EMAIL`, ensure the row exists, is enabled, and has `is_admin = 1` (idempotent); on a first installation without an IdP, the row's `password_hash` is provisioned from `ADMIN_BOOTSTRAP_PASSWORD` (REQ-AUTH-051).
+3. Update the row's `auth_source` to the call's `source` (REQ-AUTH-005) and set `last_login_at` to now (UTC, REQ-AUTH-053).
 4. Record `login_success` (audit) — `source=ui`, acting user set, no token.
 5. Return the user object.
 
@@ -96,8 +102,19 @@ Session inactivity timeout: `SESSION_LIFETIME` (default 8 h, REQ-AUTH-015, `Syst
 
 - Store: per host, in memory (`email → {failures, window_start, locked_until}`); lost on restart (allowed by REQ-AUTH-035's "in memory or session store").
 - Rule: ≥ 5 failed logins for the same email within a rolling 10-minute window → further attempts for that email rejected for 15 minutes (429 on the login form; `login_failure` with reason `rate_limited`).
-- The check runs **before** contacting the IdP/LDAP (fail fast; no credential probing against the directory).
+- The check runs **before** contacting the IdP/LDAP — and before the local hash check of Sequence F (fail fast; no credential probing against the directory or the hash column).
 - A successful login clears the counter for that email.
+
+### 2.6 Sequence F — local (table-based) login (GD-18, REQ-AUTH-050/051)
+
+The email+password form of the login page (present when no OAuth2 provider is configured, or as the fallback form beside the provider buttons — `User_Interface_Design.md` §2.2) initiates, in order:
+
+1. Brute-force check (Sequence E).
+2. PHP → API `POST /api/v1/auth/login` with `{ "email": "…", "source": "local", "password": "***" }` (service token; the password travels only on the trusted internal path, REQ-AUTH-034, and is never logged — REQ-AUTH-036). The API performs Sequence C step 0 (hash verification) and steps 1–5.
+3. On **401** (`account_not_found` or `bad_password`) **and** LDAP servers are configured: PHP runs Sequence B (LDAP); a successful LDAP bind logs the user in with `source: "ldap"`. On **403** (`account_disabled` / `account_expired`) PHP surfaces the specific reason and does **not** fall through (the account state — not the credential — is the problem).
+4. Otherwise: `login_failure` is already audit-logged by the API; the login page shows the translated failure line.
+
+On success PHP establishes the session (§3) exactly as for the other paths; `auth_source` is `local`.
 
 ## 3. Session Schema (GD-1)
 
@@ -111,7 +128,7 @@ The session is owned by the PHP web application: PHP-native session, file storag
 | `email` | login | string | |
 | `display_name` | login | string | |
 | `is_admin` | login | `0`/`1` | |
-| `auth_source` | login | `oauth2`/`ldap` | |
+| `auth_source` | login | `oauth2`/`ldap`/`local` | |
 | `issued_at` | login | unix timestamp | |
 | `csrf_token` | session start | 32-byte random hex | session regeneration |
 | `oauth2_state` | `/login` | 16-byte random hex | callback (single use) |
@@ -164,6 +181,33 @@ The rule is orthogonal to the levels: the level governs which actions are allowe
 
 The endpoint→permission mapping is the normative summary in `API_Endpoints_Requirements.md` §4.19. Access to a project or record the caller is not entitled to is rejected with a consistent 403 that does not disclose existence (REQ-API-007, REQ-AUTH-026).
 
+### 4.4 Account active rule (GD-19, REQ-AUTH-006/052/053)
+
+Evaluated at **every** authentication check — login (Sequence C), administration-API calls (the `X-Internal-User-Id` check of §4.3), and data-API token checks (the `user.enabled` check, REQ-API-048):
+
+```
+active(user, now):
+  if user.enabled = 0:                      reject account_disabled
+  if user.valid_until is not null and user.valid_until < today(now, UTC):
+                                           reject account_expired        (REQ-AUTH-052)
+  if user.last_login_at is not null
+     and AUTH_INACTIVITY_LIMIT_DAYS > 0
+     and now - user.last_login_at > AUTH_INACTIVITY_LIMIT_DAYS days:
+     AUTO-DISABLE: set enabled = 0, last_login_at = NULL   (same transaction)
+     audit account_auto_disabled (source = system)         (REQ-AUTH-053, REQ-AUD-024)
+     reject account_disabled
+  return active
+```
+
+Rules:
+
+- `AUTH_INACTIVITY_LIMIT_DAYS` is configuration (`System_Configuration_Design.md` §3.10); default **180**; `0` turns the rule off (REQ-CFG-024).
+- The auto-disable is the **only** path that sets `enabled = 0` without an administrator; it is idempotent (a second check on the same account just sees `enabled = 0`) and commits atomically with the audit entry (REQ-AUD-003).
+- **Re-enable** by an administrator (`PUT /api/v1/users/{id}`, `enabled: true`, REQ-API-048) leaves `last_login_at = NULL`, so the inactivity clock starts at the account's **next successful login** — the account is usable immediately after re-enabling (REQ-AUTH-053).
+- `valid_until` (date, UTC; `NULL` = indefinite) is set from a `valid_days` field (integer ≥ 0; `0` = indefinite → `NULL`) as `today(UTC) + valid_days` at account creation/update (REQ-API-047/048). An expired account stays `enabled = 1`; the administrator restores access by setting a new `valid_days` (REQ-AUTH-052).
+- `last_login_at` is set to now (UTC) on **every** successful login, whatever the source (GD-19).
+- The user overview displays `last_login_at`, `valid_until`, and a derived status (active / disabled / expired / auto-disabled) (REQ-UI-011, `User_Interface_Design.md` §5.1).
+
 ## 5. API Token Mechanics (GD-5)
 
 - One token per (user, project) assignment: UUID v4 (128-bit, `crypto/rand`), stored in `user_projects.token` (`CHAR(36)`), globally unique (REQ-AUTH-029).
@@ -182,7 +226,7 @@ The endpoint→permission mapping is the normative summary in `API_Endpoints_Req
 
 ## 7. Non-Functional Security
 
-- **No password storage** (REQ-AUTH-036): passwords exist only transiently in the LDAP path; they go over TLS to the directory and are never persisted or logged.
+- **Password handling** (REQ-AUTH-036, GD-18): the LDAP password exists only transiently — it goes over TLS to the directory and is never persisted or logged. Local (table-based) passwords are verified against a **bcrypt** hash (`cost ≥ 10`, constant-time compare — `golang.org/x/crypto/bcrypt` in the Go API) stored in `users.password_hash`; the plaintext exists only in flight (browser → PHP over TLS; PHP → API over the trusted internal path) and is never logged, never in audit `details`, and never returned by any endpoint. Setting/resetting a password stores only the new hash; clearing it sets the column to `NULL` (the account keeps its other paths).
 - **CSRF** (REQ-AUTH-037, REQ-UI-005): every state-changing browser request carries the per-session `csrf_token` (form field or `X-CSRF-Token` header); the administration API is additionally protected by the service-token boundary (GD-1).
 - **Trusted path** (REQ-AUTH-034): PHP→API traffic on loopback or TLS.
 - **Log hygiene** (REQ-AUTH-049, REQ-API-005): the proxy does not log `/api/` query strings (or redacts `token=…`); neither component logs the service token, IdP secrets, or record values.
@@ -196,7 +240,9 @@ The endpoint→permission mapping is the normative summary in `API_Endpoints_Req
 | `X-Internal-User-Id` on `POST /api/v1/auth/login` (REQ-API-041) | the login endpoint is the sole exception — service token only; the externally authenticated identity arrives in the body (§2.3) |
 | brute-force store and windows (REQ-AUTH-035) | in-memory per host; 5 failures / 10 min → 15 min lockout (§2.5) |
 | OAuth2 flow hardening | PKCE (S256) + single-use `state` (§2.1) |
-| `login_failure` reason vocabulary | extended in `Audit_Logging_Design.md` §3.1 (`state_mismatch`, `bad_credentials`) |
+| `login_failure` reason vocabulary | `provider_unavailable \| state_mismatch \| bad_credentials \| bad_password \| account_not_found \| account_disabled \| account_expired \| rate_limited` (`Audit_Logging_Design.md` §3.1) |
+| table-based authentication (owner decision 2026-09-22, GD-18) | `users.password_hash` (bcrypt) + `auth_source = local`; Sequence F before the LDAP fallback; bootstrap password from `ADMIN_BOOTSTRAP_PASSWORD` (required at startup when no IdP is configured); `REQ-AUTH-036` revised to "no plaintext, hash only" (§2.2/§2.3/§2.6, §7) |
+| account validity and inactivity (owner decision 2026-09-22, GD-19) | `users.valid_until` / `users.last_login_at`; the account-active rule of §4.4 evaluated at every authentication check; auto-disable + `account_auto_disabled` audit; admin re-enable resets the inactivity clock |
 
 ## 9. Open Items
 

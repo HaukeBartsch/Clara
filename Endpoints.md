@@ -461,3 +461,7 @@ The generateNextRecordName is only for projects with the property "auto-generate
 For authentication with LDAP use ext-ldap native php and for OAuth workflows use a library such as jumbojett/OpenID-Connect-PHP.
 
 For project documentation purposes create a user view that shows the data dictionary of the project (list of instruments and their fields) as a table. Add a feature to export the data dictionary similar to the assets/Example_data_dictionary csv file.
+
+Bootstrap: For all tables use condensed tables (table-sm class).
+
+Use responsible tables and adjust to smaller screens like tablets and phones.

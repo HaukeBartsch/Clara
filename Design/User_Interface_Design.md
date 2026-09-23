@@ -20,11 +20,11 @@ Common conventions (REQ-UI-001…008), binding on every page:
 
 - **Stack** (REQ-UI-001, REQ-TECH-001): plain HTML + vanilla ES2020 + vendored Bootstrap 5.3.x (CSS + bundle JS only); no frontend framework, no build step. Pages are rendered by the PHP layer, which delegates **all** data access to the API (REQ-TECH-006). The only JavaScript file of the application is `web/assets/app.js` (`Technology_Stack_Design.md` §4).
 - **Browser boundary** (REQ-UI-002, GD-1): the browser talks only to the PHP routes of §2 and never to `/api/v1/*` or the data API directly.
-- **Permission gating** (REQ-UI-003, REQ-AUTH-027): a page, section, or action is present **only** when the acting user's effective permissions allow it — \"hidden\" means absent from the DOM, not merely disabled. Gating is computed server-side at render time; the API re-checks on every call (REQ-AUTH-033), so client-side gating is presentation, never enforcement.
+- **Permission gating** (REQ-UI-003, REQ-AUTH-027): a page, section, or action is present **only** when the acting user's effective permissions allow it — "hidden" means absent from the DOM, not merely disabled. Gating is computed server-side at render time; the API re-checks on every call (REQ-AUTH-033), so client-side gating is presentation, never enforcement.
 - **Escaping** (REQ-UI-004): stored free-text values are the only content rendered as HTML — and only because they were sanitized to the allowlist at store (`Data_Validation_Design.md` §5.2). **All other** content (choice values, field labels, record names, user names, audit fields, translated strings) is escaped server-side (REQ-TECH-020). The `Content-Security-Policy` header is sent on every response (REQ-TECH-020).
 - **CSRF** (REQ-UI-005, REQ-AUTH-037): every state-changing browser request is a `POST` (form or fetch) carrying the per-session `csrf_token` — hidden `csrf_token` form field for forms, `X-CSRF-Token` header for fetch calls.
 - **Language** (REQ-UI-008, GD-12): English is the default and fallback; `nb` and `nn` are the first targets. Translations are applied **server-side at render time** — no i18n JavaScript library (REQ-TECH-001); §9 covers how JavaScript-originated messages are translated.
-- **Time** (GD-7): all timestamps are displayed as UTC, in the `YYYY-MM-DD HH:MM:SS` form the API returns; the UI performs no locale reformatting of stored data (resolves ASM-UI-1).
+- **Time** (GD-7, GD-16): **system** timestamps (audit, history, account fields) are displayed as UTC, in the `YYYY-MM-DD HH:MM:SS` form the API returns. Clinical date/date-time **values** are displayed **exactly as stored** — canonical form **including the collection timezone offset** (e.g. `2026-03-01+01:00`, `2026-03-01 09:30+01:00`); the UI performs no locale reformatting of stored data and no timezone conversion (resolves ASM-UI-1). When the user enters a date/date-time in the data-entry form, the form submits it as typed (the field's `validation_format`) and the browser's timezone is sent as the collection zone (GD-16, REQ-VAL-041 — the PHP layer resolves the browser zone to the offset and passes `tz`).
 - **Layout** (master spec, "User interface details"): a **sidebar + content-panel** shell — the navigation lives in a left sidebar; selecting a function (e.g. *Setup*) renders the corresponding page in the right-hand content panel (§2.4). This is a shared multi-page layout, not a single-page app: each route of §2.1 renders the same sidebar and swaps the panel content (consistent with REQ-UI-001 — no framework).
 
 ## 2. Application Shell and Routes
@@ -58,9 +58,9 @@ There are no other browser-reachable routes. State-changing browser requests are
 
 ### 2.2 Login page (`GET /login`, REQ-UI-007)
 
-- Primary: one button per configured OAuth2 provider — \"Sign in with `<provider name>`\" — initiating Sequence A (`Authentication_Authorization_Design.md` §2.1).
-- Fallback: a collapsed \"Sign in with directory account\" form — email + password — initiating Sequence B (LDAP). The password is sent only to the directory and never stored or logged (REQ-AUTH-036).
-- Failure presentation: a single translated error line (provider unavailable / bad credentials / state mismatch per `Authentication_Authorization_Design.md` §2.5); no internals. Rate-limit rejection (429) shows the lockout duration (REQ-AUTH-035).
+- **Providers** (present only when at least one OAuth2 provider is configured): one button per configured provider — "Sign in with `<provider name>`" — initiating Sequence A (`Authentication_Authorization_Design.md` §2.1).
+- **Email + password form** (always present — on a first installation without an IdP it is the **only** path, GD-18, REQ-AUTH-051): email + password, initiating **Sequence F** (`Authentication_Authorization_Design.md` §2.6) — the API verifies the local (table-based) hash first, then falls back to Sequence B (LDAP) when servers are configured. The password travels only browser→PHP (TLS) and PHP→API (trusted internal path); it is never stored in plaintext and never logged (REQ-AUTH-036).
+- Failure presentation: a single translated error line per the API reason — provider unavailable / state mismatch / **bad password** / bad credentials (LDAP) / **account disabled** (incl. "disabled after inactivity — an administrator must re-enable") / **account expired** ("validity period ended — an administrator must extend it") — no internals. Rate-limit rejection (429) shows the lockout duration (REQ-AUTH-035).
 - Session inactivity timeout: any request with an expired session redirects to `/login` (REQ-UI-007, REQ-AUTH-015).
 
 ### 2.3 No-access page
@@ -129,7 +129,7 @@ The PHP layer maps the stable `error` code of `API_Endpoints_Design.md` §4.2 to
 | `forbidden` (403) | "You do not have permission for this action" — uniform; never "project not found" (REQ-API-007) |
 | `conflict` (409) | the `message` (duplicate name, still-in-use resource, §5.5 group deletion) |
 | `not_found` (404) | "The object does not exist or you do not have access" (uniform with 403 for protected resources) |
-| `account_not_found` / `account_disabled` (login) | the login-page failure line of §2.2 |
+| `account_not_found` / `bad_password` / `account_disabled` / `account_expired` (login) | the login-page failure line of §2.2 (reason-specific text; auto-disabled and expired accounts point the user to an administrator) |
 | `service_token_invalid` / `internal` (500) | a generic failure line + the operator is notified by the application log — never internals (REQ-API-006) |
 | data-API `import_record_id = 0` | the per-field validation detail from `import_form_name` (`Data_Validation_Design.md` §3 codes), §8.6 |
 
@@ -150,13 +150,13 @@ Success confirmations (created/updated/removed) are one translated alert line at
 The start page after login (REQ-UI-009). Data: `GET /api/v1/projects` (visible projects only — REQ-API-049, REQ-API-007).
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  <user display name>                                          │
-│  Projects (n)                          [Administration] (adm) │
-├──────────────────────────────────────────────────────────────┤
+┌───────────────────────────────────────────────────────────────────────────┐
+│  <user display name>                                                      │
+│  Projects (n)                          [Administration] (adm)             │
+├───────────────────────────────────────────────────────────────────────────┤
 │  8DISC                 NAT EU      42 records · 5 instr. · 128 fields  →  │
 │  EMIT-23               OTHER       128 records · 1 instr. · 146 fields →  │
-└──────────────────────────────────────────────────────────────┘
+└───────────────────────────────────────────────────────────────────────────┘
 ```
 
 - One row/card per visible project: name, organization, and the quick statistics exactly as returned (`record_count`, `instrument_count`, `field_count` — REQ-UI-009, REQ-API-049). The row links to the project home (`/projects/{id}`, §6.1).
@@ -170,23 +170,26 @@ The pages of §5.1/§5.2/§5.6/§5.7 are global (`is_admin`); §5.3/§5.4/§5.5 
 
 ### 5.1 User accounts (`GET /admin/users`, `is_admin`, REQ-UI-011)
 
-Data: `GET /api/v1/users`. Table columns: `email`, `display_name`, `enabled` (badge), `is_admin` (badge), `auth_source` (`oauth2`/`ldap`).
+Data: `GET /api/v1/users` (the full user object, `API_Endpoints_Design.md` §4.3/§4.4). Table columns: `email`, `display_name`, `enabled` (badge), `is_admin` (badge), `auth_source` (`oauth2`/`ldap`/`local`), **`last_login_at`** (UTC; "never" when `null`), **`valid_until`** ("indefinite" when `null`), and the derived **status** badge — `active` / `disabled` / `expired` / `auto_disabled` (GD-19, REQ-AUTH-052/053). An `auto_disabled` row is visually distinct and shows the inactivity reason ("no login for more than `AUTH_INACTIVITY_LIMIT_DAYS` days — re-enabled by an administrator").
 
 | Action | Control | API | Notes |
 |---|---|---|---|
-| create account | form: `email` + `display_name` | `POST /api/v1/users` | a disabled account with the same email is **re-enabled** by the same call (REQ-API-047) — the form therefore doubles as the re-enable action |
-| disable / re-enable | row button, confirmation modal on disable | `PUT /api/v1/users/{id}` with `enabled` | idempotent; disabling takes effect at call time for that user's tokens (REQ-API-048) |
+| create account | form: `email` + `display_name` + **validity in days** (`0` = indefinite) + optional **local password** (repeat field; the value is shown once as masked text, never echoed back) | `POST /api/v1/users` (`valid_days`, `password`) | a disabled account with the same email is **re-enabled** by the same call (REQ-API-047) — the form therefore doubles as the re-enable action; `valid_days 0` → `valid_until = null` (REQ-AUTH-052) |
+| disable / re-enable | row button, confirmation modal on disable (naming the consequence for that user's tokens) | `PUT /api/v1/users/{id}` with `enabled` | idempotent; disabling takes effect at call time for that user's tokens (REQ-API-048); **re-enabling an auto-disabled account resets the inactivity clock** (REQ-AUTH-053) |
+| extend validity | row action (number input, days; `0` = indefinite) | `PUT /api/v1/users/{id}` with `valid_days` | re-sets `valid_until`; restores access for expired accounts (REQ-AUTH-052) |
+| set / reset local password | row action (password + repeat; empty = clear the local password) | `PUT /api/v1/users/{id}` with `password` | stored only as a bcrypt hash; never shown, never logged (REQ-AUTH-050, REQ-AUTH-036); `auth_source` then reports `local` after the next login (REQ-AUTH-005) |
 
 The `is_admin` flag is set by the bootstrap mechanism (GD-4, REQ-AUTH-007) — phase 1 offers no UI toggle for it (out of REQ-UI-011's scope).
 
 ### 5.2 Projects — create and edit (`GET /admin/projects`, `is_admin`, REQ-UI-012)
 
-**Create** — a single form covering all creation fields of REQ-DB-006, submitting `POST /api/v1/projects`:
+**Create** — a single form covering the simplified creation fields of REQ-DB-006 (GD-17), submitting `POST /api/v1/projects`:
 
-- identity: `project_name` (unique — a 409 shows the conflict message, §3.4), `organization` (select of the REQ-DB-006 enumeration — the main supporting institution), `pi_name`, `pi_email`, `dm_name`, `dm_email`;
-- ethics and time: `rek_number`, `rek_start_date`, `rek_end_date`, `start_date`, `end_date`, `end_provision` (select `delete`|`anonymize`);
-- options: checkboxes `option_radiology`, `option_pathology` (+ `option_pathology_type` text, enabled only when pathology is checked), `option_redcap_only`, `option_data_collection_from_home`, `agreed_to_end_user_contract` (a required confirmation checkbox);
-- structure: `participant_names` (naming pattern — `8DISC[0-9][0-9][0-9]` or `0001_01`, REQ-DB-007) and `event_names` (comma-separated initial events — creation derives arm 1 and one event per label, `API_Endpoints_Design.md` §4.5).
+- identity: `project_name` (unique — a 409 shows the conflict message, §3.4), `organization` (select of the REQ-DB-006 enumeration — **the main supporting institution**), `pi_name`, `pi_email`, `dm_name`, `dm_email`;
+- ethics and time: `rek_number`, `rek_start_date`, `rek_end_date`, `start_date`, `end_date`;
+- naming: `participant_names` (naming pattern — `8DISC[0-9][0-9][0-9]` or `0001_01`, REQ-DB-007).
+
+The option flags, the end-user-contract confirmation, the end provision, and the initial-events list are **absent from the form** (GD-17, REQ-DB-032): the owner MAY record them later as data in an ordinary instrument (e.g. `DataTransferProjects`), and events are added in the project's Setup page (§6.2 B). Creation makes the project with **arm 1 only** (`API_Endpoints_Design.md` §4.5); the page then offers a link straight into the new project's setup to add its events.
 
 On 201 the page offers a link into the new project's setup (§6.2).
 
@@ -268,7 +271,9 @@ One page, four blocks. **Arm-dependent blocks are presented as tabs, one per arm
 
 **Block A — Arms** (all arms; not tabbed): a list of arms (`arm_num`, `name`); **Add arm** form (`name`) → `POST …/arms`; **Remove** (confirmation) → `DELETE /api/v1/arms/{id}` — rejected with the 409 message while the arm still has events or data (§3.4, DEV-API-6).
 
-**Block B — Events** (per arm, tabbed): a table of the arm's events — `event_name`, `unique_event_name` (derived `<label>_arm_<n>`, REQ-DB-011), `period` (days), `safe_region_start`/`safe_region_end` (± days), `position`. **Add event** form (label, period, safe region) → `POST …/events` (duplicate label in the arm → 409). **Edit** row → `PUT /api/v1/events/{id}` (label change re-derives `unique_event_name`; collision → 409). *Changing event order: the master spec asks for it; events carry a `position` (REQ-DB-011) but **no events-order endpoint exists yet** — see Open Item 2 (§11).*
+**Block B — Events** (per arm, tabbed): a table of the arm's events — `event_name`, `unique_event_name` (derived `<label>_arm_<n>`, REQ-DB-011), `period` (the **timepoint**, days after baseline — blank when the event has **no timepoint**, GD-15), `safe_region_start`/`safe_region_end` (± days), `position`. **Add event** form (label, optional timepoint, safe region) → `POST …/events` (duplicate label in the arm → 409; a blank timepoint stores `period = null`). **Edit** row → `PUT /api/v1/events/{id}` (label change re-derives `unique_event_name`; collision → 409; clearing the timepoint makes the event user-orderable).
+
+**Ordering (GD-15, REQ-DB-011):** the table is displayed in the **canonical per-arm order** — timepoint events first, sorted by `period` ascending (ties in position order); then no-timepoint events in position order. **Reorder controls** (up/down arrows) are offered on the **no-timepoint events** (and on ties among timepoint events): they submit `PUT /api/v1/projects/{id}/events/order` with the **full** ordered id list of the arm (`API_Endpoints_Design.md` §4.9, REQ-API-103); timepoint events without ties are not reorderable — their place is fixed by their timepoint (the owner changes that by editing `period`).
 
 **Block C — Instruments** (all arms; not tabbed): the instrument list in position order (`name`, `position`, `field_count`, `is_survey`, `branching_logic`). **Add** (`name`, unique per project) → `POST …/instruments`. **Reorder** (up/down or drag) → `PUT …/instruments/order` with the **full** ordered id list; the GD-8 record-identifier invariant MUST hold after the change — a violation returns 400 and is shown per §3.4 (`API_Endpoints_Design.md` §4.10). **Edit** (survey flag, branching logic) → `PUT …/instruments/{iid}` (invalid branching → 400 `validation_error` with the reason shown, REQ-VAL-029).
 
@@ -399,7 +404,7 @@ At the **end of each data-collection instrument's form** (not for surveys — §
 The form `POST`s to the PHP route (CSRF token, §3.3). PHP then, server-side:
 
 1. **Obtain the member's project token.** From the session cache (`proj_token_{id}`) if present; otherwise call `GET /api/v1/projects/{id}/users/{uid}/token` (**self-service fetch, REQ-API-102** — `{uid}` is the acting member) and cache the result in the session for that (user, project). This is the only sanctioned source: the session stores it as a **cache** (invalidated per step 3), never as an authorization input (permissions stay API-derived, REQ-AUTH-033 — this refines, not overrides, `Authentication_Authorization_Design.md` §3).
-2. **Present it to the data API**: `content=record&action=import` with the form's values as `data[]` entries for the (record, instrument, event) (`API_Endpoints_Design.md` §3.7). The API validates every value (REQ-VAL-001), stores all-or-nothing per record (REQ-API-035), and recomputes calculated fields in the same transaction (REQ-API-095). A new record is assigned to the member's active data-access group or none (REQ-API-093).
+2. **Present it to the data API**: `content=record&action=import` with the form's values as `data[]` entries for the (record, instrument, event) (`API_Endpoints_Design.md` §3.7) — **submission policy (GD-14, REQ-UI-031):** the `data[]` payload contains exactly (a) the fields that **carry a value** in the form, and (b) the fields that **had a stored value that the user removed** (the client tracks each field's prefill value of §8.3 and sends an explicit empty string for those). Fields that had no value and were left empty are **not sent at all** — an empty value reaching the API clears the stored value (REQ-VAL-024), so unsent fields keep their previous values and a partially filled instrument stores only what was entered. For date/date-time fields the call carries the browser's timezone as the collection zone (the `tz` parameter — GD-16, REQ-VAL-041, §1). The API validates every value (REQ-VAL-001), stores all-or-nothing per record (REQ-API-035), and recomputes calculated fields in the same transaction (REQ-API-095). A new record is assigned to the member's active data-access group or none (REQ-API-093).
 3. **Stale-token handling**: if the data API answers **401 `Invalid token`** (the token was rotated/revoked since the cache, REQ-AUTH-030), PHP discards the cached token, re-fetches per step 1, and **retries once**. A **403** is a permission result — it is surfaced per §3.4 and NOT retried.
 4. **Render the result** (`API_Endpoints_Design.md` §3.7.2): per record — `import_record_id` `1` (added) / `2` (updated) → a success line; `0` → the per-field validation detail from `import_form_name` (rule codes + messages, `Data_Validation_Design.md` §3) listed per field, with the offending inputs highlighted. The completion dropdown (§8.5) submits alongside, as part of the same PHP action.
 
@@ -418,7 +423,7 @@ Present per the member's levels (REQ-UI-003):
 A standalone PHP route — **no login, outside the session** (GD-1, REQ-API-084, DEV-UI-1), rendered without the sidebar (§2.4). The link is `WEB_PUBLIC_URL + /survey/<link token>`.
 
 - **Render**: PHP calls the **data API** `content=metadata` with the link token — the API accepts a link token only for the calls that render and fill its (record, instrument) (REQ-API-083, `API_Endpoints_Design.md` §3.10); the page shows **only** that instrument's fields for that record (values prefilled from the respondent's prior submission, if any).
-- **Submit**: PHP → data API `content=record&action=import` with the link token. Submissions pass the **same validation and audit rules as any import** (REQ-AUTH-041, REQ-VAL-001; audit `survey_submitted` — success and failure, `Audit_Logging_Design.md` §3.6).
+- **Submit**: PHP → data API `content=record&action=import` with the link token, applying the same **submission policy** as the data-entry form (GD-14, REQ-UI-031 — entered values plus explicitly cleared fields only) and sending the respondent's browser timezone as the collection zone (GD-16). Submissions pass the **same validation and audit rules as any import** (REQ-AUTH-041, REQ-VAL-001; audit `survey_submitted` — success and failure, `Audit_Logging_Design.md` §3.6).
 - **Re-open to edit**: the respondent may re-open the link and change their responses (REQ-AUTH-042) — the page is idempotent for them; the API upserts (REQ-DB-016).
 - **Branching**: the same client-side evaluator (§8.4) applies — fields/instruments show or hide per their logic (GD-13, REQ-VAL-040).
 - **Revoked link**: the API rejects every call (403, REQ-AUTH-040) — the page shows a single translated "this link is no longer valid" state, no retry.
@@ -437,7 +442,7 @@ A standalone PHP route — **no login, outside the session** (GD-1, REQ-API-084,
 | Deferred in | Resolution here |
 |---|---|
 | page layouts, component details, interaction specifications (`User_Interface_Requirements.md` §1) | this document — routes §2.1, layout §2.4, pages §4–§8 |
-| locale-specific date/number formatting (ASM-UI-1) | displayed as stored — canonical UTC `YYYY-MM-DD HH:MM:SS` (GD-7); no locale reformatting of stored data (§1) |
+| locale-specific date/number formatting (ASM-UI-1) | displayed as stored — system timestamps in UTC `YYYY-MM-DD HH:MM:SS`; clinical date/date-time values **with their collection offset** (GD-16); no locale reformatting, no conversion (§1) |
 | token source for UI data entry (ASM-API-3; conflict with `Authentication_Authorization_Design.md` §3 "never in the session") | the self-service fetch `GET …/users/{uid}/token` (REQ-API-102) + a **session cache** invalidated on 401/rotate (§8.6); the session stores it as a cache, never as an authorization input (owner decision, 2026-09-22, master spec "Details") |
 | where the data-entry form reads current values (not specified in the baseline) | the record-history endpoint (data-access gated per REQ-AUTH-018 `read_only` = "read the arm's record values"; untransformed values suitable for round-trip entry — unlike the export-gated surfaces, REQ-API-026) (§8.3) |
 | sidebar + panel layout, arm tabs (arm_1 default), mapping orientation (instruments × events) (master spec "User interface details") | §2.4, §6.2 (tabbed arm blocks; D = rows × columns checkbox matrix) |
@@ -446,17 +451,17 @@ A standalone PHP route — **no login, outside the session** (GD-1, REQ-API-084,
 
 ## 11. Open Items and Backend Dependencies
 
-UI-side contracts above depend on these **backend changes that are not yet in the requirements baseline** — each needs a requirements + design decision before implementation (out of scope for this document):
+Items 2, 4–8 were owner-level baseline changes; the owner decisions of 2026-09-22 (master spec "Details") have now been taken into the requirements baseline, and each resolution is recorded in the Status column with the baseline references that now bind. Items 1 and 3 remain open (additive).
 
-| # | Item (master spec source) | What is missing | Affected baseline |
-|---|---|---|---|
-| 1 | 3-state completion: no data / some data / **finished**, user-assigned per non-survey instrument (§6.3, §8.5) | a stored per-(record, event, instrument) completion state; an endpoint to set it; `record-status` returning the three states | binary "any field has a value" today — REQ-API-074, REQ-UI-019; `Database_Schema_Design.md` §6 |
-| 2 | "allow changing of event order" (§6.2 B) | an events-order endpoint (events carry `position`; instruments/fields have order endpoints, events do not) | REQ-DB-011 (position exists); no `PUT …/events/order` in `API_Endpoints_Design.md` |
-| 3 | record-history read order (§8.3) | a most-recent-first (or tail) read mode would serve the form's current-value derivation; the endpoint is chronological | `API_Endpoints_Design.md` §4.16 — efficiency note, not a blocker |
-| 4 | **time zones** — browser tz, per-project collection tz (master spec "Details") | conflicts with GD-7 (UTC), REQ-DB-005, and the tz-less canonical date form of `Data_Validation_Design.md` §4.1; needs a baseline decision (store tz with values? convert? which surface?) | GD-7, REQ-DB-005, REQ-API-004, validation §4.1 |
-| 5 | **simplify `projects`** — drop options / `end_provision` / `event_names`; keep PI + REK + institution; some into a `DataTransferProjects` instrument (master spec "Details") | conflicts with REQ-DB-006 (all fields stored), REQ-API-050 (creation body), REQ-UI-012 (creation form), BR-009 (end provision); `organization` already serves as the main supporting institution | REQ-DB-006, REQ-API-050/052, `Database_Schema_Design.md` §4 |
-| 6 | **table-based authentication** — local password account; bootstrap admin configures auth in the UI (master spec "Details") | conflicts with REQ-AUTH-036 ("MUST NOT store user passwords") and the startup rule requiring an OAuth2 provider or LDAP (`System_Configuration_Design.md` §4.1); needs a new auth sequence, a `users` password-hash column, and an auth-configuration UI | REQ-AUTH-001…003/036, REQ-CFG-011/012, `Authentication_Authorization_Design.md` §2/§7 |
-| 7 | **account validity (days; 0 = indefinite)** (master spec "Details") | no expiry column on `users`, no auth check, no field in the user form | `Database_Schema_Design.md` §4 (`users`), REQ-UI-011, auth evaluation §4.3 |
-| 8 | **auto-disable after N days (180) inactivity** + admin re-enable + display on the user overview (master spec "Details") | no `last_login` column, no disable rule, no config key; the user overview (REQ-UI-011) doesn't show it | `users` schema, REQ-AUTH-006 (enabled check), `System_Configuration_Design.md`, REQ-UI-011/§5.1 |
+| # | Item (master spec source) | Status |
+|---|---|---|
+| 1 | 3-state completion: no data / some data / **finished**, user-assigned per non-survey instrument (§6.3, §8.5) | **OPEN** — a stored per-(record, event, instrument) completion state, an endpoint to set it, and `record-status` returning the three states are not yet in the baseline (binary "any field has a value" today — REQ-API-074, REQ-UI-019; `Database_Schema_Design.md` §6) |
+| 2 | "allow changing of event order" (§6.2 B) | **RESOLVED (GD-15)** — `PUT …/projects/{id}/events/order` (REQ-API-103); `period` nullable; canonical per-arm order (REQ-DB-011, `API_Endpoints_Design.md` §4.9); the §6.2 B contract binds |
+| 3 | record-history read order (§8.3) | **OPEN** — a most-recent-first (or tail) read mode would serve the form's current-value derivation; the endpoint is chronological (`API_Endpoints_Design.md` §4.16 — efficiency note, not a blocker) |
+| 4 | **time zones** — browser tz, per-project collection tz (master spec "Details") | **RESOLVED (GD-16)** — the canonical date/date-time form carries the collection offset (REQ-VAL-041, `Data_Validation_Design.md` §4.1); zone from browser `tz` (UI) / `tz` parameter (API) else `APP_TIMEZONE` (REQ-CFG-026); GD-7 scoped to system timestamps; the §1/§8.6 contracts bind |
+| 5 | **simplify `projects`** — drop options / `end_provision` / `event_names`; keep PI + REK + institution; some into a `DataTransferProjects` instrument (master spec "Details") | **RESOLVED (GD-17)** — simplified table (REQ-DB-006, `Database_Schema_Design.md` §4); removed attributes are ordinary instrument data (REQ-DB-032); creation body and form reduced (REQ-API-050, REQ-UI-012, §5.2); BR-009 re-sourced |
+| 6 | **table-based authentication** — local password account; bootstrap admin configures the system in the UI (master spec "Details") | **RESOLVED (GD-18)** — `users.password_hash` (bcrypt) + `auth_source = local` (REQ-DB-008); Sequence F first, LDAP fallback (REQ-AUTH-050/051, `Authentication_Authorization_Design.md` §2.6); `ADMIN_BOOTSTRAP_PASSWORD` startup rule (REQ-CFG-025, `System_Configuration_Design.md` §4.1); REQ-AUTH-036 revised; the §2.2 contract binds. (The authentication/authorization setup itself uses the existing administration UI — §5 — since provider configuration remains environment-based, REQ-CFG-001) |
+| 7 | **account validity (days; 0 = indefinite)** (master spec "Details") | **RESOLVED (GD-19)** — `users.valid_until` (REQ-DB-008); `valid_days` on the user API (REQ-API-047/048); `account_expired` rejection (REQ-AUTH-052); the §5.1 form contract binds |
+| 8 | **auto-disable after N days (180) inactivity** + admin re-enable + display on the user overview (master spec "Details") | **RESOLVED (GD-19)** — `users.last_login_at` (REQ-DB-008); auto-disable rule + `account_auto_disabled` audit (REQ-AUTH-053, `Authentication_Authorization_Design.md` §4.4); `AUTH_INACTIVITY_LIMIT_DAYS` default 180, `0` = off (REQ-CFG-024, `System_Configuration_Design.md` §3.10); admin re-enable resets the inactivity clock; the §5.1 contract binds |
 
-Items 4–8 are owner-level baseline changes (they amend or supersede existing requirements); items 1–3 are additive. None blocks the UI contracts already fixed in this document — the affected controls (§6.2 B, §6.3, §8.5, §5.1) are specified against the **target** shape and will bind once the backend items land.
+The open items (1 and 3) are additive and need a requirements + design decision before implementation (out of scope for this document). Neither blocks the UI contracts already fixed in this document: the §6.3/§8.5 completion-state contract (item 1) is specified against the **target** shape and will bind once the backend items land, and the §8.3 note (item 3) is an efficiency suggestion for an endpoint that already works.

@@ -9,7 +9,7 @@
 The normative endpoint contracts — parameter tables, request/response schemas, status codes, error formats — for both surfaces. The requirements document fixes *what* (which endpoint does what, under which permission); this document fixes *shape*.
 
 - **Two surfaces** (REQ-API-001): the REDCap-compatible data API at `POST /api/` (and `GET /api/`) and the administration API under `/api/v1/`. Beyond these, only the documentation and health endpoints exist (REQ-API-003).
-- **UTC and UTF-8** in all requests and responses (REQ-API-004).
+- **UTC and UTF-8** in all requests and responses for **system** timestamps (REQ-API-004, GD-7); clinical date/date-time values carry their collection timezone in the canonical form (GD-16, REQ-VAL-041, `Data_Validation_Design.md` §4.1).
 - **Versioning**: the administration API is versioned in the path (`/api/v1/`); breaking changes only under a new major version (REQ-API-008). The data API is pinned by the REDCap protocol — caller compatibility is the contract (REQ-API-037).
 - **Non-disclosure**: a project or record the caller is not entitled to is rejected with a uniform 403 (data API: `Permission denied`; administration API: `forbidden`) — never disclosed as missing (REQ-API-007).
 - **Pagination** (`GET /api/v1/audit`, record history): `limit` (default 50, max 200) + opaque `cursor` (encodes the last-seen `(created_at, id)`); the response carries `next_cursor` (`null` when exhausted).
@@ -52,6 +52,7 @@ One endpoint: `POST /api/` with an `application/x-www-form-urlencoded` body; `GE
 | `rawOrLabel` | `raw` / `label` | `raw` | choice fields (REQ-API-027) |
 | `rawOrLabelHeaders` | `raw` / `label` / `both` | `raw` | field names (REQ-API-027) |
 | `data[]` | import entries (§3.7.1) | — | import only (REQ-API-031) |
+| `tz` | IANA timezone name or `±HH:MM` offset | `APP_TIMEZONE` (REQ-CFG-026) | import only — timezone of collection for the call's date/date-time values (GD-16, REQ-VAL-041, REQ-API-031) |
 | `exportCheckboxLabel`, `exportSurveyFields`, `exportDataAccessGroups` | any | — | accepted and **ignored** (REQ-API-016, DEV-API-2) |
 
 Unknown parameters are accepted and ignored, never rejected — existing callers keep working (REQ-API-017).
@@ -94,7 +95,7 @@ Any valid token for the project suffices. JSON response (array with one object):
   "project_rek_end_date": "2028-01-01",
   "project_start_date": "2026-01-01",
   "project_end_date": "2028-01-01",
-  "project_end_provision": "anonymize",
+  "project_end_provision": "",
   "project_organizational": "NAT EU",
   "project_creation_time": "2026-01-01 09:00:00",
   "project_pat_import_folder": "",
@@ -103,7 +104,7 @@ Any valid token for the project suffices. JSON response (array with one object):
 }]
 ```
 
-Standard REDCap project-info keys the system does not store are returned with neutral values (`"0"` / `""`) rather than omitted, so naive parsers keep working (REQ-API-018). CSV: a single row of those key/value pairs.
+Standard REDCap project-info keys the system does not store are returned with neutral values (`"0"` / `""`) rather than omitted, so naive parsers keep working (REQ-API-018) — including `project_end_provision` since GD-17 (the end provision is no longer stored; if the owner records one, it is data in an instrument such as `DataTransferProjects`, REQ-DB-032). CSV: a single row of those key/value pairs.
 
 ### 3.4 `content=metadata` (REQ-API-019)
 
@@ -148,8 +149,8 @@ All require data access ≥ `read_only` except `generateNextRecordName` (≥ `vi
 
 | content | Response shape (JSON) |
 |---|---|
-| `event` (REQ-API-020) | `[ {"event_name":"baseline","arm_num":1,"unique_event_name":"baseline_arm_1","event_id":4}, … ]` |
-| `formEventMapping` (REQ-API-021) | `[ {"form_name":"intake","event_name":"baseline","arm_num":1,"unique_event_name":"baseline_arm_1","form_event_mapping":"1"}, … ]` |
+| `event` (REQ-API-020) | `[ {"event_name":"baseline","arm_num":1,"unique_event_name":"baseline_arm_1","event_id":4}, … ]` — events in the **canonical per-arm order** (GD-15: timepoint events by `period` ascending, ties by position; then no-timepoint events by position) |
+| `formEventMapping` (REQ-API-021) | `[ {"form_name":"intake","event_name":"baseline","arm_num":1,"unique_event_name":"baseline_arm_1","form_event_mapping":"1"}, … ]` — events in the canonical per-arm order (GD-15) |
 | `exportFieldNames` (REQ-API-022) | `[ {"field_name":"record_id","form_name":"intake"}, … ]` — restricted to `forms[]` when supplied |
 | `generateNextRecordName` (REQ-API-023) | `{ "next_record_name": "8DISC042" }` |
 
@@ -206,7 +207,7 @@ token=…&content=record&action=import
 &data[1][age]=&data[1][status]=1
 ```
 
-Each value passes the full validation pipeline (`Data_Validation_Design.md` §2) before storage; invalid values are not stored (REQ-API-032, REQ-VAL-001). Empty values act as "no value" (clear/no-op, REQ-VAL-024). Values for calculated fields are rejected (`CALCULATED_READONLY`, REQ-API-095).
+Each value passes the full validation pipeline (`Data_Validation_Design.md` §2) before storage; invalid values are not stored (REQ-API-032, REQ-VAL-001). Empty values act as "no value" (clear/no-op, REQ-VAL-024) — an **intentional** clear: the UI data-entry path sends empties only for fields the user explicitly cleared (GD-14, REQ-UI-031). Values for calculated fields are rejected (`CALCULATED_READONLY`, REQ-API-095). Date/date-time values are stored with the collection offset — the `tz` parameter when present (UI: the browser's zone, sent by PHP), else `APP_TIMEZONE` (GD-16, REQ-VAL-041).
 
 #### 3.7.2 Response (REQ-API-034, REQ-VAL-008)
 
@@ -284,27 +285,37 @@ Every error is a JSON object with a consistent shape:
 | 400 | `validation_error` | design-time rejection of a data-dictionary entry — ill-formed expression, unknown/inactive reference, cycle, malformed name (`Data_Validation_Design.md` §6.2, §7.2, §9); the reason is in `message` (REQ-VAL-029) |
 | 401 | `service_token_invalid` | missing/invalid `X-Internal-Service-Token` (audit `admin_rejected`) |
 | 401 | `account_not_found` | login with an email that has no user row (REQ-AUTH-006; audit `login_failure`) |
+| 401 | `bad_password` | local login: the account has no stored hash, or the password does not match (GD-18, REQ-AUTH-050; the two cases are not distinguished; audit `login_failure`) |
 | 403 | `forbidden` | insufficient permission; project or record outside the acting user's visibility (uniform, REQ-API-007); unknown/disabled acting user (audit `admin_rejected`) |
-| 403 | `account_disabled` | login with a disabled account (audit `login_failure`) |
+| 403 | `account_disabled` | login with a disabled account (including auto-disabled by the inactivity rule — `account_auto_disabled` audit first, REQ-AUTH-053; audit `login_failure`) |
+| 403 | `account_expired` | login with an account whose `valid_until` has passed (GD-19, REQ-AUTH-052; audit `login_failure`) |
 | 404 | `not_found` | an unknown path resource (a user, project, arm, event, instrument, field, or group that does not exist) |
 | 409 | `conflict` | a state violation — duplicate name (project, role, event label, instrument, field, group); deleting an arm that still has events or data (DEV-API-6); deleting a group that still has records (ASM-AUTH-4); deleting a field referenced by an active expression; an event rename colliding with an existing `unique_event_name` (§4.9) |
 | 500 | `internal` | unexpected failure; `message` carries no details |
 
 ### 4.3 Session (REQ-API-044, REQ-API-045)
 
-**`POST /api/v1/auth/login`** — called by the PHP application after successful OAuth2/LDAP authentication (REQ-AUTH-016). The only endpoint exempt from `X-Internal-User-Id`; it still requires the service token. Body:
+**`POST /api/v1/auth/login`** — called by the PHP application after successful OAuth2/LDAP authentication, **or with `source: "local"` and the password for table-based login** (GD-18, REQ-AUTH-050/051; REQ-AUTH-016). The only endpoint exempt from `X-Internal-User-Id`; it still requires the service token. Body:
 
 ```json
 { "email": "user@example.org", "source": "oauth2", "provider": "https://idp.example.org" }
 ```
 
-Processing (in order, `Authentication_Authorization_Design.md` §2.3): the user row exists and `enabled = 1` — otherwise 401 `account_not_found` / 403 `account_disabled` + audit `login_failure`; bootstrap-admin promotion (REQ-AUTH-007): if the email equals `ADMIN_BOOTSTRAP_EMAIL`, ensure the row exists, is enabled, and has `is_admin = 1` (idempotent); set the row's `auth_source` (REQ-AUTH-005); audit `login_success`. The API MUST NOT create or store a session (GD-1).
+```json
+{ "email": "user@example.org", "source": "local", "password": "***" }
+```
+
+Processing (in order, `Authentication_Authorization_Design.md` §2.3): for `source: "local"` — the row exists (401 `account_not_found`) and the bcrypt hash matches in constant time (else 401 `bad_password`; the password is never logged, REQ-AUTH-036); the account is active per the rule of `Authentication_Authorization_Design.md` §4.4 — `enabled`, not expired (403 `account_expired`), not inactive (auto-disable + 403 `account_disabled`, REQ-AUTH-053); bootstrap-admin promotion (REQ-AUTH-007): if the email equals `ADMIN_BOOTSTRAP_EMAIL`, ensure the row exists, is enabled, and has `is_admin = 1` (idempotent); set the row's `auth_source` and `last_login_at` (REQ-AUTH-005, REQ-AUTH-053); audit `login_success` with the source. The API MUST NOT create or store a session (GD-1).
 
 200 — the user object (used by all §4.4 user endpoints):
 
 ```json
-{ "id": 3, "email": "user@example.org", "display_name": "User", "enabled": true, "is_admin": true, "auth_source": "oauth2", "ui_language": "en" }
+{ "id": 3, "email": "user@example.org", "display_name": "User", "enabled": true, "is_admin": true,
+  "auth_source": "oauth2", "ui_language": "en",
+  "last_login_at": "2026-09-20 08:14:05", "valid_until": null, "status": "active" }
 ```
+
+`last_login_at` is `null` when the account has never logged in; `valid_until` is `null` when indefinite; `status` ∈ `active | disabled | expired | auto_disabled` (derived — GD-19, REQ-AUTH-052/053).
 
 **`POST /api/v1/auth/logout`** — records the `logout` audit event (REQ-AUTH-008) and returns 200. Destruction of the PHP session remains the PHP layer's responsibility, performed after this call (GD-1, REQ-AUTH-015; `Authentication_Authorization_Design.md` §2.4).
 
@@ -314,9 +325,9 @@ All three require `is_admin`; a call by a non-admin is rejected (403 `forbidden`
 
 | Endpoint | Contract |
 |---|---|
-| `GET /api/v1/users` | 200 — array of user objects (`id`, `email`, `display_name`, `enabled`, `is_admin`, `auth_source`) (REQ-API-046) |
-| `POST /api/v1/users` | body `{ "email": "…", "display_name": "…" }`; a new account → 201 user object; a disabled account with the same email is re-enabled → 200 user object (REQ-API-047); audit `user_created` (`re_enabled` flag) |
-| `PUT /api/v1/users/{id}` | body `{ "enabled": true\|false }` — the supplied flag is authoritative (idempotent, REQ-API-042); 200 user object; disabling a user denies the effective permissions of that user's API tokens at call time (REQ-AUTH-033, REQ-API-048); audit `user_updated` |
+| `GET /api/v1/users` | 200 — array of user objects (`id`, `email`, `display_name`, `enabled`, `is_admin`, `auth_source`, `last_login_at`, `valid_until`, `status` — the full user object of §4.3) (REQ-API-046) |
+| `POST /api/v1/users` | body `{ "email": "…", "display_name": "…", "valid_days": 90, "password": "***" }` (`valid_days` ≥ 0, `0` = indefinite; `password` optional — stored only as a bcrypt hash, REQ-AUTH-050); a new account → 201 user object; a disabled account with the same email is re-enabled → 200 user object (re-enabling resets the inactivity clock, REQ-AUTH-053) (REQ-API-047); audit `user_created` (`re_enabled` flag, `valid_until`) |
+| `PUT /api/v1/users/{id}` | body — any subset of `{ "enabled": true\|false, "valid_days": 90, "password": "***" }`; `enabled` is authoritative (idempotent, REQ-API-042); `valid_days` re-sets `valid_until` (`0` → `NULL` = indefinite, REQ-AUTH-052); `password` set/resets the local hash, an **empty string clears** it (never returned, never logged, REQ-AUTH-036); re-enabling resets the inactivity clock (REQ-AUTH-053); 200 user object; disabling a user denies the effective permissions of that user's API tokens at call time (REQ-AUTH-033, REQ-API-048); audit `user_updated` with the changed attributes (`enabled`, `valid_until`, `password_changed` — the password value itself is never in the trail) |
 
 ### 4.5 Projects (REQ-API-049…052)
 
@@ -326,7 +337,7 @@ All three require `is_admin`; a call by a non-admin is rejected (403 `forbidden`
 [ { "id": 33, "project_name": "8DISC", "organization": "NAT EU", "record_count": 42, "instrument_count": 5, "field_count": 128 } ]
 ```
 
-**`POST /api/v1/projects`** — `is_admin` (master spec: administrator users create projects). Body — all creation fields of REQ-DB-006:
+**`POST /api/v1/projects`** — `is_admin` (master spec: administrator users create projects). Body — the creation fields of the simplified `projects` (GD-17, REQ-DB-006):
 
 ```json
 {
@@ -334,16 +345,12 @@ All three require `is_admin`; a call by a non-admin is rejected (403 `forbidden`
   "pi_name": "Ansgar Espeland", "pi_email": "ansgar.espeland@example.org",
   "dm_name": "Lars Akslen", "dm_email": "lars.akslen@uib.no",
   "rek_number": "REK-2026/123", "rek_start_date": "2026-01-01", "rek_end_date": "2028-01-01",
-  "start_date": "2026-01-01", "end_date": "2028-01-01", "end_provision": "anonymize",
-  "option_radiology": false, "option_pathology": false, "option_pathology_type": null,
-  "option_redcap_only": false, "option_data_collection_from_home": false,
-  "agreed_to_end_user_contract": true,
-  "participant_names": "8DISC[0-9][0-9][0-9]",
-  "event_names": ["baseline", "follow_up"]
+  "start_date": "2026-01-01", "end_date": "2028-01-01",
+  "participant_names": "8DISC[0-9][0-9][0-9]"
 }
 ```
 
-A duplicate `project_name` → 409 `conflict`. Creation is single-arm (REQ-DB-011, DEV-API-4): the API creates arm 1 and one event per `event_names` entry (`unique_event_name = <label>_arm_1`). 201 — the project object (`id` + the supplied fields + `creation_time`). Audit `project_created`.
+The removed attributes — `end_provision`, the `option_*` flags, `agreed_to_end_user_contract`, `event_names` — are rejected as unknown attributes (400 `invalid_request`, REQ-API-052); if the owner wants them they are data in an ordinary instrument (e.g. `DataTransferProjects`, REQ-DB-032). A duplicate `project_name` → 409 `conflict`. Creation is single-arm (REQ-DB-011, DEV-API-4): the API creates **arm 1 only** — initial events are added afterwards through `POST /api/v1/projects/{id}/events` (REQ-API-062; `event_names` is no longer part of creation, GD-17). 201 — the project object (`id` + the supplied fields + `creation_time`). Audit `project_created`.
 
 **`GET /api/v1/projects/{id}`** — data access ≥ `read_only` + project visibility. 200 — full metadata plus structure:
 
@@ -412,36 +419,57 @@ Both endpoints require `is_admin`. Roles are project-scoped (REQ-AUTH-024) and n
 
 ### 4.8 Arms (REQ-API-058…060)
 
-**`GET /api/v1/projects/{id}/arms`** — data access ≥ `read_only`. 200:
+**`GET /api/v1/projects/{id}/arms`** — data access ≥ `read_only`. 200 (events in the canonical per-arm order, GD-15; `period` is `null` when the event has no timepoint):
 
 ```json
 [ { "id": 5, "arm_num": 1, "name": "",
     "events": [ { "id": 4, "event_name": "baseline", "unique_event_name": "baseline_arm_1",
-                  "period": 0, "safe_region_start": null, "safe_region_end": null, "position": 1 } ] } ]
+                  "period": 0, "safe_region_start": null, "safe_region_end": null, "position": 1 },
+                { "id": 9, "event_name": "screening", "unique_event_name": "screening_arm_1",
+                  "period": null, "safe_region_start": -2, "safe_region_end": 3, "position": 2 } ] } ]
 ```
 
 **`POST /api/v1/projects/{id}/arms`** — `project_admin`. Body `{ "name": "…" }`; `arm_num` is the next 1-based number (a duplicate → 409 `conflict`). 201 — the arm object. Audit `arm_created`.
 
 **`DELETE /api/v1/arms/{id}`** — `project_admin`; the path follows the master plan verbatim (ASM-API-1). 204. An arm that still has events or data → 409 `conflict` (DEV-API-6; phase-1 edge case, ASM-API-4). Audit `arm_deleted`.
 
-### 4.9 Events (REQ-API-061…063)
+### 4.9 Events (REQ-API-061…063, REQ-API-103)
 
-**`GET /api/v1/projects/{id}/events`** — data access ≥ `read_only`. 200 — all events, all arms:
+`period` is the event's **timepoint** (days after baseline) and is **nullable**: `null` = the event has no timepoint (GD-15, REQ-DB-011). Canonical per-arm order (applies to every event listing — here, `content=event`, `content=formEventMapping`, the record-status dashboard, and the UI event table):
+
+```
+1. events with a period, ascending by period (ties: ascending position)
+2. events with period = null, ascending by position (user-orderable)
+```
+
+**`GET /api/v1/projects/{id}/events`** — data access ≥ `read_only`. 200 — all events, all arms, in canonical per-arm order:
 
 ```json
 [ { "id": 4, "arm_num": 1, "event_name": "baseline", "unique_event_name": "baseline_arm_1",
-    "period": 0, "safe_region_start": null, "safe_region_end": null, "position": 1 } ]
+    "period": 0, "safe_region_start": null, "safe_region_end": null, "position": 1 },
+  { "id": 7, "arm_num": 1, "event_name": "follow_up", "unique_event_name": "follow_up_arm_1",
+    "period": 90, "safe_region_start": -2, "safe_region_end": 3, "position": 2 },
+  { "id": 9, "arm_num": 1, "event_name": "screening", "unique_event_name": "screening_arm_1",
+    "period": null, "safe_region_start": null, "safe_region_end": null, "position": 3 } ]
 ```
 
-**`POST /api/v1/projects/{id}/events`** — `project_admin`. Body:
+**`POST /api/v1/projects/{id}/events`** — `project_admin`. Body (`period` optional — `null`/absent = no timepoint):
 
 ```json
 { "arm_num": 1, "event_name": "follow_up", "period": 90, "safe_region_start": -2, "safe_region_end": 3 }
 ```
 
-The API derives `unique_event_name = <label>_arm_<n>` (REQ-DB-011); a duplicate label within the same arm → 409 `conflict`. 201 — the event object. Audit `event_created`.
+The API derives `unique_event_name = <label>_arm_<n>` (REQ-DB-011); a duplicate label within the same arm → 409 `conflict`; the new event takes `position` = end of the arm's list. 201 — the event object. Audit `event_created`.
 
-**`PUT /api/v1/events/{id}`** — `project_admin` (path verbatim, ASM-API-1); idempotent (REQ-API-042). Body: any subset of `{ "event_name", "period", "safe_region_start", "safe_region_end" }`. A label change re-derives `unique_event_name`; a collision with an existing `unique_event_name` → 409 `conflict` (§4.2). An event that already holds data keeps its values — the rename updates the stored `unique_event_name` key in the same transaction (ASM-API-4). Audit `event_updated` with old and new values.
+**`PUT /api/v1/events/{id}`** — `project_admin` (path verbatim, ASM-API-1); idempotent (REQ-API-042). Body: any subset of `{ "event_name", "period", "safe_region_start", "safe_region_end" }` — `period: null` **clears** the timepoint (the event becomes user-orderable, GD-15). A label change re-derives `unique_event_name`; a collision with an existing `unique_event_name` → 409 `conflict` (§4.2). An event that already holds data keeps its values — the rename updates the stored `unique_event_name` key in the same transaction (ASM-API-4). Audit `event_updated` with old and new values.
+
+**`PUT /api/v1/projects/{id}/events/order`** — `project_admin`; idempotent (REQ-API-103). Body — the **full** ordered list of the supplied arm's event ids (a partial list → 400 `invalid_request`):
+
+```json
+{ "arm_num": 1, "order": [9, 4, 7] }
+```
+
+Writes `position` (1…n) for the arm's events; the canonical order of GD-15 then governs the display (timepoint events by `period`, ties and no-timepoint events by the written `position`). 200. Audit `event_reordered` with the new order (REQ-API-103, `Audit_Logging_Design.md` §3.3).
 
 ### 4.10 Instruments (REQ-API-064…066, REQ-API-101)
 

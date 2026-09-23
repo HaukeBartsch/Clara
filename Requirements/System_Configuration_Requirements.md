@@ -35,10 +35,12 @@ Defines how the system is configured across environments. The design document `D
 
 | ID | Requirement |
 |---|---|
-| REQ-CFG-011 | OAuth2 provider settings MUST support the authorization-code flow: issuer/provider URL, client id, client secret, redirect URI, and the attribute(s) used to map the provider's user to the system user (email). Multiple providers MAY be configured; at least one provider or at least one LDAP server is required. |
+| REQ-CFG-011 | OAuth2 provider settings MUST support the authorization-code flow: issuer/provider URL, client id, client secret, redirect URI, and the attribute(s) used to map the provider's user to the system user (email). Multiple providers MAY be configured. Providers and LDAP servers are **optional** — table-based (local) authentication is always available (GD-18); the startup rule for first installations is in `System_Configuration_Design.md` §4.1 (REQ-CFG-025). |
 | REQ-CFG-012 | LDAP settings MUST include, per server: URL, bind DN and bind password (or simple anonymous search), search base, and the attribute names for uid/email/display name. |
 | REQ-CFG-013 | The service secret shared between PHP and the Go API (`INTERNAL_SERVICE_TOKEN`) MUST be configurable and MUST NOT have a built-in default that works in production (production MUST fail to start without it). |
 | REQ-CFG-014 | The bootstrap administrator (`ADMIN_BOOTSTRAP_EMAIL`) MUST be configurable (decision GD-4). |
+| REQ-CFG-025 | The bootstrap administrator's local password (`ADMIN_BOOTSTRAP_PASSWORD`) MUST be configurable (GD-18, REQ-AUTH-051): on a first installation without an OAuth2 provider and without an LDAP server it is **required** (startup fails without it — `System_Configuration_Design.md` §4.1), and it is hashed (bcrypt) into the bootstrap account's `password_hash`; it MUST NOT have a built-in default and MUST NOT be logged (REQ-CFG-021). |
+| REQ-CFG-024 | The inactivity auto-disable limit (`AUTH_INACTIVITY_LIMIT_DAYS`) MUST be configurable as an integer number of days ≥ 0 (GD-19, REQ-AUTH-053): accounts whose last successful login is older than this are auto-disabled at their next authentication check; the default is **180**; `0` disables the rule. |
 
 ### 2.4 Anonymization Configuration
 
@@ -55,6 +57,7 @@ Defines how the system is configured across environments. The design document `D
 | REQ-CFG-018 | The public base URL of the application MUST be configurable (used for OAuth2 redirect URIs and API documentation links). |
 | REQ-CFG-019 | Log level MUST be configurable per component (debug|info|warn|error). |
 | REQ-CFG-020 | Optional rate limiting for the REDCap API MUST be configurable (enabled/disabled, requests-per-minute per token) with a default of disabled (see `API_Endpoints_Requirements.md`). |
+| REQ-CFG-026 | The deployment's default collection timezone (`APP_TIMEZONE`) MUST be configurable as an IANA timezone name (GD-16, REQ-VAL-041): it supplies the offset for date/date-time values imported without an explicit zone (no browser zone, no `tz` parameter); the default is `UTC`. |
 
 ### 2.6 Security
 
@@ -73,4 +76,9 @@ Defines how the system is configured across environments. The design document `D
 
 ## 4. Deviations from Plan
 
-None. The plan's example configuration is extended (not contradicted) with the variables required by GD-1, GD-2, GD-3, GD-4 and the authentication design.
+The plan's example configuration is extended (not contradicted) with the variables required by GD-1, GD-2, GD-3, GD-4 and the authentication design.
+
+| ID | Deviation | Rationale |
+|---|---|---|
+| DEV-CFG-1 | "At least one OAuth2 provider or one LDAP server" is no longer a startup requirement; instead: when **neither** is configured, `ADMIN_BOOTSTRAP_PASSWORD` is required | Owner decision (2026-09-22, GD-18; master spec "Details"): first installation without an IdP must be usable — the table-based bootstrap admin is the guaranteed login path (REQ-CFG-025, `System_Configuration_Design.md` §4.1). |
+| DEV-CFG-2 | New configuration keys `AUTH_INACTIVITY_LIMIT_DAYS`, `ADMIN_BOOTSTRAP_PASSWORD`, `APP_TIMEZONE` | Owner decisions (2026-09-22, GD-16/GD-18/GD-19; master spec "Details"): inactivity rule (180 days), bootstrap local password, default collection timezone (REQ-CFG-024/025/026). |
