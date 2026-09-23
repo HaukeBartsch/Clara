@@ -465,3 +465,5 @@ For project documentation purposes create a user view that shows the data dictio
 Bootstrap: For all tables use condensed tables (table-sm class).
 
 Use responsible tables and adjust to smaller screens like tablets and phones.
+
+Project name: CLARA - "Clinical Logbook for Automated Research Assistance", Related to a light-towers log-book
