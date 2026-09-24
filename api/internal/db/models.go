@@ -196,6 +196,12 @@ type CalculatedDependency struct {
 	RefFieldName       string
 }
 
+// InstrumentEvent is one checked (instrument, event) pair (REQ-DB-012).
+type InstrumentEvent struct {
+	InstrumentID int64
+	EventID      int64
+}
+
 // Language and i18n string (REQ-DB-031, GD-12).
 type Language struct {
 	ID          int64
