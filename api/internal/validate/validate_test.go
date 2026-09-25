@@ -2,6 +2,22 @@ package validate
 
 import "testing"
 
+// seededRegistry mirrors the migration seed (0003_validation_types.sql); keep
+// the two in sync (REQ-VAL-043).
+func seededRegistry(t *testing.T) *Registry {
+	t.Helper()
+	r, err := NewRegistry([]RegistryEntry{
+		{Name: "email", Regex: `^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$`, Builtin: true},
+		{Name: "MRN", Regex: `^[0-9]{11}$`, Builtin: true},
+		{Name: "international phone", Regex: `^\+[1-9][0-9 ]{7,14}$`, Builtin: true},
+		{Name: "national phone", Regex: `^[0-9]{8}$`, Builtin: true},
+	})
+	if err != nil {
+		t.Fatalf("seeded registry: %v", err)
+	}
+	return r
+}
+
 func TestCSVCell(t *testing.T) {
 	tests := []struct {
 		name string

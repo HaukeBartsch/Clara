@@ -1,9 +1,10 @@
 // Package validate is the pure, DB-free core of the data-validation design
 // (Data_Validation_Design.md): the CSV formula-injection neutralizer (§5.3)
-// and the type validators (§4). Nothing here touches the store or the
-// network, so it is unit-tested in isolation and the data API maps its own
-// types into these signatures. The expression evaluator shared by
-// filterLogic (§7) and branching logic will live here as well.
+// and the type validators (§4), including the validation-type registry that
+// resolves named regex types from caller-supplied rows (§4.2). Nothing here
+// touches the store or the network, so it is unit-tested in isolation and the
+// data API maps its own types into these signatures. The expression evaluator
+// shared by filterLogic (§7) and branching logic will live here as well.
 package validate
 
 import (
@@ -155,10 +156,12 @@ func isNumber(v string) bool {
 
 // ValidateValue checks a single value against f. An empty value is a
 // no-op ("no value", REQ-VAL-024) and returns nil; the caller handles the
-// identifier case separately. Date/datetime and free-text HTML sanitization
-// are the import slice's responsibility (they need the collection offset and
-// the §5.2 sanitizer) and are not applied here.
-func ValidateValue(f Field, value string) *Violation {
+// identifier case separately. reg resolves regex validation types (§4.2);
+// a type that is neither built-in nor in reg is rejected (a field must never
+// silently stop validating because its registry row went away). Date/datetime
+// and free-text HTML sanitization are the import slice's responsibility (they
+// need the collection offset and the §5.2 sanitizer) and are not applied here.
+func ValidateValue(f Field, value string, reg *Registry) *Violation {
 	if value == "" {
 		return nil
 	}
@@ -180,17 +183,17 @@ func ValidateValue(f Field, value string) *Violation {
 		if !matchRegex(floatRE, value) {
 			return &Violation{CodeTypeInvalid, fmt.Sprintf("value %q is not a valid floating point", value)}
 		}
-	case "email":
-		if !matchRegex(emailRE, value) {
-			return &Violation{CodeTypeInvalid, fmt.Sprintf("value %q is not a valid email", value)}
-		}
-	case "MRN":
-		if !matchRegex(mrnRE, value) {
-			return &Violation{CodeTypeInvalid, fmt.Sprintf("value %q is not a valid medical record number", value)}
-		}
 	case "", "date", "datetime":
 		// Free text, or date/datetime whose grammar is checked by the import
 		// slice with its collection offset (REQ-VAL-019/039, §4.1).
+	default:
+		re, ok := reg.Lookup(f.ValidationType)
+		if !ok {
+			return &Violation{CodeTypeInvalid, fmt.Sprintf("field %q has unknown validation type %q", f.Name, f.ValidationType)}
+		}
+		if !re.MatchString(value) {
+			return &Violation{CodeTypeInvalid, fmt.Sprintf("value %q is not a valid %s", value, f.ValidationType)}
+		}
 	}
 	return rangeCheck(f, value)
 }
