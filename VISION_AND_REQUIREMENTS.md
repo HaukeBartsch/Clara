@@ -452,7 +452,7 @@ Authentication ("users" table) should also support a table-based authentication 
 
 To identify a user from oauth and LDAP use their institutional email address.
 
-User accounts should have a limited time (days) they are valid. That time can be "0" which is indefinite.
+User accounts should have a limited time (days) they are valid. That time can be "0", which is indefinite.
 
 User accounts that do not have a login in the last N days (180) should be "disabled". An admin user needs to "enable" them again before the user can gain access to the system again. Display such information for the admin user on the user overview screen (used to assign users to projects, etc.).
 
