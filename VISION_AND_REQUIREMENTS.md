@@ -500,10 +500,6 @@ Data entry is disabled; viewing and exporting remain available according to each
 | production ↔ analysis	| project admin	|  Keep all data |
 
 
-## Numbering issue
-
-If participant id `0001_01` and `0003_01` exist but `0002_01` was deleted, auto-generation would return `0002_01`. That's gap-filling. This is not desired. Return max+1 for new IDs.
-
 ## Field validation
 
 Field validation should be extensible by adding additional validations (regular expressions with a given name) to the database. Use the existing email and MRN entries, add an international phone number validation type such as "+47 55566777" as well as a national phone number type "55566777".

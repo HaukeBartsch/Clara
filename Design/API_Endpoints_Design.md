@@ -156,7 +156,7 @@ All require data access ≥ `read_only` except `generateNextRecordName` (≥ `vi
 | `exportFieldNames` (REQ-API-022) | `[ {"field_name":"record_id","form_name":"intake"}, … ]` — restricted to `forms[]` when supplied |
 | `generateNextRecordName` (REQ-API-023) | `{ "next_record_name": "8DISC042" }` |
 
-`generateNextRecordName` follows the project's naming pattern (REQ-DB-007) — digit-placeholder style (`8DISC[0-9][0-9][0-9]`) and counter-prefix style (`0001_01`, width preserved) — and MUST NOT return a name an existing record already holds (REQ-API-023).
+`generateNextRecordName` follows the project's naming pattern (REQ-DB-007) — digit-placeholder style (`8DISC[0-9][0-9][0-9]`) and counter-prefix style (`0001_01`, width preserved) — and MUST NOT return a name an existing record already holds (REQ-API-023). The next name is one counter step above the greatest existing name of the same shape (max + 1); names freed by deleted records are not reused (no gap-filling, REQ-API-023).
 
 ### 3.6 `content=record&action=export`
 

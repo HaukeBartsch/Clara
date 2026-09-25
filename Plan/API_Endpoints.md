@@ -11,7 +11,7 @@ This document outlines the API for the clinical study management system, impleme
     - event: Return the events (event_name, arm_num, unique_event_name, event_id).
     - formEventMapping: Return the instrument-by-event mapping.
     - exportFieldNames: Return the field names of the project.
-    - generateNextRecordName: Generate the next record name following the project's participant naming.
+    - generateNextRecordName: Generate the next record name following the project's participant naming, as one step above the greatest existing name (max + 1); names of deleted records are not reused.
     - record + action=export: Export records. Parameters: records[], fields[], forms[], events[], rawOrLabel, rawOrLabelHeaders, exportCheckboxLabel, exportSurveyFields, exportDataAccessGroups, filterLogic, csvDelimiter.
     - record + action=import: Store values into fields (data entry), validated against the field rules. In analysis-mode projects all writes (import, delete, survey submissions) are rejected; reads and exports are unaffected.
 - Permissions are enforced per token: view, change, add, export all, export anonymized.
