@@ -109,6 +109,14 @@ func ParseParams(r *http.Request) (Params, error) {
 // formValues parses the POST body as urlencoded, tolerating a missing or
 // unexpected Content-Type header (PHP callers occasionally omit it).
 func formValues(r *http.Request) (map[string][]string, error) {
+	// Enforce the body cap on the primary read path too: the LimitReader in
+	// the fallback below only guards that branch, so a normal POST would
+	// otherwise be read in full. A nil ResponseWriter is fine — MaxBytesReader
+	// reports the overflow as an error, which ParseParams surfaces as the
+	// uniform 400 rather than a bare 413 (REQ-TECH-011).
+	if r.Body != nil {
+		r.Body = http.MaxBytesReader(nil, r.Body, maxFormBytes)
+	}
 	if err := r.ParseForm(); err == nil {
 		return r.PostForm, nil
 	}

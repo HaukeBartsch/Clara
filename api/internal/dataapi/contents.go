@@ -341,36 +341,39 @@ type nextNameRow struct {
 }
 
 func (h *Handler) contentGenerateNextRecordName(ctx context.Context, w http.ResponseWriter, enc string, sub *subject, p Params) {
-	ids, err := h.Store.ListRecordIDs(ctx, sub.Project.ID)
+	maxID, _, err := h.Store.MaxRecordID(ctx, sub.Project.ID)
 	if err != nil {
 		h.storeError(w, enc)
 		return
 	}
-	existing := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		existing[id] = true
-	}
-	render(w, enc, p.Delimiter(), []nextNameRow{{NextRecordName: nextRecordName(sub.Project.ParticipantNames, existing)}})
+	render(w, enc, p.Delimiter(), []nextNameRow{{NextRecordName: nextRecordName(sub.Project.ParticipantNames, maxID)}})
 }
 
-// nextRecordName computes the next available record name for the project's
-// naming pattern (REQ-DB-007, REQ-API-023). Two styles are supported:
+// nextRecordName computes the next record name for the project's naming
+// pattern (REQ-DB-007, REQ-API-023) from the greatest existing name
+// (existingMax, "" when the project has none). Two styles are supported:
 //
 //   - digit placeholder: "8DISC[0-9][0-9][0-9]" -> fixed prefix plus a
 //     zero-padded counter of one digit per "[0-9]", e.g. 8DISC042;
 //   - counter prefix:    "0001_01" -> the leading digit run is the counter
 //     (width preserved) followed by the fixed remainder, e.g. 0002_01.
 //
-// The result is the smallest candidate not held by an existing record, so it
-// never collides (REQ-API-023).
-func nextRecordName(pattern string, existing map[string]bool) string {
+// The result is one counter step above the greatest existing name of the
+// same shape, so it never collides (REQ-API-023); the counter extends past
+// the pattern's digit width once the range is exhausted. Names produced by
+// this API share a counter width, which is what makes "greatest + 1" safe.
+func nextRecordName(pattern, existingMax string) string {
 	if i := strings.Index(pattern, "[0-9]"); i >= 0 {
 		prefix := pattern[:i]
 		width := strings.Count(pattern, "[0-9]")
 		if width < 1 {
 			width = 1
 		}
-		return firstFree(existing, func(n int) string { return prefix + pad(n, width) })
+		counter := 0
+		if rest, ok := strings.CutPrefix(existingMax, prefix); ok {
+			counter, _ = strconv.Atoi(rest) // non-numeric rest -> stays 0
+		}
+		return prefix + pad(counter+1, width)
 	}
 
 	digits := 0
@@ -381,17 +384,11 @@ func nextRecordName(pattern string, existing map[string]bool) string {
 		digits = 4 // no counter in the pattern: still emit a usable name
 	}
 	suffix := pattern[digits:]
-	return firstFree(existing, func(n int) string { return pad(n, digits) + suffix })
-}
-
-// firstFree returns the smallest candidate(n) for n = 1,2,… that is not in
-// existing.
-func firstFree(existing map[string]bool, candidate func(int) string) string {
-	for n := 1; ; n++ {
-		if c := candidate(n); !existing[c] {
-			return c
-		}
+	counter := 0
+	if head, ok := strings.CutSuffix(existingMax, suffix); ok {
+		counter, _ = strconv.Atoi(head) // non-numeric head -> stays 0
 	}
+	return pad(counter+1, digits) + suffix
 }
 
 // pad formats n as a base-10 integer with at least width leading zeros;

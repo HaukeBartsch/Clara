@@ -77,14 +77,20 @@ Maps users to projects, roles, and API tokens.
 - section_header (String)
 - choices (Text, numeric code + label pairs for dropdown/radio/matrix)
 - field_note (Text)
-- validation_type (String: integer, floating point, email, MRN, date, ...)
+- validation_type (String: built-in integer, floating point, date, datetime; or a named regular expression from the validation_types table: email, MRN, international phone, national phone, ...)
 - validation_min (String)
 - validation_max (String)
 - required (Boolean)
 - branching_logic (Text)
 - matrix_group (String)
 - personal_information (Boolean, used for anonymized export)
+- direct_identifier (Boolean, user-set on any field; preset for email/MRN/phone types; removed at de-identified export)
 - position (Integer, order of the field within the instrument)
+
+7a. Validation Types (extensible registry, system-wide)
+- name (Primary Key: e.g. email, MRN, international phone, national phone)
+- regex (Text, Go RE2 pattern matched against the whole value)
+- builtin (Boolean, seeded entries cannot be removed)
 
 8. Events
 - id (Primary Key)

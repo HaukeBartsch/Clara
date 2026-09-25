@@ -68,14 +68,14 @@ Given the data dictionary of `Database_Schema_Design.md` §5 (REQ-DB-013), the p
 
 | Category | Definition |
 |---|---|
-| **direct identifier field** | the record identifier field (GD-8 — first field of the instrument at position 1) **or** a field whose `validation_type` is `email` or `MRN` (REQ-VAL-015…039) |
+| **direct identifier field** | the record identifier field (GD-8 — first field of the instrument at position 1) **or** a field whose user-set `direct_identifier` flag is set (REQ-DB-013, REQ-EXP-020; preset by the API for `email`, `MRN`, `international phone` and `national phone` validation types — DEV-EXP-5) |
 | **personal field** | `personal_information = 1` (REQ-DB-013) and not a direct identifier field (removal wins over hashing) |
 | **free text field** | `field_type = text` (REQ-DB-013) and neither of the above; its export approval is `export_approved` (DEV-DB-2) |
 | **structured field** | everything else (dropdown, radio, matrix rows, calculated, numeric, non-text) |
 
 A field with `validation_type ∈ {date, datetime}` is **date-bearing** — an orthogonal property: a surviving date-bearing field is shifted at the `export_de_identified` level (§5.2).
 
-Fail-safe property (D-1): an email or MRN value can never leave the system untransformed at any level below `export_full`, even if the data manager never flagged the field as personal.
+Fail-safe property (D-1): the value of a direct identifier field can never leave the system untransformed at any level below `export_full`, even if the data manager never flagged the field as personal. The preset keeps this fail-safe for identifier-shaped data: a field with an `email`/`MRN`/phone validation type starts out flagged as a direct identifier, and clearing the flag requires an explicit action plus a designer warning (REQ-EXP-021) — identifier status otherwise travels with whatever field the user marks (DEV-EXP-5).
 
 ### 4.2 Per-level pipeline
 

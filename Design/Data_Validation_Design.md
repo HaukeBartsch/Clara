@@ -43,17 +43,21 @@ Codes are stable across versions (callers may branch on them); messages are huma
 
 ## 4. Type Validators (normative)
 
-| `validation_type` | Grammar (Go regular expression) | Notes |
-|---|---|---|
-| `integer` | `^-?[0-9]+$` | optional leading minus, digits only; then inclusive min/max (REQ-VAL-015) |
-| `floating point` | `^[+-]?[0-9]+(\.[0-9]+)?$` | optional sign, single decimal point; then inclusive min/max (REQ-VAL-016) |
-| `email` | `^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$` | practical RFC 5322 subset (resolves REQ-VAL-017); domain must contain a label |
-| `MRN` | `^[0-9]{11}$` | exactly 11 digits (REQ-VAL-018) |
-| `date` | per `validation_format` (§4.1) | valid calendar date required (REQ-VAL-019) |
-| `datetime` | per `validation_format` (§4.1) | valid date **and** time (REQ-VAL-039) |
-| (empty) | any non-empty UTF-8 | free-form text, content policy applies (§5) (REQ-VAL-021) |
+A `validation_type` is either a **built-in structured type** (validated by dedicated logic — min/max, format tokens, calendar validity, timezone) or a **named regular expression from the validation-type registry** (§4.2, REQ-VAL-042). The whole value must match the pattern; patterns are Go RE2, stored pre-anchored.
 
-`validation_min`/`validation_max` apply to `integer`/`floating point` only; ignored elsewhere (REQ-VAL-020). Choice fields (dropdown/radio/matrix rows) validate against the field's numeric codes regardless of type (REQ-VAL-022/023).
+| `validation_type` | Kind | Grammar (Go regular expression) | Notes |
+|---|---|---|---|
+| `integer` | built-in | `^-?[0-9]+$` | optional leading minus, digits only; then inclusive min/max (REQ-VAL-015) |
+| `floating point` | built-in | `^[+-]?[0-9]+(\.[0-9]+)?$` | optional sign, single decimal point; then inclusive min/max (REQ-VAL-016) |
+| `date` | built-in | per `validation_format` (§4.1) | valid calendar date required (REQ-VAL-019) |
+| `datetime` | built-in | per `validation_format` (§4.1) | valid date **and** time (REQ-VAL-039) |
+| `email` | registry (seeded) | `^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$` | practical RFC 5322 subset (resolves REQ-VAL-017); domain must contain a label |
+| `MRN` | registry (seeded) | `^[0-9]{11}$` | exactly 11 digits (REQ-VAL-018) |
+| `international phone` | registry (seeded) | `^\+[1-9][0-9 ]{7,14}$` | `+`, non-zero country-code digit, then 7–14 digits with single spaces allowed — e.g. `+47 55566777` (REQ-VAL-043) |
+| `national phone` | registry (seeded) | `^[0-9]{8}$` | eight digits, no country code or separators — e.g. `55566777` (Norwegian national format; REQ-VAL-043) |
+| (empty) | — | any non-empty UTF-8 | free-form text, content policy applies (§5) (REQ-VAL-021) |
+
+`validation_min`/`validation_max` apply to `integer`/`floating point` only; ignored elsewhere — including every registry type (REQ-VAL-020). Choice fields (dropdown/radio/matrix rows) validate against the field's numeric codes regardless of type (REQ-VAL-022/023).
 
 ### 4.1 Date and date-time formats
 
@@ -69,6 +73,15 @@ Format tokens (REDCap-style): `Y` = 4-digit year, `m` = 2-digit month, `d` = 2-d
   1. zone supplied with the import — the **browser's timezone** for UI data entry (the PHP layer resolves it to the offset of the value's date and passes it as `tz`), or the data-API import's optional `tz` parameter (IANA name, resolved to the offset at the value's date, or a direct `±HH:MM` offset);
   2. else `APP_TIMEZONE` (configuration, `System_Configuration_Design.md` §3.10; default `UTC`).
 - Examples: format `m-d-Y` accepts `02-30-2026`? No — `2026-02-30` is not a calendar date, so both `30-02-2026` and `2026-02-30` are rejected; `25:00` rejected for `datetime`; `2026-03-01` (format `Y-m-d`, browser zone `Europe/Oslo`, March) stores as `2026-03-01+01:00`
+
+### 4.2 The validation-type registry (REQ-VAL-042/043, REQ-DB-033)
+
+Regex validation types live in the system-wide table `validation_types(name, regex, builtin)` (`Database_Schema_Design.md` §5), seeded by migration with `email`, `MRN`, `international phone` and `national phone` (grammars in §4).
+
+- **Resolution (step 5 of §2):** a field's `validation_type` that is not empty and not one of the four built-in structured types MUST name a registry row; the value is valid when it fully matches that row's pattern. The API compiles each pattern once at load (`regexp.Compile`, RE2 — no catastrophic backtracking, so validation cost stays bounded for adversarial input) and wraps it as `\A(?:pattern)\z` so anchoring in the stored pattern is belt-and-braces, not load-bearing.
+- **Extension:** adding a type is an insert into `validation_types` (a migration or DB operation); no code or schema change, mirroring the languages rule (REQ-DB-031). There is no write endpoint in phase 1; the designer lists available types read-only via `GET /api/v1/validationTypes` (REQ-API-104), which also serves the patterns for advisory client-side hints (server-side validation stays authoritative, REQ-VAL-002).
+- **Guards:** a registry row named after a built-in structured type MUST NOT shadow it (REQ-DB-033); deleting a seeded (`builtin = 1`) row is not supported while any field references it; a pattern that fails to compile makes the entry unusable — the API rejects assigning it at design time with a machine-readable reason (§9) and application-logs the compile failure (REQ-TECH-016).
+- **Interaction:** registry types never take `validation_min`/`max` (REQ-VAL-020) and are subject to the choice-field rule first, exactly like the built-ins (REQ-VAL-022/023). Fields whose type is one of the four seeded identifier-shaped entries preset the field's `direct_identifier` flag (REQ-EXP-020).
 
 ## 5. Free-form Text Content Policy (REQ-VAL-030/031/032)
 
@@ -241,7 +254,7 @@ When creating or updating a field (REQ-API-068/069) or instrument (REQ-API-065/1
 | Attribute | Rule |
 |---|---|
 | `field_name` | `^[a-z0-9_]+$` (REQ-VAL-011); unique within the project (REQ-VAL-012); longer than 26 characters accepted — the warning after 26 is UI-only (REQ-VAL-013); reserved (design decision — the flat export row would otherwise be ambiguous, REQ-API-028): `redcap_event_name`, `redcap_repeat_instrument`, `redcap_repeat_instance` MUST NOT be used |
-| `validation_type` | empty, or one of `integer`, `floating point`, `email`, `MRN`, `date`, `datetime` (REQ-VAL-010) |
+| `validation_type` | empty, a built-in structured type (`integer`, `floating point`, `date`, `datetime`), or an existing validation-type registry name whose pattern compiles (§4.2; REQ-VAL-010/042) |
 | `validation_min`/`max` | if present, a valid number per the field's type (integer → §4 integer grammar; floating point → decimal grammar) and min ≤ max; ignored for other types (REQ-VAL-020) |
 | `choices` | `code$label##code$label` (schema §1); codes non-empty, unique, numeric (REQ-VAL-022); labels non-empty |
 | `validation_format` | (date/datetime) composed of the §4.1 tokens — `Y`, `m`, `d`, plus `H`, `i` for datetime — with the specified separators; empty → the §4.1 defaults |

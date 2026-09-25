@@ -122,9 +122,10 @@ func writeJSON(w http.ResponseWriter, rows any) {
 	_ = enc.Encode(rows)
 }
 
-// writeCSV renders the same rows with a header line. Header and values
-// are derived from the struct via reflection, so the two encodings never
-// drift.
+// writeCSV renders the same rows with a header line. The header is always
+// written — even for a zero-row result, so callers get the column names
+// (REDCap returns a header row for an empty result). Header and values are
+// derived from the struct via reflection, so the two encodings never drift.
 func writeCSV(w http.ResponseWriter, delimiter rune, rows any) {
 	w.Header().Set("Content-Type", "text/csv")
 	cw := csv.NewWriter(w)
@@ -134,8 +135,10 @@ func writeCSV(w http.ResponseWriter, delimiter rune, rows any) {
 		cw.Flush()
 		return
 	}
-	if rv.Len() > 0 {
-		ft := rv.Index(0).Type()
+	// Element type from the slice type, valid whether or not any rows are
+	// present (rv.Index(0) would not be for an empty slice).
+	ft := rv.Type().Elem()
+	if ft.Kind() == reflect.Struct {
 		header := make([]string, ft.NumField())
 		for i := range header {
 			header[i] = jsonName(ft.Field(i))
@@ -144,7 +147,6 @@ func writeCSV(w http.ResponseWriter, delimiter rune, rows any) {
 	}
 	for i := 0; i < rv.Len(); i++ {
 		fv := rv.Index(i)
-		ft := fv.Type()
 		vals := make([]string, ft.NumField())
 		for j := range vals {
 			vals[j] = fmt.Sprintf("%v", fv.Field(j).Interface())

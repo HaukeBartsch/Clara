@@ -16,41 +16,31 @@ import (
 )
 
 // nextRecordName is pure logic (REQ-DB-007, REQ-API-023), so it is tested
-// without a store: both pattern styles, collision avoidance, gap filling,
-// width preservation, and extension past the pattern's digit width.
+// without a store: both pattern styles, collision avoidance, width
+// preservation, extension past the pattern's digit width, and ignoring an
+// existing name that does not share the pattern's shape.
 func TestNextRecordName(t *testing.T) {
 	cases := []struct {
-		name     string
-		pattern  string
-		existing []string
-		want     string
+		name        string
+		pattern     string
+		existingMax string
+		want        string
 	}{
-		{"digit placeholder, none used", "8DISC[0-9][0-9][0-9]", nil, "8DISC001"},
-		{"digit placeholder, next after run", "8DISC[0-9][0-9][0-9]", []string{"8DISC001", "8DISC002", "8DISC041"}, "8DISC003"},
-		{"digit placeholder, fills gap", "8DISC[0-9][0-9][0-9]", []string{"8DISC001", "8DISC003"}, "8DISC002"},
-		{
-			"digit placeholder, extends past width", "8DISC[0-9][0-9][0-9]",
-			[]string{"8DISC001", "8DISC002", "8DISC003", "8DISC004", "8DISC005", "8DISC006", "8DISC007", "8DISC008", "8DISC009"},
-			"8DISC010",
-		},
-		{"digit placeholder, ignores unrelated ids", "8DISC[0-9][0-9][0-9]", []string{"foo", "8DISC999"}, "8DISC001"},
-		{"counter prefix, none used", "0001_01", nil, "0001_01"},
-		{"counter prefix, next after run", "0001_01", []string{"0001_01", "0002_01"}, "0003_01"},
-		{"counter prefix, width preserved", "00001_02", []string{"00001_02", "00002_02"}, "00003_02"},
-		{
-			"counter prefix, extends past width", "0001_01",
-			[]string{"0001_01", "0002_01", "0003_01", "0004_01", "0005_01"},
-			"0006_01",
-		},
+		{"digit placeholder, none used", "8DISC[0-9][0-9][0-9]", "", "8DISC001"},
+		{"digit placeholder, one step past max", "8DISC[0-9][0-9][0-9]", "8DISC041", "8DISC042"},
+		{"digit placeholder, extends past width", "8DISC[0-9][0-9][0-9]", "8DISC999", "8DISC1000"},
+		{"digit placeholder, ignores unrelated max", "8DISC[0-9][0-9][0-9]", "FOO123", "8DISC001"},
+		{"digit placeholder, ignores non-numeric tail", "8DISC[0-9][0-9][0-9]", "8DISCxx", "8DISC001"},
+		{"counter prefix, none used", "0001_01", "", "0001_01"},
+		{"counter prefix, one step past max", "0001_01", "0002_01", "0003_01"},
+		{"counter prefix, width preserved", "00001_02", "00002_02", "00003_02"},
+		{"counter prefix, extends past width", "0001_01", "9999_01", "10000_01"},
+		{"counter prefix, ignores unrelated max", "0001_01", "8DISC042", "0001_01"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			ex := make(map[string]bool, len(tc.existing))
-			for _, e := range tc.existing {
-				ex[e] = true
-			}
-			if got := nextRecordName(tc.pattern, ex); got != tc.want {
-				t.Fatalf("nextRecordName(%q, %v) = %q, want %q", tc.pattern, tc.existing, got, tc.want)
+			if got := nextRecordName(tc.pattern, tc.existingMax); got != tc.want {
+				t.Fatalf("nextRecordName(%q, %q) = %q, want %q", tc.pattern, tc.existingMax, got, tc.want)
 			}
 		})
 	}
@@ -402,6 +392,21 @@ func TestCSVOutput(t *testing.T) {
 	mustStatus(t, code, http.StatusOK, body)
 	if first := strings.SplitN(body, "\n", 2)[0]; first != "event_name|arm_num|unique_event_name|event_id" {
 		t.Errorf("delimiter header = %q, want pipes", first)
+	}
+}
+
+// A zero-row CSV result still carries the header line, matching REDCap —
+// callers read the column names even when there is no data (REQ-API-013).
+func TestCSVEmptyRowsEmitHeader(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeCSV(rec, ',', []eventRow{})
+	body := rec.Body.String()
+	if !strings.HasPrefix(body, "event_name,arm_num,unique_event_name,event_id") {
+		t.Fatalf("empty CSV should carry the header, got %q", body)
+	}
+	// Header line only — no trailing data row.
+	if lines := strings.Split(strings.TrimRight(body, "\n"), "\n"); len(lines) != 1 {
+		t.Fatalf("expected a single header line, got %d / %q", len(lines), body)
 	}
 }
 

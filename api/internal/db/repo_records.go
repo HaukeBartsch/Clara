@@ -1,28 +1,27 @@
 package db
 
-import "context"
+import (
+	"context"
+	"database/sql"
+)
 
-// ListRecordIDs returns the distinct record ids that hold at least one
-// data value or a record entity (union of both tables) — the collision
-// set generateNextRecordName must avoid (REQ-API-023).
-func (s *Store) ListRecordIDs(ctx context.Context, projectID int64) ([]string, error) {
-	rows, err := s.DB.QueryContext(ctx,
-		`SELECT record_id FROM data WHERE project_id = ?
-		 UNION
-		 SELECT record_id FROM record_entities WHERE project_id = ?
-		 ORDER BY 1`,
-		projectID, projectID)
+// MaxRecordID returns the lexicographically greatest record id that holds at
+// least one data value or a record entity, or ("", false) when the project
+// has none. The data API derives the next generated name from it
+// (REQ-API-023) without loading every id into memory.
+func (s *Store) MaxRecordID(ctx context.Context, projectID int64) (string, bool, error) {
+	var v sql.NullString
+	err := s.DB.QueryRowContext(ctx,
+		`SELECT max(record_id) FROM (
+			 SELECT record_id FROM data WHERE project_id = ?
+			 UNION
+			 SELECT record_id FROM record_entities WHERE project_id = ?
+		 )`, projectID, projectID).Scan(&v)
 	if err != nil {
-		return nil, err
+		return "", false, err
 	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out = append(out, id)
+	if !v.Valid {
+		return "", false, nil
 	}
-	return out, rows.Err()
+	return v.String, true, nil
 }

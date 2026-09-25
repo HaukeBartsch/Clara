@@ -157,7 +157,7 @@ CREATE TABLE IF NOT EXISTS fields (              -- REQ-DB-013, REQ-DB-014
     section_header      VARCHAR(255),
     choices             TEXT,                    -- code$label##code$label (dropdown/radio/matrix)
     field_note          TEXT,
-    validation_type     VARCHAR(32),             -- integer | floating point | email | MRN | date | datetime (REQ-VAL-015…039)
+    validation_type     VARCHAR(32),             -- empty | built-in (integer | floating point | date | datetime) | validation_types.name (REQ-VAL-010/042)
     validation_format   VARCHAR(32),             -- accepted input format for date/datetime (e.g. Y-m-d, m-d-Y, Y-m-d H:i); see Data_Validation_Design.md
     validation_min      VARCHAR(255),
     validation_max      VARCHAR(255),
@@ -166,6 +166,7 @@ CREATE TABLE IF NOT EXISTS fields (              -- REQ-DB-013, REQ-DB-014
     calculation         TEXT,                    -- GD-11, REQ-VAL-033 (type = calculated only)
     matrix_group        VARCHAR(255),            -- matrix rows share this (REQ-DB-014)
     personal_information INTEGER NOT NULL DEFAULT 0,
+    direct_identifier   INTEGER NOT NULL DEFAULT 0,   -- user-set on any field; preset by the API for email/MRN/phone types (REQ-EXP-020, DEV-EXP-5)
     export_approved     INTEGER NOT NULL DEFAULT 0,   -- DEV-DB-2 (free-text export approval)
     position            INTEGER NOT NULL DEFAULT 1,
     UNIQUE (project_id, field_name),
@@ -181,9 +182,23 @@ CREATE TABLE IF NOT EXISTS calculated_dependencies (   -- GD-11 support
     ref_field_name        VARCHAR(255) NOT NULL,
     PRIMARY KEY (project_id, calculated_field_id, ref_unique_event_name, ref_field_name)
 );
+
+-- System-wide (not per-project): extensible field validation (REQ-DB-033, REQ-VAL-042/043).
+-- Adding a validation type is an INSERT here, not a schema change (mirrors `languages`, REQ-DB-031).
+CREATE TABLE IF NOT EXISTS validation_types (
+    name      VARCHAR(64) PRIMARY KEY,   -- shown to the designer; referenced by fields.validation_type
+    regex     TEXT NOT NULL,             -- Go RE2 pattern, full-value match (§4.2); served to the designer for advisory hints (REQ-API-104)
+    builtin   INTEGER NOT NULL DEFAULT 0 -- seeded entries; cannot be removed while referenced
+);
+
+-- Seed (idempotent, same style as the languages seed): grammars are normative in Data_Validation_Design.md §4.
+INSERT INTO validation_types (name, regex, builtin) SELECT 'email',               '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$', 1 WHERE NOT EXISTS (SELECT 1 FROM validation_types WHERE name = 'email');
+INSERT INTO validation_types (name, regex, builtin) SELECT 'MRN',                 '^[0-9]{11}$',                                          1 WHERE NOT EXISTS (SELECT 1 FROM validation_types WHERE name = 'MRN');
+INSERT INTO validation_types (name, regex, builtin) SELECT 'international phone', '^\+[1-9][0-9 ]{7,14}$',                                1 WHERE NOT EXISTS (SELECT 1 FROM validation_types WHERE name = 'international phone');
+INSERT INTO validation_types (name, regex, builtin) SELECT 'national phone',      '^[0-9]{8}$',                                           1 WHERE NOT EXISTS (SELECT 1 FROM validation_types WHERE name = 'national phone');
 ```
 
-Notes: matrix rows are ordinary `fields` rows sharing `matrix_group`/`choices`/validation (REQ-DB-014); the record identifier is the first field of the first instrument by `position` (GD-8 — enforced by the API, not the schema). **Event order (GD-15, REQ-DB-011):** within an arm, events with a `period` sort by it ascending (ties by `position`); events with `period = NULL` sort by `position` after them. `position` is set by the API at creation (end of list) and by the events-order endpoint (REQ-API-103); the canonical order is computed by the API (the schema stores the inputs only) and applies to the UI event table, the record-status dashboard, `content=event`, and `content=formEventMapping`.
+Notes: matrix rows are ordinary `fields` rows sharing `matrix_group`/`choices`/validation (REQ-DB-014); the record identifier is the first field of the first instrument by `position` (GD-8 — enforced by the API, not the schema). `validation_type` resolves against `validation_types` at validation time; the four built-in structured types are validated by code and cannot be shadowed by a registry row (§4.2). The API presets `direct_identifier = 1` when a field's validation type is `email`, `MRN`, `international phone` or `national phone`; the user may set or clear it on any field (REQ-EXP-020). **Event order (GD-15, REQ-DB-011):** within an arm, events with a `period` sort by it ascending (ties by `position`); events with `period = NULL` sort by `position` after them. `position` is set by the API at creation (end of list) and by the events-order endpoint (REQ-API-103); the canonical order is computed by the API (the schema stores the inputs only) and applies to the UI event table, the record-status dashboard, `content=event`, and `content=formEventMapping`.
 
 ## 6. Data (EAV) and Record Entities
 
@@ -358,4 +373,4 @@ Reference scale (REQ-DB-025): 100 projects × 10,000 records × 200 fields × 10
 |---|---|
 | `details` JSON shapes per audit event type | `Audit_Logging_Design.md` |
 | `anon_salt` configuration key | `System_Configuration_Design.md` |
-| exact validator grammar for `validation_type` values | `Data_Validation_Design.md` |
+| exact validator grammar for `validation_type` values and the `validation_types` seed patterns | `Data_Validation_Design.md` §4/§4.2 |

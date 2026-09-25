@@ -127,7 +127,8 @@ Requires data access ≥ `read_only`. JSON response: one object per field, matri
     "required_field": "Y",
     "branching_logic": "",
     "matrix_group_name": "",
-    "record_identifier": "Y"
+    "record_identifier": "Y",
+    "direct_identifier": "Y"
   },
   {
     "field_name": "status",
@@ -141,7 +142,7 @@ Requires data access ≥ `read_only`. JSON response: one object per field, matri
 ]
 ```
 
-`record_identifier` is `"Y"` on the record-identifier field (position 1 of instrument position 1, GD-8) and empty elsewhere. `choice_codes`/`choice_labels` are comma-joined from the stored `code$label##code$label` encoding.
+`record_identifier` is `"Y"` on the record-identifier field (position 1 of instrument position 1, GD-8) and empty elsewhere. `direct_identifier` is this system's key (`"Y"`/`""`, REQ-DB-013, REQ-EXP-020 — an additional key beyond the REDCap shape, tolerated by naive parsers per REQ-API-018). `choice_codes`/`choice_labels` are comma-joined from the stored `code$label##code$label` encoding.
 
 ### 3.5 `event`, `formEventMapping`, `exportFieldNames`, `generateNextRecordName`
 
@@ -504,9 +505,9 @@ The record-identifier invariant MUST hold after reordering (GD-8: the first fiel
     "personal_information": false, "position": 2 } ]
 ```
 
-**`POST /api/v1/projects/{id}/instruments/{iid}/fields`** — `project_admin`. Body: the field object minus `id`/`position` (appended at the end of the list). The field name is lower-case alphanumeric + underscore, unique within the project (REQ-DB-013; a duplicate → 409 `conflict`); names longer than 26 characters are accepted — the warning after 26 is a UI concern (master spec). `calculation` is only allowed with `field_type = calculated`; the expression and the branching logic are validated at design time → 400 `validation_error` (REQ-VAL-029, REQ-VAL-033/034; `Data_Validation_Design.md` §6.2, §7.2). 201 — the field object. Audit `field_created`.
+**`POST /api/v1/projects/{id}/instruments/{iid}/fields`** — `project_admin`. Body: the field object minus `id`/`position` (appended at the end of the list). The field name is lower-case alphanumeric + underscore, unique within the project (REQ-DB-013; a duplicate → 409 `conflict`); names longer than 26 characters are accepted — the warning after 26 is a UI concern (master spec). `validation_type` must be empty, one of the built-in structured types, or an existing `validation_types` name (`Data_Validation_Design.md` §4.2; anything else → 400 `validation_error`, REQ-VAL-010/042); `direct_identifier` is accepted for any field and defaults to `1` when the validation type is `email`, `MRN`, `international phone` or `national phone` (REQ-EXP-020). `calculation` is only allowed with `field_type = calculated`; the expression and the branching logic are validated at design time → 400 `validation_error` (REQ-VAL-029, REQ-VAL-033/034; `Data_Validation_Design.md` §6.2, §7.2). 201 — the field object. Audit `field_created`.
 
-**`PUT /api/v1/projects/{id}/instruments/{iid}/fields/{fid}`** — `project_admin`; idempotent. Body: any subset of the attributes — including a `field_name` rename (the stored values are renamed in the same transaction, REQ-VAL-014, `Data_Validation_Design.md` §9), the `calculation` expression of a calculated field (REQ-VAL-033/034), and the `branching_logic` expression (REQ-VAL-029). A change to a calculated field's expression triggers recomputation of all project records in the same transaction (REQ-VAL-037, `Data_Validation_Design.md` §6.3). 200 — the field object. Audit `field_updated` with old and new values.
+**`PUT /api/v1/projects/{id}/instruments/{iid}/fields/{fid}`** — `project_admin`; idempotent. Body: any subset of the attributes — including a `field_name` rename (the stored values are renamed in the same transaction, REQ-VAL-014, `Data_Validation_Design.md` §9), the `calculation` expression of a calculated field (REQ-VAL-033/034), the `branching_logic` expression (REQ-VAL-029), and the `direct_identifier` flag; an assigned `validation_type` is checked against the registry as at creation (§4.2, REQ-VAL-010/042). A change to a calculated field's expression triggers recomputation of all project records in the same transaction (REQ-VAL-037, `Data_Validation_Design.md` §6.3). 200 — the field object. Audit `field_updated` with old and new values.
 
 **`DELETE /api/v1/projects/{id}/instruments/{iid}/fields/{fid}`** — `project_admin`. 204. The field's stored values are removed in the same transaction (DEV-API-5); a field referenced by an active expression → 409 `conflict` (§4.2). Audit `field_deleted` with the count of removed values.
 
@@ -517,6 +518,8 @@ The record-identifier invariant MUST hold after reordering (GD-8: the first fiel
 ```
 
 The GD-8 record-identifier invariant MUST hold after reordering — a violation → 400 `invalid_request` (§4.2). Audit `field_reordered`.
+
+**`GET /api/v1/validationTypes`** — any authenticated user; read-only (REQ-API-104). 200 — the types the designer may assign: the four built-in structured types plus every `validation_types` row, as `{"name": "…", "regex": "…", "builtin": true}` objects (the pattern is included for advisory client-side hints only — server-side validation remains authoritative, REQ-VAL-002). Registry entries are added by inserting a database row (`Database_Schema_Design.md` §5); there is no write endpoint in phase 1.
 
 **`POST /api/v1/projects/{id}/records/{record}/fields/{fid}/test`** — `project_admin` + record visibility under the data-access-group rule (REQ-AUTH-045). Body: optionally `{ "expression": "[baseline][a] + [baseline][b] * 2" }` (a draft expression; omitted = the field's stored expression). 200 — the evaluation result with explicit flags for each evaluation problem (REQ-VAL-038, `Data_Validation_Design.md` §6.4):
 
@@ -710,6 +713,7 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirement.m
 | arms, events, instruments, fields, mapping — reads (GET) | data access ≥ `read_only` |
 | `GET …/record-status`, `GET …/records/{record}/history` | data access ≥ `read_only` (+ record visibility) |
 | `POST …/fields/{fid}/test` | `project_admin` + record visibility |
+| `GET /api/v1/validationTypes` | any authenticated user |
 | `GET …/export` | export level per arm (GD-2; `export_none` → 403) |
 | survey links (issue/revoke, §4.17) | data access ≥ `view_edit` on the arm (+ record visibility) |
 | `GET …/data-access-groups` | data access ≥ `read_only` |

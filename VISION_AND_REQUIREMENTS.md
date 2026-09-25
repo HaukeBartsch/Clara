@@ -1,4 +1,4 @@
-# Data model for clinical study management system
+# Clara - clinical study management system
 
 A research electronic data capture system for clinical studies (web-based platform to collect project data)
  - projects are secured with tokens that map to user accounts
@@ -488,8 +488,40 @@ Upgrades: Support either a full installation or, a rolling versioned update inst
 
 ## Project modes
 
-Projects should be in one of three modes - development, production, analysis. Admin users for a project should be able to set this project mode. Projects start in "development" mode with setup and data entry as usual. All functionality should work as expected. A project in development mode can be moved to "production" mode (by project admin user, ask if previously stored data should be deleted or kept). In production mode changes to the setup are staged together (start staging) before they become activated together (commit staged changes). The user can for example create addititional instruments or change the existing instruments (after start staging). During this phase all ongoing data collections are still using the currently active versions of all instruments. At any point in production the user can decide to "commit" the staged changes. A warning should inform the user which of the changes will make the database for the project inconsistent. For example, adding a new field to an instrument or changing its description should not be considered a breaking change. Adding new options to existing dropdown menues are the same (no warning). Warn the user if data is no longer accessible (deleting a field). A project in production mode should also be able to moved back to development. In mode "analysis" no more data entry should be possible but all users still have access and can export - based on their permissions.
+Every project is in exactly one of three modes: development, production, or analysis. Only project admins can change the mode.
+
+### Development
+- Default mode for new projects.
+- Setup and data entry work as usual; all functionality available.
+
+### Production
+- Setup changes are staged and activated as a group:
+  - Start staging — begins a staging set (e.g., add or modify instruments). While staged, ongoing data collection continues to use the currently active instrument versions.
+  - Commit staged changes — activates the whole staging set at once.
+- Breaking-change warning: before committing, warn about changes that would make existing project data inconsistent:
+  - No warning (non-breaking): adding a field, changing a field description, adding options to an existing dropdown.
+  - Warning (breaking): any change that makes recorded data inaccessible, e.g., deleting a field.
+
+### Analysis
+Data entry is disabled; viewing and exporting remain available according to each user's permissions. Admin users can still interact with the project.
+
+### Transitions
+
+| From → To	| Who |	Prompt / effect |
+|-------|--------|--------|
+| development → production	| project admin	| Ask whether previously stored data should be kept or deleted |
+| production → development	| project admin	| Keep all data |
+| production ↔ analysis	| project admin	|  Keep all data |
+
 
 ## Add missing AGENTS.md
 
 To synchronize development across several LLMs add AGENTS.md files into folders that benefit from it. Outline the rules for LLMs based on the existing project structure with Requirements, Plan, and Design documentation.
+
+### Numbering issue
+
+If participant id `0001_01` and `0003_01` exist but `0002_01` was deleted, auto-generation would return `0002_01`. That's gap-filling. This is not desired. Return max+1 for new IDs.
+
+## Field validation
+
+Field validation should be extensible by adding additional validations (regular expressions with a given name) to the database. Use the existing email and MRN entries, add an international phone number validation type such as "+47 55566777" as well as a national phone number type "55566777".

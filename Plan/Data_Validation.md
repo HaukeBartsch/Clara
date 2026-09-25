@@ -9,7 +9,10 @@ Field Types & Validations
 - Floating Point: Must be a decimal number (optional min/max range).
 - Email: Must match standard email format.
 - Medical Record Number (MRN): Must be exactly 11 digits.
+- International Phone: Must match an international number such as "+47 55566777".
+- National Phone: Must match a national number such as "55566777".
 - Date: Must match specified format (e.g., Y-m-d).
+- Extensible: Additional validation types can be added as named regular expressions stored in the database (validation_types table); email, MRN, and both phone types are seeded entries of that registry.
 
 2. Choice Fields (Dropdowns / Radio Buttons)
 - Validation: Value must match one of the predefined numeric codes.

@@ -345,9 +345,10 @@ Data: `GET …/instruments/{iid}/fields` (fields in position order, all data-dic
 | `section_header` | text | group heading in the form |
 | `choices` | list editor: `code`/`label` rows | for `dropdown`/`radio`/`matrix` — the `code$label##…` encoding (REQ-VAL-022); codes numeric and unique |
 | `field_note` | text | help text |
-| `validation_type` | select: empty / `integer` / `floating point` / `email` / `MRN` / `date` / `datetime` | + `validation_format` for date/datetime (§4.1 of `Data_Validation_Design.md`); `validation_min`/`max` for integer/float (REQ-VAL-015/016) |
+| `validation_type` | select: empty / built-in `integer` / `floating point` / `date` / `datetime` / every entry of the validation-type registry (`email`, `MRN`, `international phone`, `national phone`, … — listed from `GET /api/v1/validationTypes`, REQ-API-104) | + `validation_format` for date/datetime (§4.1 of `Data_Validation_Design.md`); `validation_min`/`max` for integer/float only (REQ-VAL-015/016/020); unknown names rejected at design time (REQ-VAL-010/042) |
 | `required` | checkbox | REQ-VAL-028 |
 | `personal_information` | checkbox | feeds anonymized export (REQ-DB-013) |
+| `direct_identifier` | checkbox on any field; preset when the validation type is `email`/`MRN`/phone; clearing such a preset requires an explicit action and shows a warning | removed at de-identified export (REQ-EXP-020/021, DEV-EXP-5) |
 | `matrix_group` | text | for `matrix` rows (REQ-DB-014) |
 | `branching_logic` | expression editor (§7.3) | display-only logic (GD-13) |
 | `calculation` | expression editor (§7.3) | only when `field_type = calculated` |
@@ -392,7 +393,7 @@ The instrument's fields for the selected (record, event) render in position orde
 
 | `field_type` | Control | Notes |
 |---|---|---|
-| `text` | `<input type=text>` (or `<textarea>` for free-text) | free-text values render as their allowlist HTML on display (§3.2); validation type drives input hints (integer/float/email/MRN/date/datetime) |
+| `text` | `<input type=text>` (or `<textarea>` for free-text) | free-text values render as their allowlist HTML on display (§3.2); validation type drives input hints (built-in integer/float/date/datetime; registry types — email, phone, … — drive the advisory `pattern` from the client-side copy of the registry, never trusted server-side, REQ-VAL-002) |
 | `dropdown` | `<select>` | choices as `code`/`label` (stored value = code, REQ-VAL-022) |
 | `radio` | radio group | one input per choice |
 | `matrix` | a row per matrix sub-field (rows expanded, REQ-DB-014), sharing the group's choices/validation | the matrix header states the coding once (master spec) |

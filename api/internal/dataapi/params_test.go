@@ -80,6 +80,18 @@ func TestParseParamsRepeatedValues(t *testing.T) {
 	}
 }
 
+// An oversized body is rejected rather than read in full (REQ-TECH-011): the
+// cap now holds on the primary ParseForm path, not just the fallback. This
+// also exercises http.MaxBytesReader with a nil ResponseWriter.
+func TestOversizedBodyRejected(t *testing.T) {
+	big := strings.Repeat("a", maxFormBytes+1)
+	req := httptest.NewRequest(http.MethodPost, "http://test/api/", strings.NewReader("token=t&"+big))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if _, err := ParseParams(req); err == nil {
+		t.Fatal("want an error for a body over maxFormBytes")
+	}
+}
+
 // An index list and a bare repeated key are distinct; the indexed form wins
 // when both are present (indexed syntax is checked first in list()).
 func TestParseParamsIndexedWinsOverRepeated(t *testing.T) {
