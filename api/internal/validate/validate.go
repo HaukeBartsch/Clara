@@ -13,13 +13,76 @@ import (
 	"strings"
 )
 
-// §4 type grammars, precompiled once (Data_Validation_Design.md §4).
+// §4 built-in structured grammars, precompiled once (Data_Validation_Design.md §4).
 var (
 	integerRE = regexp.MustCompile(`^-?[0-9]+$`)
 	floatRE   = regexp.MustCompile(`^[+-]?[0-9]+(\.[0-9]+)?$`)
-	emailRE   = regexp.MustCompile(`^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$`)
-	mrnRE     = regexp.MustCompile(`^[0-9]{11}$`)
 )
+
+// identifierTypes are the seeded registry entries whose fields preset the
+// direct_identifier flag (REQ-EXP-020); names match the migration seed.
+var identifierTypes = map[string]bool{
+	"email":               true,
+	"MRN":                 true,
+	"international phone": true,
+	"national phone":      true,
+}
+
+// PresetDirectIdentifier reports whether a new field with this validation
+// type starts out flagged as a direct identifier (REQ-EXP-020).
+func PresetDirectIdentifier(validationType string) bool { return identifierTypes[validationType] }
+
+// RegistryEntry is one validation_types row (REQ-DB-033).
+type RegistryEntry struct {
+	Name    string
+	Regex   string
+	Builtin bool
+}
+
+// Registry resolves regex validation types beyond the four built-in
+// structured ones (§4.2). Patterns are compiled once at load and wrapped as
+// \A(?:…)\z so anchoring in the stored pattern is belt-and-braces; RE2 keeps
+// per-value cost bounded for adversarial input.
+type Registry struct {
+	patterns map[string]*regexp.Regexp
+	entries  []RegistryEntry
+}
+
+// NewRegistry compiles every entry's pattern; a pattern that fails to compile
+// makes the whole call fail — callers reject the entry at design time and
+// application-log the failure (REQ-TECH-016, §4.2).
+func NewRegistry(rows []RegistryEntry) (*Registry, error) {
+	r := &Registry{
+		patterns: make(map[string]*regexp.Regexp, len(rows)),
+		entries:  append([]RegistryEntry(nil), rows...),
+	}
+	for _, row := range rows {
+		re, err := regexp.Compile(`\A(?:` + row.Regex + `)\z`)
+		if err != nil {
+			return nil, fmt.Errorf("validation type %q: %w", row.Name, err)
+		}
+		r.patterns[row.Name] = re
+	}
+	return r, nil
+}
+
+// Lookup returns the compiled pattern for a registry name.
+func (r *Registry) Lookup(name string) (*regexp.Regexp, bool) {
+	if r == nil {
+		return nil, false
+	}
+	re, ok := r.patterns[name]
+	return re, ok
+}
+
+// Entries returns the registry rows in load order — the designer listing of
+// available types (REQ-API-104).
+func (r *Registry) Entries() []RegistryEntry {
+	if r == nil {
+		return nil
+	}
+	return append([]RegistryEntry(nil), r.entries...)
+}
 
 // Rule codes are stable, machine-readable (REQ-VAL-009). Messages are
 // human-readable and must not leak internals (REQ-API-006/039).

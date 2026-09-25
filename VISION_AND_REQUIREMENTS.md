@@ -514,7 +514,7 @@ Data entry is disabled; viewing and exporting remain available according to each
 | production ↔ analysis	| project admin	|  Keep all data |
 
 
-## Add missing AGENTS.md
+## Add content to AGENTS.md
 
 To synchronize development across several LLMs add AGENTS.md files into folders that benefit from it. Outline the rules for LLMs based on the existing project structure with Requirements, Plan, and Design documentation.
 
