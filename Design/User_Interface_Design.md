@@ -275,6 +275,7 @@ Data: `GET /api/v1/projects/{id}` (full metadata + structure). Gating: project v
 | Members · Roles | §5.3 · §5.4 | `is_admin` | v) administer users in the project (match roles to permissions) |
 | Groups | §5.5 | data access ≥ `read_only` (mutate: `project_admin`) | (record scope) |
 | End provision | §6.5 | `is_admin` | (end of project — BR-009) |
+| Mode | §6.6 | `project_admin` (the mode badge is visible to every member) | project modes (GD-20) |
 
 ### 6.2 Setup page (`GET /projects/{id}/setup`, `project_admin`, REQ-UI-018)
 
@@ -326,6 +327,29 @@ Present on the project home (§6.1) **only** for `is_admin` (REQ-UI-003; the act
   - `anonymize` — applies the de-identified pipeline **in place**; every later read and export of the project returns the anonymized form — irreversible (§7.4).
 - **Confirmation modal** (§3.5 — destructive and hard-to-reverse): states the chosen provision and the one-shot consequence, requires an explicit confirm click.
 - **Result**: on 200, a success line naming the provision and the affected records/values; on 409 (already executed) the conflict line per §3.4.
+
+### 6.6 Project mode (GD-20, REQ-UI-033)
+
+The project home (§6.1) shows the current mode as a **badge** next to the project name — `development` / `production` / `analysis` — from `GET …/mode` (visible to every member; the sidebar brand bar carries it in the project context, §2.4). Data pages state the active design they serve when a staging set is open (§6.7).
+
+The **Mode card** (`project_admin` only, REQ-UI-003) offers `PUT /api/v1/projects/{id}/mode` through `?action=` on the project route (CSRF, §3.3), presenting **only the allowed transitions**:
+
+| Transition | Confirmation modal |
+|---|---|
+| development → production | asks whether previously stored data should be **kept or deleted** (radio pair); choosing delete states the consequence in full — every record value is removed, metadata/structure/memberships/audit remain (same scope as §6.5 `delete`) — and requires a second explicit confirm click (§3.5) |
+| production → development | "all data is kept"; if a staging set is open the modal instead points to the staging banner (§6.7) — commit or discard first (409 surfaced per §3.4) |
+| production ↔ analysis | "all data is kept"; entering analysis warns that data entry stops for everyone (§8.1) |
+
+Any other pair is not offered (the API rejects it, `API_Endpoints_Design.md` §4.21). On success the badge updates and a translated line names the new mode; on 409 the conflict reason is shown per §3.4.
+
+### 6.7 Staged setup changes in production (GD-20, REQ-UI-034)
+
+When `mode = production`, the Setup (§6.2) and Designer (§7) pages carry the staging controls; in development they are absent and edits apply directly.
+
+- **Start staging** button → `POST …/staging`. Once a set is open, every setup/design page shows a persistent banner: **"Staging open — your changes are staged, data collection continues on the active design"** with **Commit staged changes** and **Discard** (§3.5 confirmations for both).
+- The pages then read and write the **staged** design (the API serves it to `project_admin`, `API_Endpoints_Design.md` §4.21); response shapes are unchanged, so every §6.2/§7 control works identically on the staged state. A "view active design" toggle links the plain reads for comparison.
+- **Commit** opens a dialog fed by `GET …/staging`: the staged changes listed in two groups — **non-breaking** and **breaking**, each breaking entry with its reason (classification normative in `API_Endpoints_Design.md` §4.21). Committing is disabled until an explicit acknowledgement checkbox ("I understand these changes make existing data inaccessible") is ticked, then `POST …/staging/commit` with `{ "acknowledge_breaking": true }`; a commit without breaking changes posts directly. On success the banner closes and a line names the applied counts; on 409 (breaking not acknowledged) the dialog stays open with the list refreshed.
+- **Discard** → `POST …/staging/discard` (confirmation naming the number of staged changes thrown away); the pages revert to the active design.
 
 ## 7. Instrument Designer (`project_admin`)
 

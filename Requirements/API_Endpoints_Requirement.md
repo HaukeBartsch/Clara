@@ -242,7 +242,17 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 | REQ-API-099 | `GET /api/v1/i18n/strings?language=<code>` MUST list the translation keys with the current translation and a missing flag; it requires `is_admin`. |
 | REQ-API-100 | `PUT /api/v1/i18n/strings` MUST upsert translations (language, key, text); an empty text removes the translation (fallback to English, REQ-DB-031); it requires `is_admin`. The change MUST be audit-logged (REQ-API-043). |
 
-### 4.19 Permission summary
+### 4.19 Project modes and staging (GD-20)
+
+| ID | Requirement |
+|---|---|
+| REQ-API-105 | `GET /api/v1/projects/{id}/mode` MUST return the project's current mode (`development` \| `production` \| `analysis`; new projects start in `development`, REQ-DB-034) and whether a staging set is open; it requires data access ≥ `read_only`. `PUT /api/v1/projects/{id}/mode` (idempotent, REQ-API-042) MUST change the mode per the transition rules of GD-20 and requires `project_admin`: **development → production** MUST require an explicit `keep_data` body flag (`true` keeps the stored record data; `false` deletes it with the same scope as the end-provision `delete`, `Data_Export_Anonymization_Design.md` §7.3); **production → development** and **production ↔ analysis** keep all data; any other transition MUST be rejected (409). Leaving production mode while a staging set is open MUST be rejected (409) until the set is committed or discarded. The change MUST be audit-logged with old and new mode and the `keep_data` decision (REQ-AUD-025, REQ-API-043). |
+| REQ-API-106 | Staging lifecycle (production mode only; all require `project_admin`): `POST /api/v1/projects/{id}/staging` opens a staging set holding a snapshot of the currently active design (REQ-DB-035) — opening a second set while one is open MUST be rejected (409); `GET /api/v1/projects/{id}/staging` returns the staging state (open/closed, opened when/by, and the staged change list with each change classified non-breaking or breaking per REQ-API-108); `POST /api/v1/projects/{id}/staging/commit` activates the whole staged set at once in a single transaction; `POST /api/v1/projects/{id}/staging/discard` removes the staged set unchanged. Every lifecycle event MUST be audit-logged (REQ-AUD-025). |
+| REQ-API-107 | In production mode a structure change (arms, events, instruments, fields, mapping — REQ-API-058…073) MUST require an open staging set (rejected 409 when none is open); while one is open the change MUST apply to the **staged** design and MUST NOT affect the active design. Data collection and export (`content=metadata`, `event`, `formEventMapping`, record import/export, record status) MUST continue to use the **active** design until commit. In development mode structure changes apply immediately (no staging). In analysis mode admin users can still change structure; those changes apply immediately. |
+| REQ-API-108 | Commit MUST classify the staged diff (GD-20): **non-breaking** — adding a field, changing a field description/label, adding options to an existing dropdown/radio/matrix (the normative classification table is in `API_Endpoints_Design.md`); **breaking** — any change that would make recorded data inaccessible, e.g. deleting a field. A commit whose staged set contains breaking changes MUST be rejected (409) listing them, unless the body sets `acknowledge_breaking: true`. |
+| REQ-API-109 | In analysis mode data entry is disabled: `content=record&action=import` and `content=record&action=delete` MUST be rejected (403 with a REDCap-style error), survey-link submissions MUST be rejected, and no new record value may be stored through any surface. Viewing (data access ≥ `read_only`) and exporting follow the permissions as usual; `project_admin` structure changes remain possible ("admin users can still interact with the project", GD-20). |
+
+### 4.20 Permission summary
 
 | Endpoint(s) | Required permission |
 |---|---|
@@ -266,6 +276,9 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 | `GET /i18n/languages`, `PUT /users/me/ui-language` | any authenticated user |
 | `GET/PUT /i18n/strings` | `is_admin` |
 | `GET /api/v1/audit` | `is_admin`, or member of the queried project (REQ-API-078) |
+| `GET .../mode` | data access ≥ `read_only` |
+| `PUT .../mode`; staging start/commit/discard (§4.19) | `project_admin` |
+| `GET .../staging` | `project_admin` |
 
 `is_admin` users hold all permission levels on every arm of every project (REQ-AUTH-023), so a permission requirement never excludes an administrator.
 

@@ -27,6 +27,7 @@ Stores project-level metadata (see the project creation form in Endpoints.md).
 - agreed_to_end_user_contract (Boolean)
 - participant_names (String, participant naming pattern)
 - event_names (String, comma-separated initial events)
+- mode (String: development | production | analysis, default development - project modes)
 - creation_time (DateTime)
 
 2. Users
@@ -109,7 +110,14 @@ The checkbox table (instrument x event pairs) that defines the design of a proje
 - event_id (Foreign Key)
 - UNIQUE (instrument_id, event_id)
 
-10. Data (Records)
+10. Project Staging (production mode only)
+At most one open staging set per project: a snapshot of the staged design, applied to the live structure tables on commit (all in one transaction) and removed on commit or discard.
+- project_id (Primary Key, Foreign Key - one open set per project)
+- design (Text, JSON snapshot of the staged design: instruments with fields, arms with events, instrument-event mapping)
+- opened_by (Foreign Key, nullable)
+- opened_at (DateTime)
+
+11. Data (Records)
 Entity-attribute-value layout, exactly as mandated by Endpoints.md: adding a new field or a new project never changes this table layout.
 - project_id (Foreign Key)
 - record_id (String)

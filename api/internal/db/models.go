@@ -126,8 +126,17 @@ type Field struct {
 	Calculation         sql.NullString
 	MatrixGroup         sql.NullString
 	PersonalInformation bool
+	DirectIdentifier    bool // user-set on any field; preset for email/MRN/phone types (REQ-EXP-020)
 	ExportApproved      bool
 	Position            int
+}
+
+// ValidationType is one validation_types row (REQ-DB-033): a named regular
+// expression resolving non-built-in validation types (§4.2).
+type ValidationType struct {
+	Name    string
+	Regex   string
+	Builtin bool
 }
 
 // DataValue is one EAV row (REQ-DB-015…020).
@@ -242,7 +251,7 @@ type AuditRecordView struct {
 	Email       sql.NullString
 	Token       string
 	ProjectID   int64
-	RecordIDs   string // JSON array of record ids
+	RecordIDs   string         // JSON array of record ids
 	Instruments sql.NullString // JSON array
 	CreatedAt   string
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+
+	"csms/api/internal/validate"
 )
 
 // nextPosition returns the next available position value for rows within
@@ -441,7 +443,7 @@ const fieldColumns = `id, project_id, instrument_id, field_name, field_label,
 	field_type, section_header, choices, field_note,
 	validation_type, validation_format, validation_min, validation_max,
 	required, branching_logic, calculation, matrix_group,
-	personal_information, export_approved, position`
+	personal_information, direct_identifier, export_approved, position`
 
 func scanField(row interface{ Scan(dest ...any) error }) (Field, error) {
 	var (
@@ -459,18 +461,20 @@ func scanField(row interface{ Scan(dest ...any) error }) (Field, error) {
 		calculation    any
 		matrixGroup    any
 		personalInfo   int
+		directIdent    int
 		exportApproved int
 	)
 	err := row.Scan(&f.ID, &f.ProjectID, &f.InstrumentID, &f.FieldName, &fieldLabel,
 		&f.FieldType, &sectionHeader, &choices, &fieldNote,
 		&validationType, &validationFmt, &validationMin, &validationMax,
 		&required, &branchingLogic, &calculation, &matrixGroup,
-		&personalInfo, &exportApproved, &f.Position)
+		&personalInfo, &directIdent, &exportApproved, &f.Position)
 	if err != nil {
 		return f, err
 	}
 	f.Required = required != 0
 	f.PersonalInformation = personalInfo != 0
+	f.DirectIdentifier = directIdent != 0
 	f.ExportApproved = exportApproved != 0
 	if v, ok := nullAnyString(fieldLabel); ok {
 		f.FieldLabel = sql.NullString{String: v, Valid: true}
@@ -509,7 +513,9 @@ func scanField(row interface{ Scan(dest ...any) error }) (Field, error) {
 }
 
 // AddField inserts a field; position defaults to the end of its instrument's
-// field list.
+// field list. The direct_identifier flag presets to true for identifier-shaped
+// validation types — email, MRN, international/national phone (REQ-EXP-020);
+// the designer MAY clear it afterwards.
 func (s *Store) AddField(ctx context.Context, f *Field) (int64, error) {
 	if f.Position == 0 {
 		if err := s.nextPosition(ctx, `fields`, `project_id = ? AND instrument_id = ?`,
@@ -517,22 +523,50 @@ func (s *Store) AddField(ctx context.Context, f *Field) (int64, error) {
 			return 0, err
 		}
 	}
+	if !f.DirectIdentifier && validate.PresetDirectIdentifier(f.ValidationType.String) {
+		f.DirectIdentifier = true
+	}
 	res, err := s.DB.ExecContext(ctx,
 		`INSERT INTO fields (project_id, instrument_id, field_name, field_label,
 			field_type, section_header, choices, field_note,
 			validation_type, validation_format, validation_min, validation_max,
 			required, branching_logic, calculation, matrix_group,
-			personal_information, export_approved, position)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			personal_information, direct_identifier, export_approved, position)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		f.ProjectID, f.InstrumentID, f.FieldName, nullStr(f.FieldLabel),
 		f.FieldType, nullStr(f.SectionHeader), nullStr(f.Choices), nullStr(f.FieldNote),
 		nullStr(f.ValidationType), nullStr(f.ValidationFormat), nullStr(f.ValidationMin), nullStr(f.ValidationMax),
 		boolToInt(f.Required), nullStr(f.BranchingLogic), nullStr(f.Calculation), nullStr(f.MatrixGroup),
-		boolToInt(f.PersonalInformation), boolToInt(f.ExportApproved), f.Position)
+		boolToInt(f.PersonalInformation), boolToInt(f.DirectIdentifier), boolToInt(f.ExportApproved), f.Position)
 	if err != nil {
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// ListValidationTypes returns the validation-type registry (REQ-DB-033);
+// seeded entries first, then by name — the order the designer lists
+// (GET /api/v1/validationTypes, REQ-API-104).
+func (s *Store) ListValidationTypes(ctx context.Context) ([]ValidationType, error) {
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT name, regex, builtin FROM validation_types ORDER BY builtin DESC, name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ValidationType
+	for rows.Next() {
+		var (
+			vt      ValidationType
+			builtin int
+		)
+		if err := rows.Scan(&vt.Name, &vt.Regex, &builtin); err != nil {
+			return nil, err
+		}
+		vt.Builtin = builtin != 0
+		out = append(out, vt)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) GetField(ctx context.Context, id int64) (*Field, error) {

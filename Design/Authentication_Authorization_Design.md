@@ -181,7 +181,7 @@ The rule is orthogonal to the levels: the level governs which actions are allowe
 | survey link | link token | link → (project, record, instrument) with `revoked = 0`; fill-only on that (record, instrument) — every other content, record, or instrument is 403 (REQ-AUTH-039, REQ-API-083); revocation takes effect immediately (REQ-AUTH-040) |
 | administration API (`/api/v1/*`) | service token + user id | §4.1 + §4.2 for the acting user (REQ-AUTH-013) |
 
-The endpoint→permission mapping is the normative summary in `API_Endpoints_Requirements.md` §4.19. Access to a project or record the caller is not entitled to is rejected with a consistent 403 that does not disclose existence (REQ-API-007, REQ-AUTH-026).
+The endpoint→permission mapping is the normative summary in `API_Endpoints_Requirements.md` §4.20. Access to a project or record the caller is not entitled to is rejected with a consistent 403 that does not disclose existence (REQ-API-007, REQ-AUTH-026).
 
 ### 4.4 Account active rule (GD-19, REQ-AUTH-006/052/053)
 

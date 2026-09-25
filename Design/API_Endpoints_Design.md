@@ -73,6 +73,7 @@ HTTP status mapping (REQ-API-039):
 | missing/invalid token | 401 | `Invalid token` (same body whether or not the token exists — REQ-AUTH-032) |
 | unknown/missing `content`, or `record` without supported `action` | 400 | `Invalid content` |
 | insufficient permission (incl. `export_none`, read-only import) | 403 | `Permission denied` |
+| write to an analysis-mode project (`import` / `delete`; survey submissions included) | 403 | `Project in analysis mode` (GD-20, REQ-API-109) |
 | rate limit exceeded (when enabled) | 429 | `Rate limit exceeded` |
 | import with per-record validation failures | 200 | — (per-record result codes, §3.7.2) |
 
@@ -194,7 +195,7 @@ Minimum normative support: equality on string fields, `[field]="value"`, and com
 
 ### 3.7 `content=record&action=import`
 
-Requires data access ≥ `view_edit` on the record's arm (REQ-API-033); a `read_only`/`no_access` token is rejected (403 `Permission denied`).
+Requires data access ≥ `view_edit` on the record's arm (REQ-API-033); a `read_only`/`no_access` token is rejected (403 `Permission denied`). In **analysis mode** every import is rejected — 403 `Project in analysis mode` (GD-20, REQ-API-109); reads and exports are unaffected.
 
 #### 3.7.1 Request shape (REQ-API-031)
 
@@ -233,7 +234,7 @@ All-or-nothing per record: a failed value stores nothing of that record (single 
 
 ### 3.8 `content=record&action=delete` (GD-3, REQ-API-036)
 
-Requires data access ≥ `delete` on the record's arm. Removes the record's values — scoped by the supplied `records[]`/`events[]`/`fields[]`, or the whole record — and, when a record's last value is removed, the record itself. Audit: `record_deleted` **with the deleted values** (REQ-AUD-009, `Audit_Logging_Design.md` §3.2).
+Requires data access ≥ `delete` on the record's arm. In analysis mode the call is rejected — 403 `Project in analysis mode` (GD-20, REQ-API-109). Removes the record's values — scoped by the supplied `records[]`/`events[]`/`fields[]`, or the whole record — and, when a record's last value is removed, the record itself. Audit: `record_deleted` **with the deleted values** (REQ-AUD-009, `Audit_Logging_Design.md` §3.2).
 
 Request: `token=…&content=record&action=delete&records[0]=8DISC042` (optionally `events[]`/`fields[]` to scope).
 
@@ -256,7 +257,7 @@ A survey link token (`survey_links.token`, `Database_Schema_Design.md` §8) is a
 | `content=metadata` | the field definitions of that instrument (a `forms[]` naming another instrument → 403) |
 | `content=record&action=import` | values for that record and that instrument |
 
-Every other `content` (including `export` and `delete`), another record, or another instrument is rejected with 403 `Permission denied` (REQ-API-083, REQ-AUTH-039). A revoked link is rejected on every call (REQ-AUTH-040). Link tokens are subject to the §3.9 rate limit (REQ-API-038). Submissions are audit-logged as `survey_submitted` — success and failure (`Audit_Logging_Design.md` §3.6). The public survey page is served by the PHP application; the browser never calls `/api/v1/*` from it (GD-1, REQ-API-084).
+Every other `content` (including `export` and `delete`), another record, or another instrument is rejected with 403 `Permission denied` (REQ-API-083, REQ-AUTH-039). In an analysis-mode project the permitted import is rejected too — `Project in analysis mode` (GD-20, REQ-API-109); the survey page then shows its closed state (`User_Interface_Design.md` §8.8). A revoked link is rejected on every call (REQ-AUTH-040). Link tokens are subject to the §3.9 rate limit (REQ-API-038). Submissions are audit-logged as `survey_submitted` — success and failure (`Audit_Logging_Design.md` §3.6). The public survey page is served by the PHP application; the browser never calls `/api/v1/*` from it (GD-1, REQ-API-084).
 
 ## 4. Administration API — `/api/v1/`
 
@@ -291,7 +292,7 @@ Every error is a JSON object with a consistent shape:
 | 403 | `account_disabled` | login with a disabled account (including auto-disabled by the inactivity rule — `account_auto_disabled` audit first, REQ-AUTH-053; audit `login_failure`) |
 | 403 | `account_expired` | login with an account whose `valid_until` has passed (GD-19, REQ-AUTH-052; audit `login_failure`) |
 | 404 | `not_found` | an unknown path resource (a user, project, arm, event, instrument, field, or group that does not exist) |
-| 409 | `conflict` | a state violation — duplicate name (project, role, event label, instrument, field, group); deleting an arm that still has events or data (DEV-API-6); deleting a group that still has records (ASM-AUTH-4); deleting a field referenced by an active expression; an event rename colliding with an existing `unique_event_name` (§4.9) |
+| 409 | `conflict` | a state violation — duplicate name (project, role, event label, instrument, field, group); deleting an arm that still has events or data (DEV-API-6); deleting a group that still has records (ASM-AUTH-4); deleting a field referenced by an active expression; an event rename colliding with an existing `unique_event_name` (§4.9); a mode transition outside the allowed set, leaving production with an open staging set, opening a second staging set, committing breaking changes without acknowledgement, or a structure change in production mode while no staging set is open (§4.21) |
 | 500 | `internal` | unexpected failure; `message` carries no details |
 
 ### 4.3 Session (REQ-API-044, REQ-API-045)
@@ -695,9 +696,66 @@ Record scope and transformation are orthogonal (REQ-API-092, REQ-AUTH-045): the 
 
 Audit: `project_ended` with the provision and the affected counts (`Audit_Logging_Design.md` §3.3; `Data_Export_Anonymization_Design.md` §8).
 
+### 4.21 Project modes and staging (GD-20, REQ-API-105…109)
+
+Every project is in exactly one mode (`projects.mode`, `Database_Schema_Design.md` §4): `development` (default for new projects), `production`, or `analysis`. Only `project_admin` changes the mode or runs staging (an `is_admin` user is covered by REQ-AUTH-023).
+
+**`GET /api/v1/projects/{id}/mode`** — data access ≥ `read_only` + project visibility. 200:
+
+```json
+{ "mode": "production", "staging_open": true }
+```
+
+**`PUT /api/v1/projects/{id}/mode`** — `project_admin`; idempotent (REQ-API-042). Body `{ "mode": "production" }`, plus `keep_data` where the transition demands it:
+
+| Transition | Body | Effect |
+|---|---|---|
+| development → production | `{ "mode": "production", "keep_data": true \| false }` — `keep_data` **required** (missing → 400 `invalid_request`) | `true`: all stored record data is kept. `false`: the project's record data is deleted with the same scope as the end-provision `delete` (`Data_Export_Anonymization_Design.md` §7.3 — EAV rows, `record_entities`, `survey_links`, `anon_offsets`; metadata, structure, memberships, and audit kept); affected counts are in the response |
+| production → development | `{ "mode": "development" }` | all data kept; rejected (409) while a staging set is open — commit or discard first (REQ-API-105) |
+| production ↔ analysis | `{ "mode": "analysis" }` / `{ "mode": "production" }` | all data kept; leaving/entering production applies the same open-staging rule |
+| any other pair (incl. development ↔ analysis) | — | 409 `conflict` — not an allowed transition (GD-20 table) |
+
+200 — `{ "mode": "<new mode>", "records_deleted": 0 }` (`records_deleted` set only for the delete-on-transition case). Audit `project_mode_changed` with old/new mode and the `keep_data` decision (`Audit_Logging_Design.md` §3.3).
+
+**Mode effects (normative):**
+
+| Mode | Setup (structure changes) | Data entry (import / delete / survey submission) | Read / export |
+|---|---|---|---|
+| development | applies immediately | allowed | allowed |
+| production | requires an open staging set; applies on commit (§4.21 staging below) | allowed — against the **active** design, also while a set is staged | per permissions |
+| analysis | allowed for admin users (`project_admin`); applies immediately | **disabled** — 403 `Project in analysis mode` on every surface (REQ-API-109) | per permissions ("viewing and exporting remain available", GD-20) |
+
+**Staging (production only, REQ-API-106/107).** One open staging set per project (`project_staging`, `Database_Schema_Design.md` §5): a JSON snapshot of the live design taken at start; all structure endpoints (§4.8–§4.12) then read and write the **staged** design for `project_admin` users (response shapes unchanged), while every data-facing endpoint keeps serving the **active** design until commit.
+
+- **`POST /api/v1/projects/{id}/staging`** — `project_admin`; production mode only (409 otherwise); a second set while one is open → 409. Snapshots the live design. 201 — `{ "opened_at": "…", "opened_by": 3 }`. Audit `staging_started`.
+- **`GET /api/v1/projects/{id}/staging`** — `project_admin`. 200 — state plus the staged diff, computed against the active design:
+
+```json
+{ "open": true, "opened_at": "2026-09-25 08:00:00", "opened_by": 3,
+  "changes": [ { "kind": "field_added", "object": "intake.age_at_entry", "breaking": false },
+               { "kind": "field_deleted", "object": "intake.old_score", "breaking": true,
+                 "reason": "deleting a field makes its stored values inaccessible" } ] }
+```
+
+- **`POST /api/v1/projects/{id}/staging/commit`** — `project_admin`; body optionally `{ "acknowledge_breaking": true }`. The staged diff is classified per the table below; if it contains breaking changes and `acknowledge_breaking` is not `true` → 409 `conflict` listing them. On success the snapshot is applied to the live structure tables in **one transaction** (the whole set activates at once, GD-20) and the staging row is removed. 200 — `{ "applied": { "instruments": 2, "fields": 5, "events": 1, "mapping_pairs": 3 } }`. Audit `staging_committed` with the applied counts and the acknowledged breaking changes.
+- **`POST /api/v1/projects/{id}/staging/discard`** — `project_admin`. 204; the staging row is removed without applying. Audit `staging_discarded`.
+
+**Breaking-change classification (normative, REQ-API-108).** The rule: a change is breaking when it would make existing recorded data inconsistent or inaccessible; everything else is non-breaking.
+
+| Staged change | Classification |
+|---|---|
+| add an arm / event / instrument / field; map or unmap an instrument to an event | non-breaking |
+| change a field label/description, field note, section header; reorder fields/instruments/events (GD-8 invariant enforced as ever) | non-breaking |
+| rename a field (stored values renamed in the same transaction, REQ-VAL-014) | non-breaking — values stay accessible under the new name |
+| add options to an existing dropdown/radio/matrix | non-breaking |
+| delete a field | **breaking** — its stored values are removed (DEV-API-5) |
+| change a field's type, or its validation type beyond the current values | **breaking** — stored values may no longer satisfy the new rules |
+| remove a choice option that stored values use, or re-code existing options | **breaking** — stored codes lose their label/meaning (removing an unused option is non-breaking) |
+| delete an instrument or event that holds data; delete an arm with events or data (DEV-API-6) | **breaking** — the keyed values become inaccessible |
+
 ## 5. Permission summary
 
-The normative endpoint → permission mapping is in `API_Endpoints_Requirement.md` §4.19; it is reproduced here as an overview:
+The normative endpoint → permission mapping is in `API_Endpoints_Requirement.md` §4.20; it is reproduced here as an overview:
 
 | Endpoints | Required permission |
 |---|---|
@@ -724,5 +782,8 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirement.m
 | `GET /i18n/languages`, `PUT /users/me/ui-language` | any authenticated user |
 | `GET/PUT /i18n/strings` | `is_admin` |
 | `POST …/end-provision` (§4.20) | `is_admin` (BR-009) |
+| `GET …/mode` (§4.21) | data access ≥ `read_only` + visibility |
+| `PUT …/mode`; staging start/commit/discard (§4.21) | `project_admin` |
+| `GET …/staging` (§4.21) | `project_admin` |
 
 `is_admin` users hold all permission levels on every arm of every project (REQ-AUTH-023), so a permission requirement never excludes an administrator.

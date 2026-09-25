@@ -7,6 +7,7 @@ Logged Events
 - Data Changes: Creation, modification, and deletion of records.
 - Record Views: All views of records, i.e. every record a user pulls through the API.
 - Project Structure: Changes to instruments, fields, or project settings.
+- Project Modes: Mode changes (with the keep-or-delete decision for development to production) and the staging lifecycle - start, commit (including the breaking changes acknowledged), discard.
 - Exports: Full or anonymized data exports.
 
 Log Details

@@ -154,6 +154,9 @@ type metaRow struct {
 	BranchingLogic   string `json:"branching_logic"`
 	MatrixGroupName  string `json:"matrix_group_name"`
 	RecordIdentifier string `json:"record_identifier"`
+	// This system's key beyond the REDCap shape (REQ-API-019): tolerated by
+	// naive parsers as an extra key, cf. REQ-API-018.
+	DirectIdentifier string `json:"direct_identifier"`
 }
 
 func (h *Handler) contentMetadata(ctx context.Context, w http.ResponseWriter, enc string, sub *subject, p Params) {
@@ -193,6 +196,7 @@ func (h *Handler) contentMetadata(ctx context.Context, w http.ResponseWriter, en
 			// GD-8: the record identifier is the first field of the
 			// first instrument (ListFields is in that order).
 			RecordIdentifier: yn(i == 0),
+			DirectIdentifier: yn(f.DirectIdentifier),
 		})
 	}
 	render(w, enc, p.Delimiter(), rows)

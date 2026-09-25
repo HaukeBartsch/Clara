@@ -19,7 +19,8 @@ Key Views
 3. Project Workspace
 - Purpose: Main hub for a specific study, shown when the user selects a project.
 - Components:
-    - Summary: Number of records, instruments, and fields in the project.
+    - Summary: Number of records, instruments, and fields in the project; the current project mode (development | production | analysis) as a badge. Project admins can change the mode: development to production asks whether previously stored data is kept or deleted; other transitions confirm that all data is kept.
+    - Staging (production mode): Setup and Design pages show staging controls - start staging, a persistent "changes are staged" banner with commit/discard, and a commit dialog that lists breaking changes (each with its reason) and requires acknowledgement. In development mode setup edits apply directly.
     - Actions (presented only if the user's role/permission allows them):
         - Setup (permission "project_admin"): Add/remove arms, instruments, events, and mappings between them.
         - Design: Create a new instrument, edit fields in an existing instrument.
@@ -33,7 +34,7 @@ Key Views
 - A mapping page shows the instrument-by-event mapping (table with checkboxes) for each arm. A single arm is assumed to start with.
 
 5. Data Entry Form
-- Purpose: Collecting clinical data.
+- Purpose: Collecting clinical data. In analysis-mode projects the form is read-only (no submit control); the survey page shows a closed state.
 - Components:
     - Dynamic rendering of fields (Text, Dropdowns, Radio buttons, Matrix).
     - Real-time validation feedback (client-side JavaScript + HTML5; authoritative validation in the API).

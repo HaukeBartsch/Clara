@@ -60,7 +60,7 @@ func TestCSVCell(t *testing.T) {
 
 func TestValidateValueEmpty(t *testing.T) {
 	f := Field{Name: "age", Type: "text", ValidationType: "integer", ValidationMin: "1"}
-	if v := ValidateValue(f, ""); v != nil {
+	if v := ValidateValue(f, "", nil); v != nil {
 		t.Errorf("empty value must be a no-op (REQ-VAL-024), got %v", v)
 	}
 }
@@ -68,13 +68,13 @@ func TestValidateValueEmpty(t *testing.T) {
 func TestValidateValueNonValueFields(t *testing.T) {
 	for _, typ := range []string{"description", "header"} {
 		f := Field{Name: "info", Type: typ}
-		v := ValidateValue(f, "x")
+		v := ValidateValue(f, "x", nil)
 		if v == nil || v.Code != CodeNonValueField {
 			t.Errorf("type %q: got %v, want %s", typ, v, CodeNonValueField)
 		}
 	}
 	f := Field{Name: "bmi", Type: "calculated"}
-	v := ValidateValue(f, "23.5")
+	v := ValidateValue(f, "23.5", nil)
 	if v == nil || v.Code != CodeCalculatedRO {
 		t.Errorf("calculated: got %v, want %s", v, CodeCalculatedRO)
 	}
@@ -125,7 +125,7 @@ func TestValidateValueTypes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := Field{Name: "f", Type: "text", ValidationType: tt.typ}
-			v := ValidateValue(f, tt.in)
+			v := ValidateValue(f, tt.in, seededRegistry(t))
 			if tt.ok && v != nil {
 				t.Errorf("ValidateValue(%q) = %v, want valid", tt.in, v)
 			}
@@ -142,21 +142,21 @@ func TestValidateValueChoices(t *testing.T) {
 		Type:    "dropdown",
 		Choices: "1$Active##2$Inactive##3$Deceased",
 	}
-	if v := ValidateValue(f, "2"); v != nil {
+	if v := ValidateValue(f, "2", nil); v != nil {
 		t.Errorf("valid code rejected: %v", v)
 	}
-	v := ValidateValue(f, "9")
+	v := ValidateValue(f, "9", nil)
 	if v == nil || v.Code != CodeChoiceInvalid {
 		t.Errorf("invalid code: got %v, want %s", v, CodeChoiceInvalid)
 	}
 	// labels are not codes (REQ-VAL-022/023)
-	if v := ValidateValue(f, "Active"); v == nil || v.Code != CodeChoiceInvalid {
+	if v := ValidateValue(f, "Active", nil); v == nil || v.Code != CodeChoiceInvalid {
 		t.Errorf("label as value: got %v, want %s", v, CodeChoiceInvalid)
 	}
 	// choices are enforced regardless of validation type
 	g := f
 	g.ValidationType = "integer"
-	if v := ValidateValue(g, "9"); v == nil || v.Code != CodeChoiceInvalid {
+	if v := ValidateValue(g, "9", nil); v == nil || v.Code != CodeChoiceInvalid {
 		t.Errorf("choice check must precede type: got %v, want %s", v, CodeChoiceInvalid)
 	}
 }
@@ -227,7 +227,7 @@ func TestRangeCheck(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			v := ValidateValue(tt.f, tt.in)
+			v := ValidateValue(tt.f, tt.in, seededRegistry(t))
 			if tt.want == "" && v != nil {
 				t.Errorf("ValidateValue(%q) = %v, want valid", tt.in, v)
 			}
@@ -291,5 +291,90 @@ func TestChoiceCodes(t *testing.T) {
 	}
 	if got := choiceCodes(""); got != nil {
 		t.Errorf("choiceCodes(\"\") = %v, want nil", got)
+	}
+}
+
+func TestRegistryTypes(t *testing.T) {
+	tests := []struct {
+		name string
+		typ  string
+		in   string
+		ok   bool
+	}{
+		// email (seeded registry entry, REQ-VAL-017/043)
+		{"email ok", "email", "user.name+tag@example.co", true},
+		{"email rejected", "email", "user@localhost", false},
+
+		// MRN (seeded registry entry, REQ-VAL-018/043)
+		{"mrn 11 digits", "MRN", "12345678901", true},
+		{"mrn 10 rejected", "MRN", "1234567890", false},
+
+		// international phone (REQ-VAL-043): "+47 55566777"
+		{"intl with space", "international phone", "+47 55566777", true},
+		{"intl no space", "international phone", "+4755566777", true},
+		{"intl missing plus rejected", "international phone", "47 55566777", false},
+		{"intl leading zero rejected", "international phone", "+07 55566777", false},
+		{"intl too short rejected", "international phone", "+47 556", false},
+		{"intl letters rejected", "international phone", "+47 555abcd", false},
+
+		// national phone (REQ-VAL-043): "55566777"
+		{"national 8 digits", "national phone", "55566777", true},
+		{"national 7 rejected", "national phone", "5556777", false},
+		{"national 9 rejected", "national phone", "555667771", false},
+		{"national plus rejected", "national phone", "+4755566777", false},
+	}
+	reg := seededRegistry(t)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := Field{Name: "f", Type: "text", ValidationType: tt.typ}
+			v := ValidateValue(f, tt.in, reg)
+			if tt.ok && v != nil {
+				t.Errorf("ValidateValue(%q) = %v, want valid", tt.in, v)
+			}
+			if !tt.ok && (v == nil || v.Code != CodeTypeInvalid) {
+				t.Errorf("ValidateValue(%q) = %v, want %s", tt.in, v, CodeTypeInvalid)
+			}
+		})
+	}
+}
+
+func TestRegistryUnknownTypeFailsClosed(t *testing.T) {
+	f := Field{Name: "f", Type: "text", ValidationType: "barcode"}
+	for _, reg := range []*Registry{nil, seededRegistry(t)} {
+		v := ValidateValue(f, "anything", reg)
+		if v == nil || v.Code != CodeTypeInvalid {
+			t.Errorf("unknown type with reg=%v: got %v, want %s", reg != nil, v, CodeTypeInvalid)
+		}
+	}
+}
+
+func TestNewRegistryRejectsBadPattern(t *testing.T) {
+	if _, err := NewRegistry([]RegistryEntry{{Name: "broken", Regex: `^([0-9`}}); err == nil {
+		t.Fatal("NewRegistry accepted an uncompilable pattern")
+	}
+}
+
+func TestRegistryEntriesCopy(t *testing.T) {
+	reg := seededRegistry(t)
+	entries := reg.Entries()
+	if len(entries) != 4 {
+		t.Fatalf("Entries() = %d rows, want 4", len(entries))
+	}
+	entries[0].Name = "mutated"
+	if reg.Entries()[0].Name != "email" {
+		t.Error("Entries() must return a copy; caller mutation leaked into the registry")
+	}
+}
+
+func TestPresetDirectIdentifier(t *testing.T) {
+	for _, typ := range []string{"email", "MRN", "international phone", "national phone"} {
+		if !PresetDirectIdentifier(typ) {
+			t.Errorf("PresetDirectIdentifier(%q) = false, want true (REQ-EXP-020)", typ)
+		}
+	}
+	for _, typ := range []string{"", "integer", "floating point", "date", "datetime", "custom"} {
+		if PresetDirectIdentifier(typ) {
+			t.Errorf("PresetDirectIdentifier(%q) = true, want false", typ)
+		}
 	}
 }

@@ -15,7 +15,7 @@ This document contains the **normative** logical schema and DDL. MariaDB is the 
 - Foreign keys declared everywhere (REQ-DB-004); MariaDB `ENGINE=InnoDB`, SQLite `PRAGMA foreign_keys=ON` per connection
 - Identifiers: `snake_case`; string identifiers `VARCHAR(255)`; email `VARCHAR(254)`; UUIDs `CHAR(36)`
 - **Canonical value formats** (resolves ASM-VAL-1; GD-16, REQ-VAL-041): dates `YYYY-MM-DD±HH:MM`; date-times `YYYY-MM-DD HH:MM±HH:MM` — no seconds, **with the timezone of collection** (`±HH:MM`, UTC = `+00:00`); values are stored as collected, never converted to UTC (clinical data, not system timestamps — system timestamps remain UTC per REQ-DB-005/GD-7); choice lists use the REDCap encoding `code$label##code$label`; free-form text has **no application length cap** beyond the storage type (REQ-VAL-021), `LONGTEXT`/`TEXT`
-- **Migrations** (REQ-DB-003): a `schema_version` table records applied versions; migrations are numbered `NNN_name.up.sql`, applied in order, idempotent (`CREATE TABLE IF NOT EXISTS`, guarded `ALTER`); the API applies them at startup
+- **Migrations** (REQ-DB-003): a `schema_version` table records applied versions; migrations are numbered `NNN_name.up.sql`, applied in order, idempotent (`CREATE TABLE IF NOT EXISTS`, guarded `ALTER`); the API applies them at startup (the project modes of GD-20 arrive as one such migration: `projects.mode` + `project_staging`)
 
 ## 2. Logical Type Map
 
@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS projects (            -- REQ-DB-006 (simplified, GD-1
     start_date                  DATE,
     end_date                    DATE,
     participant_names           VARCHAR(255) NOT NULL,   -- naming pattern (REQ-DB-007)
+    mode                        VARCHAR(16) NOT NULL DEFAULT 'development',  -- development | production | analysis (GD-20, REQ-DB-034); API allowlist
     creation_time               DATETIME NOT NULL
 );
 
@@ -196,6 +197,17 @@ INSERT INTO validation_types (name, regex, builtin) SELECT 'email',             
 INSERT INTO validation_types (name, regex, builtin) SELECT 'MRN',                 '^[0-9]{11}$',                                          1 WHERE NOT EXISTS (SELECT 1 FROM validation_types WHERE name = 'MRN');
 INSERT INTO validation_types (name, regex, builtin) SELECT 'international phone', '^\+[1-9][0-9 ]{7,14}$',                                1 WHERE NOT EXISTS (SELECT 1 FROM validation_types WHERE name = 'international phone');
 INSERT INTO validation_types (name, regex, builtin) SELECT 'national phone',      '^[0-9]{8}$',                                           1 WHERE NOT EXISTS (SELECT 1 FROM validation_types WHERE name = 'national phone');
+
+-- One OPEN staging set per project at most (primary key); the row exists only while
+-- staging is open in production mode (GD-20, REQ-DB-035). Commit applies the snapshot
+-- to the live structure tables in one transaction and deletes the row; discard only
+-- deletes the row. Data collection never reads this table (REQ-API-107).
+CREATE TABLE IF NOT EXISTS project_staging (
+    project_id  INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+    design      TEXT NOT NULL,       -- staged-design snapshot (JSON): {instruments:[{name,position,is_survey,branching_logic,fields:[…]}], arms:[{arm_num,name,events:[…]}], mapping:{arm_num:{instrument:[unique_event_name]}}}
+    opened_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    opened_at   DATETIME NOT NULL
+);
 ```
 
 Notes: matrix rows are ordinary `fields` rows sharing `matrix_group`/`choices`/validation (REQ-DB-014); the record identifier is the first field of the first instrument by `position` (GD-8 — enforced by the API, not the schema). `validation_type` resolves against `validation_types` at validation time; the four built-in structured types are validated by code and cannot be shadowed by a registry row (§4.2). The API presets `direct_identifier = 1` when a field's validation type is `email`, `MRN`, `international phone` or `national phone`; the user may set or clear it on any field (REQ-EXP-020). **Event order (GD-15, REQ-DB-011):** within an arm, events with a `period` sort by it ascending (ties by `position`); events with `period = NULL` sort by `position` after them. `position` is set by the API at creation (end of list) and by the events-order endpoint (REQ-API-103); the canonical order is computed by the API (the schema stores the inputs only) and applies to the UI event table, the record-status dashboard, `content=event`, and `content=formEventMapping`.
@@ -366,6 +378,7 @@ Reference scale (REQ-DB-025): 100 projects × 10,000 records × 200 fields × 10
 | simplified `projects` (master spec "Details", GD-17) | `projects` keeps name, organization, PI, DM, REK, dates, naming pattern (§4); removed attributes are ordinary instrument data if wanted (REQ-DB-032) |
 | table-based authentication (master spec "Details", GD-18) | `users.password_hash` (nullable, bcrypt) + `auth_source = local` (§4); plaintext never stored |
 | account validity and inactivity (master spec "Details", GD-19) | `users.valid_until` (NULL = indefinite) + `users.last_login_at` (§4); auto-disable rule in `Authentication_Authorization_Design.md` §4.4 |
+| project modes (master spec "Project modes", GD-20) | `projects.mode` (`development` default, §4) + `project_staging` JSON-snapshot table (§5 — the live structure tables stay untouched while a set is open); transition/staging rules normative in `API_Endpoints_Design.md` §4.21 |
 
 ## 12. Open Items
 

@@ -33,6 +33,8 @@ Defines the requirements for the system's audit trail: the two append-only audit
 | REQ-AUD-021 | **Survey events.** Every survey link submission (success and failure) MUST be recorded with the link token, the project, the record, the instrument, the changed values, and the timestamp (UTC); link issuance and revocation MUST be recorded as administration events (GD-9, REQ-AUTH-039/040). |
 | REQ-AUD-022 | **Data access group events.** Every group creation and deletion, every member group assignment change, every active-group switch, and every record group assignment/reassignment MUST be recorded with the acting user, the project, the affected group(s) and record(s), and the timestamp (UTC) (GD-10, REQ-AUTH-046/048). |
 | REQ-AUD-023 | **Calculated field updates.** Every system-driven recomputation MUST be recorded with the triggering user, the project, the record, the calculated field, the old and new values, and the timestamp (UTC) (REQ-VAL-038). |
+| REQ-AUD-024 | **Account auto-disable event.** The inactivity auto-disable of the account active rule MUST be recorded (`account_auto_disabled`, `source=system`) with the account, its last successful login, and the applied limit (GD-19, REQ-AUTH-053). |
+| REQ-AUD-025 | **Project mode events.** Every mode change MUST be recorded with the old and new mode and — for development → production — the keep/delete decision; every staging set open, commit, and discard MUST be recorded, a commit additionally with the staged changes applied and the breaking changes that were acknowledged (GD-20, REQ-API-105/106). |
 
 ## 4. Record View Log — `audit_record_views`
 

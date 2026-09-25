@@ -18,6 +18,64 @@ func mustNullInt64(v int64) sql.NullInt64 {
 	return sql.NullInt64{Int64: v, Valid: true}
 }
 
+func TestFieldDirectIdentifierPreset(t *testing.T) {
+	s := migrateTestStore(t)
+	ctx := context.Background()
+	pid := seedProject(t, s, ctx)
+
+	insID, err := s.AddInstrument(ctx, &Instrument{ProjectID: pid, Name: "contact"})
+	if err != nil {
+		t.Fatalf("AddInstrument: %v", err)
+	}
+
+	// An identifier-shaped validation type presets the flag (REQ-EXP-020)…
+	emailID, err := s.AddField(ctx, &Field{
+		ProjectID: pid, InstrumentID: insID, FieldName: "email_work",
+		FieldType: "text", ValidationType: sql.NullString{String: "email", Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("AddField email: %v", err)
+	}
+	got, err := s.GetField(ctx, emailID)
+	if err != nil {
+		t.Fatalf("GetField email: %v", err)
+	}
+	if !got.DirectIdentifier {
+		t.Error("email field: DirectIdentifier = false, want preset true (REQ-EXP-020)")
+	}
+
+	// …a plain type does not…
+	ageID, err := s.AddField(ctx, &Field{
+		ProjectID: pid, InstrumentID: insID, FieldName: "age",
+		FieldType: "text", ValidationType: sql.NullString{String: "integer", Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("AddField age: %v", err)
+	}
+	got, err = s.GetField(ctx, ageID)
+	if err != nil {
+		t.Fatalf("GetField age: %v", err)
+	}
+	if got.DirectIdentifier {
+		t.Error("integer field: DirectIdentifier = true, want false")
+	}
+
+	// …and an explicit set on any field round-trips (user choice, DEV-EXP-5).
+	if _, err := s.AddField(ctx, &Field{
+		ProjectID: pid, InstrumentID: insID, FieldName: "home_address",
+		FieldType: "text", DirectIdentifier: true,
+	}); err != nil {
+		t.Fatalf("AddField address: %v", err)
+	}
+	got, err = s.GetFieldByName(ctx, pid, "home_address")
+	if err != nil {
+		t.Fatalf("GetFieldByName address: %v", err)
+	}
+	if !got.DirectIdentifier {
+		t.Error("explicitly flagged field: DirectIdentifier lost on round-trip")
+	}
+}
+
 func TestSurveyLinkRoundTrip(t *testing.T) {
 	s := migrateTestStore(t)
 	ctx := context.Background()
