@@ -589,12 +589,15 @@ func (s *Store) ListFieldsByInstrument(ctx context.Context, projectID, instrumen
 // field position — the order the data dictionary is rendered
 // (REQ-API-019, REQ-DB-013).
 func (s *Store) ListFields(ctx context.Context, projectID int64) ([]Field, error) {
+	// Order by instrument position then field position. The instrument
+	// position is read via a correlated subquery rather than a join, so the
+	// bare columns in fieldColumns are never ambiguous with instruments'
+	// own id/project_id/position.
 	rows, err := s.DB.QueryContext(ctx,
 		`SELECT `+fieldColumns+`
-		 FROM fields f
-		 JOIN instruments i ON i.id = f.instrument_id
-		 WHERE f.project_id = ?
-		 ORDER BY i.position, f.position`, projectID)
+		 FROM fields
+		 WHERE project_id = ?
+		 ORDER BY (SELECT i.position FROM instruments i WHERE i.id = fields.instrument_id), position`, projectID)
 	if err != nil {
 		return nil, err
 	}

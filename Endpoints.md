@@ -456,7 +456,7 @@ User accounts should have a limited time (days) they are valid. That time can be
 
 User accounts that do not have a login in the last N days (180) should be "disabled". An admin user needs to "enable" them again before the user can gain access to the system again. Display such information for the admin user on the user overview screen (used to assign users to projects, etc.).
 
-The generateNextRecordName is only for projects with the property "auto-generate-record-names". Such a project uses integers (start with 1) as record_ids. The second options for projects is to be "user-defined-record-names". Such names are strings like "<project ackronym>_<numeric site code>_<numeric value with leading zeros>".
+The generateNextRecordName is only for projects with the property "auto-generate-record-names". Such a project uses integers (start with 1) as record_ids. The second options for projects is to be "user-defined-record-names". Such names are strings like "<project acronym>_<numeric site code>_<numeric value with leading zeros>".
 
 For authentication with LDAP use ext-ldap native php and for OAuth workflows use a library such as jumbojett/OpenID-Connect-PHP.
 
@@ -469,3 +469,27 @@ Use responsible tables and adjust to smaller screens like tablets and phones.
 Project name: CLARA - "Clinical Logbook for Automated Research Assistance", Related to a light-towers log-book
 
 The assets/table_based_authentication_plus_user_management/ folder contains a historic FIONA user management application (table-based authentication). "AC.php" is the corresponding authentication control script that all FIONA pages are using to establish a session. **If not against otherwise specified requirements** plan the development to utilize the example layout and style of interfacing php with the web-application - pull data using json from the backend, populate rendering targets on the client.
+
+## Some more details
+
+Create some administration instructions as human readable markdown files covering initial setup and testing. 
+
+Javascript libraries like bootstrap and fonts, css should be downloaded from an CDN once and placed into local directories (where accessible). The final application pages are expected to work without access to internet so loading from local copies is the best solution.
+
+For the web interface a nice font seems to be font Geist (https://fontsource.org/fonts/geist/use).
+
+Do not use web-pack or similar technology that requires a build step for the website frontend.
+
+For performant table rendering on the website use this javascript library: https://unpkg.com/tabulator-tables.
+
+## Upgradability and versioning
+
+Upgrades: Support either a full installation or, a rolling versioned update installation. The update installation should adjust existing tables without loosing collected data (projects, instruments, fields, arms, roles, etc.). To update an installation from a compatible version to the current update installation a folder copied to the installation directory should be sufficient. Use the folders name (like clara_v1.0.0) to indicate the update installation version number. The user interface should allow admin users to start a versioned update installation process. If the process is successful (bump the version number in the database tables).
+
+## Project modes
+
+Projects should be in one of three modes - development, production, analysis. Admin users for a project should be able to set this project mode. Projects start in "development" mode with setup and data entry as usual. All functionality should work as expected. A project in development mode can be moved to "production" mode (by project admin user, ask if previously stored data should be deleted or kept). In production mode changes to the setup are staged together (start staging) before they become activated together (commit staged changes). The user can for example create addititional instruments or change the existing instruments (after start staging). During this phase all ongoing data collections are still using the currently active versions of all instruments. At any point in production the user can decide to "commit" the staged changes. A warning should inform the user which of the changes will make the database for the project inconsistent. For example, adding a new field to an instrument or changing its description should not be considered a breaking change. Adding new options to existing dropdown menues are the same (no warning). Warn the user if data is no longer accessible (deleting a field). A project in production mode should also be able to moved back to development. In mode "analysis" no more data entry should be possible but all users still have access and can export - based on their permissions.
+
+## Add missing AGENTS.md
+
+To synchronize development across several LLMs add AGENTS.md files into folders that benefit from it. Outline the rules for LLMs based on the existing project structure with Requirements, Plan, and Design documentation.
