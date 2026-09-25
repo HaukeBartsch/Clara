@@ -409,7 +409,7 @@ Marking an instrument as a survey is the `is_survey` attribute in §6.2 block C 
 
 Reached from the record status dashboard (§6.3): selecting a participant (record) opens this view; the user then selects the **event** and **instrument** (tabs/selects — the instrument must be mapped to the event, REQ-DB-012) to render the form. The unit of the form is a **(record, event, instrument)** triple (the "instrument display of a record", REQ-API-081).
 
-Gating: the view requires data access ≥ `read_only` on the record's arm + record visibility (REQ-AUTH-045); **changing values requires ≥ `view_edit`** — a `read_only` member sees the values but the submit control is absent (REQ-UI-003, REQ-API-033).
+Gating: the view requires data access ≥ `read_only` on the record's arm + record visibility (REQ-AUTH-045); **changing values requires ≥ `view_edit`** — a `read_only` member sees the values but the submit control is absent (REQ-UI-003, REQ-API-033). In an **analysis-mode** project the submit control is absent for everyone including `project_admin` — data entry is disabled (GD-20, REQ-UI-035); the form renders read-only with a translated "analysis mode — data entry is closed" notice, and the record-status dashboard's new-participant affordance (§6.3) is likewise absent.
 
 ### 8.2 Form rendering (REQ-UI-025)
 
@@ -474,6 +474,7 @@ A standalone PHP route — **no login, outside the session** (GD-1, REQ-API-084,
 - **Re-open to edit**: the respondent may re-open the link and change their responses (REQ-AUTH-042) — the page is idempotent for them; the API upserts (REQ-DB-016).
 - **Branching**: the same client-side evaluator (§8.4) applies — fields/instruments show or hide per their logic (GD-13, REQ-VAL-040).
 - **Revoked link**: the API rejects every call (403, REQ-AUTH-040) — the page shows a single translated "this link is no longer valid" state, no retry.
+- **Analysis mode**: while the project is in analysis mode the import is rejected (`Project in analysis mode`, REQ-API-109) — the page renders read-only with a translated "this survey no longer accepts responses" closed state (GD-20).
 - The browser **never** calls `/api/v1/*` from this page (REQ-UI-002, REQ-API-084); the CSRF/session rules of §3.3 do not apply (no session) — the link token is the sole credential, and it is scoped to this one (record, instrument) by the API (REQ-AUTH-039).
 
 ## 9. Multilingual (GD-12, REQ-UI-008/029/030)

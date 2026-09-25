@@ -118,6 +118,17 @@ Rules: omitted filters are empty arrays; `sensitivity` is the level applied per 
 | `dag_active_switched` | REQ-API-090 (self-service, REQ-AUTH-046) | `{"member_email":"…","group_id":7}` |
 | `dag_record_assigned` | REQ-API-091 | `{"record_id":"…","group_id":3 or null}` — `null` = unassigned; `target_record` is set |
 
+### 3.8 Project mode and staging events (REQ-AUD-025)
+
+| Code | When | `details` payload |
+|---|---|---|
+| `project_mode_changed` | `PUT /api/v1/projects/{id}/mode` succeeds (GD-20, REQ-API-105; `API_Endpoints_Design.md` §4.21) | `{"old":"development","new":"production","keep_data":false,"records_deleted":42}` — `keep_data` and `records_deleted` only on development → production; omitted on the keep-all transitions |
+| `staging_started` | `POST …/staging` opens a staging set (REQ-API-106) | `{}` |
+| `staging_committed` | `POST …/staging/commit` succeeds (REQ-API-106) — one entry for the whole commit, in the same transaction as the applied changes | `{"applied":{"instruments":2,"fields":5},"breaking_acknowledged":[{"kind":"field_deleted","object":"intake.age"}]}` — `breaking_acknowledged` lists the classified breaking changes (`API_Endpoints_Design.md` §4.21) accepted via `acknowledge_breaking:true`; omitted (or `[]`) when none |
+| `staging_discarded` | `DELETE …/staging` discards an open set (REQ-API-106) | `{"opened_at":"…"}` |
+
+Rejected transitions and rejected commits (409: disallowed transition, open staging set left behind, unacknowledged breaking change — REQ-API-105/106) write no entry (REQ-AUD-004). Staged structure edits themselves are **not** logged as `field_created`/`field_updated` and friends (§3.3 fires on the live design only); the commit's `staging_committed` entry is the audit record for the batch, and per-object detail lives in the snapshot it applied.
+
 ## 4. Record View Entries — `audit_record_views`
 
 One row per invocation of `content=record&action=export` — regardless of initiator (external caller or the PHP layer, REQ-AUD-013, ASM-API-3). Rejected invocations (invalid token, `export_none`, no visibility) write no row (REQ-AUD-004).

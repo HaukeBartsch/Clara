@@ -6,7 +6,7 @@
 
 ## 1. Purpose
 
-Fixes the top-level system design: the normative component decomposition, the boundaries between components, and how the area design documents compose into one deployable system. It maps each business requirement (BR-001…BR-012) and global decision (GD-1…GD-19) of the charter to the area design that realizes it, and states how the charter's success criteria (§7) are verifiable.
+Fixes the top-level system design: the normative component decomposition, the boundaries between components, and how the area design documents compose into one deployable system. It maps each business requirement (BR-001…BR-013) and global decision (GD-1…GD-20) of the charter to the area design that realizes it, and states how the charter's success criteria (§7) are verifiable.
 
 The area design documents remain normative within their own areas; this document is normative for the **cross-area system view** — the component set, the inter-component boundaries, and the composition. Adding a component, moving a responsibility across a boundary, or changing how the areas compose is a change to this document.
 
@@ -39,6 +39,7 @@ The system is exactly these four components and no others. There is no scheduler
 | Data entry | UI form → PHP → Go API import → validation → EAV upsert + same-transaction audit row | `API_Endpoints_Design.md` §3.7, `Data_Validation_Design.md` §2, `Audit_Logging_Design.md` §3 |
 | External pull (Fiona) | `POST /api/` → token/level check → export pipeline (level + anonymization) → streamed CSV/JSON + audit + record-view row | `Data_Export_Anonymization_Design.md` §2–§6, `API_Endpoints_Design.md` §3.6 |
 | Project end | operator → `POST /api/v1/projects/{id}/end-provision` (`is_admin`) → delete / in-place anonymize + `project_ended` audit | `Data_Export_Anonymization_Design.md` §7 |
+| Mode transition / staged setup (GD-20) | `project_admin` → UI mode card or staging banner → PHP → Go API (`PUT …/mode`; staging open/edit/commit, `API_Endpoints_Design.md` §4.21) → live design changed in one transaction + audit row; analysis mode additionally gates the import and survey-submission paths | `User_Interface_Design.md` §6.6/§6.7; `Audit_Logging_Design.md` §3.8 |
 
 ## 3. Realization of Business Requirements
 
@@ -56,6 +57,7 @@ The system is exactly these four components and no others. There is no scheduler
 | BR-010 | Project visible only to an administrator or a member | `Authentication_Authorization_Design.md` §4.3 (per-surface decision paths); `API_Endpoints_Design.md` (REQ-API-007) |
 | BR-011 | Record isolation between data access groups | `Authentication_Authorization_Design.md` §4.2; `Database_Schema_Design.md` §6/§8 (`record_entities`, DAG tables) |
 | BR-012 | Account validity period + inactivity auto-disable | `Authentication_Authorization_Design.md` §4.4 (account active rule); `System_Configuration_Design.md` §3.10 |
+| BR-013 | Three project modes: staged setup changes in production, disabled data entry in analysis | `API_Endpoints_Design.md` §4.21 (mode + staging endpoints, classification); `User_Interface_Design.md` §6.6/§6.7 |
 
 ## 4. Realization of Global Decisions
 
@@ -80,6 +82,7 @@ The system is exactly these four components and no others. There is no scheduler
 | GD-17 | Simplified `projects` table; removed attributes are ordinary instrument data, no special handling | `Database_Schema_Design.md` §4 (REQ-DB-032); `API_Endpoints_Design.md` §4.5 (creation body) |
 | GD-18 | Table-based authentication: local password path tried first; bootstrap password from configuration | `Authentication_Authorization_Design.md` §2.6 (sequence F); `System_Configuration_Design.md` §3.3 |
 | GD-19 | Account validity period + inactivity auto-disable, re-enableable by an administrator | `Authentication_Authorization_Design.md` §4.4 (account active rule); `System_Configuration_Design.md` §3.10 |
+| GD-20 | Project modes (development / production / analysis): admin-only transitions, staging with breaking-change warning in production, data entry disabled in analysis | `API_Endpoints_Design.md` §4.21; `Database_Schema_Design.md` §4/§5 (`projects.mode`, `project_staging`); `User_Interface_Design.md` §6.6/§6.7; `Audit_Logging_Design.md` §3.8 |
 
 ## 5. Scope Boundaries (charter §4)
 

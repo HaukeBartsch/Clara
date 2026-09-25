@@ -95,6 +95,13 @@ Defines the persistent data model requirements. `Design/Database_Schema_Design.m
 |---|---|
 | REQ-DB-033 | Store the **validation-type registry**: a system-wide table of named regular expressions (name unique, pattern, built-in flag). Migrations MUST seed it with `email`, `MRN`, `international phone` and `national phone` (REQ-VAL-042/043); adding a further validation type is an insert into this table, not a schema change (mirrors the languages rule, REQ-DB-031). The four built-in structured types (`integer`, `floating point`, `date`, `datetime`) are validated by dedicated code and MUST NOT be shadowed by registry rows of the same name. A `fields.validation_type` value that names a registry entry resolves to that entry's pattern at validation time (REQ-VAL-010). |
 
+### 2.11 Project Modes and Staging (GD-20)
+
+| ID | Requirement |
+|---|---|
+| REQ-DB-034 | `projects` MUST store the project's mode — `development`, `production`, or `analysis` — defaulting to `development` for new projects. Exactly one mode per project; changes flow only through the mode endpoint (REQ-API-105). |
+| REQ-DB-035 | A staging table MUST hold **at most one open staging set per project**: a snapshot of the staged design (instruments, fields, events, and the instrument-event mapping, as a JSON document), who opened it, and when. Closing the set — commit or discard — removes the row; commit applies the snapshot to the live structure tables in one transaction (REQ-API-106/107). |
+
 ## 3. Capacity and Performance
 
 | ID | Requirement |
@@ -121,3 +128,4 @@ Defines the persistent data model requirements. `Design/Database_Schema_Design.m
 | DEV-DB-6 | `users` gains `password_hash`, `valid_until`, `last_login_at`; `auth_source` gains `local` | Owner decisions (2026-09-22, GD-18/GD-19; master spec "Details"): table-based authentication; account validity (days, 0 = indefinite); inactivity auto-disable (180 days) with admin re-enable. |
 | DEV-DB-7 | `events.period` becomes nullable (`NULL` = no timepoint) and gains the canonical per-arm ordering rule | Owner decision (2026-09-22, GD-15; master spec "Details" event ordering): timepoint events sorted by timepoint, non-timepoint events user-reorderable. |
 | DEV-DB-8 | Added `validation_types` table (seeded regex registry) and `fields.direct_identifier` flag | Owner decision (2026-09-25, master spec "Field validation"): extensible named-regex validation types; identifier classification becomes a user-set choice on any field instead of being derived from the validation type (REQ-DB-033, REQ-EXP-020, DEV-VAL-11). |
+| DEV-DB-9 | `projects` gains `mode`; added `project_staging` table (JSON design snapshot) | Owner decision (2026-09-25, GD-20; master spec "Project modes"): three project modes with staged setup changes in production; the snapshot form keeps the EAV/structure tables untouched while a staging set is open (REQ-DB-034/035). |

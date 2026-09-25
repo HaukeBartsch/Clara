@@ -11,6 +11,7 @@ Objectives
 - Expose a REDCap-compatible API (Go, OpenAPI/Swagger) so existing callers such as Fiona keep working unchanged.
 - Provide a web user interface (admin interface and data entry) that accesses the backend exclusively through the API.
 - Log all access to backend data in two audit tables: one for change/create/delete events, and one exclusively for record views (records pulled through the API).
+- Support three project modes - development (default), production, and analysis. Only project admins change the mode. In production, setup changes are staged and activated as a group with a warning before committing breaking changes; in analysis, data entry is disabled while viewing and exporting remain available per permissions. Transitions: development to production asks whether stored data is kept or deleted; all other transitions keep all data.
 
 Scope
 The initial phase will focus on the core data model as defined in Endpoints.md, including user management, project structure, the data dictionary, the REDCap-compatible API, the web user interfaces, and audit logging. The API is implemented in Go, the web application in PHP, and the database runs on MariaDB in production and SQLite in development.
