@@ -462,25 +462,11 @@ For authentication with LDAP use ext-ldap native php and for OAuth workflows use
 
 For project documentation purposes create a user view that shows the data dictionary of the project (list of instruments and their fields) as a table. Add a feature to export the data dictionary similar to the assets/Example_data_dictionary csv file.
 
-Bootstrap: For all tables use condensed tables (table-sm class).
-
-Use responsible tables and adjust to smaller screens like tablets and phones.
-
 Project name: CLARA - "Clinical Logbook for Automated Research Assistance", Related to a light-towers log-book
-
-The assets/table_based_authentication_plus_user_management/ folder contains a historic FIONA user management application (table-based authentication). "AC.php" is the corresponding authentication control script that all FIONA pages are using to establish a session. **If not against otherwise specified requirements** plan the development to utilize the example layout and style of interfacing php with the web-application - pull data using json from the backend, populate rendering targets on the client.
 
 ## Some more details
 
-Create some administration instructions as human readable markdown files covering initial setup and testing. 
-
-Javascript libraries like bootstrap and fonts, css should be downloaded from an CDN once and placed into local directories (where accessible). The final application pages are expected to work without access to internet so loading from local copies is the best solution.
-
-For the web interface a nice font seems to be font Geist (https://fontsource.org/fonts/geist/use).
-
-Do not use web-pack or similar technology that requires a build step for the website frontend.
-
-For performant table rendering on the website use this javascript library: https://unpkg.com/tabulator-tables.
+Create some administration instructions as human readable markdown files covering initial setup and testing.
 
 ## Upgradability and versioning
 
@@ -514,11 +500,7 @@ Data entry is disabled; viewing and exporting remain available according to each
 | production ↔ analysis	| project admin	|  Keep all data |
 
 
-## Add content to AGENTS.md
-
-To synchronize development across several LLMs add AGENTS.md files into folders that benefit from it. Outline the rules for LLMs based on the existing project structure with Requirements, Plan, and Design documentation.
-
-### Numbering issue
+## Numbering issue
 
 If participant id `0001_01` and `0003_01` exist but `0002_01` was deleted, auto-generation would return `0002_01`. That's gap-filling. This is not desired. Return max+1 for new IDs.
 
