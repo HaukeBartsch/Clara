@@ -280,19 +280,8 @@ func (w *Writer) ensureTableTx(ctx context.Context, ex execer, table string) err
 	if known {
 		return nil
 	}
-	if _, err := ex.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS `+table+` (`+eventsCols+`)`); err != nil {
+	if err := w.createEventsObjects(ctx, ex, table); err != nil {
 		return err
-	}
-	for _, idx := range []struct{ name, cols string }{
-		{"project", "project_id, created_at"},
-		{"user", "user_id, created_at"},
-		{"type", "project_id, event_type, created_at"},
-		{"record", "project_id, target_record, created_at"},
-	} {
-		if _, err := ex.ExecContext(ctx,
-			`CREATE INDEX IF NOT EXISTS idx_`+table+`_`+idx.name+` ON `+table+` (`+idx.cols+`)`); err != nil {
-			return err
-		}
 	}
 	w.mu.Lock()
 	w.ensured[table] = true
@@ -307,6 +296,39 @@ func (w *Writer) ensureViewTableTx(ctx context.Context, ex execer, table string)
 	if known {
 		return nil
 	}
+	if err := w.createViewObjects(ctx, ex, table); err != nil {
+		return err
+	}
+	w.mu.Lock()
+	w.ensured[table] = true
+	w.mu.Unlock()
+	return nil
+}
+
+// createEventsObjects and createViewObjects run the year-object DDL without
+// touching w.mu (the mutex is not reentrant; EnsureYear holds it across the
+// rollover). All statements are IF NOT EXISTS, so concurrent creation is a
+// no-op for the loser.
+
+func (w *Writer) createEventsObjects(ctx context.Context, ex execer, table string) error {
+	if _, err := ex.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS `+table+` (`+eventsCols+`)`); err != nil {
+		return err
+	}
+	for _, idx := range []struct{ name, cols string }{
+		{"project", "project_id, created_at"},
+		{"user", "user_id, created_at"},
+		{"type", "project_id, event_type, created_at"},
+		{"record", "project_id, target_record, created_at"},
+	} {
+		if _, err := ex.ExecContext(ctx,
+			`CREATE INDEX IF NOT EXISTS idx_`+table+`_`+idx.name+` ON `+table+` (`+idx.cols+`)`); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (w *Writer) createViewObjects(ctx context.Context, ex execer, table string) error {
 	if _, err := ex.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS `+table+` (`+viewsCols+`)`); err != nil {
 		return err
 	}
@@ -314,9 +336,6 @@ func (w *Writer) ensureViewTableTx(ctx context.Context, ex execer, table string)
 		`CREATE INDEX IF NOT EXISTS idx_`+table+`_project ON `+table+` (project_id, created_at)`); err != nil {
 		return err
 	}
-	w.mu.Lock()
-	w.ensured[table] = true
-	w.mu.Unlock()
 	return nil
 }
 
@@ -362,12 +381,14 @@ func (w *Writer) rolloverSQLite(ctx context.Context, year int) error {
 	return nil
 }
 
+// ensureTableTxByKind is called from the rollover only, with w.mu already
+// held, so it goes straight to the locking-free DDL helpers.
 func (w *Writer) ensureTableTxByKind(ctx context.Context, base string, year int) error {
 	table := physical(base, year)
 	if base == "audit_events" {
-		return w.ensureTableTx(ctx, w.DB, table)
+		return w.createEventsObjects(ctx, w.DB, table)
 	}
-	return w.ensureViewTableTx(ctx, w.DB, table)
+	return w.createViewObjects(ctx, w.DB, table)
 }
 
 // rebuildView recreates the stable-name view as UNION ALL over all existing
