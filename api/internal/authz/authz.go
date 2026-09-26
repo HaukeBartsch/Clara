@@ -104,11 +104,11 @@ func Effective(ctx context.Context, store *db.Store, user *db.User, projectID in
 		return lv, nil
 	}
 	asg, err := store.GetAssignment(ctx, user.ID, projectID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return lv, nil // not a member
-	}
 	if err != nil {
 		return nil, err
+	}
+	if asg == nil { // repo convention: not-found is (nil, nil) — not a member
+		return lv, nil
 	}
 	lv.IsMember = true
 
@@ -130,13 +130,13 @@ func Effective(ctx context.Context, store *db.Store, user *db.User, projectID in
 		return lv, nil
 	}
 	role, err := store.GetRole(ctx, asg.RoleID.Int64)
-	if errors.Is(err, sql.ErrNoRows) {
+	if err != nil {
+		return nil, err
+	}
+	if role == nil {
 		// Dangling role reference: treat as role-less would grant too much;
 		// deny (no implicit access).
 		return lv, nil
-	}
-	if err != nil {
-		return nil, err
 	}
 	lv.ProjectAdmin = role.ProjectAdmin
 	roleArms, err := store.ListRoleArms(ctx, role.ID)
@@ -242,11 +242,11 @@ func UserStatus(u *db.User, now time.Time) string {
 // the permission levels (REQ-AUTH-045).
 func ActiveGroup(ctx context.Context, store *db.Store, userID, projectID int64) (int64, error) {
 	asg, err := store.GetAssignment(ctx, userID, projectID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, nil
-	}
 	if err != nil {
 		return 0, err
+	}
+	if asg == nil { // not a member: no active group
+		return 0, nil
 	}
 	memberships, err := store.ListDAGMembershipsByAssignment(ctx, asg.ID)
 	if err != nil {
