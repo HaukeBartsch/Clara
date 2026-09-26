@@ -9,7 +9,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -21,9 +20,10 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"csms/api/internal/audit"
 	"csms/api/internal/config"
-	"csms/api/internal/dataapi"
 	"csms/api/internal/db"
+	"csms/api/internal/httpapi"
 )
 
 func main() {
@@ -71,14 +71,14 @@ func run() error {
 		return fmt.Errorf("bootstrap admin: %w", err)
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", healthHandler(store))
-
-	data := &dataapi.Handler{Store: store, Cfg: cfg}
-	if cfg.RateLimitEnabled { // off by default (REQ-CFG-020)
-		data.Limiter = dataapi.NewRateLimiter(cfg.RateLimitRPM)
+	// Audit year objects (partitions / per-year tables) before serving
+	// (Audit_Logging_Design.md §6).
+	aw := audit.NewWriter(store.DB, string(store.Dialect))
+	if err := aw.EnsureYear(ctx); err != nil {
+		return fmt.Errorf("audit rollover: %w", err)
 	}
-	mux.Handle("/api/", data)
+
+	mux := httpapi.NewMux(store, cfg, aw)
 
 	srv := &http.Server{
 		Addr:              cfg.APIAddr,
@@ -130,29 +130,6 @@ func bootstrapAdmin(ctx context.Context, store *db.Store, cfg *config.Config) er
 	}
 	slog.Info("bootstrap admin ready", "email", u.Email, "user_id", u.ID)
 	return nil
-}
-
-// healthHandler reports liveness plus a bounded database check
-// (REQ-API-003): 200 {"status":"ok","db":"ok"}, or 503 degraded when the
-// ping fails. It returns no data and needs no authentication.
-func healthHandler(store *db.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		status := "ok"
-		pingCtx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
-		if err := store.DB.PingContext(pingCtx); err != nil {
-			status = "error"
-		}
-		code := http.StatusOK
-		body := map[string]string{"status": "ok", "db": status}
-		if status != "ok" {
-			code = http.StatusServiceUnavailable
-			body["status"] = "degraded"
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(code)
-		_ = json.NewEncoder(w).Encode(body)
-	}
 }
 
 // logLevel maps the validated LOG_LEVEL_API value to a slog level.
