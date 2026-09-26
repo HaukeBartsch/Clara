@@ -146,17 +146,18 @@ func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
 	return out, rows.Err()
 }
 
-// UpdateProject rewrites the mutable identity/ethics fields; the name and
-// creation time are fixed at creation.
+// UpdateProject rewrites the mutable identity/ethics fields including the
+// name (PUT accepts project_name per API_Endpoints_Design.md §4.5 — callers
+// check uniqueness first); the creation time is fixed at creation.
 func (s *Store) UpdateProject(ctx context.Context, p *Project) error {
 	_, err := s.DB.ExecContext(ctx,
 		`UPDATE projects SET
-			organization = ?, pi_name = ?, pi_email = ?,
+			project_name = ?, organization = ?, pi_name = ?, pi_email = ?,
 			dm_name = ?, dm_email = ?, rek_number = ?,
 			rek_start_date = ?, rek_end_date = ?, start_date = ?, end_date = ?,
 			participant_names = ?
 		 WHERE id = ?`,
-		p.Organization, p.PIName, p.PIEmail,
+		p.ProjectName, p.Organization, p.PIName, p.PIEmail,
 		nullStr(p.DMName), nullStr(p.DMEmail), nullStr(p.RekNumber),
 		nullStr(p.RekStartDate), nullStr(p.RekEndDate),
 		nullStr(p.StartDate), nullStr(p.EndDate), p.ParticipantNames, p.ID)
