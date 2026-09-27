@@ -292,7 +292,7 @@ Every error is a JSON object with a consistent shape:
 | 403 | `account_disabled` | login with a disabled account (including auto-disabled by the inactivity rule — `account_auto_disabled` audit first, REQ-AUTH-053; audit `login_failure`) |
 | 403 | `account_expired` | login with an account whose `valid_until` has passed (GD-19, REQ-AUTH-052; audit `login_failure`) |
 | 404 | `not_found` | an unknown path resource (a user, project, arm, event, instrument, field, or group that does not exist) |
-| 409 | `conflict` | a state violation — duplicate name (project, role, event label, instrument, field, group); deleting an arm that still has events or data (DEV-API-6); deleting a group that still has records (ASM-AUTH-4); deleting a field referenced by an active expression; an event rename colliding with an existing `unique_event_name` (§4.9); a mode transition outside the allowed set, leaving production with an open staging set, opening a second staging set, committing breaking changes without acknowledgement, or a structure change in production mode while no staging set is open (§4.21) |
+| 409 | `conflict` | a state violation — duplicate name (project, role, event label, instrument, field, group); deleting an arm that still has events or data (DEV-API-6); deleting a group that still has records (ASM-AUTH-4); deleting a field referenced by an active expression; an event rename colliding with an existing `unique_event_name` (§4.9); a mode transition outside the allowed set, any mode change while a staging set is open, opening a second staging set, committing breaking changes without acknowledgement, a structure change in production mode while no staging set is open, or a breaking structure change in analysis mode sent without `acknowledge_breaking` (§4.21) |
 | 500 | `internal` | unexpected failure; `message` carries no details |
 
 ### 4.3 Session (REQ-API-044, REQ-API-045)
@@ -556,7 +556,7 @@ Each array lists the events an instrument is mapped to; an empty array = mapped 
                "scores": ["baseline_arm_1"] } }
 ```
 
-An instrument is active for data entry once it is mapped to at least one event (REQ-DB-012). 200. Audit `mapping_updated`.
+An instrument is active for data entry once it is mapped to at least one event (REQ-DB-012). **Unmapping never deletes anything:** the pair's `data` rows and its `instrument_completion` rows stay in place (REQ-DB-036 creates none while the pair is unmapped, and removes none), and they become visible again — in the form, on the record-status dashboard, and in exports — as soon as the pair is mapped back. Unmapping a pair that holds values is therefore non-breaking and needs no acknowledgement in any mode (§4.21). 200. Audit `mapping_updated`.
 
 ### 4.13 Record status (REQ-API-074, REQ-API-110)
 
@@ -717,9 +717,9 @@ Record scope and transformation are orthogonal (REQ-API-092, REQ-AUTH-045): the 
 
 Audit: `project_ended` with the provision and the affected counts (`Audit_Logging_Design.md` §3.3; `Data_Export_Anonymization_Design.md` §8).
 
-### 4.21 Project modes and staging (GD-20, REQ-API-105…109)
+### 4.21 Project modes and staging (GD-20, REQ-API-105…111)
 
-Every project is in exactly one mode (`projects.mode`, `Database_Schema_Design.md` §4): `development` (default for new projects), `production`, or `analysis`. Only `project_admin` changes the mode or runs staging (an `is_admin` user is covered by REQ-AUTH-023).
+Every project is in exactly one mode (`projects.mode`, `Database_Schema_Design.md` §4): `development` (default for new projects), `production`, or `analysis`. Changing the mode belongs to `is_admin` alone — an installation admin user, **not** the project's own `project_admin`, who gets a 403 (GD-20, 2026-09-27). Staging is run by `project_admin` as before.
 
 **`GET /api/v1/projects/{id}/mode`** — data access ≥ `read_only` + project visibility. 200:
 
@@ -727,14 +727,18 @@ Every project is in exactly one mode (`projects.mode`, `Database_Schema_Design.m
 { "mode": "production", "staging_open": true }
 ```
 
-**`PUT /api/v1/projects/{id}/mode`** — `project_admin`; idempotent (REQ-API-042). Body `{ "mode": "production" }`, plus `keep_data` where the transition demands it:
+**`PUT /api/v1/projects/{id}/mode`** — `is_admin`; idempotent (REQ-API-042). Body `{ "mode": "production" }`, plus `keep_data` where the transition demands it:
 
 | Transition | Body | Effect |
 |---|---|---|
 | development → production | `{ "mode": "production", "keep_data": true \| false }` — `keep_data` **required** (missing → 400 `invalid_request`) | `true`: all stored record data is kept. `false`: the project's record data is deleted with the same scope as the end-provision `delete` (`Data_Export_Anonymization_Design.md` §7.3 — EAV rows, `record_entities`, `survey_links`, `anon_offsets`; metadata, structure, memberships, and audit kept); affected counts are in the response |
-| production → development | `{ "mode": "development" }` | all data kept; rejected (409) while a staging set is open — commit or discard first (REQ-API-105) |
-| production ↔ analysis | `{ "mode": "analysis" }` / `{ "mode": "production" }` | all data kept; leaving/entering production applies the same open-staging rule |
-| any other pair (incl. development ↔ analysis) | — | 409 `conflict` — not an allowed transition (GD-20 table) |
+| production → development | `{ "mode": "development" }` | all data kept; setup edits go back to applying directly, with no staging and no warning |
+| production → analysis | `{ "mode": "analysis" }` | all data kept; data entry stops for everyone from then on (REQ-API-109) |
+| analysis → production | `{ "mode": "production" }` | all data kept; setup changes go back behind a staging set (REQ-API-107) |
+| analysis → development | `{ "mode": "development" }` | all data kept — the way out of analysis without passing through production again (GD-20, 2026-09-27) |
+| any other pair (incl. **development → analysis**) | — | 409 `conflict` — not an allowed transition: a project enters `analysis` only from `production`, where the data entry it disables has actually happened (GD-20 table) |
+
+**No mode change while a staging set is open.** Every transition in the table is rejected (409 `conflict`) until the open set is committed or discarded (REQ-API-105, GD-20 2026-09-27). The rule is stated for all transitions rather than only the ones leaving production because staging opens only in production and closing it is now a precondition of every way out.
 
 200 — `{ "mode": "<new mode>", "records_deleted": 0 }` (`records_deleted` set only for the delete-on-transition case). Audit `project_mode_changed` with old/new mode and the `keep_data` decision (`Audit_Logging_Design.md` §3.3).
 
@@ -744,7 +748,9 @@ Every project is in exactly one mode (`projects.mode`, `Database_Schema_Design.m
 |---|---|---|---|
 | development | applies immediately | allowed | allowed |
 | production | requires an open staging set; applies on commit (§4.21 staging below) | allowed — against the **active** design, also while a set is staged | per permissions |
-| analysis | allowed for admin users (`project_admin`); applies immediately | **disabled** — 403 `Project in analysis mode` on every surface (REQ-API-109) | per permissions ("viewing and exporting remain available", GD-20) |
+| analysis | allowed for admin users (`project_admin`); applies immediately — a **breaking** change must first be acknowledged (REQ-API-111) | **disabled** — 403 `Project in analysis mode` on every surface (REQ-API-109) | per permissions ("viewing and exporting remain available", GD-20) |
+
+**Setup changes in analysis mode (REQ-API-111, GD-20 2026-09-27).** No staging set — a `project_admin` edit lands on the live design exactly as it does in development. What analysis mode adds is a guard rather than a gate: an edit that classifies as **breaking** (table below) is rejected once — 409 `conflict`, naming the change and its reason — and applies when the same call returns with `{ "acknowledge_breaking": true }`. A non-breaking edit goes straight through with no round trip. The flag is accepted only in analysis mode: production routes structure changes through staging (REQ-API-107), where the acknowledgement happens at commit (REQ-API-108), and development warns about nothing.
 
 **Staging (production only, REQ-API-106/107).** One open staging set per project (`project_staging`, `Database_Schema_Design.md` §5): a JSON snapshot of the live design taken at start; all structure endpoints (§4.8–§4.12) then read and write the **staged** design for `project_admin` users (response shapes unchanged), while every data-facing endpoint keeps serving the **active** design until commit.
 
@@ -765,7 +771,8 @@ Every project is in exactly one mode (`projects.mode`, `Database_Schema_Design.m
 
 | Staged change | Classification |
 |---|---|
-| add an arm / event / instrument / field; map or unmap an instrument to an event | non-breaking |
+| add an arm / event / instrument / field | non-breaking |
+| map an instrument to an event; unmap a pair that holds no values | non-breaking |
 | change a field label/description, field note, section header; reorder fields/instruments/events (GD-8 invariant enforced as ever) | non-breaking |
 | rename a field (stored values renamed in the same transaction, REQ-VAL-014) | non-breaking — values stay accessible under the new name |
 | add options to an existing dropdown/radio/matrix | non-breaking |
@@ -773,6 +780,7 @@ Every project is in exactly one mode (`projects.mode`, `Database_Schema_Design.m
 | change a field's type, or its validation type beyond the current values | **breaking** — stored values may no longer satisfy the new rules |
 | remove a choice option that stored values use, or re-code existing options | **breaking** — stored codes lose their label/meaning (removing an unused option is non-breaking) |
 | delete an instrument or event that holds data; delete an arm with events or data (DEV-API-6) | **breaking** — the keyed values become inaccessible |
+| unmap an instrument–event pair whose records **do** hold values | non-breaking, no warning — nothing is deleted: the values stay in `data` and are reachable again once the pair is mapped back, so the change is reversible by construction (master spec "Unmap is misclassified"; retention rule §4.12) |
 
 ## 5. Permission summary
 
@@ -805,7 +813,8 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirement.m
 | `GET/PUT /i18n/strings` | `is_admin` |
 | `POST …/end-provision` (§4.20) | `is_admin` (BR-009) |
 | `GET …/mode` (§4.21) | data access ≥ `read_only` + visibility |
-| `PUT …/mode`; staging start/commit/discard (§4.21) | `project_admin` |
+| `PUT …/mode` (§4.21) | `is_admin` — `project_admin` is rejected (403) |
+| staging start/commit/discard (§4.21) | `project_admin` |
 | `GET …/staging` (§4.21) | `project_admin` |
 
 `is_admin` users hold all permission levels on every arm of every project (REQ-AUTH-023), so a permission requirement never excludes an administrator.

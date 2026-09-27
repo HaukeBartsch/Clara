@@ -20,8 +20,8 @@ Key Views
 3. Project Workspace
 - Purpose: Main hub for a specific study, shown when the user selects a project.
 - Components:
-    - Summary: Number of records, instruments, and fields in the project; the current project mode (development | production | analysis) as a badge. Project admins can change the mode: development to production asks whether previously stored data is kept or deleted; other transitions confirm that all data is kept.
-    - Staging (production mode): Setup and Design pages show staging controls - start staging, a persistent "changes are staged" banner with commit/discard, and a commit dialog that lists breaking changes (each with its reason) and requires acknowledgement. In development mode setup edits apply directly.
+    - Summary: Number of records, instruments, and fields in the project; the current project mode (development | production | analysis) as a badge. Installation admin users (is_admin) can change the mode; a project's own admin sees the badge only: development to production asks whether previously stored data is kept or deleted; other transitions confirm that all data is kept. The control is offered only while no staging set is open.
+    - Staging (production mode): Setup and Design pages show staging controls - start staging, a persistent "changes are staged" banner with commit/discard, and a commit dialog that lists breaking changes (each with its reason) and requires acknowledgement. In development mode setup edits apply directly; in analysis mode they do too, but a breaking change shows the same warning dialog and saves only on confirmation (REQ-UI-037).
     - Actions (presented only if the user's role/permission allows them):
         - Setup (permission "project_admin"): Add/remove arms, instruments, events, and mappings between them.
         - Design: Create a new instrument, edit fields in an existing instrument.
