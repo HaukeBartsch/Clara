@@ -30,16 +30,29 @@ func NewMux(store *db.Store, cfg *config.Config, aw *audit.Writer) http.Handler 
 
 	mux.HandleFunc("GET /healthz", healthHandler(store))
 
-	data := &dataapi.Handler{Store: store, Cfg: cfg}
-	if cfg.RateLimitEnabled { // off by default (REQ-CFG-020)
-		data.Limiter = dataapi.NewRateLimiter(cfg.RateLimitRPM)
-	}
+	data := &dataapi.Handler{Store: store, Cfg: cfg, Limiter: dataapi.NewRateLimiter()}
 	mux.Handle("/api/", data)
 
 	adminAPI := admin.New(store, cfg, aw)
-	mux.Handle("/api/v1/", AdminBoundary(adminAPI.Handler, store, cfg, aw))
+	mux.Handle("/api/v1/", rateLimit(store, cfg, data.Limiter,
+		AdminBoundary(adminAPI.Handler, store, cfg, aw)))
 
 	return mux
+}
+
+// rateLimit enforces the per-source-IP budget on the administration surface
+// (REQ-API-038/111/112): the enable flag and threshold come from the system
+// settings, read per request. The data API applies the same limiter inside
+// its handler, where the requested error format is known (§3.9).
+func rateLimit(store *db.Store, cfg *config.Config, l *dataapi.RateLimiter, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if enabled, rpm := dataapi.RateLimitSettings(r.Context(), store); enabled &&
+			!l.Allow(dataapi.SourceIP(cfg, r), rpm, time.Now()) {
+			admin.APIError(w, http.StatusTooManyRequests, "rate_limited", "Rate limit exceeded")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // loginPath is the sole administration endpoint exempt from

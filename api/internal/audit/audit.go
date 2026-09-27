@@ -65,6 +65,7 @@ const (
 	TokenRevoked        = "token_revoked"
 	RoleCreated         = "role_created"
 	I18nUpdated         = "i18n_updated"
+	SettingsUpdated     = "settings_updated" // REQ-AUD-027, REQ-API-112
 
 	// §3.5 export events
 	Export = "export"

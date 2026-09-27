@@ -108,6 +108,12 @@ Defines the persistent data model requirements. `Design/Database_Schema_Design.m
 |---|---|
 | REQ-DB-036 | The store MUST persist the user-assigned completion of a data-collection instrument per **(record, event, instrument)**, with who set it and when, and MUST enforce at most one such row per triple (REQ-API-110, DEV-DB-10). The stored state is only the `finished` assignment: whether an instrument has no values or some values stays **derived** from the stored data, so a persisted flag can never contradict what the record actually holds. Survey instruments hold no completion state (GD-9). Rows MUST be removed with the record (cascade) and MUST NOT be created for an (event, instrument) pair that is not mapped in the project's active design. |
 
+### 2.13 System Settings
+
+| ID | Requirement |
+|---|---|
+| REQ-DB-037 | The store MUST hold a system-wide `system_settings` table — a key/value registry of runtime settings changed through the administration interface without a restart (REQ-API-112). Migrations MUST seed it with `rate_limit_enabled` = `false` and `rate_limit_rpm` = `600` (master spec "Rate limitter"); adding a further runtime setting is an insert into this table plus its validation at the API boundary, not a schema change (mirrors the languages rule, REQ-DB-031). Values are JSON scalars interpreted and validated by the API; the table holds no secrets (REQ-CFG-021 — secrets remain environment-only). |
+
 ## 3. Capacity and Performance
 
 | ID | Requirement |
@@ -136,3 +142,4 @@ Defines the persistent data model requirements. `Design/Database_Schema_Design.m
 | DEV-DB-8 | Added `validation_types` table (seeded regex registry) and `fields.direct_identifier` flag | Owner decision (2026-09-25, master spec "Field validation"): extensible named-regex validation types; identifier classification becomes a user-set choice on any field instead of being derived from the validation type (REQ-DB-033, REQ-EXP-020, DEV-VAL-11). |
 | DEV-DB-9 | `projects` gains `mode`; added `project_staging` table (JSON design snapshot) | Owner decision (2026-09-25, GD-20; master spec "Project modes"): three project modes with staged setup changes in production; the snapshot form keeps the EAV/structure tables untouched while a staging set is open (REQ-DB-034/035). |
 | DEV-DB-10 | Added `instrument_completion` — one row per (record, event, instrument) marked finished, sparse (absence = not finished) | The plan's record-status dashboard derives filled/empty from the data and stores nothing; the master spec's third state ("finished", set by the user at the end of a data-collection instrument) is a fact about the user's act, not about the values, so it cannot be derived and must be stored. Sparse rather than one row per triple because the mapped cross is large (records × events × instruments) and almost none of it is ever marked (REQ-DB-036, REQ-API-110). |
+| DEV-DB-11 | Added `system_settings` (key/value registry of runtime settings, seeded with the rate-limit flag and threshold) | Owner decision (2026-09-27; master spec "Rate limitter"): rate-limit thresholds are customizable in the administration interface, so they must persist in the database rather than the environment; a key/value registry admits further runtime settings without schema changes (REQ-DB-037, REQ-API-112, DEV-CFG-3). |

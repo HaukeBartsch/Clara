@@ -288,7 +288,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_views_project ON audit_record_views (projec
 
 Notes: append-only (REQ-DB-021/024): the API exposes no UPDATE/DELETE; on MariaDB the application account is granted `INSERT, SELECT` only. Yearly rollover (REQ-DB-022): MariaDB `PARTITION BY RANGE (YEAR(created_at))` on both tables, partitions pre-created per year — the partitioned table's key MUST be composite `(id, created_at)`, since MariaDB rejects a partitioned table whose primary key omits the partition column (error 1503; DEV-AUD-4); SQLite keeps per-year tables `audit_events_YYYY` behind a stable `VIEW audit_events AS SELECT * FROM audit_events_2026 UNION ALL …` (same pattern for views), and because a compound view is not insertable the writer targets the current-year physical table on SQLite while reads keep the stable name (DEV-AUD-3). The listing above is the **logical** shape; `Audit_Logging_Design.md` §6 is normative for the physical objects. `details` holds the per-event JSON shapes (audit design doc); the fixed columns carry the fields common to every event.
 
-## 8. Anonymization, Survey Links, Data Access Groups, i18n
+## 8. Anonymization, Survey Links, Data Access Groups, i18n, System Settings
 
 ```sql
 CREATE TABLE IF NOT EXISTS anon_offsets (        -- REQ-DB-023 (GD-6, DEV-DB-3)
@@ -341,6 +341,13 @@ CREATE TABLE IF NOT EXISTS i18n_strings (        -- REQ-DB-031
     text         TEXT NOT NULL,                  -- LONGTEXT on MariaDB
     UNIQUE (language_id, key)
 );
+
+CREATE TABLE IF NOT EXISTS system_settings (     -- REQ-DB-037 (master spec "Rate limitter")
+    key   VARCHAR(64) PRIMARY KEY,               -- dotted setting name
+    value TEXT NOT NULL                          -- JSON scalar; interpreted and validated at the API boundary (REQ-API-112)
+);
+INSERT INTO system_settings (key, value) SELECT 'rate_limit_enabled', 'false' WHERE NOT EXISTS (SELECT 1 FROM system_settings WHERE key = 'rate_limit_enabled');
+INSERT INTO system_settings (key, value) SELECT 'rate_limit_rpm',     '600'   WHERE NOT EXISTS (SELECT 1 FROM system_settings WHERE key = 'rate_limit_rpm');
 ```
 
 Notes:

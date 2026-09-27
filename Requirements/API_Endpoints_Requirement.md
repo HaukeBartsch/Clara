@@ -83,7 +83,8 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 | ID | Requirement |
 |---|---|
 | REQ-API-037 | Every Fiona call example in `Endpoints.md` (PHP and cURL) MUST succeed against this API without modification of the caller (charter success criterion 1) and MUST be encoded as executable regression tests (REQ-TECH-022). |
-| REQ-API-038 | Optional rate limiting (REQ-CFG-020): when enabled, the API MUST limit requests per token per minute and answer HTTP 429 with a REDCap-style error body when the limit is exceeded. |
+| REQ-API-038 | Optional rate limiting (REQ-CFG-020): when enabled, the API MUST limit requests **per source IP address** per minute — on both surfaces (`/api/` and `/api/v1/`, so web-application traffic and external scripts alike) — and answer HTTP 429 with a REDCap-style error body when the limit is exceeded. The source IP is derived per REQ-API-111; the enable flag and the threshold are system settings stored in the database and editable in the administration interface (REQ-API-112; master spec "Rate limitter"). |
+| REQ-API-111 | The rate-limit source identity MUST be the caller's IP address: when the direct TCP peer is inside a configured trusted-proxy range (`TRUSTED_PROXY_CIDRS`, `System_Configuration_Design.md` §3.9), the proxy-provided `X-Real-IP` header is authoritative; otherwise the connection's remote address is used. A client-supplied `X-Real-IP` from an untrusted peer MUST be ignored, and the reverse proxy overwrites the header on every routed request (no forwarded-for chains; `Technology_Stack_Design.md` §5). The deployment MUST supply the header so every external caller keeps a distinct address — without it all web-application traffic would share the single application-host address (master spec "Rate limitter": unique incoming IPs verified). |
 | REQ-API-039 | Data API error responses MUST carry a machine-readable `error` string in the body rendered in the requested format, with 4xx HTTP status (400 invalid request, 401 invalid token, 403 insufficient permission); error text MUST NOT leak internal implementation details. |
 
 ## 4. Administration API (`/api/v1/`)
@@ -253,7 +254,13 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 | REQ-API-108 | Commit MUST classify the staged diff (GD-20): **non-breaking** — adding a field, changing a field description/label, adding options to an existing dropdown/radio/matrix (the normative classification table is in `API_Endpoints_Design.md`); **breaking** — any change that would make recorded data inaccessible, e.g. deleting a field. A commit whose staged set contains breaking changes MUST be rejected (409) listing them, unless the body sets `acknowledge_breaking: true`. |
 | REQ-API-109 | In analysis mode data entry is disabled: `content=record&action=import` and `content=record&action=delete` MUST be rejected (403 with a REDCap-style error), survey-link submissions MUST be rejected, and no new record value may be stored through any surface. Viewing (data access ≥ `read_only`) and exporting follow the permissions as usual; `project_admin` structure changes remain possible ("admin users can still interact with the project", GD-20). |
 
-### 4.20 Permission summary
+### 4.20 System settings
+
+| ID | Requirement |
+|---|---|
+| REQ-API-112 | `GET /api/v1/settings` MUST return and `PUT /api/v1/settings` MUST update the system-wide runtime settings persisted in the database (REQ-DB-037): `rate_limit_enabled` (boolean, default false) and `rate_limit_rpm` (integer ≥ 1 requests per minute per source IP, default 600). Both endpoints require `is_admin`; a call by a non-admin is rejected (403 `forbidden`). PUT applies the supplied fields idempotently (REQ-API-042), rejects an out-of-range value (400 `bad_request`) and unknown attributes (400), and the applied values MUST take effect on the next request without a restart. Every applied change MUST be audit-logged with old and new values (REQ-AUD-027). |
+
+### 4.21 Permission summary
 
 | Endpoint(s) | Required permission |
 |---|---|
@@ -280,6 +287,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 | `GET .../mode` | data access ≥ `read_only` |
 | `PUT .../mode`; staging start/commit/discard (§4.19) | `project_admin` |
 | `GET .../staging` | `project_admin` |
+| `GET/PUT /api/v1/settings` (§4.20) | `is_admin` |
 
 `is_admin` users hold all permission levels on every arm of every project (REQ-AUTH-023), so a permission requirement never excludes an administrator.
 
@@ -309,3 +317,4 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 | DEV-API-10 | Project creation body simplified; `event_names` and the option/contract/end-provision fields are no longer accepted (400 as unknown attributes); creation no longer derives initial events | Owner decision (2026-09-22, GD-17; master spec "Details"): keep PI + REK + main supporting institution; removed attributes MAY live as data in a `DataTransferProjects` instrument (REQ-DB-032). |
 | DEV-API-11 | Completion state is three-valued (`no_data` / `some_data` / `finished`) and the `finished` half is stored per (record, event, instrument) with an endpoint to set it | The plan's record-status dashboard says only "any field has a value vs. none"; the master spec colors each instrument grey/amber/green, and green is assigned by the user at the end of a data-collection instrument — a fact no derived query can recover. Only the `finished` assignment is stored; the grey/amber split stays derived so the displayed state can never contradict the stored values (REQ-API-074/110, REQ-DB-036). Closes Open Item 1 of `Design/User_Interface_Design.md` §11. |
 | DEV-API-12 | The administration export takes `arm`, `rawOrLabel`, `rawOrLabelHeaders`, and `csvDelimiter`; the plan's UI export had only the format | REQ-EXP-003 requires that a higher per-arm sensitivity be obtainable by separate per-arm exports, which is impossible without an arm restriction on this surface; REQ-EXP-010/013 require the raw/label axis and delimiter there. Applied level stays the lowest among the selected arms (`Design/Data_Export_Anonymization_Design.md` §4.3). |
+| DEV-API-13 | Rate limiting counts per **source IP** instead of per token, applies to both surfaces, and its enable flag and threshold are system settings in the database edited via `GET/PUT /api/v1/settings` instead of environment variables | Owner decision (2026-09-27; master spec "Rate limitter"): web-application and external-script traffic alike limited by incoming IP (600/min default); thresholds customizable in the administration interface, effective without restart (REQ-API-038/111/112, REQ-CFG-020, DEV-CFG-3). |

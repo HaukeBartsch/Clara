@@ -37,6 +37,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	enc := p.Encoding()
 
+	// Rate limiting is per source IP, threshold from the system settings
+	// (REQ-API-038/111/112); checked before token work so an over-budget
+	// caller cannot spend token lookups.
+	if h.Limiter != nil {
+		if enabled, rpm := RateLimitSettings(r.Context(), h.Store); enabled &&
+			!h.Limiter.Allow(SourceIP(h.Cfg, r), rpm, time.Now()) {
+			writeError(w, enc, http.StatusTooManyRequests, "Rate limit exceeded")
+			return
+		}
+	}
+
 	sub, rerr := h.resolveToken(r.Context(), p.Token)
 	if errors.Is(rerr, errInvalidToken) {
 		writeError(w, enc, http.StatusUnauthorized, "Invalid token")
@@ -44,12 +55,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if rerr != nil {
 		writeError(w, enc, http.StatusInternalServerError, "Internal error")
-		return
-	}
-
-	// Rate limiting is per token (REQ-API-038).
-	if h.Limiter != nil && !h.Limiter.Allow(p.Token, time.Now()) {
-		writeError(w, enc, http.StatusTooManyRequests, "Rate limit exceeded")
 		return
 	}
 

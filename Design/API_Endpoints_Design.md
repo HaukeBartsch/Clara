@@ -246,7 +246,9 @@ Response (JSON):
 
 ### 3.9 Rate Limiting (REQ-API-038, REQ-CFG-020)
 
-When enabled (`RATE_LIMIT_ENABLED=1`, default disabled — `System_Configuration_Design.md` §3.9), each token is limited to `RATE_LIMIT_RPM` requests per minute (default 600); a call over the limit is answered with HTTP 429 and the §3.2 error body (`Rate limit exceeded`).
+The limiter counts **per source IP address** and covers both surfaces — `/api/` and `/api/v1/` — so web-application traffic (through PHP) and external scripts are limited alike (master spec "Rate limitter"). The data API enforces it inside its handler (where the requested error format is known); the administration surface at the boundary middleware in `httpapi`. The enable flag and threshold are the system settings of §4.22, read from `system_settings` per request — a saved change is effective on the next request, no restart (REQ-API-112). When enabled, each source IP may make `rate_limit_rpm` requests per rolling minute (default 600); a call over the limit is answered with HTTP 429 and the §3.2 error body (`Rate limit exceeded`). In-memory by design — the API stays stateless and a restart only resets the windows.
+
+**Source IP (REQ-API-111).** When the direct TCP peer is inside `TRUSTED_PROXY_CIDRS` (`System_Configuration_Design.md` §3.9), the limiter keys on the proxy-provided `X-Real-IP`; otherwise on the connection's remote address; a client-supplied `X-Real-IP` from an untrusted peer is ignored. nginx overwrites `X-Real-IP` with its own `$remote_addr` on every routed request and never appends a chain (`Technology_Stack_Design.md` §5), so each external caller keeps a distinct address. Web-application calls arrive server-side from PHP on the application host: PHP forwards the browser's address (its own `REMOTE_ADDR`, which nginx sets) in `X-Real-IP`; loopback is trusted by default, so per-browser limiting works despite the shared server hop.
 
 ### 3.10 Survey Link Tokens (GD-9, REQ-API-083)
 
@@ -774,9 +776,18 @@ Every project is in exactly one mode (`projects.mode`, `Database_Schema_Design.m
 | remove a choice option that stored values use, or re-code existing options | **breaking** — stored codes lose their label/meaning (removing an unused option is non-breaking) |
 | delete an instrument or event that holds data; delete an arm with events or data (DEV-API-6) | **breaking** — the keyed values become inaccessible |
 
+### 4.22 System settings (REQ-API-112)
+
+Both endpoints require `is_admin`; a call by a non-admin is rejected (403 `forbidden`). The values live in `system_settings` (`Database_Schema_Design.md` §8, REQ-DB-037); the rate limiter reads them per request (§3.9), so an applied change takes effect on the next request without a restart.
+
+| Endpoint | Behavior |
+|---|---|
+| `GET /api/v1/settings` | 200 — `{ "rate_limit_enabled": false, "rate_limit_rpm": 600 }` (the effective values: the stored row when present, the seeded default otherwise) |
+| `PUT /api/v1/settings` | Body: any subset of the fields (idempotent, REQ-API-042). Validation: `rate_limit_enabled` a boolean; `rate_limit_rpm` an integer ≥ 1 — else 400 `bad_request`; unknown attributes → 400. 200 — the full settings object after the update. Audit `settings_updated` with the old and new value of each changed key (REQ-AUD-027); a PUT that changes nothing writes no entry |
+
 ## 5. Permission summary
 
-The normative endpoint → permission mapping is in `API_Endpoints_Requirement.md` §4.20; it is reproduced here as an overview:
+The normative endpoint → permission mapping is in `API_Endpoints_Requirement.md` §4.21; it is reproduced here as an overview:
 
 | Endpoints | Required permission |
 |---|---|
@@ -807,5 +818,6 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirement.m
 | `GET …/mode` (§4.21) | data access ≥ `read_only` + visibility |
 | `PUT …/mode`; staging start/commit/discard (§4.21) | `project_admin` |
 | `GET …/staging` (§4.21) | `project_admin` |
+| `GET/PUT /api/v1/settings` (§4.22) | `is_admin` |
 
 `is_admin` users hold all permission levels on every arm of every project (REQ-AUTH-023), so a permission requirement never excludes an administrator.

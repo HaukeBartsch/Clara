@@ -36,6 +36,7 @@ Defines the requirements for the system's audit trail: the two append-only audit
 | REQ-AUD-024 | **Account auto-disable event.** The inactivity auto-disable of the account active rule MUST be recorded (`account_auto_disabled`, `source=system`) with the account, its last successful login, and the applied limit (GD-19, REQ-AUTH-053). |
 | REQ-AUD-025 | **Project mode events.** Every mode change MUST be recorded with the old and new mode and — for development → production — the keep/delete decision; every staging set open, commit, and discard MUST be recorded, a commit additionally with the staged changes applied and the breaking changes that were acknowledged (GD-20, REQ-API-105/106). |
 | REQ-AUD-026 | **Instrument completion event.** Setting or clearing the (record, event, instrument) completion state MUST be recorded (`instrument_completed` / `instrument_uncompleted`, `source=ui`), with the record, the event, the instrument, and the resulting state (REQ-API-110). The entry carries no field values — the event changes none (REQ-AUD-007). |
+| REQ-AUD-027 | **System settings event.** Every applied change of a system setting MUST be recorded (`settings_updated`) with the acting administrator and the old and new value of each changed key (`rate_limit_enabled`, `rate_limit_rpm`, …) (REQ-API-112; master spec "Rate limitter"). A PUT that changes nothing writes no entry (REQ-AUD-004). |
 
 ## 4. Record View Log — `audit_record_views`
 

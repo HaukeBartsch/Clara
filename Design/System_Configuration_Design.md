@@ -101,8 +101,9 @@ Per server `N` (1…3):
 
 | Variable | Component | Type | Default | Required | Description |
 |---|---|---|---|---|---|
-| `RATE_LIMIT_ENABLED` | api | `0`\|`1` | `0` (disabled) | — | (REQ-CFG-020, REQ-API-038) |
-| `RATE_LIMIT_RPM` | api | integer ≥ 1 | `600` | — | requests per minute per token (REQ-CFG-020) |
+| `TRUSTED_PROXY_CIDRS` | api | comma-separated CIDR list | `127.0.0.0/8,::1` | — | address ranges whose `X-Real-IP` header the rate limiter trusts (REQ-API-111); loopback covers the same-host nginx + PHP-FPM deployment (`Technology_Stack_Design.md` §5) |
+
+The rate-limit **threshold is not an environment variable**: `rate_limit_enabled` (default off) and `rate_limit_rpm` (default 600 requests per minute per source IP) are system settings stored in the database and edited in the administration interface, effective without a restart (REQ-CFG-020, REQ-API-112, REQ-DB-037, `API_Endpoints_Design.md` §4.22). The former keys `RATE_LIMIT_ENABLED`/`RATE_LIMIT_RPM` are removed (DEV-CFG-3).
 
 ### 3.10 Account policy and time (api)
 
@@ -191,9 +192,8 @@ SESSION_COOKIE_NAME=csms_session
 SESSION_LIFETIME=28800
 SESSION_COOKIE_SECURE=0
 
-# rate limiting (api)
-RATE_LIMIT_ENABLED=0
-RATE_LIMIT_RPM=600
+# rate limiting (api) — thresholds live in system_settings, edited in the admin interface
+TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1
 
 # account policy and time (api)
 AUTH_INACTIVITY_LIMIT_DAYS=180
@@ -207,7 +207,7 @@ APP_TIMEZONE=UTC
 | `anon_salt` configuration key (`Database_Schema_Design.md` §12) | `ANON_SALT` + range keys, §3.6 |
 | finite value-length cap key (`Data_Validation_Design.md` §11) | `MAX_VALUE_BYTES`, §3.7 |
 | date-shift "sane defaults" (REQ-CFG-016) | 0…364 days, §3.6 |
-| rate-limit keys (REQ-CFG-020) | `RATE_LIMIT_ENABLED`/`RATE_LIMIT_RPM`, §3.9 |
+| rate-limit keys (REQ-CFG-020) | superseded 2026-09-27 (master spec "Rate limitter", DEV-CFG-3): enable flag and per-source-IP threshold moved to `system_settings` edited in the admin interface (`API_Endpoints_Design.md` §4.22); env keeps only `TRUSTED_PROXY_CIDRS`, §3.9 |
 | session settings (REQ-CFG-017) | §3.8, 8 h default per REQ-AUTH-015 |
 | bootstrap local password (GD-18, master spec "Details") | `ADMIN_BOOTSTRAP_PASSWORD`, §3.3; startup rule §4.1; redaction §4.4 |
 | inactivity auto-disable rule key (GD-19, master spec "Details") | `AUTH_INACTIVITY_LIMIT_DAYS` (default 180, 0 = off), §3.10 |

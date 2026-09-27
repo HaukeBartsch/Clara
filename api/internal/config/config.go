@@ -13,6 +13,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -82,9 +83,11 @@ type Config struct {
 	SessionLifetime     int
 	SessionCookieSecure bool
 
-	// §3.9 rate limiting
-	RateLimitEnabled bool
-	RateLimitRPM     int
+	// §3.9 rate limiting — trusted-proxy ranges only; the enable flag and
+	// per-source-IP threshold are system settings in the database
+	// (REQ-CFG-020, REQ-API-111/112, DEV-CFG-3)
+	TrustedProxyCIDRs []*net.IPNet
+	trustedProxyRaw   string
 
 	// §3.10 account policy and time
 	AuthInactivityLimitDays int
@@ -99,6 +102,21 @@ func (c *Config) AppLocation() *time.Location {
 		return c.appLocation
 	}
 	return time.UTC
+}
+
+// IsTrustedProxy reports whether ip sits inside a configured trusted-proxy
+// range — only then may the proxy-provided X-Real-IP header be authoritative
+// for rate limiting (REQ-API-111).
+func (c *Config) IsTrustedProxy(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	for _, n := range c.TrustedProxyCIDRs {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // Load parses the environment and .env file, applies the defaults of §3,
@@ -273,11 +291,27 @@ func Load() (*Config, error) {
 		fail("SESSION_DIR: %q is not a directory", cfg.SessionDir)
 	}
 
-	// §3.9 rate limiting
-	cfg.RateLimitEnabled = getBool(get, "RATE_LIMIT_ENABLED", false)
-	cfg.RateLimitRPM = getInt(get, "RATE_LIMIT_RPM", 600)
-	if cfg.RateLimitRPM < 1 {
-		fail("RATE_LIMIT_RPM: %d (want >= 1)", cfg.RateLimitRPM)
+	// §3.9 rate limiting — trusted-proxy ranges only; thresholds live in
+	// system_settings, edited in the administration interface (REQ-CFG-020).
+	cfg.trustedProxyRaw = getOr(get, "TRUSTED_PROXY_CIDRS", "127.0.0.0/8,::1")
+	for _, part := range strings.Split(cfg.trustedProxyRaw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if _, n, err := net.ParseCIDR(part); err == nil {
+			cfg.TrustedProxyCIDRs = append(cfg.TrustedProxyCIDRs, n)
+			continue
+		}
+		if ip := net.ParseIP(part); ip != nil { // bare address = single-host range
+			mask := net.CIDRMask(32, 32)
+			if ip.To4() == nil {
+				mask = net.CIDRMask(128, 128)
+			}
+			cfg.TrustedProxyCIDRs = append(cfg.TrustedProxyCIDRs, &net.IPNet{IP: ip, Mask: mask})
+			continue
+		}
+		fail("TRUSTED_PROXY_CIDRS: %q is not a CIDR range or IP address", part)
 	}
 
 	// §3.10 account policy and time
@@ -366,8 +400,7 @@ func (c *Config) Dump() []string {
 		"SESSION_COOKIE_NAME="+c.SessionCookieName,
 		"SESSION_LIFETIME="+itoa(c.SessionLifetime),
 		"SESSION_COOKIE_SECURE="+boolStr(c.SessionCookieSecure),
-		"RATE_LIMIT_ENABLED="+boolStr(c.RateLimitEnabled),
-		"RATE_LIMIT_RPM="+itoa(c.RateLimitRPM),
+		"TRUSTED_PROXY_CIDRS="+c.trustedProxyRaw+" (thresholds in system_settings)",
 		"AUTH_INACTIVITY_LIMIT_DAYS="+itoa(c.AuthInactivityLimitDays)+" (0 = off)",
 		"APP_TIMEZONE="+c.AppTimezone,
 	)

@@ -42,6 +42,7 @@ Common conventions (REQ-UI-001…008), binding on every page:
 | `GET /admin/projects` | project create/edit (§5.2) | `is_admin` | `POST /api/v1/projects`, `GET/PUT /api/v1/projects/{id}` |
 | `GET /admin/audit` | audit view (§5.6) | `is_admin` or member of a project (REQ-API-078) | `GET /api/v1/audit` |
 | `GET /admin/i18n` | translation management (§5.7) | `is_admin` | `GET /api/v1/i18n/strings?language=`, `PUT /api/v1/i18n/strings` |
+| `GET /admin/settings` | system settings (§5.8) | `is_admin` | `GET/PUT /api/v1/settings` |
 | `GET /projects/{id}` | project workspace (§6.1) | project visibility (REQ-API-007) | `GET /api/v1/projects/{id}` |
 | `GET /projects/{id}/setup` | setup page (§6.2) | `project_admin` | arms / events / instruments / mapping endpoints |
 | `GET /projects/{id}/design` | instrument designer (§7.1) | `project_admin` | instruments / fields endpoints |
@@ -256,6 +257,12 @@ Data: `GET /api/v1/i18n/strings?language=<code>` (after `GET /api/v1/i18n/langua
 - **Key table**: one row per translation key — `key`, current `text`, and a **missing** badge (`missing = true` → the key falls back to English at render, REQ-DB-031, REQ-UI-008). Missing keys are visually distinct (the requirement's "MUST be visible in the list").
 - **Editor**: inline `text` editing per row (or a side form); empty `text` **removes** the translation (fallback to English). Save → `PUT /api/v1/i18n/strings` with `{ "language", "entries": [ { "key", "text" } ] }` (upsert; REQ-API-100).
 - Translated strings are escaped on render (§3.2, REQ-UI-004).
+
+### 5.8 System settings (`GET /admin/settings`, `is_admin`)
+
+Data: `GET /api/v1/settings`; save → `PUT /api/v1/settings` (CSRF, §3.3; contract `API_Endpoints_Design.md` §4.22).
+
+- **Rate limiting (REQ-UI-037)**: an enabled/disabled switch (`rate_limit_enabled`) and a requests-per-minute number input per source IP (`rate_limit_rpm`, ≥ 1, default 600), with helper text naming the scope ("limits every caller IP on both the data API and the administration surface; applies immediately after saving"). Invalid values are rejected by the API (400) and surfaced per §3.4; applied changes are audit-logged (`settings_updated`, REQ-AUD-027).
 
 ## 6. Project Workspace
 

@@ -37,8 +37,8 @@ func TestMigrateCreatesSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SchemaVersion: %v", err)
 	}
-	if v != 3 {
-		t.Fatalf("SchemaVersion = %d, want 3", v)
+	if v != 4 {
+		t.Fatalf("SchemaVersion = %d, want 4", v)
 	}
 
 	// Every core table must exist.
@@ -103,8 +103,8 @@ func TestMigrateIdempotent(t *testing.T) {
 		t.Fatalf("second Migrate: %v", err)
 	}
 	v, _ := s.SchemaVersion(ctx)
-	if v != 3 {
-		t.Fatalf("SchemaVersion = %d after re-migrate, want 3", v)
+	if v != 4 {
+		t.Fatalf("SchemaVersion = %d after re-migrate, want 4", v)
 	}
 	// Languages must not be duplicated by the re-seed.
 	var n int
@@ -120,6 +120,17 @@ func TestMigrateIdempotent(t *testing.T) {
 	}
 	if n != 4 {
 		t.Errorf("validation_types count = %d after re-migrate, want 4", n)
+	}
+	// Neither must the system settings (REQ-DB-037).
+	settings, err := s.SystemSettings(ctx)
+	if err != nil {
+		t.Fatalf("SystemSettings: %v", err)
+	}
+	if len(settings) != 2 {
+		t.Errorf("system_settings count = %d after re-migrate, want 2", len(settings))
+	}
+	if settings["rate_limit_enabled"] != "false" || settings["rate_limit_rpm"] != "600" {
+		t.Errorf("system_settings seed = %v, want rate_limit_enabled=false, rate_limit_rpm=600", settings)
 	}
 }
 

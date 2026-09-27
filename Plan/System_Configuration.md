@@ -29,3 +29,4 @@ Key Settings
 - APP_ENV: Toggles between development (SQLite default) and production (MariaDB).
 - DB_*: Database connection details.
 - OAUTH_ / LDAP_*:* Authentication server details.
+- Runtime system settings are not environment variables: the rate-limit enable flag and requests-per-minute threshold per source IP live in the `system_settings` table and are edited in the administration interface (REQ-CFG-020, REQ-API-112). Only `TRUSTED_PROXY_CIDRS` — which proxy addresses may supply the caller IP for rate limiting — stays an environment variable.

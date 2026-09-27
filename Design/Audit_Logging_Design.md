@@ -93,6 +93,7 @@ Field renames are `field_updated` with `"changes":{"name":{"old":"…","new":"�
 | `token_revoked` | member removal or explicit revocation (REQ-AUTH-030) | `{"member_email":"…","reason":"member_removed or explicit"}` |
 | `role_created` | REQ-API-057 | `{"name":"data-manager","project_admin":1,"arms":{"1":{"data":"delete","export":"export_full"},"2":{"data":"view_edit","export":"export_none"}}}` |
 | `i18n_updated` | REQ-API-100 | `{"language":"nb","key":"ui.dashboard.title","action":"set or removed"}` |
+| `settings_updated` | `PUT /api/v1/settings` changes at least one key (REQ-API-112, REQ-AUD-027) | `{"changes":{"rate_limit_rpm":{"old":"600","new":"300"},"rate_limit_enabled":{"old":"false","new":"true"}}}` — same old/new shape as `project_updated`; a PUT that changes nothing writes no entry (REQ-AUD-004) |
 
 ### 3.5 Export events (REQ-AUD-011, BR-008)
 

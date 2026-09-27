@@ -40,6 +40,7 @@ Defines the web user interface requirements: the views, the permission gating of
 | REQ-UI-014 | **Role editor.** Create a role with a name and per-arm permissions: for each arm a data access level and an export level, plus the `project_admin` checkbox (GD-2, REQ-API-057); the example presets MAY be offered as starting points only (REQ-AUTH-020). |
 | REQ-UI-015 | **Data access groups.** Create groups (name, unique per project) and delete them, with a warning that deletion is rejected while records are still assigned (REQ-API-087/088). |
 | REQ-UI-016 | **Audit view.** A paginated, read-only table of audit entries with a project filter and the acting-user/target fields (REQ-API-077/078, REQ-AUD-019); a non-administrator sees only entries of their own projects; values MUST be escaped (REQ-UI-004). |
+| REQ-UI-037 | **System settings.** A settings page showing the current system-wide runtime settings with an editor for them (REQ-API-112): the rate-limiting switch (`rate_limit_enabled`) and the requests-per-minute threshold per source IP (`rate_limit_rpm`, ≥ 1) — customizable here, effective immediately after save without a restart, and audit-logged with old and new values (REQ-AUD-027; master spec "Rate limitter"). |
 
 ## 5. Project Workspace
 

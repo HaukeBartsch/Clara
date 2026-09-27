@@ -487,10 +487,19 @@ func TestMethodNotAllowed(t *testing.T) {
 
 func TestRateLimit(t *testing.T) {
 	h, full, _ := testHandler(t)
-	limited := &Handler{Store: h.Store, Cfg: h.Cfg, Limiter: NewRateLimiter(1)}
+	// The budget comes from the system settings (REQ-API-112): enable with
+	// a 1-call-per-minute threshold.
+	ctx := context.Background()
+	if err := h.Store.SetSystemSetting(ctx, "rate_limit_enabled", "true"); err != nil {
+		t.Fatalf("SetSystemSetting: %v", err)
+	}
+	if err := h.Store.SetSystemSetting(ctx, "rate_limit_rpm", "1"); err != nil {
+		t.Fatalf("SetSystemSetting: %v", err)
+	}
+	limited := &Handler{Store: h.Store, Cfg: h.Cfg, Limiter: NewRateLimiter()}
 	code, body := do(t, limited, url.Values{"token": {full}, "content": {"project"}, "format": {"json"}})
 	mustStatus(t, code, http.StatusOK, body)
-	// The same token is now over its 1-call-per-minute budget (REQ-API-038).
+	// The same source IP is now over its 1-call-per-minute budget (REQ-API-038).
 	code, body = do(t, limited, url.Values{"token": {full}, "content": {"project"}, "format": {"json"}})
 	mustStatus(t, code, http.StatusTooManyRequests, body)
 	if !strings.Contains(body, "Rate limit exceeded") {
