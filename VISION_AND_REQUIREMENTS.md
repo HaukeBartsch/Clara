@@ -503,3 +503,7 @@ Data entry is disabled; viewing and exporting remain available according to each
 ## Field validation
 
 Field validation should be extensible by adding additional validations (regular expressions with a given name) to the database. Use the existing email and MRN entries, add an international phone number validation type such as "+47 55566777" as well as a national phone number type "55566777".
+
+## Rate limitter
+
+Using the API from the web-application or from external scripts should be rate-limitted based on the incoming IP address. Allow up to 600 calls per minute from a single IP source. Check if our setup allows for unique IP addresses from incoming calls. Make rate-limitting threshold values customizable in the administration interface.
