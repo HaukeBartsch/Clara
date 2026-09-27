@@ -237,7 +237,19 @@ CREATE TABLE IF NOT EXISTS record_entities (     -- REQ-DB-029 (GD-10)
     created_at  DATETIME NOT NULL,
     PRIMARY KEY (project_id, record_id)
 );
+
+CREATE TABLE IF NOT EXISTS instrument_completion (  -- REQ-DB-036 (DEV-DB-10) — sparse: a row exists only when the user marked it finished
+    project_id     INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    record_id      VARCHAR(255) NOT NULL,
+    event_id       INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    instrument_id  INTEGER NOT NULL REFERENCES instruments(id) ON DELETE CASCADE,
+    completed_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    completed_at   DATETIME NOT NULL,
+    PRIMARY KEY (project_id, record_id, event_id, instrument_id)
+);
 ```
+
+**`instrument_completion`** (REQ-DB-036, DEV-DB-10) stores **only** the user's "finished" assignment — there is no state column, because absence of the row already means "not finished" and the grey/amber split stays derived from `data` (REQ-API-074). Keeping it sparse avoids a row per (record × event × instrument) mapping in projects that never mark anything, and makes clearing the assignment a delete. It joins nothing into `data`, so it cannot make a stored value look complete. The primary key doubles as the record-status read path (`project_id, record_id` prefix, REQ-DB-025); the cascades drop a project's assignments with its records, instruments, and events (REQ-DB-036). Survey-marked instruments never get a row (GD-9).
 
 Notes: upsert is the unique constraint + `INSERT … ON CONFLICT` (SQLite) / `INSERT … ON DUPLICATE KEY UPDATE` (MariaDB) inside one transaction (REQ-DB-016, REQ-DB-026); calculated-field values live here as ordinary rows at each active position (REQ-DB-030); `repeating_instrument` is `''` for non-repeating entries so the unique key stays total.
 
@@ -254,6 +266,7 @@ CREATE TABLE IF NOT EXISTS audit_events (        -- REQ-DB-021 (see Audit_Loggin
     project_id  INTEGER,
     arm_num     INTEGER,
     role        VARCHAR(255),
+    target_record VARCHAR(255),                -- record name for record-scoped events (Audit_Logging_Design.md §6.4)
     details     TEXT,                            -- JSON payload per event type (audit design doc)
     created_at  DATETIME NOT NULL
 );
@@ -273,7 +286,7 @@ CREATE TABLE IF NOT EXISTS audit_record_views (  -- REQ-DB-021: record pulls via
 CREATE INDEX IF NOT EXISTS idx_audit_views_project ON audit_record_views (project_id, created_at);
 ```
 
-Notes: append-only (REQ-DB-021/024): the API exposes no UPDATE/DELETE; on MariaDB the application account is granted `INSERT, SELECT` only. Yearly rollover (REQ-DB-022): MariaDB `PARTITION BY RANGE (YEAR(created_at))` on both tables, partitions pre-created per year; SQLite keeps per-year tables `audit_events_YYYY` behind a stable `VIEW audit_events AS SELECT * FROM audit_events_2026 UNION ALL …` (same pattern for views). `details` holds the per-event JSON shapes (audit design doc); the fixed columns carry the fields common to every event.
+Notes: append-only (REQ-DB-021/024): the API exposes no UPDATE/DELETE; on MariaDB the application account is granted `INSERT, SELECT` only. Yearly rollover (REQ-DB-022): MariaDB `PARTITION BY RANGE (YEAR(created_at))` on both tables, partitions pre-created per year — the partitioned table's key MUST be composite `(id, created_at)`, since MariaDB rejects a partitioned table whose primary key omits the partition column (error 1503; DEV-AUD-4); SQLite keeps per-year tables `audit_events_YYYY` behind a stable `VIEW audit_events AS SELECT * FROM audit_events_2026 UNION ALL …` (same pattern for views), and because a compound view is not insertable the writer targets the current-year physical table on SQLite while reads keep the stable name (DEV-AUD-3). The listing above is the **logical** shape; `Audit_Logging_Design.md` §6 is normative for the physical objects. `details` holds the per-event JSON shapes (audit design doc); the fixed columns carry the fields common to every event.
 
 ## 8. Anonymization, Survey Links, Data Access Groups, i18n
 

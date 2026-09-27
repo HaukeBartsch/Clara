@@ -102,6 +102,12 @@ Defines the persistent data model requirements. `Design/Database_Schema_Design.m
 | REQ-DB-034 | `projects` MUST store the project's mode — `development`, `production`, or `analysis` — defaulting to `development` for new projects. Exactly one mode per project; changes flow only through the mode endpoint (REQ-API-105). |
 | REQ-DB-035 | A staging table MUST hold **at most one open staging set per project**: a snapshot of the staged design (instruments, fields, events, and the instrument-event mapping, as a JSON document), who opened it, and when. Closing the set — commit or discard — removes the row; commit applies the snapshot to the live structure tables in one transaction (REQ-API-106/107). |
 
+### 2.12 Instrument Completion State
+
+| ID | Requirement |
+|---|---|
+| REQ-DB-036 | The store MUST persist the user-assigned completion of a data-collection instrument per **(record, event, instrument)**, with who set it and when, and MUST enforce at most one such row per triple (REQ-API-110, DEV-DB-10). The stored state is only the `finished` assignment: whether an instrument has no values or some values stays **derived** from the stored data, so a persisted flag can never contradict what the record actually holds. Survey instruments hold no completion state (GD-9). Rows MUST be removed with the record (cascade) and MUST NOT be created for an (event, instrument) pair that is not mapped in the project's active design. |
+
 ## 3. Capacity and Performance
 
 | ID | Requirement |
@@ -129,3 +135,4 @@ Defines the persistent data model requirements. `Design/Database_Schema_Design.m
 | DEV-DB-7 | `events.period` becomes nullable (`NULL` = no timepoint) and gains the canonical per-arm ordering rule | Owner decision (2026-09-22, GD-15; master spec "Details" event ordering): timepoint events sorted by timepoint, non-timepoint events user-reorderable. |
 | DEV-DB-8 | Added `validation_types` table (seeded regex registry) and `fields.direct_identifier` flag | Owner decision (2026-09-25, master spec "Field validation"): extensible named-regex validation types; identifier classification becomes a user-set choice on any field instead of being derived from the validation type (REQ-DB-033, REQ-EXP-020, DEV-VAL-11). |
 | DEV-DB-9 | `projects` gains `mode`; added `project_staging` table (JSON design snapshot) | Owner decision (2026-09-25, GD-20; master spec "Project modes"): three project modes with staged setup changes in production; the snapshot form keeps the EAV/structure tables untouched while a staging set is open (REQ-DB-034/035). |
+| DEV-DB-10 | Added `instrument_completion` — one row per (record, event, instrument) marked finished, sparse (absence = not finished) | The plan's record-status dashboard derives filled/empty from the data and stores nothing; the master spec's third state ("finished", set by the user at the end of a data-collection instrument) is a fact about the user's act, not about the values, so it cannot be derived and must be stored. Sparse rather than one row per triple because the mapped cross is large (records × events × instruments) and almost none of it is ever marked (REQ-DB-036, REQ-API-110). |

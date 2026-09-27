@@ -304,15 +304,17 @@ Data: `GET …/record-status` (data access ≥ `read_only` + record visibility, 
 | some data | amber | at least one field has a value | derived (any field has a value = true) |
 | finished | green | data entry for this instrument is complete | **user-assigned** (§8.5) |
 
-> **Backend dependency (Open Item 1, §11).** The current baseline (`REQ-API-074`, `REQ-UI-019`) defines only the binary "any field has a value vs. none." The master spec's three states — and especially **"finished," which is assigned by the user at the end of each data-collection instrument (not for surveys)** — require a stored per-(record, event, instrument) completion state, an endpoint to set it, and `record-status` to return it. The UI contract above (grey/amber/green + the §8.5 dropdown) is the target shape; the backend items are flagged, not yet specified.
+> **Backend (Open Item 1, §11 — resolved).** The three states are in the baseline: `record-status` returns `no_data` / `some_data` / `finished` per (record, event, instrument) (REQ-API-074), where `finished` is read from `instrument_completion` (REQ-DB-036, `Database_Schema_Design.md` §6) and the other two are derived from whether any field holds a value — so grey/amber can never disagree with the stored data, and green only ever comes from the user's own assignment. Setting it is REQ-API-110 (§8.5); surveys take no assignment (GD-9).
 
 - **Navigation**: a record row (or a specific instrument cell) links to the data-entry / record view for that (record, event, instrument) — §8.
 - The response MUST NOT contain field values (REQ-API-074); the dashboard reveals only the completion state.
 
 ### 6.4 Export action (`GET /projects/{id}/export`, REQ-UI-020)
 
-- A control offering **CSV** or **JSON** (`format=csv|json`, default `csv`) — the two export formats of the master spec (raw vs. labels is the `rawOrLabel` axis on the data API; here the UI export follows the acting user's level, REQ-API-075).
-- **Sensitivity indicator**: a visible badge stating the level being applied for the arm(s) — `export_full` / `export_no_identifiers` / `export_de_identified` — so the user knows exactly what they are downloading (REQ-UI-020). For a multi-arm export the least restrictive level applied is the one shown.
+- A control offering **CSV** or **JSON** (`format=csv|json`, default `csv`) — the two export formats of the master spec (REQ-API-075).
+- **Arm selector** (REQ-UI-020): one checkbox per arm the member may export, all checked by default; the selection is sent as repeated `arm=` parameters. This is how a member with different levels on different arms obtains the higher sensitivity for a single arm — deselecting the weaker arm raises the applied level for that download (§4.3 of `Data_Export_Anonymization_Design.md`; REQ-EXP-003). A project with one arm hides the selector.
+- **Values / headers** (REQ-EXP-010): a raw-vs-labels switch (`rawOrLabel`) and a header switch (`rawOrLabelHeaders`), mirroring the data API's axes — these are available on this surface too, not only on the data API. For CSV, an optional `csvDelimiter` (REQ-EXP-013).
+- **Sensitivity indicator**: a visible badge stating the level being applied for the selected arm(s) — `export_full` / `export_no_identifiers` / `export_de_identified` — so the user knows exactly what they are downloading (REQ-UI-020). For a multi-arm export the **lowest (most protective)** level among the selected arms is the one shown and the one applied (REQ-EXP-003, D-4) — never the highest any single arm would allow. The badge recomputes when the arm selection changes, so unchecking an arm visibly raises the stated level before the download starts.
 - The download **streams** (REQ-TECH-011); the PHP route proxies the streamed response, so large exports do not buffer.
 - Gating: present only when the member holds a non-`export_none` level on the arm (REQ-UI-017/020, REQ-API-075); `export_none` → the card is absent (REQ-UI-003).
 - Every call is audit-logged with `surface:"ui"`, the project, and the sensitivity level (REQ-API-076, `Audit_Logging_Design.md` §3.5).
@@ -444,7 +446,9 @@ Both come from the **record history endpoint** `GET …/records/{record}/history
 
 At the **end of each data-collection instrument's form** (not for surveys — §7.5) a **dropdown** lets the user set that (record, event, instrument)'s completion state: *no data / some data / finished*. Selecting "finished" is the user's completion assignment that drives the green color-code in §6.3. The dropdown is present when the member has data access ≥ `view_edit` on the arm.
 
-> **Backend dependency (Open Item 1, §11):** persisting this user-assigned state and exposing it via `record-status` is not yet in the baseline (which is binary, REQ-API-074). The UI contract is fixed here; the storage + endpoint are flagged.
+The control maps onto one call — `PUT …/records/{record}/events/{event}/instruments/{iid}/completion` (REQ-API-110, `API_Endpoints_Design.md` §4.13): **finished** → `{ "state": "finished" }`; **no data** or **some data** → `{ "state": "unfinished" }`, after which the dashboard re-derives which of those two to show from the stored values (REQ-API-074). The two non-finished choices are therefore one action, not two — the UI never asserts a filled/empty state the data contradicts, and the dropdown's current selection for an unfinished instrument reflects the derived state rather than a stored one.
+
+> **Backend (Open Item 1, §11 — resolved):** the assignment persists in `instrument_completion` (REQ-DB-036) and is returned by `record-status` as the third state; each set or clear is audit-logged (REQ-AUD-026).
 
 ### 8.6 Submitting values — the data-API import path (ASM-API-3, REQ-API-031/035)
 
@@ -499,11 +503,11 @@ A standalone PHP route — **no login, outside the session** (GD-1, REQ-API-084,
 
 ## 11. Open Items and Backend Dependencies
 
-Items 2, 4–8 were owner-level baseline changes; the owner decisions of 2026-09-22 (master spec "Details") have now been taken into the requirements baseline, and each resolution is recorded in the Status column with the baseline references that now bind. Items 1 and 3 remain open (additive).
+Items 2, 4–8 were owner-level baseline changes; the owner decisions of 2026-09-22 (master spec "Details") have now been taken into the requirements baseline, and each resolution is recorded in the Status column with the baseline references that now bind. Item 1 was an additive backend dependency and has since been specified into the baseline (REQ-API-110, REQ-DB-036, REQ-AUD-026, REQ-UI-036). Only item 3 remains open.
 
 | # | Item (master spec source) | Status |
 |---|---|---|
-| 1 | 3-state completion: no data / some data / **finished**, user-assigned per non-survey instrument (§6.3, §8.5) | **OPEN** — a stored per-(record, event, instrument) completion state, an endpoint to set it, and `record-status` returning the three states are not yet in the baseline (binary "any field has a value" today — REQ-API-074, REQ-UI-019; `Database_Schema_Design.md` §6) |
+| 1 | 3-state completion: no data / some data / **finished**, user-assigned per non-survey instrument (§6.3, §8.5) | **RESOLVED** — `instrument_completion` stores the finished assignment per (record, event, instrument) (REQ-DB-036, DEV-DB-10, `Database_Schema_Design.md` §6); `PUT …/records/{record}/events/{event}/instruments/{iid}/completion` sets or clears it (REQ-API-110, `API_Endpoints_Design.md` §4.13); `record-status` returns `no_data`/`some_data`/`finished` (REQ-API-074, DEV-API-11); audit `instrument_completed`/`instrument_uncompleted` (REQ-AUD-026). Grey/amber stay derived so the badge cannot contradict the stored values (DEV-UI-8); the §6.3/§8.5 contracts bind |
 | 2 | "allow changing of event order" (§6.2 B) | **RESOLVED (GD-15)** — `PUT …/projects/{id}/events/order` (REQ-API-103); `period` nullable; canonical per-arm order (REQ-DB-011, `API_Endpoints_Design.md` §4.9); the §6.2 B contract binds |
 | 3 | record-history read order (§8.3) | **OPEN** — a most-recent-first (or tail) read mode would serve the form's current-value derivation; the endpoint is chronological (`API_Endpoints_Design.md` §4.16 — efficiency note, not a blocker) |
 | 4 | **time zones** — browser tz, per-project collection tz (master spec "Details") | **RESOLVED (GD-16)** — the canonical date/date-time form carries the collection offset (REQ-VAL-041, `Data_Validation_Design.md` §4.1); zone from browser `tz` (UI) / `tz` parameter (API) else `APP_TIMEZONE` (REQ-CFG-026); GD-7 scoped to system timestamps; the §1/§8.6 contracts bind |
@@ -512,4 +516,4 @@ Items 2, 4–8 were owner-level baseline changes; the owner decisions of 2026-09
 | 7 | **account validity (days; 0 = indefinite)** (master spec "Details") | **RESOLVED (GD-19)** — `users.valid_until` (REQ-DB-008); `valid_days` on the user API (REQ-API-047/048); `account_expired` rejection (REQ-AUTH-052); the §5.1 form contract binds |
 | 8 | **auto-disable after N days (180) inactivity** + admin re-enable + display on the user overview (master spec "Details") | **RESOLVED (GD-19)** — `users.last_login_at` (REQ-DB-008); auto-disable rule + `account_auto_disabled` audit (REQ-AUTH-053, `Authentication_Authorization_Design.md` §4.4); `AUTH_INACTIVITY_LIMIT_DAYS` default 180, `0` = off (REQ-CFG-024, `System_Configuration_Design.md` §3.10); admin re-enable resets the inactivity clock; the §5.1 contract binds |
 
-The open items (1 and 3) are additive and need a requirements + design decision before implementation (out of scope for this document). Neither blocks the UI contracts already fixed in this document: the §6.3/§8.5 completion-state contract (item 1) is specified against the **target** shape and will bind once the backend items land, and the §8.3 note (item 3) is an efficiency suggestion for an endpoint that already works.
+Item 1 is no longer a dependency: the storage, endpoint, audit event, and three-state `record-status` response are in the baseline, so the §6.3 and §8.5 contracts bind as written. The remaining item (3) is additive and non-blocking — an efficiency suggestion for an endpoint that already works correctly, needing no requirements decision to implement the UI as specified here.

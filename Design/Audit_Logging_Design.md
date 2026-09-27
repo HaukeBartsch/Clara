@@ -38,6 +38,8 @@ No IdP tokens, LDAP passwords, or service-token values ever appear in payloads (
 | `record_updated` | import changing an existing record | shape below, `"action":"update"` |
 | `record_deleted` | `content=record&action=delete` (REQ-API-036) | shape below, `"action":"delete"` |
 | `calculated_recomputed` | every system-driven recomputation (REQ-AUD-023, REQ-VAL-038) | `{"record_id":"…","field":"total","old":"9","new":"11","trigger_field":"a","trigger_event":"e1_arm_1"}` |
+| `instrument_completed` | the user marks a (record, event, instrument) finished — `PUT …/completion` with `state=finished` (REQ-AUD-026, REQ-API-110) | `{"record_id":"8DISC042","event":"e1_arm_1","instrument":"intake"}` |
+| `instrument_uncompleted` | the user clears that assignment (`state=unfinished`) (REQ-AUD-026) | `{"record_id":"8DISC042","event":"e1_arm_1","instrument":"intake"}` |
 
 Data-change shape (create / update / delete):
 
@@ -98,7 +100,7 @@ Field renames are `field_updated` with `"changes":{"name":{"old":"…","new":"�
 |---|---|---|
 | `export` | every data export on both surfaces — data API (`content=record&action=export`) and administration API (`GET /api/v1/projects/{id}/export`) | `{"surface":"data_api or ui","sensitivity":"full or no_identifiers or de_identified","filters":{"records":["…"],"fields":["…"],"forms":["…"],"events":["…"],"filter_logic":"[age]=\"42\""}}` |
 
-Rules: omitted filters are empty arrays; `sensitivity` is the level applied per REQ-API-026/075 (for multi-arm exports, the least restrictive level applied); the record-view row for data-API exports is written **in addition** to this entry (REQ-AUD-013, §4).
+Rules: omitted filters are empty arrays; `sensitivity` is the level applied per REQ-API-026/075 (for multi-arm exports, the **lowest / most protective** level among the exported arms — the one actually applied to every row, `Data_Export_Anonymization_Design.md` §4.3); the record-view row for data-API exports is written **in addition** to this entry (REQ-AUD-013, §4).
 
 ### 3.6 Survey events (REQ-AUD-021)
 
@@ -154,13 +156,13 @@ The row records **no values** — only who, when, which records, which instrumen
 
 ## 6. Partitioning and Rollover (REQ-AUD-006, REQ-DB-022)
 
-The application reads and writes **only** the stable names `audit_events` / `audit_record_views`; the physical objects are per dialect.
+The application **reads** only the stable names `audit_events` / `audit_record_views`. Writes are dialect-dependent: MariaDB writes the stable name (a partitioned table accepts inserts and routes them itself); SQLite writes the current-year physical table, because a compound (`UNION ALL`) view is not insertable. See §6.2 and deviation DEV-AUD-3.
 
 ### 6.1 MariaDB — yearly partitions (normative DDL)
 
 ```sql
 CREATE TABLE IF NOT EXISTS audit_events (
-    id            INTEGER PRIMARY KEY AUTO_INCREMENT,
+    id            INTEGER AUTO_INCREMENT,
     event_type    VARCHAR(64) NOT NULL,
     source        VARCHAR(8)  NOT NULL,
     user_id       INTEGER,
@@ -172,12 +174,20 @@ CREATE TABLE IF NOT EXISTS audit_events (
     target_record VARCHAR(255),
     details       TEXT,
     created_at    DATETIME NOT NULL,
-    PARTITION BY RANGE (YEAR(created_at)) (
-        PARTITION p2026 VALUES LESS THAN (2027),
-        PARTITION p2027 VALUES LESS THAN (2028)
-    )
+    PRIMARY KEY (id, created_at)          -- must include the partition column (ER 1503)
+)                                         -- and PARTITION BY follows the closing paren
+PARTITION BY RANGE (YEAR(created_at)) (
+    PARTITION p2026 VALUES LESS THAN (2027),
+    PARTITION p2027 VALUES LESS THAN (2028)
 );
 ```
+
+Two constraints make this shape mandatory, and both are easy to get wrong:
+
+- **The partitioning column MUST be part of every unique key** — MariaDB rejects a partitioned table whose primary key omits `created_at` with error 1503 (*"Table contains a partition function but has an incorrect primary key or unique index"*). So the key is composite, `(id, created_at)`; `AUTO_INCREMENT` is legal because `id` leads it. A single-column `id PRIMARY KEY` cannot be created on a range-partitioned-by-year table at all.
+- **`PARTITION BY` is a table option**, written after the closing parenthesis of the column list, not inside it.
+
+Consequence to keep in mind: because the key is composite, `id` alone is **not** guaranteed unique across partitions — an audit entry is addressed by `(id, created_at)`, and any endpoint returning or filtering an audit entry by `id` alone (§4.15, §7) must carry `created_at` with it.
 
 Same shape for `audit_record_views` (columns per `Database_Schema_Design.md` §7). **No `MAXVALUE` partition** — a `MAXVALUE` guard would block later `ADD PARTITION`.
 
@@ -204,6 +214,15 @@ CREATE VIEW IF NOT EXISTS audit_events AS SELECT * FROM audit_events_2026;
 ```
 
 **Rollover check** (same trigger as §6.1): if `audit_events_<current year>` does not exist, create it with the same shape, then `DROP VIEW audit_events` and recreate it as `UNION ALL` over all `audit_events_*` tables in year order (same for `audit_record_views`). The audit tables carry no foreign keys — they are append-only business records — so view recreation has no integrity side effects.
+
+**Write path (normative).** The writer resolves the target table name from the entry's own `created_at` year — `audit_events_2026`, `audit_events_2027`, … — and inserts into that physical table; it never issues `INSERT INTO audit_events`. Once a second year exists, `audit_events` is a compound view and SQLite rejects the insert — verified against SQLite: `Error: in prepare, cannot modify a because it is a view` (only views over a single table, without compounds, are updatable) — so writing the stable name would make every audit entry fail from the first day of the second year. The writer derives the year from the same UTC timestamp it stores, so an entry always lands in the partition its `created_at` reads back from, and §6.3's rollover stays invisible to callers.
+
+Two alternatives were considered and do not work here:
+
+- **An `INSTEAD OF INSERT` trigger on the view** — SQLite has no dynamic SQL, so a trigger body cannot compute a target table name from `NEW.created_at`; and only one `INSTEAD OF INSERT` trigger may serve a view, so there is no way to chain per-year routing. The trigger would have to be rewritten at every rollover and still could not route by year.
+- **One physical table forever, partitioned logically by a column** — abandons REQ-AUD-006/REQ-DB-022's yearly rollover and the retention-by-dropping-years operation (§6.3).
+
+Because `id` is now per-year (`INTEGER PRIMARY KEY` = rowid alias within each year table), SQLite shares MariaDB's consequence: `id` is unique **within** a year, and `(id, created_at)` addresses an entry across years. Reads from the view present years in ascending order; callers that page audit entries key on `(created_at, id)`, never on `id` alone (§7).
 
 ### 6.3 Rollover is maintenance, not migration
 

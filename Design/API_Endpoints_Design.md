@@ -558,22 +558,43 @@ Each array lists the events an instrument is mapped to; an empty array = mapped 
 
 An instrument is active for data entry once it is mapped to at least one event (REQ-DB-012). 200. Audit `mapping_updated`.
 
-### 4.13 Record status (REQ-API-074)
+### 4.13 Record status (REQ-API-074, REQ-API-110)
 
-**`GET /api/v1/projects/{id}/record-status`** — data access ≥ `read_only` + record visibility (REQ-AUTH-045). 200 — all visible records, with their instruments per event in the instrument order of each arm and a completion state per (record, event, instrument) — any field has a value vs. none:
+**`GET /api/v1/projects/{id}/record-status`** — data access ≥ `read_only` + record visibility (REQ-AUTH-045). 200 — all visible records, with their instruments per event in the instrument order of each arm and a **three-state** completion state per (record, event, instrument):
 
 ```json
 [ { "record_id": "8DISC042",
     "events": [ { "unique_event_name": "baseline_arm_1",
-                  "instruments": [ { "name": "intake", "complete": true },
-                                   { "name": "scores", "complete": false } ] } ] } ]
+                  "instruments": [ { "name": "intake", "state": "finished" },
+                                   { "name": "scores", "state": "some_data" },
+                                   { "name": "labs",   "state": "no_data" } ] } ] } ]
 ```
+
+`state` is `no_data` | `some_data` | `finished`. Only `finished` is stored (REQ-DB-036); the other two are computed per row from whether any of that instrument's fields in that event holds a value, so the field never reports `no_data` for an instrument that has values or `some_data` for one the user marked finished. A survey-marked instrument always reports its derived state — it takes no completion assignment (GD-9).
 
 The response MUST NOT contain field values (REQ-API-074). A record-status read is not a record view (`Audit_Logging_Design.md` §8, ASM-AUD-2).
 
+**`PUT /api/v1/projects/{id}/records/{record}/events/{event}/instruments/{iid}/completion`** — data access ≥ `view_edit` on the record's arm (REQ-API-110); idempotent (REQ-API-042). Body:
+
+```json
+{ "state": "finished" }
+```
+
+`state` is `finished` (set) or `unfinished` (clear, returning the row to its derived `no_data`/`some_data`). The call writes **no field value** — it is a workflow annotation, not data entry, and MUST NOT be rejected by validation or by analysis-mode write rules that apply to values (GD-20 scopes mode rejection to imports of data; this endpoint changes none). Unknown record/event/instrument → 404 `not_found`; an (event, instrument) pair not mapped in the active design → 409 `conflict`; a survey-marked instrument → 409 `conflict` (REQ-DB-036). A record outside the caller's data-access-group scope → 403 `forbidden` (REQ-AUTH-045). 200 — `{ "state": "finished" }`, the resulting stored state. Audit `instrument_completed` / `instrument_uncompleted` (REQ-AUD-026, `Audit_Logging_Design.md` §3).
+
 ### 4.14 Export (UI) (REQ-API-075…076)
 
-**`GET /api/v1/projects/{id}/export`** — query parameter `format=csv|json` (default `csv`); the response is streamed (REQ-TECH-011). Record selection follows the data-access-group rule (REQ-API-092); the sensitivity follows the acting user's export level per arm (the REQ-API-026 ladder — `export_full` → full dataset; `export_no_identifiers` → identifier fields removed; `export_de_identified` → de-identified per §3.6.1; `export_none` → 403 `forbidden`); for a multi-arm export the least restrictive level applied is the one recorded.
+**`GET /api/v1/projects/{id}/export`** — query parameters (all optional; unknown ones accepted and ignored, REQ-API-017; DEV-API-12):
+
+| Parameter | Values | Default | Meaning |
+|---|---|---|---|
+| `format` | `csv` \| `json` | `csv` | encoding (REQ-API-075) |
+| `arm` | arm number, repeatable (`arm=1&arm=3`) | all arms the caller may export | restricts the export to those arms — this is what makes a higher per-arm sensitivity obtainable by separate per-arm exports (REQ-EXP-003); an arm the caller cannot export → 403 `forbidden`; an unknown arm number → 404 `not_found` |
+| `rawOrLabel` | `raw` \| `label` | `raw` | choice values as codes or labels (REQ-EXP-010, same semantics as the data API's `rawOrLabel`, §3.1) |
+| `rawOrLabelHeaders` | `raw` \| `label` \| `both` | `raw` | column names (REQ-EXP-010) |
+| `csvDelimiter` | single character | `,` | empty value = comma (REQ-EXP-013); CSV only |
+
+The response is streamed (REQ-TECH-011). Record selection follows the data-access-group rule (REQ-API-092). Sensitivity follows the acting user's export level per arm (the REQ-API-026 ladder — `export_full` → full dataset; `export_no_identifiers` → identifier fields removed; `export_de_identified` → de-identified per §3.6.1; `export_none` → 403 `forbidden`). **For an export spanning several arms the applied level is the lowest (most protective) level among those arms** — the minimum in the GD-2 ordering, so every row is delivered at a level no weaker than any arm allows (REQ-EXP-003, `Data_Export_Anonymization_Design.md` §4.3, decision D-4); `export_none` on any exported arm → 403 `forbidden`. The level recorded in the audit event and shown in the UI badge is exactly this applied minimum — never a higher level that some individual arm would have permitted.
 
 Every call is audit-logged as an `export` event with `surface: "ui"`, the project, and the sensitivity level (REQ-API-076, BR-007, `Audit_Logging_Design.md` §3.5).
 
@@ -770,6 +791,7 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirement.m
 | arms, events, instruments, fields, mapping — mutations (POST/PUT/DELETE) | `project_admin` |
 | arms, events, instruments, fields, mapping — reads (GET) | data access ≥ `read_only` |
 | `GET …/record-status`, `GET …/records/{record}/history` | data access ≥ `read_only` (+ record visibility) |
+| `PUT …/records/{record}/events/{event}/instruments/{iid}/completion` | data access ≥ `view_edit` on the record's arm (+ record visibility) |
 | `POST …/fields/{fid}/test` | `project_admin` + record visibility |
 | `GET /api/v1/validationTypes` | any authenticated user |
 | `GET …/export` | export level per arm (GD-2; `export_none` → 403) |

@@ -5,14 +5,15 @@ This document outlines the key views and layout for the clinical study managemen
 Key Views
 
 1. Dashboard
-- Purpose: Start page after login; overview of accessible projects and recent activity.
-- Components: List of projects the user has access to (administrator group or project membership), quick stats (record counts), and notifications.
+- Purpose: Start page after login; overview of accessible projects.
+- Components: List of projects the user has access to (administrator group or project membership) and quick stats (record, instrument, field counts per project).
+- Not a requirement today: "recent activity" and "notifications". An earlier draft of this plan listed them as dashboard components; nothing in the requirements or design asks for them and no API supplies them, so they are out rather than pending. Re-introducing either needs a `REQ-UI-*` entry first (with an endpoint behind it), not an implementation shortcut.
 
 2. Admin Interface
 - Purpose: Administration for authenticated and authorized (administrator) users.
 - Components:
     - User accounts: Create (enable) and manage normal user accounts.
-    - Projects: Create new projects (name, organization, PI, data manager, REK number, REK start/end dates, end provision, options) and edit project metadata.
+    - Projects: Create new projects (name, organization = main supporting institution, PI name and email, data manager, REK/IRB number, REK start/end dates, start/end dates, participant naming pattern) and edit project metadata. The option flags, the end provision, the end-user-contract confirmation, and an initial-events list are **absent from the form** (GD-17, REQ-UI-012); creation makes the project with arm 1 only, and events are added afterwards in the project's Setup page.
     - Assignment: Assign users to projects given a role (data-manager, data-entry, controller, or a custom role). Role-less members have full permissions.
     - Roles: Create additional roles with a mixture of permissions.
 
@@ -25,7 +26,7 @@ Key Views
         - Setup (permission "project_admin"): Add/remove arms, instruments, events, and mappings between them.
         - Design: Create a new instrument, edit fields in an existing instrument.
         - Record status dashboard: Show the table of records and instruments by event.
-        - Export: Export project data based on the user's export permissions (full or anonymized).
+        - Export: Export project data as CSV or JSON at the acting user's export level, with an arm selector and a visible sensitivity badge (REQ-UI-020). The applied level for a multi-arm export is the **lowest (most protective)** of the selected arms; deselecting an arm raises it for that download (REQ-EXP-003).
 
 4. Instrument Designer
 - Purpose: Edit an instrument's data dictionary.
@@ -38,10 +39,11 @@ Key Views
 - Components:
     - Dynamic rendering of fields (Text, Dropdowns, Radio buttons, Matrix).
     - Real-time validation feedback (client-side JavaScript + HTML5; authoritative validation in the API).
+    - A completion control at the end of each data-collection instrument's form (not on surveys): set or clear this record/event/instrument's "finished" state, which drives the green marker on the status dashboard (REQ-UI-036).
 
 6. Record Status Dashboard
 - Purpose: Overview of data completion for a project.
-- Components: Lists all record_ids in a project with their instruments sorted by event and ordered based on the order of instruments in each arm. Each instrument is rendered with a small graphic (filled vs. gray circle) indicating whether any of its fields has a value.
+- Components: Lists all record_ids in a project with their instruments sorted by event and ordered based on the order of instruments in each arm. Each instrument is rendered with a small graphic in one of **three** states — grey (no field has a value), amber (some value present), green (the user marked the instrument finished at the end of its form) (REQ-UI-019/036, REQ-API-074/110). Grey and amber are derived from the stored values; only green is stored, so the indicator can never claim completion the data contradicts.
 
 UI Framework
 - Framework: Bootstrap

@@ -33,7 +33,7 @@ This document consolidates the business and product requirements for a research 
 | BR-005 | The system must expose a REDCap-compatible API (Go, OpenAPI/Swagger) so existing callers (Fiona) keep working unchanged. |
 | BR-006 | The system must provide a web UI (admin interface + data entry) that accesses the backend exclusively through the API. |
 | BR-007 | The system must log all backend data access in two audit tables: one for change/create/delete events, one exclusively for record views. |
-| BR-008 | The system must support exporting project data as CSV and JSON, with full, anonymized, and non-sensitive export levels. |
+| BR-008 | The system must support exporting project data as CSV and JSON at the four GD-2 export levels — `export_none`, `export_de_identified` (anonymized), `export_no_identifiers`, `export_full` — held per arm (supersedes the earlier "full, anonymized, non-sensitive" wording; DEV-AUTH-5). |
 | BR-009 | The system must handle project end per the project's end provision (delete or anonymize the stored data at the REK end date). Since GD-17, the end provision is no longer a `projects`-table attribute: it is held as project data (e.g. in a `DataTransferProjects` instrument) or outside the system; the REK end date remains project metadata. |
 | BR-010 | A project must only be visible to a user who is an administrator or a member of the project. |
 | BR-011 | Records MUST be isolated between data access groups: a member with an active group accesses only the records of that group; a member without a group sees all records (GD-10). |

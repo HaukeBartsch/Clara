@@ -27,7 +27,7 @@ Two surfaces, one pipeline (§4):
 | Surface | Entry | Level source |
 |---|---|---|
 | data API (Fiona and any external caller) | `POST /api/` `content=record&action=export` | the token holder's export level for the arm of the exported data (REQ-API-026, GD-2) |
-| administration API (web UI) | `GET /api/v1/projects/{id}/export?format=csv\\|json` (default `csv`, REQ-API-075) | the acting user's export level per arm (GD-2, REQ-API-075) |
+| administration API (web UI) | `GET /api/v1/projects/{id}/export?format=csv\|json&arm=N&rawOrLabel=…&rawOrLabelHeaders=…&csvDelimiter=…` (REQ-API-075; full parameter table in `API_Endpoints_Design.md` §4.14) | the acting user's export level per arm (GD-2, REQ-API-075) |
 
 Common to both (normative):
 
@@ -43,7 +43,7 @@ Common to both (normative):
 
 ### 3.1 CSV and JSON (REQ-API-013, REQ-API-075, master spec \"Export formats\")
 
-The master spec's \"CSV raw / CSV labels\" pair is the `rawOrLabel` axis on the data API (REQ-API-027) and is available on both surfaces; `format`/`returnFormat` selects the encoding (`json`/`csv`). Stored values remain choice codes (REQ-VAL-022); `rawOrLabel=label` renders dropdown/radio/matrix-row values as their labels, `rawOrLabelHeaders` renders the column names the same way (`raw`/`label`/`both`, REQ-API-027).
+The master spec's \"CSV raw / CSV labels\" pair is the `rawOrLabel` axis on the data API (REQ-API-027) and is available on both surfaces — the same-named parameters on the data API (§3.1) and on the administration export (`rawOrLabel`, `rawOrLabelHeaders`, `csvDelimiter` on `GET /api/v1/projects/{id}/export`, `API_Endpoints_Design.md` §4.14, REQ-EXP-010/013); `format`/`returnFormat` selects the encoding (`json`/`csv`). Stored values remain choice codes (REQ-VAL-022); `rawOrLabel=label` renders dropdown/radio/matrix-row values as their labels, `rawOrLabelHeaders` renders the column names the same way (`raw`/`label`/`both`, REQ-API-027).
 
 ### 3.2 Row layout (REQ-API-028, `API_Endpoints_Design.md` §3.6.2)
 
@@ -97,10 +97,10 @@ Removed means the column is absent from the output (no empty column); hashing an
 For an export spanning several arms, the applied level is the **lowest level in the GD-2 ordering among the arms of the exported data** — the most protective (D-4). Consequences:
 
 - an arm at `export_none` among the exported arms → the whole call is rejected (403), because the minimum is `export_none`;
-- the `sensitivity` recorded in the audit event is exactly this applied level (`Audit_Logging_Design.md` §3.5: \"the least restrictive level applied\" — read as the minimum of the set, i.e. the one actually applied to every row);
+- the `sensitivity` recorded in the audit event is exactly this applied level (`Audit_Logging_Design.md` §3.5 — the minimum of the set, i.e. the one actually applied to every row);
 - the UI sensitivity badge shows the same applied level (REQ-UI-020).
 
-A caller with different levels on different arms therefore obtains the de-identified form of the union; per-arm higher sensitivity is obtained by separate exports per arm.
+A caller with different levels on different arms therefore obtains the de-identified form of the union; per-arm higher sensitivity is obtained by separate exports per arm — on the administration surface via the `arm` parameter (`API_Endpoints_Design.md` §4.14), on the data API by exporting one event/arm at a time (REQ-EXP-003). The selector is what discharges that clause: without an arm restriction on the administration endpoint, a member holding `export_full` on arm 1 and `export_de_identified` on arm 2 could never obtain the arm-1 data at its own level.
 
 ### 4.4 What the pipeline does not touch
 

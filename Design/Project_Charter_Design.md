@@ -52,7 +52,7 @@ The system is exactly these four components and no others. There is no scheduler
 | BR-005 | REDCap-compatible API (Go, OpenAPI) so Fiona keeps working unchanged | `API_Endpoints_Design.md` §3; `Technology_Stack_Design.md` §3 (hand-maintained OpenAPI 3.1), §6 (Fiona fixtures) |
 | BR-006 | Web UI that accesses the backend exclusively through the API | `User_Interface_Design.md` (all); the single-writer boundary (§2.2, REQ-TECH-006) |
 | BR-007 | Two audit tables (change/create/delete; record views) | `Audit_Logging_Design.md` §3/§4; `Database_Schema_Design.md` §7 (append-only, yearly rollover) |
-| BR-008 | CSV/JSON export with full / anonymized / non-sensitive levels | `Data_Export_Anonymization_Design.md` §2–§5 |
+| BR-008 | CSV/JSON export at the four GD-2 export levels (`export_none` / `export_de_identified` / `export_no_identifiers` / `export_full`), held per arm | `Data_Export_Anonymization_Design.md` §2–§5 |
 | BR-009 | Project end per the end provision (delete or anonymize at the REK end date) | `Data_Export_Anonymization_Design.md` §7 (one-shot `is_admin` action) |
 | BR-010 | Project visible only to an administrator or a member | `Authentication_Authorization_Design.md` §4.3 (per-surface decision paths); `API_Endpoints_Design.md` (REQ-API-007) |
 | BR-011 | Record isolation between data access groups | `Authentication_Authorization_Design.md` §4.2; `Database_Schema_Design.md` §6/§8 (`record_entities`, DAG tables) |
