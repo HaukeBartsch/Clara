@@ -6,7 +6,22 @@ import (
 	"testing"
 
 	"csms/api/internal/config"
+	"csms/api/internal/migrations"
 )
+
+// wantSchemaVersion is the version a fully migrated store reports: Migrate
+// numbers files by their position in the sorted list, so it is one per
+// migration file rather than the highest number in a file name (the two
+// 0004_* files added by separate changes apply as versions 4 and 5). Derived
+// from the embedded list so adding a migration does not break this test.
+func wantSchemaVersion(t *testing.T) int {
+	t.Helper()
+	files, err := migrations.For(string(DialectSQLite))
+	if err != nil {
+		t.Fatalf("migrations.For: %v", err)
+	}
+	return len(files)
+}
 
 func openTestStore(t *testing.T) *Store {
 	t.Helper()
@@ -37,8 +52,8 @@ func TestMigrateCreatesSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SchemaVersion: %v", err)
 	}
-	if v != 4 {
-		t.Fatalf("SchemaVersion = %d, want 4", v)
+	if want := wantSchemaVersion(t); v != want {
+		t.Fatalf("SchemaVersion = %d, want %d (every migration file applied)", v, want)
 	}
 
 	// Every core table must exist.
@@ -117,8 +132,8 @@ func TestMigrateIdempotent(t *testing.T) {
 		t.Fatalf("second Migrate: %v", err)
 	}
 	v, _ := s.SchemaVersion(ctx)
-	if v != 4 {
-		t.Fatalf("SchemaVersion = %d after re-migrate, want 4", v)
+	if want := wantSchemaVersion(t); v != want {
+		t.Fatalf("SchemaVersion = %d after re-migrate, want %d", v, want)
 	}
 	// Languages must not be duplicated by the re-seed.
 	var n int
