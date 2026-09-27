@@ -18,7 +18,7 @@ var wantFiles = []string{
 	"0002_seed.sql",
 	"0003_validation_types.sql",
 	"0004_project_modes.sql",
-	"0004_system_settings.sql",
+	"0005_system_settings.sql",
 }
 
 var dialects = []string{"sqlite", "mariadb"}

@@ -11,9 +11,11 @@ import (
 
 // wantSchemaVersion is the version a fully migrated store reports: Migrate
 // numbers files by their position in the sorted list, so it is one per
-// migration file rather than the highest number in a file name (the two
-// 0004_* files added by separate changes apply as versions 4 and 5). Derived
-// from the embedded list so adding a migration does not break this test.
+// migration file rather than the highest number in a file name (five files
+// apply as versions 1–5). Derived from the embedded list so adding a migration
+// does not break this test. Keep file-name numbers unique and append-only: a
+// gap or a renumbered prefix would make an existing database re-run or skip a
+// migration.
 func wantSchemaVersion(t *testing.T) int {
 	t.Helper()
 	files, err := migrations.For(string(DialectSQLite))
