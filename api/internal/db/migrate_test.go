@@ -48,6 +48,7 @@ func TestMigrateCreatesSchema(t *testing.T) {
 		"calculated_dependencies", "data", "record_entities", "dag_groups",
 		"dag_memberships", "anon_offsets", "survey_links", "languages",
 		"i18n_strings", "audit_events", "audit_record_views", "validation_types",
+		"project_staging",
 	}
 	for _, table := range want {
 		var n int
@@ -58,6 +59,19 @@ func TestMigrateCreatesSchema(t *testing.T) {
 		if n != 1 {
 			t.Errorf("table %q missing", table)
 		}
+	}
+
+	// The mode column added by the GD-20 migration, NOT NULL with the starting
+	// mode as its default so existing rows land in development (REQ-DB-034).
+	var notNull, hasDefault int
+	if err := s.DB.QueryRowContext(ctx,
+		`SELECT "notnull", dflt_value IS NOT NULL
+		 FROM pragma_table_info('projects') WHERE name = 'mode'`).
+		Scan(&notNull, &hasDefault); err != nil {
+		t.Fatalf("projects.mode column: %v", err)
+	}
+	if notNull != 1 || hasDefault != 1 {
+		t.Errorf("projects.mode notnull=%d hasDefault=%d, want both 1", notNull, hasDefault)
 	}
 }
 
