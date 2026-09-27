@@ -41,6 +41,7 @@ func New(store *db.Store, cfg *config.Config, aw *audit.Writer) *Handler {
 	h.registerAuth(mux)
 	h.registerUsers(mux)
 	h.registerProjects(mux)
+	h.registerModes(mux)
 	h.registerMembers(mux)
 	h.registerRoles(mux)
 	h.registerStructure(mux)

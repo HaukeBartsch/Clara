@@ -30,6 +30,7 @@ type Project struct {
 	EndDate          sql.NullString
 	ParticipantNames string
 	CreationTime     string // DATETIME UTC "YYYY-MM-DD HH:MM:SS"
+	Mode             string // development | production | analysis (GD-20, REQ-DB-034)
 }
 
 // Users (REQ-DB-008, GD-18/GD-19).

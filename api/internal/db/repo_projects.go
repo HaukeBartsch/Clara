@@ -13,7 +13,7 @@ import (
 
 const projectColumns = `id, project_name, organization, pi_name, pi_email,
 	dm_name, dm_email, rek_number, rek_start_date, rek_end_date,
-	start_date, end_date, participant_names, creation_time`
+	start_date, end_date, participant_names, creation_time, mode`
 
 func scanProject(row interface{ Scan(dest ...any) error }) (Project, error) {
 	var (
@@ -29,7 +29,7 @@ func scanProject(row interface{ Scan(dest ...any) error }) (Project, error) {
 	)
 	err := row.Scan(&p.ID, &p.ProjectName, &p.Organization, &p.PIName, &p.PIEmail,
 		&dmName, &dmEmail, &rekNumber, &rekStart, &rekEnd,
-		&startDate, &endDate, &p.ParticipantNames, &creation)
+		&startDate, &endDate, &p.ParticipantNames, &creation, &p.Mode)
 	if err != nil {
 		return p, err
 	}
@@ -82,20 +82,25 @@ func nullAnyString(v any) (string, bool) {
 }
 
 // CreateProject inserts a project row and returns the new id. Creation time
-// defaults to now when unset (REQ-DB-006).
+// defaults to now when unset (REQ-DB-006) and the mode to development, the
+// starting mode of every new project (REQ-DB-034).
 func (s *Store) CreateProject(ctx context.Context, p *Project) (int64, error) {
 	if p.CreationTime == "" {
 		p.CreationTime = nowUTC()
 	}
+	if p.Mode == "" {
+		p.Mode = ModeDevelopment
+	}
 	res, err := s.DB.ExecContext(ctx,
 		`INSERT INTO projects (project_name, organization, pi_name, pi_email,
 			dm_name, dm_email, rek_number, rek_start_date, rek_end_date,
-			start_date, end_date, participant_names, creation_time)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			start_date, end_date, participant_names, creation_time, mode)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.ProjectName, p.Organization, p.PIName, p.PIEmail,
 		nullStr(p.DMName), nullStr(p.DMEmail), nullStr(p.RekNumber),
 		nullStr(p.RekStartDate), nullStr(p.RekEndDate),
-		nullStr(p.StartDate), nullStr(p.EndDate), p.ParticipantNames, p.CreationTime)
+		nullStr(p.StartDate), nullStr(p.EndDate), p.ParticipantNames, p.CreationTime,
+		p.Mode)
 	if err != nil {
 		return 0, err
 	}
@@ -148,7 +153,9 @@ func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
 
 // UpdateProject rewrites the mutable identity/ethics fields including the
 // name (PUT accepts project_name per API_Endpoints_Design.md §4.5 — callers
-// check uniqueness first); the creation time is fixed at creation.
+// check uniqueness first); the creation time is fixed at creation and the
+// mode is deliberately absent — it changes only through the mode endpoint
+// (REQ-DB-034, SetProjectMode).
 func (s *Store) UpdateProject(ctx context.Context, p *Project) error {
 	_, err := s.DB.ExecContext(ctx,
 		`UPDATE projects SET
