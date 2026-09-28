@@ -112,7 +112,7 @@ Defines the persistent data model requirements. `Design/Database_Schema_Design.m
 
 | ID | Requirement |
 |---|---|
-| REQ-DB-037 | The store MUST hold a system-wide `system_settings` table — a key/value registry of runtime settings changed through the administration interface without a restart (REQ-API-112). Migrations MUST seed it with `rate_limit_enabled` = `false` and `rate_limit_rpm` = `600` (master spec "Rate limitter"); adding a further runtime setting is an insert into this table plus its validation at the API boundary, not a schema change (mirrors the languages rule, REQ-DB-031). Values are JSON scalars interpreted and validated by the API; the table holds no secrets (REQ-CFG-021 — secrets remain environment-only). |
+| REQ-DB-037 | The store MUST hold a system-wide `system_settings` table — a key/value registry of runtime settings changed through the administration interface without a restart (REQ-API-112). Migrations MUST seed it with `rate_limit_enabled` = `false`, `rate_limit_rpm` = `600` and `rate_limit_block_minutes` = `10` (the third key arriving in the insert migration that introduces it, per the same rule; master spec "Rate limitter"); adding a further runtime setting is an insert into this table plus its validation at the API boundary, not a schema change (mirrors the languages rule, REQ-DB-031). Values are JSON scalars interpreted and validated by the API; the table holds no secrets (REQ-CFG-021 — secrets remain environment-only). |
 
 ## 3. Capacity and Performance
 
