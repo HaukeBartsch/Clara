@@ -348,6 +348,8 @@ CREATE TABLE IF NOT EXISTS system_settings (     -- REQ-DB-037 (master spec "Rat
 );
 INSERT INTO system_settings (key, value) SELECT 'rate_limit_enabled', 'false' WHERE NOT EXISTS (SELECT 1 FROM system_settings WHERE key = 'rate_limit_enabled');
 INSERT INTO system_settings (key, value) SELECT 'rate_limit_rpm',     '600'   WHERE NOT EXISTS (SELECT 1 FROM system_settings WHERE key = 'rate_limit_rpm');
+-- seeded by the migration introducing the blockout period (REQ-API-113), same insert-not-schema rule
+INSERT INTO system_settings (key, value) SELECT 'rate_limit_block_minutes', '10' WHERE NOT EXISTS (SELECT 1 FROM system_settings WHERE key = 'rate_limit_block_minutes');
 ```
 
 Notes:

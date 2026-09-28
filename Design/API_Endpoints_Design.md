@@ -74,7 +74,7 @@ HTTP status mapping (REQ-API-039):
 | unknown/missing `content`, or `record` without supported `action` | 400 | `Invalid content` |
 | insufficient permission (incl. `export_none`, read-only import) | 403 | `Permission denied` |
 | write to an analysis-mode project (`import` / `delete`; survey submissions included) | 403 | `Project in analysis mode` (GD-20, REQ-API-109) |
-| rate limit exceeded (when enabled) | 429 | `Rate limit exceeded` |
+| rate limit exceeded (when enabled) | 429 | `Rate limit exceeded` (with `Retry-After`, §3.9) |
 | import with per-record validation failures | 200 | — (per-record result codes, §3.7.2) |
 
 Error text never leaks internal implementation details (REQ-API-039, REQ-API-006).
@@ -244,9 +244,20 @@ Response (JSON):
 [ { "record_id": "8DISC042", "form_name": "", "deleted": 1 } ]
 ```
 
-### 3.9 Rate Limiting (REQ-API-038, REQ-CFG-020)
+### 3.9 Rate Limiting (REQ-API-038, REQ-API-113, REQ-CFG-020)
 
-The limiter counts **per source IP address** and covers both surfaces — `/api/` and `/api/v1/` — so web-application traffic (through PHP) and external scripts are limited alike (master spec "Rate limitter"). The data API enforces it inside its handler (where the requested error format is known); the administration surface at the boundary middleware in `httpapi`. The enable flag and threshold are the system settings of §4.22, read from `system_settings` per request — a saved change is effective on the next request, no restart (REQ-API-112). When enabled, each source IP may make `rate_limit_rpm` requests per rolling minute (default 600); a call over the limit is answered with HTTP 429 and the §3.2 error body (`Rate limit exceeded`). In-memory by design — the API stays stateless and a restart only resets the windows.
+The limiter counts **per source IP address** and covers both surfaces — `/api/` and `/api/v1/` — so web-application traffic (through PHP) and external scripts are limited alike (master spec "Rate limitter"). The data API enforces it inside its handler (where the requested error format is known); the administration surface at the boundary middleware in `httpapi`. Both share one limiter instance per API process (`httpapi.NewMux` passes the data handler's limiter into the middleware), so an address blocked on one surface is blocked on the other too. The enable flag and both thresholds are the system settings of §4.22, read from `system_settings` per request — a saved change is effective on the next request, no restart (REQ-API-112). When enabled, each source IP may make `rate_limit_rpm` requests per rolling minute (default 600); a call over the limit is answered with HTTP 429 and the §3.2 error body (`Rate limit exceeded`). In-memory by design — the API stays stateless and a restart only resets the windows and the blocks.
+
+**Blockout (REQ-API-113).** Over the budget is not merely refused once: the first call that would exceed `rate_limit_rpm` blocks the source IP for `rate_limit_block_minutes` (default 10 minutes), answering 429 with a `Retry-After` header naming the remaining whole seconds (rounded up). While blocked, every request from that IP is answered the same way — before any token lookup, and without recording a hit or moving the blockout end. The period therefore runs from the first rejection, not from the last one: a client that keeps calling cannot extend its own lockout indefinitely. When the period elapses the address is admitted again with no memory of the offence (its window starts empty).
+
+```
+t=0        601st call in the window → 429, Retry-After: 600   blocked until t=10:00
+t=0:30     call                     → 429, Retry-After: 570   block unchanged
+t=9:50     call                     → 429, Retry-After: 10    block unchanged
+t=10:05    call                     → served; fresh window, budget full again
+```
+
+The state is two maps keyed by source IP — the hit timestamps of the rolling window and the blockout end — guarded by one mutex. Entries are dropped when their block has expired and their newest hit left the window; a sweep doing this for every key runs at most once per minute inside the call that notices, so no goroutine and no timer is needed and the maps stay bounded by the distinct caller addresses seen in a minute (plus blocked ones).
 
 **Source IP (REQ-API-111).** When the direct TCP peer is inside `TRUSTED_PROXY_CIDRS` (`System_Configuration_Design.md` §3.9), the limiter keys on the proxy-provided `X-Real-IP`; otherwise on the connection's remote address; a client-supplied `X-Real-IP` from an untrusted peer is ignored. nginx overwrites `X-Real-IP` with its own `$remote_addr` on every routed request and never appends a chain (`Technology_Stack_Design.md` §5), so each external caller keeps a distinct address. Web-application calls arrive server-side from PHP on the application host: PHP forwards the browser's address (its own `REMOTE_ADDR`, which nginx sets) in `X-Real-IP`; loopback is trusted by default, so per-browser limiting works despite the shared server hop.
 
@@ -784,14 +795,14 @@ Every project is in exactly one mode (`projects.mode`, `Database_Schema_Design.m
 | delete an instrument or event that holds data; delete an arm with events or data (DEV-API-6) | **breaking** — the keyed values become inaccessible |
 | unmap an instrument–event pair whose records **do** hold values | non-breaking, no warning — nothing is deleted: the values stay in `data` and are reachable again once the pair is mapped back, so the change is reversible by construction (master spec "Unmap is misclassified"; retention rule §4.12) |
 
-### 4.22 System settings (REQ-API-112)
+### 4.22 System settings (REQ-API-112, REQ-API-113)
 
 Both endpoints require `is_admin`; a call by a non-admin is rejected (403 `forbidden`). The values live in `system_settings` (`Database_Schema_Design.md` §8, REQ-DB-037); the rate limiter reads them per request (§3.9), so an applied change takes effect on the next request without a restart.
 
 | Endpoint | Behavior |
 |---|---|
-| `GET /api/v1/settings` | 200 — `{ "rate_limit_enabled": false, "rate_limit_rpm": 600 }` (the effective values: the stored row when present, the seeded default otherwise) |
-| `PUT /api/v1/settings` | Body: any subset of the fields (idempotent, REQ-API-042). Validation: `rate_limit_enabled` a boolean; `rate_limit_rpm` an integer ≥ 1 — else 400 `bad_request`; unknown attributes → 400. 200 — the full settings object after the update. Audit `settings_updated` with the old and new value of each changed key (REQ-AUD-027); a PUT that changes nothing writes no entry |
+| `GET /api/v1/settings` | 200 — `{ "rate_limit_enabled": false, "rate_limit_rpm": 600, "rate_limit_block_minutes": 10 }` (the effective values: the stored row when present, the seeded default otherwise) |
+| `PUT /api/v1/settings` | Body: any subset of the fields (idempotent, REQ-API-042). Validation: `rate_limit_enabled` a boolean; `rate_limit_rpm` an integer ≥ 1; `rate_limit_block_minutes` an integer 1–1440 — else 400 `bad_request`; unknown attributes → 400. The upper bound keeps a mistyped value from locking every caller out for days. 200 — the full settings object after the update. Audit `settings_updated` with the old and new value of each changed key (REQ-AUD-027); a PUT that changes nothing writes no entry |
 
 ## 5. Permission summary
 

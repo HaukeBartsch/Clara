@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -173,11 +174,18 @@ func testHandler(t *testing.T) (h *Handler, full, readonly string) {
 // do posts a form-encoded data-API call and returns the status and body.
 func do(t *testing.T, h *Handler, form url.Values) (int, string) {
 	t.Helper()
+	rec := doRec(t, h, form)
+	return rec.Code, rec.Body.String()
+}
+
+// doRec is do with the recorder kept, for assertions on response headers.
+func doRec(t *testing.T, h *Handler, form url.Values) *httptest.ResponseRecorder {
+	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "http://test/api/", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	return rec.Code, rec.Body.String()
+	return rec
 }
 
 func mustStatus(t *testing.T, got, want int, body string) {
@@ -487,22 +495,58 @@ func TestMethodNotAllowed(t *testing.T) {
 
 func TestRateLimit(t *testing.T) {
 	h, full, _ := testHandler(t)
-	// The budget comes from the system settings (REQ-API-112): enable with
-	// a 1-call-per-minute threshold.
+	// The budget and the blockout come from the system settings (REQ-API-112):
+	// enable with a 1-call-per-minute threshold and a 5-minute block.
 	ctx := context.Background()
-	if err := h.Store.SetSystemSetting(ctx, "rate_limit_enabled", "true"); err != nil {
-		t.Fatalf("SetSystemSetting: %v", err)
+	setting := func(key, value string) {
+		if err := h.Store.SetSystemSetting(ctx, key, value); err != nil {
+			t.Fatalf("SetSystemSetting(%s): %v", key, err)
+		}
 	}
-	if err := h.Store.SetSystemSetting(ctx, "rate_limit_rpm", "1"); err != nil {
-		t.Fatalf("SetSystemSetting: %v", err)
-	}
+	setting("rate_limit_enabled", "true")
+	setting("rate_limit_rpm", "1")
+	setting("rate_limit_block_minutes", "5")
+
 	limited := &Handler{Store: h.Store, Cfg: h.Cfg, Limiter: NewRateLimiter()}
-	code, body := do(t, limited, url.Values{"token": {full}, "content": {"project"}, "format": {"json"}})
-	mustStatus(t, code, http.StatusOK, body)
+	call := url.Values{"token": {full}, "content": {"project"}, "format": {"json"}}
+
+	rec := doRec(t, limited, call)
+	mustStatus(t, rec.Code, http.StatusOK, rec.Body.String())
+
 	// The same source IP is now over its 1-call-per-minute budget (REQ-API-038).
-	code, body = do(t, limited, url.Values{"token": {full}, "content": {"project"}, "format": {"json"}})
-	mustStatus(t, code, http.StatusTooManyRequests, body)
-	if !strings.Contains(body, "Rate limit exceeded") {
+	rec = doRec(t, limited, call)
+	mustStatus(t, rec.Code, http.StatusTooManyRequests, rec.Body.String())
+	if body := rec.Body.String(); !strings.Contains(body, "Rate limit exceeded") {
 		t.Errorf("body %q, want \"Rate limit exceeded\"", body)
 	}
+
+	// The over-budget IP is blocked (REQ-API-113): the refusal names the
+	// remaining blockout in Retry-After — close to 300 s of a 5-minute period,
+	// not the seconds until the sliding window would free budget again.
+	first := retrySeconds(t, rec)
+	if first < 295 || first > 300 {
+		t.Errorf("Retry-After = %d, want the remaining seconds of the 5-minute block", first)
+	}
+
+	// A further call is refused the same way, still counting down the same
+	// block rather than restarting it (REQ-API-113).
+	rec = doRec(t, limited, call)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Errorf("call during the block: status = %d, want 429 (body %s)", rec.Code, rec.Body.String())
+	}
+	if again := retrySeconds(t, rec); again > first || again < first-2 {
+		t.Errorf("Retry-After during the block = %d, want the same block counting down from %d", again, first)
+	}
+}
+
+// retrySeconds reads the Retry-After header of a response, failing the test
+// when it is missing or not a number of seconds (REQ-API-113).
+func retrySeconds(t *testing.T, rec *httptest.ResponseRecorder) int {
+	t.Helper()
+	v := rec.Header().Get("Retry-After")
+	secs, err := strconv.Atoi(v)
+	if err != nil {
+		t.Fatalf("Retry-After = %q, want whole seconds", v)
+	}
+	return secs
 }

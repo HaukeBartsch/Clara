@@ -498,8 +498,6 @@ Data entry is disabled; viewing and exporting remain available according to each
 | development → production	| project admin	| Ask whether previously stored data should be kept or deleted |
 | production → development	| project admin	| Keep all data |
 | production ↔ analysis	| project admin	|  Keep all data |
-| development ↔ analysis	| project admin	|  Keep all data |
-
 
 ## Field validation
 

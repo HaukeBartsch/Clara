@@ -103,7 +103,7 @@ Per server `N` (1…3):
 |---|---|---|---|---|---|
 | `TRUSTED_PROXY_CIDRS` | api | comma-separated CIDR list | `127.0.0.0/8,::1` | — | address ranges whose `X-Real-IP` header the rate limiter trusts (REQ-API-111); loopback covers the same-host nginx + PHP-FPM deployment (`Technology_Stack_Design.md` §5) |
 
-The rate-limit **threshold is not an environment variable**: `rate_limit_enabled` (default off) and `rate_limit_rpm` (default 600 requests per minute per source IP) are system settings stored in the database and edited in the administration interface, effective without a restart (REQ-CFG-020, REQ-API-112, REQ-DB-037, `API_Endpoints_Design.md` §4.22). The former keys `RATE_LIMIT_ENABLED`/`RATE_LIMIT_RPM` are removed (DEV-CFG-3).
+The rate-limit **thresholds are not environment variables**: `rate_limit_enabled` (default off), `rate_limit_rpm` (default 600 requests per minute per source IP) and `rate_limit_block_minutes` (default 10 minutes an over-budget source IP stays blocked, REQ-API-113) are system settings stored in the database and edited in the administration interface, effective without a restart (REQ-CFG-020, REQ-API-112, REQ-DB-037, `API_Endpoints_Design.md` §4.22). The former keys `RATE_LIMIT_ENABLED`/`RATE_LIMIT_RPM` are removed (DEV-CFG-3).
 
 ### 3.10 Account policy and time (api)
 
