@@ -87,7 +87,7 @@ func AdminBoundary(next http.Handler, store *db.Store, cfg *config.Config, aw *a
 			return
 		}
 		u, err := store.GetUser(r.Context(), id)
-		if err != nil {
+		if err != nil || u == nil {
 			rejectAdmin(w, r, aw, "user_unknown")
 			return
 		}

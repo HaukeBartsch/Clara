@@ -326,9 +326,9 @@ func TestAdminBoundaryActingUserHeader(t *testing.T) {
 
 // TestAdminBoundaryUnknownUserIsForbidden covers an id that parses but names no
 // account. API_Endpoints_Design.md §4.1 fixes the answer as 403 forbidden +
-// audit admin_rejected/user_unknown: not a pass, not a 500, and not a crash.
-// It currently crashes — store.GetUser reports not-found as (nil, nil) by repo
-// convention, and authz.CheckActive then dereferences the nil user. The
+// audit admin_rejected/user_unknown: not a pass, not a 500, and not a crash —
+// store.GetUser reports not-found as (nil, nil) by repo convention, so the
+// boundary must reject before authz.CheckActive sees a nil user. The
 // assertions below are non-fatal so one run shows status, body and audit trail.
 func TestAdminBoundaryUnknownUserIsForbidden(t *testing.T) {
 	e := newEnv(t)
