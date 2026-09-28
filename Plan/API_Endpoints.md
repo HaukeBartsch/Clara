@@ -1,8 +1,8 @@
-API Endpoint Documentation Plan
+# API Endpoint Documentation Plan
 
 This document outlines the API for the clinical study management system, implemented in Go with Swagger/OpenAPI. In all calls the caller token is passed as the `token` parameter in the request body (REDCap-compatible protocol), not in an Authorization header.
 
-1. REDCap-Compatible Data API (external callers, e.g. Fiona)
+## 1. REDCap-Compatible Data API (external callers, e.g. Fiona)
 - Single endpoint: POST /api/ (also GET /api/) with form-encoded parameters.
 - Common parameters: token, content, format (json|csv), type (flat|wide), returnFormat.
 - Supported content values:
@@ -18,7 +18,7 @@ This document outlines the API for the clinical study management system, impleme
 - Optional rate limiting applies **per source IP address** (default 600 requests/minute, disabled by default), covering both the data API and the administration surface so web-application traffic and external scripts are limited alike; over the limit answers HTTP 429 with a REDCap-style error and blocks that IP for a configurable period (default 10 minutes) after which its requests are accepted again. The caller IP comes from the reverse proxy's `X-Real-IP` when the direct peer is a trusted proxy, otherwise from the connection (REQ-API-038/111/113).
 - The existing Fiona call examples (form body with token=..., content=..., filterLogic=...) must keep working unchanged.
 
-2. Administration API (used exclusively by the web application)
+## 2. Administration API (used exclusively by the web application)
 - Authentication: POST /api/v1/auth/login (verify credentials for the OAuth2 callback, an LDAP bind, or a local table-based account — `source: "local"`), POST /api/v1/auth/logout. The login endpoint **does not create or store a session** (REQ-API-044): it authenticates and returns the identity, and the PHP web application owns the session it establishes from that result (REQ-AUTH-009). The Go API stays stateless. When the account has two-factor authentication enabled (GD-21), login answers `mfa_required` until the call repeats with a valid `mfa_code` (TOTP, email code, or recovery code — REQ-API-114); self-service enrollment lives on `/api/v1/users/me/tfa/*`, administrators reset any account via `POST /api/v1/users/{id}/tfa/reset` (REQ-API-115/116).
 - Users: GET /api/v1/users, POST /api/v1/users (create/enable an account), PUT /api/v1/users/{id} (disable/enable).
 - Projects: GET /api/v1/projects (only accessible projects), POST /api/v1/projects, GET /api/v1/projects/{id}, PUT /api/v1/projects/{id}.

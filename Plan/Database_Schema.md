@@ -1,10 +1,10 @@
-Database Schema - Clinical Study Management System
+# Database Schema - Clinical Study Management System
 
 This document outlines the core database tables required for the system. The schema is created by SQL statements that create or alter an existing database, and is designed to be compatible with both SQLite (development) and MariaDB (production) using only SQL features common to both.
 
-Core Tables
+## Core Tables
 
-1. Projects
+### 1. Projects
 Stores project-level metadata (see the project creation form in Endpoints.md).
 - id (Primary Key)
 - project_name (String, Unique)
@@ -24,7 +24,7 @@ Stores project-level metadata (see the project creation form in Endpoints.md).
 
 Removed from this table by GD-17 (2026-09-22) and no longer project metadata: `end_provision`, the `option_*` flags (`radiology`, `pathology`, `pathology_type`, `redcap_only`, `data_collection_from_home`), `agreed_to_end_user_contract`, and `event_names` (initial events). The owner MAY hold them as data in an ordinary instrument (e.g. `DataTransferProjects`); initial events are added through the setup endpoints after creation (REQ-DB-032, DEV-DB-5).
 
-2. Users
+### 2. Users
 User accounts, created and enabled by admin users.
 - id (Primary Key)
 - email (String, Unique)
@@ -38,7 +38,7 @@ User accounts, created and enabled by admin users.
 - ui_language (String, default en)
 - created_at (DateTime)
 
-2a. User Two-Factor (GD-21)
+#### 2a. User Two-Factor (GD-21)
 At most one row per user who has engaged with two-factor authentication; absent = `off`.
 - user_id (Primary Key, Foreign Key - cascade delete)
 - method (String: off | totp | email)
@@ -50,14 +50,14 @@ At most one row per user who has engaged with two-factor authentication; absent 
 
 An administrator reset deletes the row back to `off` (REQ-DB-038, REQ-AUTH-059).
 
-3. Roles
+### 3. Roles
 A project role is a collection of permissions, defined per project (any name, any combination — not a fixed catalogue).
 - id (Primary Key)
 - project_id (Foreign Key)
 - role_name (String, e.g. data-manager, data-entry, controller)
 - project_admin (Boolean - may manage the project's structure and membership)
 
-3a. Role-Arm Permissions
+#### 3a. Role-Arm Permissions
 Permissions are held **per arm** (GD-2), one row per (role, arm) — not a flat permission string:
 - role_id (Foreign Key)
 - arm_num (Integer)
@@ -66,7 +66,7 @@ Permissions are held **per arm** (GD-2), one row per (role, arm) — not a flat 
 
 An arm with no row means no access. The former flat set (`view`, `change`, `add`, `export all`, `export anonymized`) is superseded by these two ordered levels (REQ-AUTH-017/018, DEV-AUTH-5).
 
-4. User-Project Assignments
+### 4. User-Project Assignments
 Maps users to projects, roles, and API tokens.
 - id (Primary Key)
 - user_id (Foreign Key)
@@ -75,14 +75,14 @@ Maps users to projects, roles, and API tokens.
 - token (UUID, identifies the user for this project)
 - UNIQUE (user_id, project_id)
 
-5. Arms
+### 5. Arms
 - id (Primary Key)
 - project_id (Foreign Key)
 - arm_num (Integer, 1-based)
 - name (String)
 - A single arm is assumed to start with.
 
-6. Instruments
+### 6. Instruments
 - id (Primary Key)
 - project_id (Foreign Key)
 - name (String, Unique per project)
@@ -111,12 +111,12 @@ Maps users to projects, roles, and API tokens.
 - direct_identifier (Boolean, user-set on any field; preset for email/MRN/phone types; removed at de-identified export)
 - position (Integer, order of the field within the instrument)
 
-7a. Validation Types (extensible registry, system-wide)
+#### 7a. Validation Types (extensible registry, system-wide)
 - name (Primary Key: e.g. email, MRN, international phone, national phone)
 - regex (Text, Go RE2 pattern matched against the whole value)
 - builtin (Boolean, seeded entries cannot be removed)
 
-8. Events
+### 8. Events
 - id (Primary Key)
 - project_id (Foreign Key)
 - arm_id (Foreign Key)
@@ -127,20 +127,20 @@ Maps users to projects, roles, and API tokens.
 - safe_region_end (Integer, days after the event, e.g. +3)
 - position (Integer)
 
-9. Instrument-Event Mapping
+### 9. Instrument-Event Mapping
 The checkbox table (instrument x event pairs) that defines the design of a project arm.
 - instrument_id (Foreign Key)
 - event_id (Foreign Key)
 - UNIQUE (instrument_id, event_id)
 
-10. Project Staging (production mode only)
+### 10. Project Staging (production mode only)
 At most one open staging set per project: a snapshot of the staged design, applied to the live structure tables on commit (all in one transaction) and removed on commit or discard.
 - project_id (Primary Key, Foreign Key - one open set per project)
 - design (Text, JSON snapshot of the staged design: instruments with fields, arms with events, instrument-event mapping)
 - opened_by (Foreign Key, nullable)
 - opened_at (DateTime)
 
-11. Data (Records)
+### 11. Data (Records)
 Entity-attribute-value layout, exactly as mandated by Endpoints.md: adding a new field or a new project never changes this table layout.
 - project_id (Foreign Key)
 - record_id (String)
@@ -153,7 +153,7 @@ Entity-attribute-value layout, exactly as mandated by Endpoints.md: adding a new
 - INDEX (project_id) - fast lookup of all values for one project
 - INDEX (record_id) - fast lookup of all values for one record_id
 
-12. Instrument Completion
+### 12. Instrument Completion
 The user's "finished" assignment at the end of a data-collection instrument — the third state of the record-status dashboard (grey / amber / green). Sparse: a row exists only where the user marked it finished, so absence means not finished and the no-data / some-data split stays derived from the values above (REQ-DB-036, DEV-DB-10).
 - project_id (Foreign Key)
 - record_id (String)

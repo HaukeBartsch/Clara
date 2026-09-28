@@ -1,9 +1,9 @@
-Project Charter - Clinical Study Management System
+# Project Charter - Clinical Study Management System
 
-Project Overview
+## Project Overview
 This project aims to develop a new research electronic data capture system for clinical studies. The system will provide a web-based platform to collect project data securely and efficiently, and integrates with the research information system through a REDCap-compatible API.
 
-Objectives
+## Objectives
 - Create a secure, token-based access system mapped to user accounts (OAuth2, with LDAP fallback and a table-based local-password path for when neither is configured — GD-18), with account validity periods and inactivity auto-disable (GD-19) and by-user configurable two-factor authentication (TOTP or email code — GD-21).
 - Implement granular, project-scoped permissions for different user roles.
 - Support flexible project structures including study arms, events, and instruments.
@@ -13,5 +13,5 @@ Objectives
 - Log all access to backend data in two audit tables: one for change/create/delete events, and one exclusively for record views (records pulled through the API).
 - Support three project modes - development (default), production, and analysis. Only installation admin users (is_admin) change the mode. In production, setup changes are staged and activated as a group with a warning before committing breaking changes; in analysis, data entry is disabled while viewing and exporting remain available per permissions, and setup changes apply immediately behind a breaking-change confirmation of their own. Transitions: development to production asks whether stored data is kept or deleted; all other transitions keep all data. A project enters analysis only from production but returns to development directly, and no mode change is accepted while a staging set is open.
 
-Scope
+## Scope
 The initial phase will focus on the core data model as defined in Endpoints.md, including user management, project structure, the data dictionary, the REDCap-compatible API, the web user interfaces, and audit logging. The API is implemented in Go, the web application in PHP, and the database runs on MariaDB in production and SQLite in development.

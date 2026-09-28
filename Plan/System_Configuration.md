@@ -1,8 +1,8 @@
-System Configuration Plan
+# System Configuration Plan
 
 This document outlines the configuration management for the clinical study management system, supporting different environments.
 
-Configuration Management
+## Configuration Management
 - Method: Environment variables stored in a .env file (not tracked in version control).
 - Example Configuration:
 
@@ -36,7 +36,7 @@ SMTP_USERNAME=
 SMTP_PASSWORD=
 OTP_MAIL_FROM=clara-noreply@example.org
 
-Key Settings
+# Key Settings
 - APP_ENV: Toggles between development (SQLite default) and production (MariaDB).
 - DB_*: Database connection details.
 - OAUTH_ / LDAP_*:* Authentication server details.
