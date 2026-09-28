@@ -262,7 +262,7 @@ Data: `GET /api/v1/i18n/strings?language=<code>` (after `GET /api/v1/i18n/langua
 
 Data: `GET /api/v1/settings`; save → `PUT /api/v1/settings` (CSRF, §3.3; contract `API_Endpoints_Design.md` §4.22).
 
-- **Rate limiting (REQ-UI-037)**: an enabled/disabled switch (`rate_limit_enabled`) and a requests-per-minute number input per source IP (`rate_limit_rpm`, ≥ 1, default 600), with helper text naming the scope ("limits every caller IP on both the data API and the administration surface; applies immediately after saving"). Invalid values are rejected by the API (400) and surfaced per §3.4; applied changes are audit-logged (`settings_updated`, REQ-AUD-027).
+- **Rate limiting (REQ-UI-037)**: an enabled/disabled switch (`rate_limit_enabled`), a requests-per-minute number input per source IP (`rate_limit_rpm`, ≥ 1, default 600) and a blockout-minutes number input (`rate_limit_block_minutes`, 1–1440, default 10), with helper text naming the scope ("limits every caller IP on both the data API and the administration surface; an IP over its per-minute budget is refused for this many minutes; applies immediately after saving"). Invalid values are rejected by the API (400) and surfaced per §3.4; applied changes are audit-logged (`settings_updated`, REQ-AUD-027).
 
 ## 6. Project Workspace
 
