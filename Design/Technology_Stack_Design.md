@@ -35,7 +35,13 @@ Everything else is standard library: `net/http` (both surfaces, OpenAPI serving)
 
 The OpenAPI document is a hand-maintained `openapi/openapi.json` (OpenAPI 3.1) next to the code; the interactive UI is the vendored `swagger-ui-dist` static bundle served by the API. No swaggo/code-generation tooling (REQ-TECH-004, REQ-API-002).
 
-**Critical-function library exceptions (GD-25, REQ-TECH-026).** For authentication protocol clients (OAuth2, LDAP), two-factor and token cryptography adjacent code, session handling, and i18n, additional vetted libraries MAY be admitted in Go, PHP, and JavaScript. Admission is by amendment to this section: one row per library with **component, module/package, pinned version + integrity hash, role, and the date of its security review**; re-review is required on every version bump, and each amendment needs owner approval. Admitted PHP code ships as a committed `vendor/` tree plus `composer.lock`; admitted JavaScript ships as vendored ES modules under `web/assets/vendor/` with no build step and no CDN (REQ-TECH-001, ASM-TECH-2). UI strings stay translated server-side (REQ-UI-008) — an admitted JS i18n library covers client-side formatting only. **Currently admitted beyond the tables above: none** — the mechanism exists so a vetted OAuth2 client or i18n formatter can be admitted without re-deciding the stack.
+**Critical-function library exceptions (GD-25, REQ-TECH-026).** For authentication protocol clients (OAuth2, LDAP), two-factor and token cryptography adjacent code, session handling, and i18n, additional vetted libraries MAY be admitted in Go, PHP, and JavaScript. Admission is by amendment to this section: one row per library with **component, module/package, pinned version + integrity hash, role, and the date of its security review**; re-review is required on every version bump, and each amendment needs owner approval. Admitted PHP code ships as a committed `vendor/` tree plus `composer.lock`; admitted JavaScript ships as vendored ES modules under `web/assets/vendor/` with no build step and no CDN (REQ-TECH-001, ASM-TECH-2). UI strings stay translated server-side (REQ-UI-008) — an admitted JS i18n library covers client-side formatting only.
+
+| Component | Module / package | Pinned version + integrity hash | Role | Security review |
+|---|---|---|---|---|
+| Go | `golang.org/x/crypto` (package `bcrypt` only) | `v0.57.0`, `h1:3ZVCjf8Ggz7zneR/EHRVx68Ctf+2pmIMP2UFhh9cC6M=` (per `api/go.sum`) | bcrypt hashing/verification for table-based authentication (GD-18, REQ-AUTH-050; `Authentication_Authorization_Design.md` §7) — cost ≥ 10, constant-time verify | 2026-09-28 |
+
+Additional candidates (e.g. a vetted OAuth2 client or an i18n formatter for PHP/JS) are admitted by adding a row here — the stack decision itself is settled.
 
 ## 4. Repository Layout (normative)
 
