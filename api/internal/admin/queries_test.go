@@ -129,19 +129,30 @@ func TestRecordStatus(t *testing.T) {
 	}
 	e1 := rows[0].Events[0] // v1_arm_1 — intake, scores in instrument order
 	if e1.UniqueEventName != "v1_arm_1" || len(e1.Instruments) != 2 ||
-		e1.Instruments[0].Name != "intake" || !e1.Instruments[0].Complete ||
-		e1.Instruments[1].Name != "scores" || e1.Instruments[1].Complete {
+		e1.Instruments[0].Name != "intake" || e1.Instruments[0].State != StateSomeData ||
+		e1.Instruments[1].Name != "scores" || e1.Instruments[1].State != StateNoData {
 		t.Fatalf("R1 v1 state: %+v", e1)
 	}
-	e2 := rows[0].Events[1] // v2_arm_1 — intake only; empty value = incomplete
+	e2 := rows[0].Events[1] // v2_arm_1 — intake only; empty value = no data
 	if e2.UniqueEventName != "v2_arm_1" || len(e2.Instruments) != 1 ||
-		e2.Instruments[0].Complete {
+		e2.Instruments[0].State != StateNoData {
 		t.Fatalf("R1 v2 state: %+v", e2)
 	}
 	for _, ev := range rows[1].Events { // R2 has no values at all
 		for _, in := range ev.Instruments {
-			if in.Complete {
-				t.Fatalf("R2 unexpectedly complete: %+v", ev)
+			if in.State != StateNoData {
+				t.Fatalf("R2 unexpectedly holds data: %+v", ev)
+			}
+		}
+	}
+	// Nothing has been assigned in this fixture, so no cell may report the
+	// stored state (REQ-DB-036 — finished only ever comes from a user).
+	for _, row := range rows {
+		for _, ev := range row.Events {
+			for _, in := range ev.Instruments {
+				if in.State == StateFinished {
+					t.Fatalf("unassigned cell reports finished: %+v", row)
+				}
 			}
 		}
 	}
