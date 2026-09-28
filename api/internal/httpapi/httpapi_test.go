@@ -625,6 +625,49 @@ func TestRateLimitMiddleware(t *testing.T) {
 			t.Errorf("%d calls reached the handler, want 2", hits-before)
 		}
 	})
+
+	t.Run("an over-budget IP stays blocked for the configured period", func(t *testing.T) {
+		// REQ-API-113: the refusal names the remaining blockout in Retry-After,
+		// and further calls count down that same block instead of restarting it.
+		setting("rate_limit_enabled", "true")
+		setting("rate_limit_rpm", "1")
+		setting("rate_limit_block_minutes", "7")
+
+		if rec := send("198.51.100.9"); rec.Code != http.StatusOK {
+			t.Fatalf("first call: %d %s", rec.Code, rec.Body.String())
+		}
+		rec := send("198.51.100.9")
+		if rec.Code != http.StatusTooManyRequests {
+			t.Fatalf("second call over the budget: %d, want 429 (body %q)", rec.Code, rec.Body.String())
+		}
+		first := retryAfter(t, rec)
+		if first < 415 || first > 420 {
+			t.Errorf("Retry-After = %d, want the remaining seconds of the 7-minute block", first)
+		}
+
+		before := hits
+		rec = send("198.51.100.9")
+		if rec.Code != http.StatusTooManyRequests {
+			t.Errorf("call during the block: %d, want 429", rec.Code)
+		}
+		if again := retryAfter(t, rec); again > first || again < first-2 {
+			t.Errorf("Retry-After during the block = %d, want the same block counting down from %d", again, first)
+		}
+		if hits != before {
+			t.Errorf("%d calls reached the handler during the block, want none", hits-before)
+		}
+	})
+}
+
+// retryAfter reads the Retry-After header of a 429 response (REQ-API-113).
+func retryAfter(t *testing.T, rec *httptest.ResponseRecorder) int {
+	t.Helper()
+	v := rec.Header().Get("Retry-After")
+	secs, err := strconv.Atoi(v)
+	if err != nil {
+		t.Fatalf("Retry-After = %q, want whole seconds", v)
+	}
+	return secs
 }
 
 // --- route table ---

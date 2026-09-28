@@ -41,15 +41,19 @@ func NewMux(store *db.Store, cfg *config.Config, aw *audit.Writer) http.Handler 
 }
 
 // rateLimit enforces the per-source-IP budget on the administration surface
-// (REQ-API-038/111/112): the enable flag and threshold come from the system
-// settings, read per request. The data API applies the same limiter inside
-// its handler, where the requested error format is known (§3.9).
+// (REQ-API-038/111/112/113): the enable flag and thresholds come from the
+// system settings, read per request, and an over-budget IP is blocked for the
+// configured period. The data API applies the same limiter inside its handler,
+// where the requested error format is known (§3.9).
 func rateLimit(store *db.Store, cfg *config.Config, l *dataapi.RateLimiter, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if enabled, rpm := dataapi.RateLimitSettings(r.Context(), store); enabled &&
-			!l.Allow(dataapi.SourceIP(cfg, r), rpm, time.Now()) {
-			admin.APIError(w, http.StatusTooManyRequests, "rate_limited", "Rate limit exceeded")
-			return
+		if enabled, lim := dataapi.RateLimitSettings(r.Context(), store); enabled {
+			ok, retryAfter := l.Allow(dataapi.SourceIP(cfg, r), lim, time.Now())
+			if !ok {
+				dataapi.SetRetryAfter(w, retryAfter)
+				admin.APIError(w, http.StatusTooManyRequests, "rate_limited", "Rate limit exceeded")
+				return
+			}
 		}
 		next.ServeHTTP(w, r)
 	})
