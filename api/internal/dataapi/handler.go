@@ -37,14 +37,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	enc := p.Encoding()
 
-	// Rate limiting is per source IP, threshold from the system settings
-	// (REQ-API-038/111/112); checked before token work so an over-budget
-	// caller cannot spend token lookups.
+	// Rate limiting is per source IP, thresholds from the system settings
+	// (REQ-API-038/111/112/113); checked before token work so an over-budget
+	// caller cannot spend token lookups. Over the budget blocks the IP for
+	// the configured period, announced as Retry-After.
 	if h.Limiter != nil {
-		if enabled, rpm := RateLimitSettings(r.Context(), h.Store); enabled &&
-			!h.Limiter.Allow(SourceIP(h.Cfg, r), rpm, time.Now()) {
-			writeError(w, enc, http.StatusTooManyRequests, "Rate limit exceeded")
-			return
+		if enabled, lim := RateLimitSettings(r.Context(), h.Store); enabled {
+			ok, retryAfter := h.Limiter.Allow(SourceIP(h.Cfg, r), lim, time.Now())
+			if !ok {
+				SetRetryAfter(w, retryAfter)
+				writeError(w, enc, http.StatusTooManyRequests, "Rate limit exceeded")
+				return
+			}
 		}
 	}
 
