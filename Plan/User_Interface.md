@@ -12,7 +12,11 @@ Key Views
 2. Admin Interface
 - Purpose: Administration for authenticated and authorized (administrator) users.
 - Components:
-    - User accounts: Create (enable) and manage normal user accounts.
+    - User accounts: Create (enable) and manage normal user accounts; show each account's two-factor method and offer an administrator reset for lost devices (GD-21, REQ-UI-011/039).
+
+Login and two-factor (REQ-UI-007/038/039)
+- The login page shows the provider buttons and/or the email+password form; when the account has a second factor configured, a follow-up step asks for the code (authenticator app or delivered by email, with resend and recovery-code entry). No session content is reachable between the steps. With the installation-wide mandate on (`AUTH_REQUIRE_2FA`), accounts without a method are taken through enrollment before login completes.
+- A self-service account page lets each user enable TOTP (QR + manual key, confirm with one code, recovery codes shown once) or email, and disable it with a current code.
     - Projects: Create new projects (name, organization = main supporting institution, PI name and email, data manager, REK/IRB number, REK start/end dates, start/end dates, participant naming pattern) and edit project metadata. The option flags, the end provision, the end-user-contract confirmation, and an initial-events list are **absent from the form** (GD-17, REQ-UI-012); creation makes the project with arm 1 only, and events are added afterwards in the project's Setup page.
     - Assignment: Assign users to projects given a role (data-manager, data-entry, controller, or a custom role). Role-less members have full permissions.
     - Roles: Create additional roles with a mixture of permissions.

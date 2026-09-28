@@ -112,6 +112,19 @@ The rate-limit **thresholds are not environment variables**: `rate_limit_enabled
 | `AUTH_INACTIVITY_LIMIT_DAYS` | api | integer ≥ 0 | `180` | — | inactivity auto-disable limit (GD-19, REQ-CFG-024, REQ-AUTH-053): `last_login_at` older than this → auto-disabled at the next authentication check; `0` = rule off |
 | `APP_TIMEZONE` | api | IANA timezone name | `UTC` | — | default collection timezone (GD-16, REQ-CFG-026, REQ-VAL-041): the offset used for date/date-time values imported without an explicit zone (no browser zone, no `tz` parameter); resolved to the `±HH:MM` offset at the value's date (DST-aware) |
 
+### 3.11 Two-factor authentication (api)
+
+| Variable | Component | Type | Default | Required | Description |
+|---|---|---|---|---|---|
+| `AUTH_REQUIRE_2FA` | api | `0`\|`1` | `0` | — | installation-wide mandate (GD-21, REQ-CFG-027, REQ-AUTH-059): accounts without an enrolled method are directed to enroll after first-factor success |
+| `TOTP_ISSUER` | api | string | `CLARA` | — | issuer label in authenticator apps / `otpauth://` URIs (REQ-CFG-029) |
+| `TFA_EMAIL_CODE_TTL` | api | integer seconds > 0 | `600` | — | email one-time-code lifetime (GD-21, REQ-CFG-029, REQ-AUTH-057) |
+| `SMTP_HOST` | api | host | — | — | SMTP relay for email codes; **all SMTP keys unset → the `email` method is unavailable** (REQ-CFG-028) |
+| `SMTP_PORT` | api | integer | `587` | — | relay port |
+| `SMTP_SECURITY` | api | `starttls`\|`tls`\|`none` | `starttls` | — | transport security to the relay |
+| `SMTP_USERNAME` / `SMTP_PASSWORD` | api | string | — | — | optional relay credentials; `SMTP_PASSWORD` is a secret — never logged, redacted in the startup dump (REQ-CFG-021) |
+| `OTP_MAIL_FROM` | api | address | — | — | sender of code emails (required when `SMTP_HOST` is set) |
+
 ## 4. Validation Rules and Startup Behavior
 
 ### 4.1 Required-at-startup matrix
@@ -129,6 +142,8 @@ The rate-limit **thresholds are not environment variables**: `rate_limit_enabled
 | `SESSION_DIR` is a directory path and not equal to `DB_DATABASE` | required (REQ-CFG-017) | required |
 | `AUTH_INACTIVITY_LIMIT_DAYS` is an integer ≥ 0 (default 180; 0 = rule off) | required | required (REQ-CFG-024) |
 | `APP_TIMEZONE` is a resolvable IANA timezone name (default `UTC`) | required | required (REQ-CFG-026) |
+| `AUTH_REQUIRE_2FA` ∈ {`0`,`1`} (default `0`); `TFA_EMAIL_CODE_TTL` integer > 0; `SMTP_SECURITY` ∈ {`starttls`,`tls`,`none`} | required | required (GD-21, REQ-CFG-027/028/029) |
+| when `SMTP_HOST` is set: `OTP_MAIL_FROM` set and parseable (email method active; unset SMTP → method unavailable, no startup failure) | required | required (REQ-CFG-028) |
 
 The API refuses to start with a non-zero exit and a message naming each missing/invalid variable (REQ-CFG-004); the PHP app fails at entry-point boot with an operator-readable page and no stack trace in production (REQ-CFG-005).
 
@@ -198,6 +213,17 @@ TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1
 # account policy and time (api)
 AUTH_INACTIVITY_LIMIT_DAYS=180
 APP_TIMEZONE=UTC
+
+# two-factor authentication (api, GD-21) — email method unavailable without SMTP_HOST
+AUTH_REQUIRE_2FA=0
+TOTP_ISSUER=CLARA
+TFA_EMAIL_CODE_TTL=600
+SMTP_HOST=
+SMTP_PORT=587
+SMTP_SECURITY=starttls
+SMTP_USERNAME=
+SMTP_PASSWORD=
+OTP_MAIL_FROM=
 ```
 
 ## 6. Resolved Deferred Items
@@ -212,6 +238,7 @@ APP_TIMEZONE=UTC
 | bootstrap local password (GD-18, master spec "Details") | `ADMIN_BOOTSTRAP_PASSWORD`, §3.3; startup rule §4.1; redaction §4.4 |
 | inactivity auto-disable rule key (GD-19, master spec "Details") | `AUTH_INACTIVITY_LIMIT_DAYS` (default 180, 0 = off), §3.10 |
 | default collection timezone (GD-16, master spec "Details") | `APP_TIMEZONE` (IANA name, default `UTC`), §3.10 |
+| two-factor mandate, code lifetime, and mail relay (GD-21, master spec "Details") | `AUTH_REQUIRE_2FA`, `TOTP_ISSUER`, `TFA_EMAIL_CODE_TTL`, SMTP keys, §3.11; posture keys stay environment-only (DEV-CFG-4) |
 
 ## 7. Open Items
 

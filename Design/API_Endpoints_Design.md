@@ -320,7 +320,11 @@ Every error is a JSON object with a consistent shape:
 { "email": "user@example.org", "source": "local", "password": "***" }
 ```
 
-Processing (in order, `Authentication_Authorization_Design.md` §2.3): for `source: "local"` — the row exists (401 `account_not_found`) and the bcrypt hash matches in constant time (else 401 `bad_password`; the password is never logged, REQ-AUTH-036); the account is active per the rule of `Authentication_Authorization_Design.md` §4.4 — `enabled`, not expired (403 `account_expired`), not inactive (auto-disable + 403 `account_disabled`, REQ-AUTH-053); bootstrap-admin promotion (REQ-AUTH-007): if the email equals `ADMIN_BOOTSTRAP_EMAIL`, ensure the row exists, is enabled, and has `is_admin = 1` (idempotent); set the row's `auth_source` and `last_login_at` (REQ-AUTH-005, REQ-AUTH-053); audit `login_success` with the source. The API MUST NOT create or store a session (GD-1).
+```json
+{ "email": "user@example.org", "source": "local", "password": "***", "mfa_code": "492817" }
+```
+
+Processing (in order, `Authentication_Authorization_Design.md` §2.3): for `source: "local"` — the row exists (401 `account_not_found`) and the bcrypt hash matches in constant time (else 401 `bad_password`; the password is never logged, REQ-AUTH-036); the account is active per the rule of `Authentication_Authorization_Design.md` §4.4 — `enabled`, not expired (403 `account_expired`), not inactive (auto-disable + 403 `account_disabled`, REQ-AUTH-053); **two-factor gate** (`source: "local"`/`"ldap"` only, GD-21, §2.7): method not `off` and no `mfa_code` → 401 `{"error":"mfa_required","method":"totp|email"}`; invalid/expired/replayed `mfa_code` → audit `login_failure` (`bad_mfa_code`) + 401 `bad_mfa_code`; `AUTH_REQUIRE_2FA` on with method `off` → 401 `tfa_enrollment_required`; bootstrap-admin promotion (REQ-AUTH-007): if the email equals `ADMIN_BOOTSTRAP_EMAIL`, ensure the row exists, is enabled, and has `is_admin = 1` (idempotent); set the row's `auth_source` and `last_login_at` (REQ-AUTH-005, REQ-AUTH-053); audit `login_success` with the source (and the factor used when the gate applied, REQ-AUD-028). The API MUST NOT create or store a session (GD-1).
 
 200 — the user object (used by all §4.4 user endpoints):
 
@@ -340,9 +344,22 @@ All three require `is_admin`; a call by a non-admin is rejected (403 `forbidden`
 
 | Endpoint | Contract |
 |---|---|
-| `GET /api/v1/users` | 200 — array of user objects (`id`, `email`, `display_name`, `enabled`, `is_admin`, `auth_source`, `last_login_at`, `valid_until`, `status` — the full user object of §4.3) (REQ-API-046) |
+| `GET /api/v1/users` | 200 — array of user objects (`id`, `email`, `display_name`, `enabled`, `is_admin`, `auth_source`, `last_login_at`, `valid_until`, `status`, **`tfa_method`** (`off` \| `totp` \| `email`, GD-21, REQ-API-116) — the full user object of §4.3) (REQ-API-046) |
 | `POST /api/v1/users` | body `{ "email": "…", "display_name": "…", "valid_days": 90, "password": "***" }` (`valid_days` ≥ 0, `0` = indefinite; `password` optional — stored only as a bcrypt hash, REQ-AUTH-050); a new account → 201 user object; a disabled account with the same email is re-enabled → 200 user object (re-enabling resets the inactivity clock, REQ-AUTH-053) (REQ-API-047); audit `user_created` (`re_enabled` flag, `valid_until`) |
 | `PUT /api/v1/users/{id}` | body — any subset of `{ "enabled": true\|false, "valid_days": 90, "password": "***" }`; `enabled` is authoritative (idempotent, REQ-API-042); `valid_days` re-sets `valid_until` (`0` → `NULL` = indefinite, REQ-AUTH-052); `password` set/resets the local hash, an **empty string clears** it (never returned, never logged, REQ-AUTH-036); re-enabling resets the inactivity clock (REQ-AUTH-053); 200 user object; disabling a user denies the effective permissions of that user's API tokens at call time (REQ-AUTH-033, REQ-API-048); audit `user_updated` with the changed attributes (`enabled`, `valid_until`, `password_changed` — the password value itself is never in the trail) |
+
+**Two-factor endpoints (GD-21).** Self-service (acting user = self; also valid in the pending-first-factor context of `Authentication_Authorization_Design.md` §2.7 under a mandate), REQ-API-115:
+
+| Endpoint | Contract |
+|---|---|
+| `GET /api/v1/users/me/tfa` | 200 `{ "method": "off\|totp\|email", "enrolled_at": … }` — never the secret or a code |
+| `POST /api/v1/users/me/tfa/totp/enroll` | 200 `{ "secret": "<base32>", "otpauth_uri": "otpauth://totp/…" }` — shown once; pending until confirmed (REQ-AUTH-056) |
+| `POST /api/v1/users/me/tfa/totp/confirm` | body `{ "code": "…" }`; a valid current RFC 6238 code activates `totp` and returns `{ "recovery_codes": [ … ] }` exactly once; wrong → 400 `bad_code`; audit `tfa_enrolled` |
+| `POST /api/v1/users/me/tfa/email/start` | sends a confirmation code to the account address via the SMTP relay; 409 `smtp_not_configured` without one; rate-limited per account (REQ-AUTH-057) |
+| `POST /api/v1/users/me/tfa/email/confirm` | body `{ "code": "…" }`; activates `email`, returns the recovery codes once; audit `tfa_enrolled` |
+| `POST /api/v1/users/me/tfa/disable` | requires a valid current code or recovery code; sets method `off`, clears secret/codes; audit `tfa_disabled` |
+
+Administrator (requires `is_admin`), REQ-API-116: `POST /api/v1/users/{id}/tfa/reset` — deletes the account's `user_two_factor` row back to `off` (lost device/email); 200; audit `tfa_reset`. No endpoint ever returns a secret, pending code, or recovery code outside its single enrollment/activation response.
 
 ### 4.5 Projects (REQ-API-049…052)
 

@@ -15,7 +15,9 @@
 | external data-API caller (Fiona/RIS) | `POST /api/` (public) | project token as `token` parameter (REQ-AUTH-031) | the token holder's per-arm levels (REQ-AUTH-033) |
 | survey respondent | PHP route `/survey/{link}` (public, no session — GD-9) | opaque link token | fill-only on exactly one (record, survey instrument) (REQ-AUTH-039) |
 | IdP / LDAP | outbound from PHP | OAuth2 client secret / LDAP bind DN | identity assertion (email) |
-| local (table-based) account | PHP login form → API | email + password (verified against `users.password_hash`) | the account's normal permissions (GD-18, REQ-AUTH-050) |
+| local (table-based) account | PHP login form → API | email + password (verified against `users.password_hash`), plus the configured second factor when enrolled (GD-21, §2.7) | the account's normal permissions (GD-18, REQ-AUTH-050) |
+
+The second factor (GD-21) guards the two CLARA-verified rows above — local and LDAP form logins — after first-factor success; the OAuth2 row is exempt (MFA there is the provider's responsibility, DEV-AUTH-10), as are survey links and data-API tokens (§4.3).
 
 ### 1.2 Network topology (normative rules)
 
@@ -70,12 +72,17 @@ The PHP login form carries email + password for the **local (Sequence F) and LDA
 { "email": "user@example.org", "source": "local", "password": "***" }
 ```
 
+```json
+{ "email": "user@example.org", "source": "local", "password": "***", "mfa_code": "492817" }
+```
+
 API processing (in order):
 0. **Local verification** (only when `source = "local"`, GD-18, REQ-AUTH-050/051): the user row exists — otherwise 401 `account_not_found` + audit `login_failure`; its `password_hash` is present and the password matches it — constant-time comparison (bcrypt) — otherwise 401 `bad_password` + audit `login_failure` (the two cases are not distinguished to the caller, and the password value is never logged, REQ-AUTH-036).
 1. User row is **active** (REQ-AUTH-006, §4.4): `enabled = 1`, not expired (`valid_until`), not inactive — otherwise reject (403 `account_disabled` / 403 `account_expired`) and audit `login_failure` (the inactivity case first performs the auto-disable of §4.4, REQ-AUTH-053).
+1.5. **Two-factor gate** (GD-21, REQ-AUTH-055/058, only for `source = "local"` or `"ldap"`): if the account's method is not `off`, a call without `mfa_code` → 401 `mfa_required` (body names the method); with an invalid, expired, or already-used code → audit `login_failure` (`bad_mfa_code`) + 401 `bad_mfa_code`; valid codes (§2.7) proceed and are recorded against replay. If `AUTH_REQUIRE_2FA` is on and the method is `off` → 401 `tfa_enrollment_required` (no audit failure — the first factor succeeded; enrollment follows, §2.7). Until this gate passes, no user object is returned and steps 3–5 do not run.
 2. **Bootstrap promotion** (REQ-AUTH-007, GD-4): if the email equals `ADMIN_BOOTSTRAP_EMAIL`, ensure the row exists, is enabled, and has `is_admin = 1` (idempotent); on a first installation without an IdP, the row's `password_hash` is provisioned from `ADMIN_BOOTSTRAP_PASSWORD` (REQ-AUTH-051).
 3. Update the row's `auth_source` to the call's `source` (REQ-AUTH-005) and set `last_login_at` to now (UTC, REQ-AUTH-053).
-4. Record `login_success` (audit) — `source=ui`, acting user set, no token.
+4. Record `login_success` (audit) — `source=ui`, acting user set, no token; when the gate of step 1.5 applied, its details name the factor used (`totp`, `email`, or `recovery`, REQ-AUD-028).
 5. Return the user object.
 
 Response (200):
@@ -116,6 +123,20 @@ The email+password form of the login page (present when no OAuth2 provider is co
 
 On success PHP establishes the session (§3) exactly as for the other paths; `auth_source` is `local`.
 
+### 2.7 Sequence G — two-factor challenge and enrollment (GD-21, REQ-AUTH-054…059)
+
+**Methods.** `off` (default), `totp` — RFC 6238 time-based one-time codes (SHA-1, 30 s step, 6 digits, ±1 step skew window) from a phone authenticator app; works with no network access on the user's side. `email` — a cryptographically random 6-digit code delivered to the account's address via the configured SMTP relay (`System_Configuration_Design.md` §3.11), valid for `TFA_EMAIL_CODE_TTL` (default 600 s), single-use, send rate-limited per account. Both methods issue 10 single-use **recovery codes** at activation (random, stored as one-way hashes, shown exactly once).
+
+**Statelessness.** All second-factor state lives in the `user_two_factor` row (`Database_Schema_Design.md` §4): secret, last accepted TOTP step (a code is accepted only for a step strictly greater than the stored one — replay-proof), pending email code hash + expiry, recovery code hashes. The API keeps no challenge state of its own (GD-1).
+
+**Challenge flow.** Sequence F/B receive 401 `mfa_required` from Sequence C step 1.5. PHP records the first-factor success in a **pre-authentication** session (`tfa_pending = {email, source, verified_at}`, §3; TTL 5 min) and renders the code form (no other page is reachable). Submitting the code re-invokes `POST /api/v1/auth/login` with `mfa_code`; on success PHP promotes the pending session to a full session (§3) — `session_regenerate_id(true)` as always. Failed attempts count toward the Sequence E lockout; while locked, no verification runs and no email code is sent (REQ-AUTH-058).
+
+**Mandated enrollment.** 401 `tfa_enrollment_required` (first factor OK, method `off`, `AUTH_REQUIRE_2FA` on) leads PHP to the enrollment wizard inside the pending session. The self-service endpoints (REQ-API-115) accept `X-Internal-User-Id` for the pending identity — the same service-token trust boundary as every other admin call; PHP only supplies an id whose first factor it just verified. Wizard: TOTP enroll → secret + QR shown once → confirm with one current code; or email start/confirm (409 when SMTP is not configured). Activation writes the method and returns the recovery codes once; PHP then resumes the login call and completes normally.
+
+**Self-service management.** A signed-in user reaches the same wizard from the account page (`User_Interface_Design.md`): change method, view status, disable — disable requires a valid current code or recovery code, so a hijacked session cannot silently drop the factor (REQ-API-115). Audit: `tfa_enrolled`, `tfa_disabled`, `tfa_reset` (REQ-AUD-028).
+
+**Administrator reset.** `POST /api/v1/users/{id}/tfa/reset` (`is_admin`) deletes the row back to `off` and clears codes — for a user who lost their phone or email access; under a mandate the user re-enrolls at the next login (REQ-AUTH-059). The user overview shows each account's method (REQ-UI-011).
+
 ## 3. Session Schema (GD-1)
 
 The session is owned by the PHP web application: PHP-native session, file storage in `SESSION_DIR` (MUST NOT be the application database, REQ-CFG-017). The API never sees the session (GD-1, REQ-API-044).
@@ -133,6 +154,9 @@ The session is owned by the PHP web application: PHP-native session, file storag
 | `csrf_token` | session start | 32-byte random hex | session regeneration |
 | `oauth2_state` | `/login` | 16-byte random hex | callback (single use) |
 | `oauth2_pkce_verifier` | `/login` | random (S256) | callback (single use) |
+| `tfa_pending` | login 401 `mfa_required` / `tfa_enrollment_required` (§2.7) | `{email, source, verified_at}` — **pre-authentication**: not a session; every page guard rejects it | second factor verified or enrollment completed (promoted via `session_regenerate_id(true)`), or TTL 5 min / abort |
+
+The identity keys above are written **only after the two-factor gate has passed** for accounts with a method other than `off` (GD-21, §2.7); while only `tfa_pending` exists, no authenticated page is reachable.
 
 All page reads go through a single `require_login()` helper; a missing session redirects to `/login`. The session stores **identity only** — no permissions, no project tokens, no data: permissions are re-derived from the API on every request (REQ-AUTH-033), and project tokens live in `user_projects.token`, never in the session.
 
@@ -229,6 +253,7 @@ Rules:
 ## 7. Non-Functional Security
 
 - **Password handling** (REQ-AUTH-036, GD-18): the LDAP password exists only transiently — it goes over TLS to the directory and is never persisted or logged. Local (table-based) passwords are verified against a **bcrypt** hash (`cost ≥ 10`, constant-time compare — `golang.org/x/crypto/bcrypt` in the Go API) stored in `users.password_hash`; the plaintext exists only in flight (browser → PHP over TLS; PHP → API over the trusted internal path) and is never logged, never in audit `details`, and never returned by any endpoint. Setting/resetting a password stores only the new hash; clearing it sets the column to `NULL` (the account keeps its other paths).
+- **Two-factor material** (GD-21, REQ-AUTH-056/057/058): TOTP secrets are 160-bit `crypto/rand` values (base32 for the QR/`otpauth://` URI); RFC 6238 verification uses standard-library `crypto/hmac` + `crypto/sha1` — no new dependency. Email codes and recovery codes come from `crypto/rand`. Pending email codes and recovery codes are persisted **as one-way hashes only** (`user_two_factor`, REQ-DB-038); the TOTP secret is stored as issued, never returned by any endpoint after its single enrollment display, and never written to logs or audit details. Email delivery uses standard-library `net/smtp` from the API against the configured relay; message bodies (the code) are never logged.
 - **CSRF** (REQ-AUTH-037, REQ-UI-005): every state-changing browser request carries the per-session `csrf_token` (form field or `X-CSRF-Token` header); the administration API is additionally protected by the service-token boundary (GD-1).
 - **Trusted path** (REQ-AUTH-034): PHP→API traffic on loopback or TLS.
 - **Log hygiene** (REQ-AUTH-049, REQ-API-005): the proxy does not log `/api/` query strings (or redacts `token=…`); neither component logs the service token, IdP secrets, or record values.
@@ -242,9 +267,10 @@ Rules:
 | `X-Internal-User-Id` on `POST /api/v1/auth/login` (REQ-API-041) | the login endpoint is the sole exception — service token only; the externally authenticated identity arrives in the body (§2.3) |
 | brute-force store and windows (REQ-AUTH-035) | in-memory per host; 5 failures / 10 min → 15 min lockout (§2.5) |
 | OAuth2 flow hardening | PKCE (S256) + single-use `state` (§2.1) |
-| `login_failure` reason vocabulary | `provider_unavailable \| state_mismatch \| bad_credentials \| bad_password \| account_not_found \| account_disabled \| account_expired \| rate_limited` (`Audit_Logging_Design.md` §3.1) |
+| `login_failure` reason vocabulary | `provider_unavailable \| state_mismatch \| bad_credentials \| bad_password \| account_not_found \| account_disabled \| account_expired \| rate_limited \| bad_mfa_code` (`Audit_Logging_Design.md` §3.1) |
 | table-based authentication (owner decision 2026-09-22, GD-18) | `users.password_hash` (bcrypt) + `auth_source = local`; Sequence F before the LDAP fallback; bootstrap password from `ADMIN_BOOTSTRAP_PASSWORD` (required at startup when no IdP is configured); `REQ-AUTH-036` revised to "no plaintext, hash only" (§2.2/§2.3/§2.6, §7) |
 | account validity and inactivity (owner decision 2026-09-22, GD-19) | `users.valid_until` / `users.last_login_at`; the account-active rule of §4.4 evaluated at every authentication check; auto-disable + `account_auto_disabled` audit; admin re-enable resets the inactivity clock |
+| two-factor authentication (owner decision 2026-09-28, GD-21) | `user_two_factor` (§2.7); Sequence C step 1.5 gate on local/LDAP logins only — OAuth2 MFA stays with the IdP (DEV-AUTH-10); TOTP (stdlib RFC 6238) + email codes (`net/smtp`); recovery codes; `tfa_pending` pre-auth session (§3); mandate `AUTH_REQUIRE_2FA`; admin reset |
 
 ## 9. Open Items
 

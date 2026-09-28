@@ -74,6 +74,17 @@ CREATE TABLE IF NOT EXISTS users (               -- REQ-DB-008 (GD-18/GD-19)
     created_at    DATETIME NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS user_two_factor (     -- REQ-DB-038 (GD-21); absent row = method off
+    user_id               INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    method                VARCHAR(5)  NOT NULL DEFAULT 'off',  -- off | totp | email
+    totp_secret           VARCHAR(64),             -- base32; never returned after enrollment display, never logged
+    totp_last_step        BIGINT,                  -- last accepted RFC 6238 step; replay prevention (REQ-AUTH-058)
+    email_code_hash       VARCHAR(64),             -- SHA-256 hex of the pending email code; never the code itself
+    email_code_expires_at DATETIME,                -- UTC; now + TFA_EMAIL_CODE_TTL (REQ-AUTH-057)
+    recovery_codes        TEXT,                    -- JSON array of {hash, consumed}; one-way hashes only
+    enrolled_at           DATETIME                 -- UTC; audit anchor for tfa_enrolled (REQ-AUD-028)
+);
+
 CREATE TABLE IF NOT EXISTS roles (               -- REQ-DB-009 (GD-2)
     id             INTEGER PRIMARY KEY,
     project_id     INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -400,6 +411,7 @@ Reference scale (REQ-DB-025): 100 projects × 10,000 records × 200 fields × 10
 | simplified `projects` (master spec "Details", GD-17) | `projects` keeps name, organization, PI, DM, REK, dates, naming pattern (§4); removed attributes are ordinary instrument data if wanted (REQ-DB-032) |
 | table-based authentication (master spec "Details", GD-18) | `users.password_hash` (nullable, bcrypt) + `auth_source = local` (§4); plaintext never stored |
 | account validity and inactivity (master spec "Details", GD-19) | `users.valid_until` (NULL = indefinite) + `users.last_login_at` (§4); auto-disable rule in `Authentication_Authorization_Design.md` §4.4 |
+| two-factor authentication (master spec "Details", GD-21) | `user_two_factor` — one row per user, method/secret/replay step/pending-code hash/recovery hashes (§4); verification and enrollment in `Authentication_Authorization_Design.md` §2.7 |
 | project modes (master spec "Project modes", GD-20) | `projects.mode` (`development` default, §4) + `project_staging` JSON-snapshot table (§5 — the live structure tables stay untouched while a set is open); transition/staging rules normative in `API_Endpoints_Design.md` §4.21 |
 
 ## 12. Open Items

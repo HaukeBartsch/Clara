@@ -1,6 +1,6 @@
 # Authentication and Authorization Plan
 
-This document outlines the security model for the clinical study management system, utilizing OAuth2 (with LDAP fallback and a table-based local-password path) for authentication and role-based access control (RBAC) for authorization.
+This document outlines the security model for the clinical study management system, utilizing OAuth2 (with LDAP fallback and a table-based local-password path) for authentication — optionally extended by a per-user two-factor step (TOTP or email code — GD-21) on the CLARA-verified paths — and role-based access control (RBAC) for authorization.
 
 ## Authentication
 - Protocol: OAuth2 (authorization code), with LDAP fallback and a local table-based path
@@ -15,6 +15,7 @@ This document outlines the security model for the clinical study management syst
 - Multiple Providers: The system will support generic OAuth2 integration with multiple identity providers (`OAUTH2_N_*`, REQ-CFG-011).
 - LDAP Fallback: If OAuth2 fails or is unavailable, the system will query up to 3 configured LDAP servers sequentially.
 - Local Password Accounts (GD-18): when no OAuth2 provider and no LDAP server is configured, accounts authenticate against `users.password_hash` (bcrypt), starting from a bootstrap administrator taken from configuration (`ADMIN_BOOTSTRAP_EMAIL`/`_PASSWORD`, REQ-CFG-025). Accounts carry a validity period and are auto-disabled after a configurable inactivity period (GD-19, default 180 days; re-enableable by an administrator).
+- Two-Factor Authentication (GD-21): each user MAY enable a second factor — `totp` (RFC 6238 authenticator app on the user's phone; works offline) or `email` (one-time code via a configured SMTP relay). It is verified after first-factor success on the local and LDAP form logins, before any session is established; the OAuth2 path leaves MFA to the identity provider. Self-service enrollment with one-time recovery codes; an installation-wide mandate (`AUTH_REQUIRE_2FA`) forces enrollment; administrators reset it per account (REQ-AUTH-054…059).
 - Identity only, not authorization: the identity provider or directory supplies the **identity** (email, display name) — never roles or permissions. Project roles are created and assigned per project by an administrator inside this system (REQ-AUTH-020/021); the earlier notion of mapping directory group attributes to system permissions was not taken up (ASM-AUTH-3).
 
 ## Authorization

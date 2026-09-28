@@ -33,11 +33,12 @@ Common conventions (REQ-UI-001…008), binding on every page:
 
 | Route | Page | Gating (server-side at render) | API calls (PHP, server-side) |
 |---|---|---|---|
-| `GET /login` | login (§2.2) | public | — (PHP OAuth2/LDAP flow; `Authentication_Authorization_Design.md` §2.1/2.2) |
+| `GET /login` | login incl. the two-factor step (§2.2) | public (pre-auth `tfa_pending` state for the challenge, GD-21) | — (PHP OAuth2/LDAP flow; `Authentication_Authorization_Design.md` §2.1/2.2/2.7) |
 | `GET /auth/callback` | OAuth2 redirect | public | `POST /api/v1/auth/login` on success |
 | `POST /logout` | — (redirect to `/login`) | any authenticated | `POST /api/v1/auth/logout` **before** session destruction (REQ-UI-007, `Authentication_Authorization_Design.md` §2.4) |
 | `GET /` | dashboard (§4) | any authenticated | `GET /api/v1/projects` |
 | `POST /lang` | language switch (redirect back) | any authenticated | `PUT /api/v1/users/me/ui-language` |
+| `GET /account/two-factor` | two-factor settings (§2.5) | any authenticated | `GET /api/v1/users/me/tfa`, `POST /api/v1/users/me/tfa/*` (GD-21, REQ-UI-039) |
 | `GET /admin/users` | user accounts (§5.1) | `is_admin` | `GET/POST /api/v1/users`, `PUT /api/v1/users/{id}` |
 | `GET /admin/projects` | project create/edit (§5.2) | `is_admin` | `POST /api/v1/projects`, `GET/PUT /api/v1/projects/{id}` |
 | `GET /admin/audit` | audit view (§5.6) | `is_admin` or member of a project (REQ-API-078) | `GET /api/v1/audit` |
@@ -62,6 +63,8 @@ There are no other browser-reachable routes. State-changing browser requests are
 - **Providers** (present only when at least one OAuth2 provider is configured): one button per configured provider — "Sign in with `<provider name>`" — initiating Sequence A (`Authentication_Authorization_Design.md` §2.1).
 - **Email + password form** (always present — on a first installation without an IdP it is the **only** path, GD-18, REQ-AUTH-051): email + password, initiating **Sequence F** (`Authentication_Authorization_Design.md` §2.6) — the API verifies the local (table-based) hash first, then falls back to Sequence B (LDAP) when servers are configured. The password travels only browser→PHP (TLS) and PHP→API (trusted internal path); it is never stored in plaintext and never logged (REQ-AUTH-036).
 - Failure presentation: a single translated error line per the API reason — provider unavailable / state mismatch / **bad password** / bad credentials (LDAP) / **account disabled** (incl. "disabled after inactivity — an administrator must re-enable") / **account expired** ("validity period ended — an administrator must extend it") — no internals. Rate-limit rejection (429) shows the lockout duration (REQ-AUTH-035).
+- **Two-factor step** (GD-21, REQ-UI-038): on 401 `mfa_required` the page switches to a second panel — one code field with method-specific help ("Enter the code from your authenticator app" / "We sent a code to your email address" + a resend action, rate-limited) and an "use a recovery code" toggle. PHP holds the first-factor success in the pre-auth `tfa_pending` session (`Authentication_Authorization_Design.md` §2.7); no other page is reachable while it stands. 401 `bad_mfa_code` re-shows the panel with the failure line; on success the response completes the login exactly as without a second factor.
+- **Mandated enrollment** (GD-21, REQ-AUTH-059): on 401 `tfa_enrollment_required` (`AUTH_REQUIRE_2FA` on, account has no method) the page shows the enrollment wizard of §2.5; completing it resumes the login.
 - Session inactivity timeout: any request with an expired session redirects to `/login` (REQ-UI-007, REQ-AUTH-015).
 
 ### 2.3 No-access page
@@ -95,9 +98,19 @@ All authenticated pages (and the public survey page, §8.8, which renders a redu
   1. **Projects** (any authenticated user with ≥ 1 visible project): a link to the dashboard (`/`) and one entry per visible project (name + organization) to its home page (`/projects/{id}`).
   2. **Administration** (`is_admin` only): Users (`/admin/users`), Projects (`/admin/projects`), Audit log (`/admin/audit`), Translations (`/admin/i18n`).
   3. **Project context** — shown only while the user is on a page of a specific project (the brand bar shows that project's name): Setup, Design, Record status, Export (gated per §6.1), and — for `is_admin` — Members, Roles; — for `project_admin` or better — Groups. Selecting one of these loads that page in the panel (the master spec's "selecting different functions (like setup) should load the corresponding page in the right hand panel").
-  4. **Account**: the language selector (§9) and a "Sign out" action (`POST /logout`, CSRF token, REQ-UI-007).
+  4. **Account**: the language selector (§9), a "Two-factor authentication" link (`GET /account/two-factor`, §2.5 — GD-21), and a "Sign out" action (`POST /logout`, CSRF token, REQ-UI-007).
 - **Responsive collapse** (REQ-UI-008): below the Bootstrap `lg` breakpoint the sidebar collapses to the standard off-canvas/overlay pattern (Bootstrap navbar + offcanvas); no mobile-specific optimization beyond Bootstrap defaults (ASM-UI-1).
 - The login page (§2.2) and the public survey page (§8.8) render **without** the sidebar (no session, no navigation) — the survey page is a single centered form panel (DEV-UI-1).
+
+### 2.5 Two-factor settings (`GET /account/two-factor`, REQ-UI-039)
+
+Self-service page in the shell, reachable by every signed-in user (also rendered standalone inside the mandated-enrollment flow of §2.2 before a session exists). Data: `GET /api/v1/users/me/tfa`.
+
+- **Current method** badge: off / authenticator app (`totp`) / email (`email`), with enrollment date.
+- **Enable TOTP**: button → the API's returned secret rendered as a QR code (client-side from `otpauth_uri`, no external service) plus the manual-entry key with a copy affordance; one confirmation-code field; on success the **recovery codes** appear exactly once in a monospace block with a copy button and an explicit "I saved them" acknowledgement (`POST …/totp/enroll`, `POST …/totp/confirm`).
+- **Enable email**: "Send code" → six-digit confirmation field (+ resend, rate-limited); the option is absent when SMTP is not configured — `POST …/email/start` 409 maps to a hidden control server-side (REQ-AUTH-057). Recovery codes shown once as above.
+- **Disable**: asks for a current code or recovery code before `POST …/tfa/disable`; explains that the mandate re-prompts enrollment at the next login when on.
+- The secret and codes never re-render after their one-time display; reload shows status only (REQ-AUTH-056). All actions CSRF-protected (REQ-UI-005); strings translated server-side (REQ-UI-008).
 
 ## 3. Common Components and Rendering Rules
 
@@ -131,6 +144,9 @@ The PHP layer maps the stable `error` code of `API_Endpoints_Design.md` §4.2 to
 | `conflict` (409) | the `message` (duplicate name, still-in-use resource, §5.5 group deletion) |
 | `not_found` (404) | "The object does not exist or you do not have access" (uniform with 403 for protected resources) |
 | `account_not_found` / `bad_password` / `account_disabled` / `account_expired` (login) | the login-page failure line of §2.2 (reason-specific text; auto-disabled and expired accounts point the user to an administrator) |
+| `mfa_required` (login, GD-21) | not an error — switches the login page to the two-factor panel (§2.2) |
+| `bad_mfa_code` (login) | "That code is wrong or has expired" on the two-factor panel; resend stays available until the lockout line replaces it (REQ-AUTH-058) |
+| `tfa_enrollment_required` (login) | not an error — opens the enrollment wizard (§2.5, §2.2) |
 | `service_token_invalid` / `internal` (500) | a generic failure line + the operator is notified by the application log — never internals (REQ-API-006) |
 | data-API `import_record_id = 0` | the per-field validation detail from `import_form_name` (`Data_Validation_Design.md` §3 codes), §8.6 |
 
@@ -181,7 +197,7 @@ The pages of §5.1/§5.2/§5.6/§5.7 are global (`is_admin`); §5.3/§5.4/§5.5 
 
 ### 5.1 User accounts (`GET /admin/users`, `is_admin`, REQ-UI-011)
 
-Data: `GET /api/v1/users` (the full user object, `API_Endpoints_Design.md` §4.3/§4.4). Table columns: `email`, `display_name`, `enabled` (badge), `is_admin` (badge), `auth_source` (`oauth2`/`ldap`/`local`), **`last_login_at`** (UTC; "never" when `null`), **`valid_until`** ("indefinite" when `null`), and the derived **status** badge — `active` / `disabled` / `expired` / `auto_disabled` (GD-19, REQ-AUTH-052/053). An `auto_disabled` row is visually distinct and shows the inactivity reason ("no login for more than `AUTH_INACTIVITY_LIMIT_DAYS` days — re-enabled by an administrator").
+Data: `GET /api/v1/users` (the full user object, `API_Endpoints_Design.md` §4.3/§4.4). Table columns: `email`, `display_name`, `enabled` (badge), `is_admin` (badge), `auth_source` (`oauth2`/`ldap`/`local`), **`last_login_at`** (UTC; "never" when `null`), **`valid_until`** ("indefinite" when `null`), the derived **status** badge — `active` / `disabled` / `expired` / `auto_disabled` (GD-19, REQ-AUTH-052/053) — and the **two-factor method** badge `off` / `totp` / `email` (GD-21, REQ-API-116). An `auto_disabled` row is visually distinct and shows the inactivity reason ("no login for more than `AUTH_INACTIVITY_LIMIT_DAYS` days — re-enabled by an administrator").
 
 | Action | Control | API | Notes |
 |---|---|---|---|
@@ -189,6 +205,7 @@ Data: `GET /api/v1/users` (the full user object, `API_Endpoints_Design.md` §4.3
 | disable / re-enable | row button, confirmation modal on disable (naming the consequence for that user's tokens) | `PUT /api/v1/users/{id}` with `enabled` | idempotent; disabling takes effect at call time for that user's tokens (REQ-API-048); **re-enabling an auto-disabled account resets the inactivity clock** (REQ-AUTH-053) |
 | extend validity | row action (number input, days; `0` = indefinite) | `PUT /api/v1/users/{id}` with `valid_days` | re-sets `valid_until`; restores access for expired accounts (REQ-AUTH-052) |
 | set / reset local password | row action (password + repeat; empty = clear the local password) | `PUT /api/v1/users/{id}` with `password` | stored only as a bcrypt hash; never shown, never logged (REQ-AUTH-050, REQ-AUTH-036); `auth_source` then reports `local` after the next login (REQ-AUTH-005) |
+| reset two-factor | row action with confirmation ("the user will lose their enrolled method and recovery codes") | `POST /api/v1/users/{id}/tfa/reset` | clears method, secret, codes (GD-21, REQ-AUTH-059); audit `tfa_reset`; under `AUTH_REQUIRE_2FA` the user re-enrolls at next login |
 
 The `is_admin` flag is set by the bootstrap mechanism (GD-4, REQ-AUTH-007) — phase 1 offers no UI toggle for it (out of REQ-UI-011's scope).
 

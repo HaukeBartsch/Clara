@@ -22,11 +22,14 @@ The normative event catalog (event codes, `details` payload schemas), the record
 
 | Code | When | `details` payload |
 |---|---|---|
-| `login_success` | every successful login | `{"source":"oauth2 or ldap","provider":"<issuer> or <LDAP server n>","display_name":"…"}` |
-| `login_failure` | every failed login attempt | `{"source":"oauth2 or ldap","email":"…","reason":"provider_unavailable or state_mismatch or bad_credentials or account_not_found or account_disabled or rate_limited"}` |
+| `login_success` | every successful login | `{"source":"oauth2 or ldap or local","provider":"<issuer> or <LDAP server n>","display_name":"…","mfa":"totp or email or recovery"}` — `mfa` only when the account had a second factor (GD-21, REQ-AUD-028) |
+| `login_failure` | every failed login attempt | `{"source":"oauth2 or ldap or local","email":"…","reason":"provider_unavailable or state_mismatch or bad_credentials or account_not_found or account_disabled or rate_limited or bad_mfa_code"}` — code values themselves are never in the payload (REQ-AUTH-036 extended, GD-21) |
 | `logout` | explicit logout (REQ-AUTH-015) | `{}` |
 | `admin_rejected` | rejected administration-API call (missing/invalid service token, unknown or disabled user — REQ-AUTH-011…013) | `{"path":"POST /api/v1/…","reason":"service_token_invalid or user_unknown or user_disabled"}` |
 | `account_auto_disabled` | inactivity auto-disable of the account active rule (GD-19, REQ-AUTH-053, REQ-AUD-024) — `enabled` set to `0` and the inactivity clock reset, same transaction as this entry; `source=system` | `{"email":"…","last_login_at":"…","inactivity_limit_days":180}` |
+| `tfa_enrolled` | a user activates a two-factor method (`method`, self) — GD-21, REQ-AUD-028 | `{"method":"totp or email"}` |
+| `tfa_disabled` | a user turns their own second factor off (verified by a current code, REQ-API-115) — GD-21 | `{"method":"<method that was active>"}` |
+| `tfa_reset` | an administrator resets another account's two-factor authentication (`is_admin`, REQ-AUTH-059) — GD-21 | `{"target_email":"…"}` |
 
 No IdP tokens, LDAP passwords, or service-token values ever appear in payloads (REQ-AUD-007, REQ-API-005).
 

@@ -4,7 +4,7 @@ Project Overview
 This project aims to develop a new research electronic data capture system for clinical studies. The system will provide a web-based platform to collect project data securely and efficiently, and integrates with the research information system through a REDCap-compatible API.
 
 Objectives
-- Create a secure, token-based access system mapped to user accounts (OAuth2, with LDAP fallback and a table-based local-password path for when neither is configured — GD-18), with account validity periods and inactivity auto-disable (GD-19).
+- Create a secure, token-based access system mapped to user accounts (OAuth2, with LDAP fallback and a table-based local-password path for when neither is configured — GD-18), with account validity periods and inactivity auto-disable (GD-19) and by-user configurable two-factor authentication (TOTP or email code — GD-21).
 - Implement granular, project-scoped permissions for different user roles.
 - Support flexible project structures including study arms, events, and instruments.
 - Ensure data integrity through robust field validations.

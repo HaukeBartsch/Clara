@@ -38,6 +38,18 @@ User accounts, created and enabled by admin users.
 - ui_language (String, default en)
 - created_at (DateTime)
 
+2a. User Two-Factor (GD-21)
+At most one row per user who has engaged with two-factor authentication; absent = `off`.
+- user_id (Primary Key, Foreign Key - cascade delete)
+- method (String: off | totp | email)
+- totp_secret (String, nullable - shared secret; never returned by the API, never logged)
+- totp_last_step (Integer, nullable - last accepted time step; replay prevention)
+- email_code_hash (String, nullable - one-way hash of the pending email code) + email_code_expires_at (DateTime, nullable)
+- recovery_codes (Text/JSON - one-way hashes with consumed state; shown once at enrollment)
+- enrolled_at (DateTime)
+
+An administrator reset deletes the row back to `off` (REQ-DB-038, REQ-AUTH-059).
+
 3. Roles
 A project role is a collection of permissions, defined per project (any name, any combination — not a fixed catalogue).
 - id (Primary Key)
