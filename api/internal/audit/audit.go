@@ -33,10 +33,12 @@ const (
 	AccountAutoDisabled  = "account_auto_disabled"
 
 	// §3.2 data change events
-	RecordCreated          = "record_created"
-	RecordUpdated          = "record_updated"
-	RecordDeleted          = "record_deleted"
-	CalculatedRecomputed   = "calculated_recomputed"
+	RecordCreated         = "record_created"
+	RecordUpdated         = "record_updated"
+	RecordDeleted         = "record_deleted"
+	CalculatedRecomputed  = "calculated_recomputed"
+	InstrumentCompleted   = "instrument_completed"   // REQ-AUD-026, REQ-API-110
+	InstrumentUncompleted = "instrument_uncompleted" // REQ-AUD-026
 
 	// §3.3 project structure events
 	ProjectCreated      = "project_created"
