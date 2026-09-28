@@ -89,7 +89,7 @@ API processing (in order):
 Response (200):
 
 ```json
-{ "id": 3, "email": "user@example.org", "display_name": "User", "is_admin": true, "auth_source": "oauth2", "ui_language": "en" }
+{ "id": 3, "email": "user@example.org", "display_name": "User", "is_admin": true, "auth_source": "oauth2", "ui_language": "en", "ui_theme": null }
 ```
 
 The API is stateless with respect to sessions: it MUST NOT create or store a session (GD-1, REQ-API-044).

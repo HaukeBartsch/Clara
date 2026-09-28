@@ -20,7 +20,7 @@ This document outlines the API for the clinical study management system, impleme
 
 ## 2. Administration API (used exclusively by the web application)
 - Authentication: POST /api/v1/auth/login (verify credentials for the OAuth2 callback, an LDAP bind, or a local table-based account — `source: "local"`), POST /api/v1/auth/logout. The login endpoint **does not create or store a session** (REQ-API-044): it authenticates and returns the identity, and the PHP web application owns the session it establishes from that result (REQ-AUTH-009). The Go API stays stateless. When the account has two-factor authentication enabled (GD-21), login answers `mfa_required` until the call repeats with a valid `mfa_code` (TOTP, email code, or recovery code — REQ-API-114); self-service enrollment lives on `/api/v1/users/me/tfa/*`, administrators reset any account via `POST /api/v1/users/{id}/tfa/reset` (REQ-API-115/116).
-- Users: GET /api/v1/users, POST /api/v1/users (create/enable an account), PUT /api/v1/users/{id} (disable/enable).
+- Users: GET /api/v1/users, POST /api/v1/users (create/enable an account), PUT /api/v1/users/{id} (disable/enable). Self-service preferences on `/api/v1/users/me/ui-language` and `/api/v1/users/me/ui-theme` (GD-26): the theme value names an installed Bootstrap theme or is `null` to follow the installation default `UI_THEME` (REQ-API-098/122).
 - Projects: GET /api/v1/projects (only accessible projects), POST /api/v1/projects, GET /api/v1/projects/{id}, PUT /api/v1/projects/{id}.
 - Members: GET /api/v1/projects/{id}/users, PUT /api/v1/projects/{id}/users/{uid} (assign a role; issue/rotate the project token).
 - Roles: GET/POST /api/v1/projects/{id}/roles (create custom roles with a mixture of permissions).

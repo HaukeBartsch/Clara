@@ -51,4 +51,5 @@ This document outlines the key views and layout for the clinical study managemen
 
 ## UI Framework
 - Framework: Bootstrap
+- Themes: The page renders with the standard Bootstrap stylesheet or one installed theme file (`darkly`, `yeti`); the installation default comes from configuration (`UI_THEME`), each user may override it beside the language selector, and "Default" returns to the installation theme (GD-26).
 - Description: Used for responsive layout and pre-built components (forms, buttons, modals) on plain JavaScript and HTML.

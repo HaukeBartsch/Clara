@@ -85,7 +85,14 @@ Defines the web user interface requirements: the views, the permission gating of
 | REQ-UI-029 | The UI MUST offer a language selector listing the enabled languages (REQ-API-097); the choice MUST be persisted to the acting user's setting (REQ-API-098), apply from the next page load, and default to English for users without a setting. |
 | REQ-UI-030 | **Translation management (administration).** Per language: a list of translation keys with translated/missing status (REQ-API-099) and an editor to add, change, or clear translations (REQ-API-100); missing translations MUST be visible in the list and MUST fall back to English at render time (REQ-UI-008); translated strings MUST be escaped on render (REQ-UI-004). |
 
-## 9. Assumptions
+## 9. Appearance (GD-26)
+
+| ID | Requirement |
+|---|---|
+| REQ-UI-040 | The PHP layer MUST render exactly one Bootstrap stylesheet per page — the standard `bootstrap.min.css` **or** one vendored theme file (GD-26, REQ-TECH-027) — chosen server-side: the acting user's theme override when set (REQ-DB-008), else the installation default (`UI_THEME`, REQ-CFG-031). Theme stylesheets MUST be served same-origin from the vendored tree (no CDN, ASM-TECH-2); markup is identical across themes, so no page content changes with the theme. |
+| REQ-UI-041 | The UI MUST offer a theme selector beside the language selector (§8 pattern): a pick of the installed themes plus a "Default" choice that clears the personal override; the choice MUST be persisted to the acting user's setting (REQ-API-122), apply from the next page load, and never affect stored data or the login/public pages' correctness (those render with the installation default). |
+
+## 10. Assumptions
 
 | ID | Assumption |
 |---|---|
@@ -93,7 +100,7 @@ Defines the web user interface requirements: the views, the permission gating of
 | ASM-UI-2 | All UI obligations parked in the other area documents (record history REQ-API-081, DAG switcher/record reassignment REQ-API-094, calculated-field test REQ-API-096, required/branching presentation REQ-VAL-028/029, escaping in value views REQ-VAL-031) are consolidated here and are normative via their cross-references. |
 | ASM-UI-3 | The role editor presents the per-arm level pickers (data access level + export level per arm, plus `project_admin`); "no role" is an explicit choice meaning full permissions (REQ-AUTH-022). |
 
-## 10. Deviations
+## 11. Deviations
 
 | ID | Deviation | Source |
 |---|---|---|
@@ -105,3 +112,4 @@ Defines the web user interface requirements: the views, the permission gating of
 | DEV-UI-6 | Project creation form reduced to the simplified field set (GD-17) | Owner decision (2026-09-22; master spec "Details"): options/end provision/event names no longer project metadata — keep PI, REK, main supporting institution (REQ-UI-012, REQ-DB-006). |
 | DEV-UI-7 | Layout, style, and client-side data binding adopt the historic FIONA reference app | Owner decision (master spec "Details", `assets/table_based_authentication_plus_user_management/`): use the reference's layout/style and "pull JSON → populate rendering targets" interfacing, realized in Bootstrap 5.3.x + vanilla ES2020 and subordinate to the fixed conventions (no framework/JQuery, server-side UI strings, safe rendering, CSRF, PHP-only browser boundary) (REQ-UI-032, REQ-TECH-025) |
 | DEV-UI-8 | Record status shows three completion states (grey / amber / green) and the form gains a control that assigns "finished" | The plan's dashboard offers only filled/empty; the master spec colors each instrument by a state the user assigns at the end of a data-collection instrument. Only "finished" is stored — grey/amber stay derived from the values so the badge cannot claim completion the data contradicts (REQ-UI-019/036, REQ-API-074/110, REQ-DB-036). Closes Open Item 1 of `Design/User_Interface_Design.md` §11. |
+| DEV-UI-9 | Selectable Bootstrap themes (darkly, yeti) with an installation default and a per-user override | Owner decision (2026-09-28, GD-26; "allow bootstrap themes like darkly and yeti in assets/"): theme files admitted as full-replacement vendored stylesheets (REQ-TECH-027); `UI_THEME` sets the installation default (REQ-CFG-031), the personal override persists on the user row (REQ-DB-008, REQ-API-122), and the selector follows the language-selector pattern (REQ-UI-040/041). |

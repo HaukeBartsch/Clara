@@ -126,6 +126,12 @@ The rate-limit **thresholds are not environment variables**: `rate_limit_enabled
 | `SMTP_USERNAME` / `SMTP_PASSWORD` | api | string | — | — | optional relay credentials; `SMTP_PASSWORD` is a secret — never logged, redacted in the startup dump (REQ-CFG-021) |
 | `OTP_MAIL_FROM` | api | address | — | — | sender of code emails (required when `SMTP_HOST` is set) |
 
+### 3.12 Appearance (web)
+
+| Variable | Component | Type | Default | Required | Description |
+|---|---|---|---|---|---|
+| `UI_THEME` | web | one of `bootstrap`, `darkly`, `yeti` | `bootstrap` | — | installation-wide default Bootstrap theme (GD-26, REQ-CFG-031, REQ-TECH-027): the stylesheet rendered for every user without a personal override (`users.ui_theme`, REQ-DB-008); an unknown value refuses startup (§4.1); the web layer resolves the effective theme at render time and links exactly one same-origin stylesheet (REQ-UI-040) |
+
 ## 4. Validation Rules and Startup Behavior
 
 ### 4.1 Required-at-startup matrix
@@ -145,6 +151,7 @@ The rate-limit **thresholds are not environment variables**: `rate_limit_enabled
 | `APP_TIMEZONE` is a resolvable IANA timezone name (default `UTC`) | required | required (REQ-CFG-026) |
 | `AUTH_REQUIRE_2FA` ∈ {`0`,`1`} (default `0`); `TFA_EMAIL_CODE_TTL` integer > 0; `SMTP_SECURITY` ∈ {`starttls`,`tls`,`none`} | required | required (GD-21, REQ-CFG-027/028/029) |
 | when `SMTP_HOST` is set: `OTP_MAIL_FROM` set and parseable (email method active; unset SMTP → method unavailable, no startup failure) | required | required (REQ-CFG-028) |
+| `UI_THEME` ∈ {`bootstrap`, `darkly`, `yeti`} (default `bootstrap`) | required | required (GD-26, REQ-CFG-031) |
 
 The API refuses to start with a non-zero exit and a message naming each missing/invalid variable (REQ-CFG-004); the PHP app fails at entry-point boot with an operator-readable page and no stack trace in production (REQ-CFG-005).
 
@@ -215,6 +222,10 @@ TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1
 AUTH_INACTIVITY_LIMIT_DAYS=180
 AUTH_PASSWORD_TOKEN_TTL_DAYS=7
 APP_TIMEZONE=UTC
+
+# appearance (web) — installation default theme: bootstrap | darkly | yeti (GD-26);
+# users may override it personally; an unknown value refuses startup
+UI_THEME=bootstrap
 
 # two-factor authentication (api, GD-21) — email method unavailable without SMTP_HOST
 AUTH_REQUIRE_2FA=0

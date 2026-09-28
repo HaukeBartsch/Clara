@@ -38,6 +38,7 @@ Common conventions (REQ-UI-001…008), binding on every page:
 | `POST /logout` | — (redirect to `/login`) | any authenticated | `POST /api/v1/auth/logout` **before** session destruction (REQ-UI-007, `Authentication_Authorization_Design.md` §2.4) |
 | `GET /` | dashboard (§4) | any authenticated | `GET /api/v1/projects` |
 | `POST /lang` | language switch (redirect back) | any authenticated | `PUT /api/v1/users/me/ui-language` |
+| `POST /theme` | theme switch (redirect back, §3.8) | any authenticated | `PUT /api/v1/users/me/ui-theme` (GD-26) |
 | `GET /account/two-factor` | two-factor settings (§2.5) | any authenticated | `GET /api/v1/users/me/tfa`, `POST /api/v1/users/me/tfa/*` (GD-21, REQ-UI-039) |
 | `GET\|POST /account/password` | change own password (§2.6) | any authenticated | `PUT /api/v1/users/me/password` (GD-23, REQ-AUTH-061) |
 | `GET\|POST /password-reset` | forgot-password request (§2.6) | public — no session | `POST /api/v1/auth/password-reset/request` (GD-23, REQ-AUTH-062) |
@@ -102,7 +103,7 @@ All authenticated pages (and the public survey page, §8.8, which renders a redu
   1. **Projects** (any authenticated user with ≥ 1 visible project): a link to the dashboard (`/`) and one entry per visible project (name + organization) to its home page (`/projects/{id}`).
   2. **Administration** (`is_admin` only): Users (`/admin/users`), Projects (`/admin/projects`), Audit log (`/admin/audit`), Translations (`/admin/i18n`).
   3. **Project context** — shown only while the user is on a page of a specific project (the brand bar shows that project's name): Setup, Design, Record status, Export (gated per §6.1), and — for `is_admin` — Members, Roles; — for `project_admin` or better — Groups. Selecting one of these loads that page in the panel (the master spec's "selecting different functions (like setup) should load the corresponding page in the right hand panel").
-  4. **Account**: the language selector (§9), a "Two-factor authentication" link (`GET /account/two-factor`, §2.5 — GD-21), a "Password" link (`GET /account/password`, §2.6 — shown only when the account has a local credential, GD-23), and a "Sign out" action (`POST /logout`, CSRF token, REQ-UI-007).
+  4. **Account**: the language selector (§9) and the theme selector (§3.8, GD-26), a "Two-factor authentication" link (`GET /account/two-factor`, §2.5 — GD-21), a "Password" link (`GET /account/password`, §2.6 — shown only when the account has a local credential, GD-23), and a "Sign out" action (`POST /logout`, CSRF token, REQ-UI-007).
 - **Responsive collapse** (REQ-UI-008): below the Bootstrap `lg` breakpoint the sidebar collapses to the standard off-canvas/overlay pattern (Bootstrap navbar + offcanvas); no mobile-specific optimization beyond Bootstrap defaults (ASM-UI-1).
 - The login page (§2.2), the public password pages (`/password-reset`, `/set-password`, §2.6), and the public survey page (§8.8) render **without** the sidebar (no session, no navigation) — each is a single centered form panel (DEV-UI-1 pattern).
 
@@ -183,6 +184,13 @@ The reference application's interfacing style (master spec, "Details"; `assets/t
 - **No page switching.** Data binding fills targets within the current page; navigation is still a full `GET` to a §2.1 route (no SPA — REQ-UI-001, REQ-TECH-001).
 - **Mutations are unchanged.** Every state-changing request is still a CSRF-protected `POST` to a PHP route (REQ-UI-005, §3.3); after a successful mutation the client re-fetches the affected data region rather than mutating the DOM by hand.
 - **Subordinate to the fixed conventions.** Where the reference diverges — its Bootstrap 2.x, jQuery, JSON-file store, and md5-in-transport password — it is **not** adopted (REQ-TECH-001, REQ-TECH-020/024, REQ-AUTH-036).
+
+### 3.8 Theme rendering and selection (GD-26, REQ-UI-040/041)
+
+- **One stylesheet per page.** The PHP shell links exactly one Bootstrap stylesheet in the `<head>`: the standard `vendor/bootstrap/bootstrap.min.css`, or the selected theme's `vendor/bootstrap/themes/<name>/bootstrap.min.css` (vendored per `Technology_Stack_Design.md` §2/§4; themes are full replacements — never both, never layered). All other assets (bundle JS, Tabulator, Geist) are theme-independent and unchanged.
+- **Resolution at render time.** The effective theme is the acting user's override (`users.ui_theme`, from the session's user object) when set, else the installation default `UI_THEME` (REQ-CFG-031). Only installed theme identifiers resolve; the value never comes from the request, so no arbitrary path lands in the `href` (REQ-TECH-027). The login page, the public password pages (§2.6), and the survey page (§8.8) have no user context and render with the installation default.
+- **Theme selector** (sidebar Account section, §2.4; REQ-UI-041): a `<select>` beside the language selector listing the installed themes (`Standard`, `Darkly`, `Yeti` — translated display names) plus **"Default"** (= follow the installation theme, i.e. clear the personal override). Choosing one is a CSRF-protected `POST /theme` (form submit, redirect back like `POST /lang`) → `PUT /api/v1/users/me/ui-theme` (REQ-API-122); the new stylesheet applies **from the next page load** — the current page keeps its already-rendered theme.
+- **Markup is theme-neutral.** No page structure or component changes with the theme (REQ-TECH-027): `table-sm`, the offcanvas collapse (§2.4), modals, and badges render from the same markup under every installed theme. The CSP of §3.2 already allows only same-origin styles — a theme introduces no new source.
 
 ## 4. Dashboard (`GET /`)
 

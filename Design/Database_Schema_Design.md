@@ -71,6 +71,7 @@ CREATE TABLE IF NOT EXISTS users (               -- REQ-DB-008 (GD-18/GD-19)
     last_login_at DATETIME,                      -- nullable; UTC; set on every successful login; GD-19
     is_admin      INTEGER NOT NULL DEFAULT 0,    -- GD-4
     ui_language   VARCHAR(8)  NOT NULL DEFAULT 'en',  -- GD-12
+    ui_theme      VARCHAR(16),                       -- nullable; installed theme id (bootstrap|darkly|yeti); NULL = follow installation default UI_THEME (GD-26, REQ-DB-008)
     created_at    DATETIME NOT NULL
 );
 

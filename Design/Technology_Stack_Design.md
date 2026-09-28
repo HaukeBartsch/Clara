@@ -17,6 +17,7 @@ Fixes the concrete versions, the production dependency set, and the repository l
 | SQLite | ≥ 3.45 (OS/toolchain-provided) | development and tests (REQ-TECH-005) |
 | MariaDB | 11.x LTS (≥ 11.4) | production (REQ-TECH-005) |
 | Bootstrap | 5.3.x | vendored under `web/assets/vendor/bootstrap/` (CSS + bundle JS only); no CDN (ASM-TECH-2) |
+| Bootstrap themes | Bootswatch 5.3-compatible (`darkly`, `yeti`) | full-replacement stylesheets vendored under `web/assets/vendor/bootstrap/themes/<name>/bootstrap.min.css`, derived from the copies in `assets/` (`darkly_theme_bootstrap.min.css`, `yeti_theme_bootstrap.min.css`); remote references inside a theme (e.g. the Google Fonts `@import`) are stripped at derivation — themes render offline; selection per REQ-TECH-027/GD-26 (`UI_THEME` default, REQ-CFG-031; per-user override, REQ-UI-040/041) |
 | JavaScript | vanilla ES2020 | no framework, no build step (REQ-TECH-001) |
 | Web server | nginx + PHP-FPM | reverse proxy and TLS termination point (REQ-TECH-015, ASM-TECH-1) |
 
@@ -69,6 +70,7 @@ redcap-replacement/
 │   └── assets/
 │       ├── app.js                  # vanilla ES2020: branching evaluator, form behavior, client-side data binding (fetch JSON → populate data regions)
 │       └── vendor/bootstrap/       # vendored Bootstrap 5.3.x
+│           └── themes/             # darkly/, yeti/ — full-replacement bootstrap.min.css per theme, remote @imports stripped (GD-26, REQ-TECH-027)
 ├── .env.example                    # complete variable inventory (System_Configuration_Design.md §5)
 ├── .gitignore                      # .env, SQLite files (REQ-CFG-001)
 └── ci/run.sh                       # go vet + unit + integration (SQLite) + Fiona fixtures

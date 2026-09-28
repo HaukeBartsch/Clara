@@ -36,6 +36,7 @@ User accounts, created and enabled by admin users.
 - last_login_at (DateTime, nullable - drives the inactivity auto-disable; GD-19)
 - is_admin (Boolean)
 - ui_language (String, default en)
+- ui_theme (String, nullable - personal Bootstrap theme override; null = follow the installation default `UI_THEME`; GD-26)
 - created_at (DateTime)
 
 #### 2a. User Two-Factor (GD-21)

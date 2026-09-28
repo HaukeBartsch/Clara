@@ -3,6 +3,7 @@
 ## Frontend
 - Languages: JavaScript, HTML
 - Framework: Bootstrap (responsive layout, forms, buttons, modals)
+- Themes: Bootstrap-compatible theme files (Bootswatch `darkly`, `yeti`) may replace the standard stylesheet; vendored locally, selected installation-wide (`UI_THEME`) or per user (GD-26).
 - Description: Plain implementation for the webpage interface; all data access goes through the API.
 
 ## Backend

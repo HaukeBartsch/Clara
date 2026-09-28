@@ -331,11 +331,11 @@ Processing (in order, `Authentication_Authorization_Design.md` §2.3): for `sour
 
 ```json
 { "id": 3, "email": "user@example.org", "display_name": "User", "enabled": true, "is_admin": true,
-  "auth_source": "oauth2", "ui_language": "en",
+  "auth_source": "oauth2", "ui_language": "en", "ui_theme": null,
   "last_login_at": "2026-09-20 08:14:05", "valid_until": null, "status": "active" }
 ```
 
-`last_login_at` is `null` when the account has never logged in; `valid_until` is `null` when indefinite; `status` ∈ `active | disabled | expired | auto_disabled` (derived — GD-19, REQ-AUTH-052/053).
+`last_login_at` is `null` when the account has never logged in; `valid_until` is `null` when indefinite; `status` ∈ `active | disabled | expired | auto_disabled` (derived — GD-19, REQ-AUTH-052/053); `ui_theme` is `null` when the account follows the installation default theme (`UI_THEME`, GD-26, REQ-DB-008).
 
 **`POST /api/v1/auth/logout`** — records the `logout` audit event (REQ-AUTH-008) and returns 200. Destruction of the PHP session remains the PHP layer's responsibility, performed after this call (GD-1, REQ-AUTH-015; `Authentication_Authorization_Design.md` §2.4).
 
@@ -715,7 +715,7 @@ Exactly one active group when `groups` is non-empty (otherwise 400 `invalid_requ
 
 Record scope and transformation are orthogonal (REQ-API-092, REQ-AUTH-045): the group governs **which records** the holder sees on both export surfaces; the export level governs **how** the data is transformed (the §3.6.1 ladder). A record created via import takes the holder's active group, or none (REQ-API-093, §3.7.2).
 
-### 4.19 i18n (GD-12, REQ-API-097…100)
+### 4.19 i18n and appearance (GD-12/GD-26, REQ-API-097…100/122)
 
 **`GET /api/v1/i18n/languages`** — any authenticated user. 200 — the enabled languages (code, display name):
 
@@ -724,6 +724,8 @@ Record scope and transformation are orthogonal (REQ-API-092, REQ-AUTH-045): the 
 ```
 
 **`PUT /api/v1/users/me/ui-language`** — any authenticated user (acting on themselves). Body `{ "language": "nb" }` — MUST be an enabled language (otherwise 400 `invalid_request`); the default is `en`. The setting persists across sessions (REQ-DB-008). 200 — the user object.
+
+**`PUT /api/v1/users/me/ui-theme`** — any authenticated user (acting on themselves; GD-26, REQ-API-122). Body `{ "theme": "darkly" }` — MUST name an installed theme (`bootstrap` | `darkly` | `yeti`, REQ-TECH-027), or `null` to clear the personal override and follow the installation default `UI_THEME` (REQ-CFG-031); an unknown identifier → 400 `invalid_request`. The setting persists across sessions (`users.ui_theme`, REQ-DB-008). 200 — the user object. The PHP layer resolves the effective theme at render time (`User_Interface_Design.md` §3.8); the API stores the value and never serves CSS.
 
 **`GET /api/v1/i18n/strings?language=<code>`** — `is_admin`. 200 — the translation keys with the current translation and a missing flag (a missing key falls back to English, REQ-DB-031):
 
@@ -859,7 +861,7 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirement.m
 | `PUT …/users/{uid}/data-access-groups` | `is_admin` |
 | `PUT …/active-data-access-group` | an assigned member (self-service) |
 | `GET /api/v1/audit` | `is_admin` (all projects) or a member of the queried project (REQ-API-078) |
-| `GET /i18n/languages`, `PUT /users/me/ui-language` | any authenticated user |
+| `GET /i18n/languages`, `PUT /users/me/ui-language`, `PUT /users/me/ui-theme` (§4.19) | any authenticated user |
 | `GET/PUT /i18n/strings` | `is_admin` |
 | `POST …/end-provision` (§4.20) | `is_admin` (BR-009) |
 | `GET …/mode` (§4.21) | data access ≥ `read_only` + visibility |
