@@ -50,8 +50,10 @@ func New(store *db.Store, cfg *config.Config, aw *audit.Writer) *Handler {
 	h.registerMembers(mux)
 	h.registerRoles(mux)
 	h.registerStructure(mux)
+	h.registerDAG(mux)
 	h.registerQueries(mux)
 	h.registerCompletion(mux)
+	h.registerI18n(mux)
 	h.registerSettings(mux)
 	h.Handler = mux
 	return h
