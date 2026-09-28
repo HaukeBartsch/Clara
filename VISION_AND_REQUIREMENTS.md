@@ -439,7 +439,7 @@ As arms will be used rarely all arm dependent section can be hidden using a tab-
 
 # Details
 
-Questions: 
+## Questions: 
 "ASM-API-3 (normative) + the audit design both say UI data entry submits as content=record&action=import against the data API, 'initiated by the PHP layer with the user's project token.'
 But the session is specified to store identity only — Authentication_Authorization_Design.md:120: 'project tokens live in user_projects.token, never in the session' — and no admin-API endpoint returns a member's project token (only the one-time add/rotation response does)."
 Answer: Allow the admin-API endpoint to return a member's project token.
