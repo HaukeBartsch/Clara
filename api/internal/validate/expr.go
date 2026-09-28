@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Expression grammars for calculated fields (§6.1) and branching logic (§7.1),
@@ -601,6 +602,410 @@ func (p *branchParser) parseCallArg() error {
 	default:
 		return fmt.Errorf("unexpected token in function arguments: %q", t.text)
 	}
+}
+
+// --- branching/filterLogic evaluator (Data_Validation_Design.md §7.3) ---
+
+// LogicEval supplies one record's stored values to EvalLogic. Value returns
+// the stored value ("" when the reference has no value); Choices returns the
+// field's stored code$label##… encoding ("" for non-choice fields) so a
+// string constant matching a choice label resolves to its code before
+// comparison (§7.3, REQ-VAL-022).
+type LogicEval struct {
+	Value   func(Ref) string
+	Choices func(Ref) string
+}
+
+// EvalLogic evaluates a branching/filterLogic expression against one
+// record's values and reports whether it holds (the single normative
+// semantics of §7.3 — filterLogic, REQ-API-025, uses the same evaluator).
+func EvalLogic(expr string, ev LogicEval) (bool, error) {
+	toks, err := tokenize(expr)
+	if err != nil {
+		return false, err
+	}
+	if len(toks) == 1 && toks[0].kind == tokEOF {
+		return false, fmt.Errorf("empty expression")
+	}
+	p := &logicParser{toks: toks}
+	root, err := p.parseOr()
+	if err != nil {
+		return false, err
+	}
+	if p.cur().kind != tokEOF {
+		return false, fmt.Errorf("unexpected token after expression: %q", p.cur().text)
+	}
+	return root.eval(ev) == 1, nil
+}
+
+// logicNode evaluates to 1 or 0 (the §7.3 logical values).
+type logicNode interface{ eval(ev LogicEval) float64 }
+
+type logicOr struct{ l, r logicNode }
+type logicAnd struct{ l, r logicNode }
+type logicTruthy struct{ a logicOperand }
+type logicCmp struct {
+	op   string
+	l, r logicOperand
+}
+type logicFunc struct {
+	name string
+	args []logicOperand
+}
+
+func (n logicOr) eval(ev LogicEval) float64 {
+	if n.l.eval(ev) == 1 || n.r.eval(ev) == 1 {
+		return 1
+	}
+	return 0
+}
+
+func (n logicAnd) eval(ev LogicEval) float64 {
+	if n.l.eval(ev) == 1 && n.r.eval(ev) == 1 {
+		return 1
+	}
+	return 0
+}
+
+// truthiness implements the §7.3 Truthiness rule: empty → 0; a choice-field
+// reference is presence-based (selected → 1 regardless of code, REQ-VAL-029);
+// any other value parses as a number? 0/0.0 → 0; else non-empty → 1.
+func truthiness(o logicOperand, ev LogicEval) float64 {
+	if o.kind == opNum {
+		if o.num != 0 {
+			return 1
+		}
+		return 0
+	}
+	v := o.value(ev)
+	if v == "" {
+		return 0
+	}
+	if o.kind == opRef && ev.Choices != nil && ev.Choices(o.ref) != "" {
+		return 1 // choice field: presence is selection, whatever the code is
+	}
+	if f, err := parseNumber(v); err == nil && f == 0 {
+		return 0
+	}
+	return 1
+}
+
+func (n logicTruthy) eval(ev LogicEval) float64 { return truthiness(n.a, ev) }
+
+// operand kinds and resolved forms.
+type opKind int
+
+const (
+	opRef opKind = iota
+	opNum
+	opStr
+)
+
+type logicOperand struct {
+	kind opKind
+	ref  Ref
+	num  float64
+	str  string
+}
+
+func (o logicOperand) value(ev LogicEval) string {
+	switch o.kind {
+	case opRef:
+		if ev.Value != nil {
+			return ev.Value(o.ref)
+		}
+		return ""
+	case opNum:
+		return formatNumber(o.num)
+	default:
+		return o.str
+	}
+}
+
+// resolve returns the operand's comparison inputs: its value, whether a
+// referenced value is present (non-empty), and its numeric form.
+func (o logicOperand) resolve(ev LogicEval) (val string, present bool, num float64, isNum bool) {
+	val = o.value(ev)
+	present = true
+	if o.kind == opRef {
+		present = val != ""
+	}
+	if o.kind == opNum {
+		return val, present, o.num, true
+	}
+	num, isNum = parseNumberQuiet(val)
+	return val, present, num, isNum
+}
+
+func (n logicCmp) eval(ev LogicEval) float64 {
+	lv, lp, ln, lisn := n.l.resolve(ev)
+	rv, rp, rn, risn := n.r.resolve(ev)
+	// A missing/empty referenced value makes every operator 0 (ASM-VAL-6).
+	if (n.l.kind == opRef && !lp) || (n.r.kind == opRef && !rp) {
+		return 0
+	}
+	// A string constant matching a choice label of the other side's choice
+	// field resolves to that code before comparison (§7.3).
+	lv, lisn = resolveChoiceLabel(ev, n.l, n.r, lv, lisn)
+	rv, risn = resolveChoiceLabel(ev, n.r, n.l, rv, risn)
+
+	switch {
+	case lisn && risn:
+		return boolVal(compareFloats(ln, rn, n.op))
+	default:
+		lt, lok := parseCanonicalInstant(lv)
+		rt, rok := parseCanonicalInstant(rv)
+		if lok && rok {
+			return boolVal(compareFloats(float64(lt.Unix()), float64(rt.Unix()), n.op))
+		}
+		return boolVal(compareStrings(lv, rv, n.op))
+	}
+}
+
+// resolveChoiceLabel maps a string constant that names a choice label of the
+// opposite reference's field to its code; anything else passes through.
+func resolveChoiceLabel(ev LogicEval, o, other logicOperand, val string, isNum bool) (string, bool) {
+	if o.kind != opStr || other.kind != opRef || ev.Choices == nil {
+		return val, isNum
+	}
+	if code := CodeForLabel(ev.Choices(other.ref), val); code != "" {
+		return code, false
+	}
+	return val, isNum
+}
+
+func boolVal(b bool) float64 {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func compareFloats(l, r float64, op string) bool {
+	switch op {
+	case "=":
+		return l == r
+	case "!=":
+		return l != r
+	case "<":
+		return l < r
+	case ">":
+		return l > r
+	case "<=":
+		return l <= r
+	case ">=":
+		return l >= r
+	}
+	return false
+}
+
+// compareStrings is the byte-wise UTF-8 lexicographic comparison of §7.3 —
+// Go's string ordering is exactly that, and ISO dates order chronologically
+// under it as a fallback when instant parsing fails.
+func compareStrings(l, r, op string) bool {
+	switch op {
+	case "=":
+		return l == r
+	case "!=":
+		return l != r
+	case "<":
+		return l < r
+	case ">":
+		return l > r
+	case "<=":
+		return l <= r
+	case ">=":
+		return l >= r
+	}
+	return false
+}
+
+// parseNumberQuiet is parseNumber without the error allocation on the hot path.
+func parseNumberQuiet(s string) (float64, bool) {
+	v, err := parseNumber(s)
+	return v, err == nil
+}
+
+var canonicalInstantLayouts = []string{
+	"2006-01-02 15:04:05 -0700",
+	"2006-01-02 15:04 -0700",
+	"2006-01-02 -0700",
+	"2006-01-02 15:04:05",
+	"2006-01-02 15:04",
+	"2006-01-02",
+}
+
+// parseCanonicalInstant parses the §4.1 canonical storage forms (with or
+// without the ±HH:MM collection offset; a missing offset reads as UTC) into
+// an absolute instant for chronological comparison (§7.3).
+func parseCanonicalInstant(s string) (time.Time, bool) {
+	for _, layout := range canonicalInstantLayouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func (n logicFunc) eval(ev LogicEval) float64 {
+	switch n.name {
+	case "is_blank":
+		if n.args[0].value(ev) == "" {
+			return 1
+		}
+		return 0
+	case "is_not_blank":
+		if n.args[0].value(ev) != "" {
+			return 1
+		}
+		return 0
+	case "text_contains":
+		v := n.args[0].value(ev)
+		if v == "" {
+			return 0 // missing/empty → 0 (§7.3)
+		}
+		if strings.Contains(v, n.args[1].value(ev)) {
+			return 1
+		}
+		return 0
+	}
+	return 0
+}
+
+type logicParser struct {
+	toks []token
+	pos  int
+}
+
+func (p *logicParser) cur() token { return p.toks[p.pos] }
+func (p *logicParser) advance()   { p.pos++ }
+
+func (p *logicParser) parseOr() (logicNode, error) {
+	l, err := p.parseAnd()
+	if err != nil {
+		return nil, err
+	}
+	for p.cur().kind == tokOp && p.cur().text == "||" {
+		p.advance()
+		r, err := p.parseAnd()
+		if err != nil {
+			return nil, err
+		}
+		l = logicOr{l: l, r: r}
+	}
+	return l, nil
+}
+
+func (p *logicParser) parseAnd() (logicNode, error) {
+	l, err := p.parseComparison()
+	if err != nil {
+		return nil, err
+	}
+	for p.cur().kind == tokOp && p.cur().text == "&&" {
+		p.advance()
+		r, err := p.parseComparison()
+		if err != nil {
+			return nil, err
+		}
+		l = logicAnd{l: l, r: r}
+	}
+	return l, nil
+}
+
+// parseComparison parses `operand [op operand]` where a bare operand is a
+// truth test (§7.1). A parenthesized group or a function call in comparison
+// position is a complete node of its own — the grammar never compares one
+// with an operator, so nothing follows it.
+func (p *logicParser) parseComparison() (logicNode, error) {
+	switch p.cur().kind {
+	case tokLParen:
+		p.advance()
+		n, err := p.parseOr()
+		if err != nil {
+			return nil, err
+		}
+		if p.cur().kind != tokRParen {
+			return nil, fmt.Errorf("unbalanced parentheses")
+		}
+		p.advance()
+		return n, nil
+	case tokIdent:
+		return p.parseCall()
+	}
+	a, err := p.parseSimpleOperand()
+	if err != nil {
+		return nil, err
+	}
+	if p.cur().kind == tokOp && isCompareOp(p.cur().text) {
+		op := p.cur().text
+		p.advance()
+		b, err := p.parseSimpleOperand()
+		if err != nil {
+			return nil, err
+		}
+		return logicCmp{op: op, l: a, r: b}, nil
+	}
+	return logicTruthy{a: a}, nil
+}
+
+func (p *logicParser) parseSimpleOperand() (logicOperand, error) {
+	t := p.cur()
+	switch t.kind {
+	case tokRef:
+		p.advance()
+		return logicOperand{kind: opRef, ref: t.ref}, nil
+	case tokNum:
+		p.advance()
+		return logicOperand{kind: opNum, num: t.num}, nil
+	case tokStr:
+		p.advance()
+		return logicOperand{kind: opStr, str: t.str}, nil
+	default:
+		return logicOperand{}, fmt.Errorf("unexpected token in expression: %q", t.text)
+	}
+}
+
+func (p *logicParser) parseCall() (logicNode, error) {
+	name := p.cur().text
+	arity, ok := branchingFuncs[name]
+	if !ok {
+		return nil, fmt.Errorf("unknown function %q", name)
+	}
+	p.advance()
+	if p.cur().kind != tokLParen {
+		return nil, fmt.Errorf("expected ( after function %q", name)
+	}
+	p.advance()
+	var args []logicOperand
+	if p.cur().kind != tokRParen {
+		for {
+			t := p.cur()
+			switch t.kind {
+			case tokRef:
+				args = append(args, logicOperand{kind: opRef, ref: t.ref})
+			case tokNum:
+				args = append(args, logicOperand{kind: opNum, num: t.num})
+			case tokStr:
+				args = append(args, logicOperand{kind: opStr, str: t.str})
+			default:
+				return nil, fmt.Errorf("unexpected token in function arguments: %q", t.text)
+			}
+			p.advance()
+			if p.cur().kind == tokComma {
+				p.advance()
+				continue
+			}
+			break
+		}
+	}
+	if p.cur().kind != tokRParen {
+		return nil, fmt.Errorf("unbalanced parentheses in %q", name)
+	}
+	p.advance()
+	if len(args) != arity {
+		return nil, fmt.Errorf("function %q expects %d arguments, got %d", name, arity, len(args))
+	}
+	return logicFunc{name: name, args: args}, nil
 }
 
 func dedupeRefs(in []Ref) []Ref {

@@ -1,9 +1,9 @@
 // Package dataapi implements the REDCap-compatible data API: the single
 // POST /api/ endpoint (and GET /api/) speaking the form-encoded
-// token/content protocol of API_Endpoints_Design.md §3. This slice covers
-// the read-only contents — project, event, metadata, formEventMapping,
-// exportFieldNames, generateNextRecordName — plus the uniform error and
-// rate-limit contracts they share.
+// token/content protocol of API_Endpoints_Design.md §3 — the read-only
+// contents (project, event, metadata, formEventMapping, exportFieldNames,
+// generateNextRecordName), the record actions export/import/delete
+// (§3.6–§3.8), and the uniform error and rate-limit contracts they share.
 package dataapi
 
 import (

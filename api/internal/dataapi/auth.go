@@ -37,15 +37,73 @@ func dataRank(level string) int {
 	}
 }
 
+// Export-level ranks, in ascending privilege (GD-2, REQ-AUTH-017).
+const (
+	expNone = iota
+	expDeIdentified
+	expNoIdentifiers
+	expFull
+)
+
+func exportRank(level string) int {
+	switch level {
+	case "export_de_identified":
+		return expDeIdentified
+	case "export_no_identifiers":
+		return expNoIdentifiers
+	case "export_full":
+		return expFull
+	default:
+		return expNone
+	}
+}
+
+func exportName(rank int) string {
+	switch rank {
+	case expDeIdentified:
+		return "export_de_identified"
+	case expNoIdentifiers:
+		return "export_no_identifiers"
+	case expFull:
+		return "export_full"
+	default:
+		return "export_none"
+	}
+}
+
 // subject is the authenticated data-API caller: the token's
-// (user, project) plus the effective per-arm data levels
+// (user, project) plus the effective per-arm data and export levels
 // (Authentication_Authorization_Design.md §4.1).
 type subject struct {
 	Assignment   *db.Assignment
 	User         *db.User
 	Project      *db.Project
 	projectAdmin bool
-	dataLevels   map[int]int // arm_num -> level rank
+	dataLevels   map[int]int // arm_num -> data level rank
+	exportLevels map[int]int // arm_num -> export level rank (GD-2)
+}
+
+// appliedExportLevel is the lowest export level among the given arms —
+// the most protective, per Data_Export_Anonymization_Design.md §4.3. An
+// empty arm list means the project has no arms to check; the holder's
+// highest level applies (a role-less member or administrator holds full).
+func (s *subject) appliedExportLevel(arms []int) int {
+	if len(arms) == 0 {
+		best := expNone
+		for _, r := range s.exportLevels {
+			if r > best {
+				best = r
+			}
+		}
+		return best
+	}
+	best := expFull
+	for _, a := range arms {
+		if r := s.exportLevels[a]; r < best {
+			best = r
+		}
+	}
+	return best
 }
 
 // hasData reports whether the holder reaches minRank on at least one arm.
@@ -91,10 +149,11 @@ func (h *Handler) resolveToken(ctx context.Context, token string) (*subject, err
 	}
 
 	sub := &subject{
-		Assignment: a,
-		User:       u,
-		Project:    p,
-		dataLevels: map[int]int{},
+		Assignment:   a,
+		User:         u,
+		Project:      p,
+		dataLevels:   map[int]int{},
+		exportLevels: map[int]int{},
 	}
 	// Effective levels (Authentication_Authorization_Design.md §4.1):
 	// an administrator or a role-less member holds full permissions on
@@ -104,8 +163,10 @@ func (h *Handler) resolveToken(ctx context.Context, token string) (*subject, err
 	for _, arm := range arms {
 		if full {
 			sub.dataLevels[arm.ArmNum] = lvlEditSurveyResponses
+			sub.exportLevels[arm.ArmNum] = expFull
 		} else {
 			sub.dataLevels[arm.ArmNum] = lvlNoAccess
+			sub.exportLevels[arm.ArmNum] = expNone
 		}
 	}
 	if full {
@@ -122,6 +183,7 @@ func (h *Handler) resolveToken(ctx context.Context, token string) (*subject, err
 		}
 		for _, l := range ra {
 			sub.dataLevels[l.ArmNum] = dataRank(l.DataAccessLevel)
+			sub.exportLevels[l.ArmNum] = exportRank(l.ExportLevel)
 		}
 	}
 	return sub, nil

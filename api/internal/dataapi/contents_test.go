@@ -456,11 +456,11 @@ func TestReadOnlyPermission(t *testing.T) {
 
 func TestInvalidContent(t *testing.T) {
 	h, full, _ := testHandler(t)
-	// record is the next slice; until it lands it is a uniform 400.
-	code, body := do(t, h, url.Values{"token": {full}, "content": {"record"}, "action": {"export"}, "format": {"json"}})
+	// An unknown action on content=record is a uniform 400 (§3.2).
+	code, body := do(t, h, url.Values{"token": {full}, "content": {"record"}, "action": {"bogus"}, "format": {"json"}})
 	mustStatus(t, code, http.StatusBadRequest, body)
-	if !strings.Contains(body, "Invalid content") {
-		t.Errorf("record body %q, want \"Invalid content\"", body)
+	if !strings.Contains(body, "Invalid request") {
+		t.Errorf("bad-action body %q, want \"Invalid request\"", body)
 	}
 	// Unknown and missing content are 400 as well.
 	code, body = do(t, h, url.Values{"token": {full}, "content": {"bogus"}, "format": {"json"}})

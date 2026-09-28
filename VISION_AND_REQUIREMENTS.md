@@ -498,6 +498,7 @@ Data entry is disabled; viewing and exporting remain available according to each
 | development → production	| project admin	| Ask whether previously stored data should be kept or deleted |
 | production → development	| project admin	| Keep all data |
 | production ↔ analysis	| project admin	|  Keep all data |
+| development ↔ analysis	| project admin	|  Keep all data |
 
 
 ## Field validation
@@ -507,3 +508,4 @@ Field validation should be extensible by adding additional validations (regular 
 ## Rate limitter
 
 Using the API from the web-application or from external scripts should be rate-limitted based on the incoming IP address. Allow up to 600 calls per minute from a single IP source. Check if our setup allows for unique IP addresses from incoming calls. Make rate-limitting threshold values customizable in the administration interface.
+If an IP hits the currently active rate limit all requests from that IP should be ignored for (configurable) 10min. After this period requests from that IP should be handeled again (restart rate limit check).

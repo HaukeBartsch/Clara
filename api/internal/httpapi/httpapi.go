@@ -30,7 +30,7 @@ func NewMux(store *db.Store, cfg *config.Config, aw *audit.Writer) http.Handler 
 
 	mux.HandleFunc("GET /healthz", healthHandler(store))
 
-	data := &dataapi.Handler{Store: store, Cfg: cfg, Limiter: dataapi.NewRateLimiter()}
+	data := &dataapi.Handler{Store: store, Cfg: cfg, Limiter: dataapi.NewRateLimiter(), Audit: aw}
 	mux.Handle("/api/", data)
 
 	adminAPI := admin.New(store, cfg, aw)

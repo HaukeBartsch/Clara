@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"csms/api/internal/audit"
 	"csms/api/internal/config"
 	"csms/api/internal/db"
 )
@@ -18,7 +19,8 @@ import (
 type Handler struct {
 	Store   *db.Store
 	Cfg     *config.Config
-	Limiter *RateLimiter // nil = rate limiting off (default, REQ-CFG-020)
+	Limiter *RateLimiter  // nil = rate limiting off (default, REQ-CFG-020)
+	Audit   *audit.Writer // nil = audit writes skipped (unit tests)
 }
 
 // ServeHTTP dispatches one data-API call (API_Endpoints_Design.md §3).
@@ -83,10 +85,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.contentGenerateNextRecordName(ctx, w, enc, sub, p)
 		})
 	case "record":
-		// record&action=export|import|delete is the next slice (API_
-		// Endpoints_Design.md §3.6–§3.8); until it lands the call fails
-		// with the §3.2 contract for an unsupported content/action.
-		writeError(w, enc, http.StatusBadRequest, "Invalid content")
+		h.contentRecord(w, r, enc, sub, p)
 	default:
 		writeError(w, enc, http.StatusBadRequest, "Invalid content")
 	}

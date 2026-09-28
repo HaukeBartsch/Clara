@@ -37,7 +37,7 @@ func TestMigrateCreatesSchema(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SchemaVersion: %v", err)
 	}
-	if v != 4 {
+	if v != 5 {
 		t.Fatalf("SchemaVersion = %d, want 4", v)
 	}
 
@@ -117,7 +117,7 @@ func TestMigrateIdempotent(t *testing.T) {
 		t.Fatalf("second Migrate: %v", err)
 	}
 	v, _ := s.SchemaVersion(ctx)
-	if v != 4 {
+	if v != 5 {
 		t.Fatalf("SchemaVersion = %d after re-migrate, want 4", v)
 	}
 	// Languages must not be duplicated by the re-seed.
