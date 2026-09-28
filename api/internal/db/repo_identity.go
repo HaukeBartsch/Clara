@@ -9,7 +9,7 @@ import (
 // --- users (REQ-DB-008) ---
 
 const userColumns = `id, email, display_name, enabled, auth_source, password_hash,
-	valid_until, last_login_at, is_admin, ui_language, created_at`
+	valid_until, last_login_at, is_admin, ui_language, ui_theme, created_at`
 
 func scanUser(row interface{ Scan(dest ...any) error }) (User, error) {
 	var (
@@ -20,7 +20,7 @@ func scanUser(row interface{ Scan(dest ...any) error }) (User, error) {
 		lastLogin  any
 	)
 	err := row.Scan(&u.ID, &u.Email, &u.DisplayName, &enabled, &u.AuthSource,
-		&u.PasswordHash, &validUntil, &lastLogin, &isAdmin, &u.UILanguage, &u.CreatedAt)
+		&u.PasswordHash, &validUntil, &lastLogin, &isAdmin, &u.UILanguage, &u.UITheme, &u.CreatedAt)
 	if err != nil {
 		return u, err
 	}
@@ -43,10 +43,11 @@ func (s *Store) CreateUser(ctx context.Context, u *User) (int64, error) {
 	}
 	res, err := s.DB.ExecContext(ctx,
 		`INSERT INTO users (email, display_name, enabled, auth_source, password_hash,
-			valid_until, last_login_at, is_admin, ui_language, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			valid_until, last_login_at, is_admin, ui_language, ui_theme, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		u.Email, u.DisplayName, boolToInt(u.Enabled), u.AuthSource, nullStr(u.PasswordHash),
-		nullStr(u.ValidUntil), nullStr(u.LastLoginAt), boolToInt(u.IsAdmin), u.UILanguage, nowUTC())
+		nullStr(u.ValidUntil), nullStr(u.LastLoginAt), boolToInt(u.IsAdmin), u.UILanguage,
+		nullStr(u.UITheme), nowUTC())
 	if err != nil {
 		return 0, err
 	}
@@ -59,7 +60,7 @@ func (s *Store) UpsertBootstrap(ctx context.Context, email, displayName, passwor
 	var u User
 	err := s.DB.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE email = ?`, email).
 		Scan(&u.ID, &u.Email, &u.DisplayName, new(int), &u.AuthSource, &u.PasswordHash,
-			new(any), new(any), new(int), &u.UILanguage, &u.CreatedAt)
+			new(any), new(any), new(int), &u.UILanguage, &u.UITheme, &u.CreatedAt)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, err
 	}
@@ -148,6 +149,14 @@ func (s *Store) SetUserPasswordHash(ctx context.Context, id int64, hash sql.Null
 
 func (s *Store) SetUILanguage(ctx context.Context, id int64, lang string) error {
 	_, err := s.DB.ExecContext(ctx, `UPDATE users SET ui_language = ? WHERE id = ?`, lang, id)
+	return err
+}
+
+// SetUITheme stores the personal theme override; an invalid NullString means
+// no override — the account follows the installation default UI_THEME
+// (REQ-API-122, REQ-DB-008, GD-26).
+func (s *Store) SetUITheme(ctx context.Context, id int64, theme sql.NullString) error {
+	_, err := s.DB.ExecContext(ctx, `UPDATE users SET ui_theme = ? WHERE id = ?`, nullStr(theme), id)
 	return err
 }
 

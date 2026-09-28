@@ -45,6 +45,7 @@ type User struct {
 	LastLoginAt  sql.NullString // DATETIME UTC
 	IsAdmin      bool
 	UILanguage   string
+	UITheme      sql.NullString // installed theme id; NULL = follow UI_THEME default (GD-26)
 	CreatedAt    string
 }
 

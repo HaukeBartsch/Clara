@@ -104,6 +104,26 @@ type Config struct {
 	SMTPUsername    string
 	SMTPPassword    string // masked in dump and logs (REQ-CFG-021)
 	OTPMailFrom     string // sender of login codes; required with SMTP_HOST
+
+	// §3.12 appearance (web; validated here for the shared matrix)
+	UITheme string // UI_THEME — installation default theme (GD-26, REQ-CFG-031)
+}
+
+// UIThemes is the set of installed theme identifiers (REQ-TECH-027): the
+// standard stylesheet plus the vendored Bootswatch themes. The web layer
+// serves exactly one of these per page; a personal override on the user row
+// must name one of them or be NULL (REQ-API-122). Growing the set means
+// vendoring a theme file and appending here — no schema change.
+var UIThemes = []string{"bootstrap", "darkly", "yeti"}
+
+// ValidUITheme reports whether id names an installed theme.
+func ValidUITheme(id string) bool {
+	for _, t := range UIThemes {
+		if t == id {
+			return true
+		}
+	}
+	return false
 }
 
 // SMTPConfigured reports whether the relay needed to deliver email login
@@ -368,6 +388,14 @@ func Load() (*Config, error) {
 		}
 	}
 
+	// §3.12 appearance (web-owned; validated here for the shared matrix).
+	// The API never serves CSS — it only refuses an unknown installation
+	// default so the web layer can trust the value (GD-26, REQ-CFG-031).
+	cfg.UITheme = getOr(get, "UI_THEME", "bootstrap")
+	if !ValidUITheme(cfg.UITheme) {
+		fail("UI_THEME: %q (want bootstrap, darkly or yeti)", cfg.UITheme)
+	}
+
 	if len(errs) > 0 {
 		return nil, fmt.Errorf("configuration invalid:\n  %s", strings.Join(errs, "\n  "))
 	}
@@ -455,6 +483,7 @@ func (c *Config) Dump() []string {
 		"SMTP_USERNAME="+none(c.SMTPUsername),
 		"SMTP_PASSWORD="+m,
 		"OTP_MAIL_FROM="+none(c.OTPMailFrom),
+		"UI_THEME="+c.UITheme+" (web; per-user override on the user row)",
 	)
 	for _, p := range c.OAuth2 {
 		out = append(out,

@@ -22,6 +22,7 @@ var wantFiles = []string{
 	"0006_rate_limit_block.sql",
 	"0007_instrument_completion.sql",
 	"0008_two_factor.sql",
+	"0009_ui_theme.sql",
 }
 
 var dialects = []string{"sqlite", "mariadb"}

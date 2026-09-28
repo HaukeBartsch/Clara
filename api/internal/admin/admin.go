@@ -261,6 +261,7 @@ type UserObject struct {
 	IsAdmin     bool    `json:"is_admin"`
 	AuthSource  string  `json:"auth_source"`
 	UILanguage  string  `json:"ui_language"`
+	UITheme     *string `json:"ui_theme"` // null = follow installation default UI_THEME (GD-26)
 	LastLoginAt *string `json:"last_login_at"`
 	ValidUntil  *string `json:"valid_until"`
 	Status      string  `json:"status"`
@@ -274,7 +275,8 @@ func NewUserObject(u *db.User, now time.Time) UserObject {
 	o := UserObject{
 		ID: u.ID, Email: u.Email, DisplayName: u.DisplayName,
 		Enabled: u.Enabled, IsAdmin: u.IsAdmin, AuthSource: u.AuthSource,
-		UILanguage: u.UILanguage, Status: authz.UserStatus(u, now), TFAMethod: "off",
+		UILanguage: u.UILanguage, UITheme: NullStrPtr(u.UITheme),
+		Status: authz.UserStatus(u, now), TFAMethod: "off",
 	}
 	if u.LastLoginAt.Valid {
 		s := u.LastLoginAt.String

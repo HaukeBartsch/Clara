@@ -1,23 +1,26 @@
 package admin
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"sort"
 	"time"
 
 	"csms/api/internal/audit"
+	"csms/api/internal/config"
 	"csms/api/internal/db"
 )
 
 // registerI18n mounts §4.19: the language list, the acting user's own UI
-// language, and the translation table (REQ-API-097…100). English is the
+// language and theme, and the translation table (REQ-API-097…100/122). English is the
 // fallback everywhere — a key with no translation in the requested language
 // renders in English rather than blank (REQ-UI-008) — which also means the
 // English rows define the key universe the missing flag is computed against.
 func (h *Handler) registerI18n(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/i18n/languages", h.listLanguages)
 	mux.HandleFunc("PUT /api/v1/users/me/ui-language", h.putMyUILanguage)
+	mux.HandleFunc("PUT /api/v1/users/me/ui-theme", h.putMyUITheme)
 	mux.HandleFunc("GET /api/v1/i18n/strings", h.listStrings)
 	mux.HandleFunc("PUT /api/v1/i18n/strings", h.putStrings)
 }
@@ -98,6 +101,50 @@ func (h *Handler) putMyUILanguage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u.UILanguage = code // the response carries the new setting (REQ-API-098)
+	writeJSON(w, http.StatusOK, NewUserObject(u, time.Now().UTC()))
+}
+
+// --- PUT /api/v1/users/me/ui-theme (§4.19, REQ-API-122) ---
+
+// putMyUITheme sets the acting user's own theme override (GD-26). Self-service
+// like the language: no target user in the path, no is_admin gate. The value
+// must name an installed theme (REQ-TECH-027) or be null to clear the override
+// and follow the installation default UI_THEME (REQ-CFG-031); anything else is
+// 400. The API only stores the identifier — the PHP layer resolves the
+// effective theme and links exactly one stylesheet at render time (REQ-UI-040).
+func (h *Handler) putMyUITheme(w http.ResponseWriter, r *http.Request) {
+	u, ok := actor(r)
+	if !ok {
+		errForbidden(w)
+		return
+	}
+	var supplied map[string]json.RawMessage
+	if err := decodeBody(r, &supplied); err != nil {
+		errBadRequest(w, "malformed JSON body")
+		return
+	}
+	if !RejectUnknownAttrs(w, supplied, "theme") {
+		return
+	}
+	raw, has := supplied["theme"]
+	if !has {
+		errBadRequest(w, "theme is required (send null to follow the installation default)")
+		return
+	}
+	theme := sql.NullString{} // JSON null = no override (REQ-DB-008)
+	if string(raw) != "null" {
+		var id string
+		if json.Unmarshal(raw, &id) != nil || !config.ValidUITheme(id) {
+			errBadRequest(w, "theme must name an installed theme (bootstrap, darkly, yeti) or be null")
+			return
+		}
+		theme = sql.NullString{String: id, Valid: true}
+	}
+	if err := h.Store.SetUITheme(r.Context(), u.ID, theme); err != nil {
+		errInternal(w)
+		return
+	}
+	u.UITheme = theme // the response carries the new setting (REQ-API-122)
 	writeJSON(w, http.StatusOK, NewUserObject(u, time.Now().UTC()))
 }
 
