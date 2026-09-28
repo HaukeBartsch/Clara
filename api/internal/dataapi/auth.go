@@ -73,7 +73,9 @@ func exportName(rank int) string {
 
 // subject is the authenticated data-API caller: the token's
 // (user, project) plus the effective per-arm data and export levels
-// (Authentication_Authorization_Design.md §4.1).
+// (Authentication_Authorization_Design.md §4.1). A survey-link caller has
+// Link and Instrument set and no account at all — User and Assignment are
+// nil there (§3.10), so nothing may dereference them.
 type subject struct {
 	Assignment   *db.Assignment
 	User         *db.User
@@ -81,6 +83,30 @@ type subject struct {
 	projectAdmin bool
 	dataLevels   map[int]int // arm_num -> data level rank
 	exportLevels map[int]int // arm_num -> export level rank (GD-2)
+
+	Link       *db.SurveyLink // set only for a survey-link token (§3.10)
+	Instrument string         // the link's instrument name
+}
+
+// isLink reports whether the caller authenticated with a survey-link token
+// rather than a project API token (API_Endpoints_Design.md §3.10).
+func (s *subject) isLink() bool { return s.Link != nil }
+
+// actorUserID and actorEmail are the audit columns for the caller: the
+// account behind a project token, unset for an anonymous survey submission
+// (the link itself travels in the fixed token column, REQ-AUTH-041).
+func (s *subject) actorUserID() int64 {
+	if s.isLink() {
+		return 0 // unset: audit_events.user_id is nullable
+	}
+	return s.User.ID
+}
+
+func (s *subject) actorEmail() string {
+	if s.isLink() {
+		return ""
+	}
+	return s.User.Email
 }
 
 // appliedExportLevel is the lowest export level among the given arms —
@@ -107,8 +133,13 @@ func (s *subject) appliedExportLevel(arms []int) int {
 }
 
 // hasData reports whether the holder reaches minRank on at least one arm.
-// An administrator holds every level on every arm (REQ-AUTH-023).
+// An administrator holds every level on every arm (REQ-AUTH-023). A survey
+// link holds no data level at all: what it may do is fixed per call by
+// API_Endpoints_Design.md §3.10, never by an arm grant.
 func (s *subject) hasData(minRank int) bool {
+	if s.isLink() {
+		return false
+	}
 	if s.User.IsAdmin {
 		return true
 	}
@@ -123,14 +154,19 @@ func (s *subject) hasData(minRank int) bool {
 // resolveToken is the data-API token check (Authentication_
 // Authorization_Design.md §4.3): the single indexed lookup, the account
 // active rule, and the effective levels — all read at call time, so role
-// changes and user disabling take effect immediately (REQ-AUTH-033).
+// changes and user disabling take effect immediately (REQ-AUTH-033). A
+// token that is not a project API token may still be a survey link
+// (§3.10); both misses render as the same uniform 401.
 func (h *Handler) resolveToken(ctx context.Context, token string) (*subject, error) {
 	if token == "" {
 		return nil, errInvalidToken
 	}
 	a, err := h.Store.GetAssignmentByToken(ctx, token)
-	if err != nil || a == nil {
+	if err != nil {
 		return nil, errInvalidToken
+	}
+	if a == nil {
+		return h.resolveSurveyLink(ctx, token)
 	}
 	u, err := h.Store.GetUser(ctx, a.UserID)
 	if err != nil || u == nil || !u.Enabled {
@@ -187,6 +223,34 @@ func (h *Handler) resolveToken(ctx context.Context, token string) (*subject, err
 		}
 	}
 	return sub, nil
+}
+
+// resolveSurveyLink admits a survey-link token (API_Endpoints_Design.md
+// §3.10): one indexed lookup on survey_links.token, the revocation check
+// (a revoked link is rejected on every call, REQ-AUTH-040), and the
+// project and instrument the link names. The level maps stay empty — a link
+// holds no arm permissions; the dispatcher grants the two calls of §3.10
+// and nothing else (REQ-API-083, REQ-AUTH-039).
+func (h *Handler) resolveSurveyLink(ctx context.Context, token string) (*subject, error) {
+	link, err := h.Store.GetSurveyLinkByToken(ctx, token)
+	if err != nil || link == nil || link.Revoked {
+		return nil, errInvalidToken
+	}
+	p, err := h.Store.GetProject(ctx, link.ProjectID)
+	if err != nil || p == nil {
+		return nil, errInvalidToken
+	}
+	ins, err := h.Store.GetInstrument(ctx, link.InstrumentID)
+	if err != nil || ins == nil || ins.ProjectID != p.ID {
+		return nil, errInvalidToken
+	}
+	return &subject{
+		Project:      p,
+		Link:         link,
+		Instrument:   ins.Name,
+		dataLevels:   map[int]int{},
+		exportLevels: map[int]int{},
+	}, nil
 }
 
 // accountActive is the account active rule of Authentication_

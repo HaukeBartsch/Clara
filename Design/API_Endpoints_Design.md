@@ -143,7 +143,7 @@ Requires data access ≥ `read_only`. JSON response: one object per field, matri
 ]
 ```
 
-`record_identifier` is `"Y"` on the record-identifier field (position 1 of instrument position 1, GD-8) and empty elsewhere. `direct_identifier` is this system's key (`"Y"`/`""`, REQ-DB-013, REQ-EXP-020 — an additional key beyond the REDCap shape, tolerated by naive parsers per REQ-API-018). `choice_codes`/`choice_labels` are comma-joined from the stored `code$label##code$label` encoding.
+`record_identifier` is `"Y"` on the record-identifier field (position 1 of instrument position 1, GD-8) and empty elsewhere. `direct_identifier` is this system's key (`"Y"`/`""`, REQ-DB-013, REQ-EXP-020 — an additional key beyond the REDCap shape, tolerated by naive parsers per REQ-API-018). `choice_codes`/`choice_labels` are comma-joined from the stored `code$label##code$label` encoding. `forms[]` restricts the response to those instruments when supplied — the mechanism §3.10 uses so a survey link sees its own instrument's definitions and no other (REQ-API-083).
 
 ### 3.5 `event`, `formEventMapping`, `exportFieldNames`, `generateNextRecordName`
 

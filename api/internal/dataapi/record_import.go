@@ -95,7 +95,9 @@ func (h *Handler) contentRecordImport(w http.ResponseWriter, r *http.Request, en
 		writeError(w, enc, http.StatusForbidden, "Project in analysis mode")
 		return
 	}
-	if !sub.hasData(lvlViewEdit) {
+	// A survey link is admitted by §3.10 itself; the arm table says nothing
+	// about it and would reject every submission.
+	if !sub.isLink() && !sub.hasData(lvlViewEdit) {
 		writeError(w, enc, http.StatusForbidden, "Permission denied")
 		return
 	}
@@ -139,7 +141,12 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 
 	recordID := row["record_id"]
 	formName := row["form_name"]
+	// A rejected submission is audit-logged like an accepted one
+	// (REQ-AUD-021); nothing changed, so its field list is empty.
 	fail := func(msg string) (importRow, error) {
+		if sub.isLink() {
+			h.auditSurveyFailure(ctx, sub, recordID, msg)
+		}
 		return importRow{RecordID: recordID, FormName: formName,
 			ImportRecordID: importInvalid, ImportFormName: "Validation error: " + msg}, nil
 	}
@@ -149,6 +156,12 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 	}
 	if formName == "" {
 		return fail("form_name: CONTENT_INVALID — a form name is required")
+	}
+	// A survey link fills its own (record, instrument) and nothing else. A
+	// row naming another pair is a permission mismatch, not a validation
+	// failure — the same shape as the arm check below (§3.10, REQ-API-083).
+	if sub.isLink() && (recordID != sub.Link.RecordID || formName != sub.Instrument) {
+		return importRow{}, errForbiddenRequest
 	}
 	formKnown := false
 	for _, f := range d.fields {
@@ -170,7 +183,9 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 		if !ok {
 			return fail("event_name: CONTENT_INVALID — unknown event '" + event + "'")
 		}
-		if !sub.User.IsAdmin && sub.dataLevels[arm] < lvlViewEdit {
+		// A survey link carries no arm grant at all: §3.10 admits it for its
+		// own (record, instrument) whatever arm the event belongs to.
+		if !sub.isLink() && !sub.User.IsAdmin && sub.dataLevels[arm] < lvlViewEdit {
 			// A permission mismatch is request-level, not a data row.
 			return importRow{}, errForbiddenRequest
 		}
@@ -286,7 +301,9 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 			return importRow{}, err
 		}
 		re := &db.RecordEntity{ProjectID: sub.Project.ID, RecordID: recordID,
-			CreatedBy: sql.NullInt64{Int64: sub.User.ID, Valid: true},
+			// An anonymous survey submission has no creating account; the
+			// nullable column stays NULL rather than naming a stranger.
+			CreatedBy: sql.NullInt64{Int64: sub.actorUserID(), Valid: !sub.isLink()},
 			CreatedAt: time.Now().UTC().Format("2006-01-02 15:04:05")}
 		if groupID != nil {
 			re.DagGroupID = sql.NullInt64{Int64: *groupID, Valid: true}
@@ -303,6 +320,8 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 	}
 
 	// Audit with old/new values (§3.7.2, REQ-AUD-009's data-change family).
+	// A survey submission has no account behind it: the actor columns stay
+	// unset and the link itself is the token column (REQ-AUTH-041).
 	eventType := audit.RecordCreated
 	if existed {
 		eventType = audit.RecordUpdated
@@ -311,8 +330,8 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 		if err := h.AuditTx(ctx, tx, audit.Entry{Token: p.Token,
 			EventType:    eventType,
 			Source:       audit.SourceAPI,
-			UserID:       sub.User.ID,
-			Email:        sub.User.Email,
+			UserID:       sub.actorUserID(),
+			Email:        sub.actorEmail(),
 			ProjectID:    sub.Project.ID,
 			TargetRecord: recordID,
 			Details:      map[string]any{"changes": changes},
@@ -324,12 +343,19 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 		if err := h.AuditTx(ctx, tx, audit.Entry{Token: p.Token,
 			EventType:    audit.CalculatedRecomputed,
 			Source:       audit.SourceAPI,
-			UserID:       sub.User.ID,
-			Email:        sub.User.Email,
+			UserID:       sub.actorUserID(),
+			Email:        sub.actorEmail(),
 			ProjectID:    sub.Project.ID,
 			TargetRecord: recordID,
 			Details:      map[string]any{"changes": calcChanges},
 		}); err != nil {
+			return importRow{}, err
+		}
+	}
+	// The submission's own entry rides in the same transaction, so a
+	// rollback cannot leave a success on the record (REQ-AUD-021).
+	if sub.isLink() {
+		if err := h.AuditTx(ctx, tx, surveySubmittedEntry(sub, recordID, "success", "", changes)); err != nil {
 			return importRow{}, err
 		}
 	}
