@@ -667,3 +667,203 @@ func TestSendReportsSilentRelay(t *testing.T) {
 		t.Fatalf("Send() = %v, want an smtp client error", err)
 	}
 }
+
+// --- line breaks and timeouts ---
+
+// shrinkTimeouts shortens the I/O deadlines for one test; production values are
+// far too long to assert on. Not parallel-safe, which this package does not use.
+func shrinkTimeouts(t *testing.T, step, total time.Duration) {
+	t.Helper()
+	stepWas, totalWas := ioTimeout, sendTimeout
+	ioTimeout, sendTimeout = step, total
+	t.Cleanup(func() { ioTimeout, sendTimeout = stepWas, totalWas })
+}
+
+// stallRelay accepts connections and then stops being useful: it greets only if
+// told to, answers that many commands with a 250, and afterwards either falls
+// silent or keeps the socket busy without ever completing a line.
+type stallRelay struct {
+	greeting bool // send the 220 line before stalling
+	answers  int  // number of commands answered normally, then silence
+	dribble  bool // instead of silence, trickle bytes forever
+}
+
+func (s stallRelay) serve(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { ln.Close() })
+
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				_ = conn.SetDeadline(time.Now().Add(30 * time.Second))
+				if s.greeting {
+					fmt.Fprint(conn, "220 stall-relay ESMTP\r\n")
+				}
+				br := bufio.NewReader(conn)
+				for answered := 0; ; answered++ {
+					line, err := br.ReadString('\n')
+					if err != nil {
+						return
+					}
+					if strings.EqualFold(strings.TrimRight(line, "\r\n"), "QUIT") {
+						fmt.Fprint(conn, "221 2.0.0 Bye\r\n")
+						return
+					}
+					if answered >= s.answers {
+						break // stop replying mid-conversation
+					}
+					fmt.Fprint(conn, "250 2.0.0 OK\r\n")
+				}
+				if s.dribble {
+					// One byte every 20 ms: reads keep succeeding, so only an
+					// overall deadline can end this.
+					for {
+						if _, err = conn.Write([]byte(" ")); err != nil {
+							return
+						}
+						time.Sleep(20 * time.Millisecond)
+					}
+				}
+				// Wait for the client to give up instead of replying; the read
+				// deadline keeps a test that never gets here from leaking.
+				conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+				br.ReadString('\n')
+			}(conn)
+		}
+	}()
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
+// timeoutOf reports whether err is a deadline error from the network layer.
+func timeoutOf(t *testing.T, err error) bool {
+	t.Helper()
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	t.Logf("error %v is not a network timeout", err)
+	return false
+}
+
+func TestSendTimesOutWithoutGreeting(t *testing.T) {
+	shrinkTimeouts(t, 150*time.Millisecond, 5*time.Second)
+	port := stallRelay{}.serve(t) // accepts and says nothing at all
+
+	start := time.Now()
+	err := New(configFor("127.0.0.1", port, "none")).Send("user@example.org", "s", "b")
+	if elapsed := time.Since(start); err == nil {
+		t.Fatal("Send() succeeded against a relay that never greeted")
+	} else if !timeoutOf(t, err) {
+		t.Errorf("Send() = %v, want a timeout error", err)
+	} else if elapsed > 3*time.Second {
+		t.Errorf("Send() took %v; the I/O deadline did not bound it", elapsed)
+	}
+}
+
+func TestSendTimesOutMidConversation(t *testing.T) {
+	shrinkTimeouts(t, 150*time.Millisecond, 30*time.Second)
+	// Greets and answers EHLO, then goes quiet while MAIL FROM waits for a reply.
+	port := stallRelay{greeting: true, answers: 1}.serve(t)
+
+	start := time.Now()
+	err := New(configFor("127.0.0.1", port, "none")).Send("user@example.org", "s", "b")
+	if elapsed := time.Since(start); err == nil {
+		t.Fatal("Send() succeeded against a relay that stopped replying")
+	} else if !timeoutOf(t, err) {
+		t.Errorf("Send() = %v, want a timeout error", err)
+	} else if elapsed > 3*time.Second {
+		t.Errorf("Send() took %v; the I/O deadline did not bound it", elapsed)
+	}
+}
+
+func TestSendHonoursOverallDeadline(t *testing.T) {
+	// The relay keeps completing reads with single bytes, so no per-step deadline
+	// ever fires; only the cap on the whole send ends it.
+	shrinkTimeouts(t, 5*time.Second, 400*time.Millisecond)
+	port := stallRelay{greeting: true, answers: 1, dribble: true}.serve(t)
+
+	start := time.Now()
+	err := New(configFor("127.0.0.1", port, "none")).Send("user@example.org", "s", "b")
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("Send() succeeded against a relay that never completed a reply")
+	}
+	// The deadline surfaces as whatever the protocol layer reported — with bytes
+	// already buffered, textproto names those instead of the timeout. What has to
+	// hold is that the send ends on the overall cap, not on ioTimeout.
+	if elapsed >= 2*time.Second {
+		t.Errorf("Send() took %v, want the %v overall cap to end it (ioTimeout is %v)",
+			elapsed, sendTimeout, ioTimeout)
+	}
+}
+
+func TestSendRejectsLineBreaksInHeaderValues(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		from     bool
+		to       string
+		subject  string
+		wantName string
+	}{
+		{"subject", false, "user@example.org",
+			"code\r\nBcc: victim@evil.example\r\nX-Injected: yes", "subject"},
+		{"recipient", false, "user@example.org\r\nRCPT TO:<victim@evil.example>",
+			"code", "recipient"},
+		{"sender", true, "user@example.org", "code", "sender"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := &relay{}
+			port := r.serve(t)
+
+			cfg := configFor("127.0.0.1", port, "none")
+			if c.from {
+				cfg.OTPMailFrom = "no-reply@example.org\r\nBcc: victim@evil.example"
+			}
+			err := New(cfg).Send(c.to, c.subject, "body")
+			if err == nil || !strings.Contains(err.Error(), c.wantName) {
+				t.Fatalf("Send() = %v, want it to name the %s", err, c.wantName)
+			}
+			// Rejected before connecting: no conversation, so nothing can be
+			// injected into a message that was never started.
+			if cmds, _, _, data := r.snapshot(); len(cmds) != 0 || data != "" {
+				t.Errorf("relay saw %v and a %d byte message although the header was rejected",
+					cmdNames(cmds), len(data))
+			}
+		})
+	}
+}
+
+func TestSendStuffsDotsAndNormalizesLineFeeds(t *testing.T) {
+	// net/smtp writes the payload through textproto's DotWriter, which escapes
+	// leading dots and turns bare LF into CRLF (RFC 5321 §4.5.2). A body that
+	// looks like protocol or like a header block must still arrive intact — this
+	// is the guarantee Send relies on, recorded here so a future hand-rolled
+	// message builder cannot quietly drop it.
+	const body = "code 493021\n.\n.evil@example.org\nQUIT\nlast line\n"
+	r := &relay{}
+	port := r.serve(t)
+
+	if err := New(configFor("127.0.0.1", port, "none")).
+		Send("user@example.org", "Your CLARA login code", body); err != nil {
+		t.Fatalf("Send(): %v", err)
+	}
+
+	cmds, _, _, data := r.snapshot()
+	if got, want := strings.Join(cmdNames(cmds), " "), "EHLO MAIL RCPT DATA QUIT"; got != want {
+		t.Errorf("conversation = %s, want %s — a line of the body ended the payload early",
+			got, want)
+	}
+	wantBody := strings.ReplaceAll(body, "\n", "\r\n")
+	if _, got := splitMessage(t, data); got != wantBody {
+		t.Errorf("body =\n%q\nwant\n%q", got, wantBody)
+	}
+}
