@@ -498,6 +498,7 @@ Data entry is disabled; viewing and exporting remain available according to each
 | development → production	| project admin	| Ask whether previously stored data should be kept or deleted |
 | production → development	| project admin	| Keep all data |
 | production ↔ analysis	| project admin	|  Keep all data |
+| analysis → development	| project admin	|  Keep all data |
 
 
 ## Field validation
@@ -507,3 +508,9 @@ Field validation should be extensible by adding additional validations (regular 
 ## Rate limitter
 
 Using the API from the web-application or from external scripts should be rate-limitted based on the incoming IP address. Allow up to 600 calls per minute from a single IP source. Check if our setup allows for unique IP addresses from incoming calls. Make rate-limitting threshold values customizable in the administration interface.
+
+Exceeding the limit blocks further requests from that IP address for a limited, configurable amount of time (10 minutes). After that period the API accepts requests from that IP again.
+
+## Unmap is misclassified
+
+Map or unmap an instrument to an event can make values unreachable through the form. This is ok as such a change can be temporary and  not delete data in the data table. Mapping the instrument back to the event should make the values visible again.
