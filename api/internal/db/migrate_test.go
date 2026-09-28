@@ -157,11 +157,12 @@ func TestMigrateIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SystemSettings: %v", err)
 	}
-	if len(settings) != 2 {
-		t.Errorf("system_settings count = %d after re-migrate, want 2", len(settings))
+	if len(settings) != 3 {
+		t.Errorf("system_settings count = %d after re-migrate, want 3", len(settings))
 	}
-	if settings["rate_limit_enabled"] != "false" || settings["rate_limit_rpm"] != "600" {
-		t.Errorf("system_settings seed = %v, want rate_limit_enabled=false, rate_limit_rpm=600", settings)
+	if settings["rate_limit_enabled"] != "false" || settings["rate_limit_rpm"] != "600" ||
+		settings["rate_limit_block_minutes"] != "10" {
+		t.Errorf("system_settings seed = %v, want rate_limit_enabled=false, rate_limit_rpm=600, rate_limit_block_minutes=10", settings)
 	}
 }
 
