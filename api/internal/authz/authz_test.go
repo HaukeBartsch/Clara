@@ -322,6 +322,14 @@ func TestActiveGroupAndRecordVisibility(t *testing.T) {
 	if vis(grouped, "8DISC003") {
 		t.Errorf("records of another group must not be visible")
 	}
+
+	// A record id with no identity row is simply not visible. GetRecordEntity
+	// reports not-found as (nil, nil) by repo convention, so this also guards
+	// the grouped path against dereferencing that nil — a caller passes an
+	// arbitrary record id from the URL (REQ-AUTH-045).
+	if vis(grouped, "8DISC999") {
+		t.Errorf("a record that does not exist must not be visible")
+	}
 }
 
 func itoa(v int) string {

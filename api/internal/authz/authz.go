@@ -279,6 +279,9 @@ func RecordVisible(ctx context.Context, store *db.Store, user *db.User, projectI
 	if err != nil {
 		return false, err
 	}
+	if re == nil { // repo convention: not-found is (nil, nil) — nothing to match
+		return false, nil
+	}
 	return re.DagGroupID.Valid && re.DagGroupID.Int64 == group, nil
 }
 

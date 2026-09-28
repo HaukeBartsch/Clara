@@ -29,6 +29,23 @@ func (s *Store) MaxRecordID(ctx context.Context, projectID int64) (string, bool,
 	return v.String, true, nil
 }
 
+// RecordExists reports whether a record id is present in the project: an
+// identity row or at least one stored value (REQ-DB-029 — a record is
+// persisted on first import, REQ-API-033). Same two sources as MaxRecordID,
+// without loading either id list.
+func (s *Store) RecordExists(ctx context.Context, projectID int64, recordID string) (bool, error) {
+	var found int
+	err := s.DB.QueryRowContext(ctx,
+		`SELECT CASE WHEN EXISTS (SELECT 1 FROM data WHERE project_id = ? AND record_id = ?)
+		              OR EXISTS (SELECT 1 FROM record_entities WHERE project_id = ? AND record_id = ?)
+		            THEN 1 ELSE 0 END`,
+		projectID, recordID, projectID, recordID).Scan(&found)
+	if err != nil {
+		return false, err
+	}
+	return found == 1, nil
+}
+
 // --- record data path (content=record, API_Endpoints_Design.md §3.6–§3.8) ---
 
 // ListRecordIDs returns the project's record ids in ascending order: every

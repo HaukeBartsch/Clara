@@ -26,11 +26,13 @@ func (h *Handler) registerQueries(mux *http.ServeMux) {
 
 // --- GET /api/v1/projects/{id}/record-status (§4.13, REQ-API-074) ---
 
-// recordStatusInstrument is one (event, instrument) completion state — any
-// field has a value vs. none; values never appear (REQ-API-074).
+// recordStatusInstrument is one (record, event, instrument) cell of the
+// dashboard: three states, no values (REQ-API-074). state is no_data or
+// some_data as derived from the stored values, or finished when the user
+// assigned it (§4.13, REQ-DB-036).
 type recordStatusInstrument struct {
-	Name     string `json:"name"`
-	Complete bool   `json:"complete"`
+	Name  string `json:"name"`
+	State string `json:"state"`
 }
 
 // recordStatusEvent is one event with its mapped instruments in the
@@ -47,8 +49,10 @@ type recordStatusRow struct {
 }
 
 // recordStatus returns all records visible to the acting user under the DAG
-// rule (REQ-AUTH-045) with a completion state per (record, event,
-// instrument). Requires data access ≥ read_only + project visibility; events
+// rule (REQ-AUTH-045) with a three-state completion state per (record, event,
+// instrument) — no_data / some_data derived, finished stored
+// (REQ-API-074, REQ-DB-036). Requires data access ≥ read_only + project
+// visibility; events
 // of arms without read access are omitted (GD-2). A record-status read is not
 // a record view — no audit row is written (§4.13, ASM-AUD-2).
 func (h *Handler) recordStatus(w http.ResponseWriter, r *http.Request) {
@@ -136,9 +140,9 @@ func (h *Handler) recordStatus(w http.ResponseWriter, r *http.Request) {
 		mapped[ie.EventID][ie.InstrumentID] = true
 	}
 
-	// Completion states in one pass: a (record, event, instrument) is
-	// complete when any stored value of it is non-empty ("any field has a
-	// value vs. none"). Values are aggregated away here — none leaves this
+	// The derived half of the state, in one pass: a (record, event, instrument)
+	// holds some data when any stored value of it is non-empty ("any field has
+	// a value vs. none"). Values are aggregated away here — none leaves this
 	// function (REQ-API-074).
 	type cellKey struct{ record, event, instrument string }
 	complete := map[cellKey]bool{}
@@ -163,6 +167,22 @@ func (h *Handler) recordStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The stored "finished" assignments (REQ-DB-036) — the sparse set, keyed by
+	// the ids the loop below already holds. Nothing here reveals a value.
+	type storedKey struct {
+		record            string
+		event, instrument int64
+	}
+	finished := map[storedKey]bool{}
+	completions, err := h.Store.ListInstrumentCompletions(ctx, projectID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	for _, c := range completions {
+		finished[storedKey{c.RecordID, c.EventID, c.InstrumentID}] = true
+	}
+
 	out := make([]recordStatusRow, 0, len(visible))
 	for _, re := range visible {
 		row := recordStatusRow{RecordID: re.RecordID, Events: []recordStatusEvent{}}
@@ -176,9 +196,21 @@ func (h *Handler) recordStatus(w http.ResponseWriter, r *http.Request) {
 					if !mapped[ev.ID][in.ID] {
 						continue
 					}
+					// Derived first, then overridden by the user's assignment:
+					// finished wins over both, never the other way round, so
+					// the badge cannot claim less than the data shows and
+					// grey/amber can never contradict it (REQ-API-074). A
+					// survey instrument reports its derived state — it takes
+					// no assignment (GD-9).
+					state := StateNoData
+					if complete[cellKey{re.RecordID, ev.UniqueEventName, in.Name}] {
+						state = StateSomeData
+					}
+					if !in.IsSurvey && finished[storedKey{re.RecordID, ev.ID, in.ID}] {
+						state = StateFinished
+					}
 					instrs = append(instrs, recordStatusInstrument{
-						Name:     in.Name,
-						Complete: complete[cellKey{re.RecordID, ev.UniqueEventName, in.Name}],
+						Name: in.Name, State: state,
 					})
 				}
 				if len(instrs) == 0 {
