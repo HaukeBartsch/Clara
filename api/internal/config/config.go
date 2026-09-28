@@ -1,6 +1,6 @@
 // Package config implements the Go API's configuration: the canonical
 // variable inventory, the defaults, and the startup validation matrix of
-// System_Configuration_Design.md §2–§4 (REQ-CFG-001…026).
+// System_Configuration_Design.md §2–§4 (REQ-CFG-001…029).
 //
 // Normative rules implemented here:
 //   - environment variables exclusively; optionally loaded from a .env file
@@ -93,7 +93,22 @@ type Config struct {
 	AuthInactivityLimitDays int
 	AppTimezone             string
 	appLocation             *time.Location // resolved APP_TIMEZONE, for value offsets
+
+	// §3.11 two-factor authentication (REQ-CFG-027/028/029, GD-21)
+	AuthRequire2FA  bool   // AUTH_REQUIRE_2FA — installation-wide mandate
+	TotpIssuer      string // label in otpauth:// URIs
+	TFAEmailCodeTTL int    // seconds an emailed code stays valid
+	SMTPHost        string
+	SMTPPort        int
+	SMTPSecurity    string // starttls | tls | none
+	SMTPUsername    string
+	SMTPPassword    string // masked in dump and logs (REQ-CFG-021)
+	OTPMailFrom     string // sender of login codes; required with SMTP_HOST
 }
+
+// SMTPConfigured reports whether the relay needed to deliver email login
+// codes is usable (REQ-AUTH-057).
+func (c *Config) SMTPConfigured() bool { return c.SMTPHost != "" }
 
 // AppLocation returns the resolved timezone location for the default
 // collection offset (REQ-CFG-026, REQ-VAL-041).
@@ -326,6 +341,33 @@ func Load() (*Config, error) {
 		cfg.appLocation = loc
 	}
 
+	// §3.11 two-factor authentication (REQ-CFG-027/028/029)
+	cfg.AuthRequire2FA = getBool(get, "AUTH_REQUIRE_2FA", false)
+	cfg.TotpIssuer = getOr(get, "TOTP_ISSUER", "CLARA")
+	cfg.TFAEmailCodeTTL = getInt(get, "TFA_EMAIL_CODE_TTL", 600)
+	if cfg.TFAEmailCodeTTL <= 0 {
+		fail("TFA_EMAIL_CODE_TTL: %d (want > 0 seconds)", cfg.TFAEmailCodeTTL)
+	}
+	cfg.SMTPHost = get("SMTP_HOST")
+	cfg.SMTPPort = getInt(get, "SMTP_PORT", 587)
+	cfg.SMTPSecurity = strings.ToLower(getOr(get, "SMTP_SECURITY", "starttls"))
+	switch cfg.SMTPSecurity {
+	case "starttls", "tls", "none":
+	default:
+		fail("SMTP_SECURITY: %q (want starttls, tls or none)", cfg.SMTPSecurity)
+	}
+	cfg.SMTPUsername = get("SMTP_USERNAME")
+	cfg.SMTPPassword = get("SMTP_PASSWORD")
+	cfg.OTPMailFrom = get("OTP_MAIL_FROM")
+	if cfg.SMTPHost != "" {
+		if cfg.OTPMailFrom == "" {
+			fail("OTP_MAIL_FROM: missing (required when SMTP_HOST is set — login codes need a sender address)")
+		}
+		if cfg.SMTPPort < 1 || cfg.SMTPPort > 65535 {
+			fail("SMTP_PORT: %d (want 1…65535)", cfg.SMTPPort)
+		}
+	}
+
 	if len(errs) > 0 {
 		return nil, fmt.Errorf("configuration invalid:\n  %s", strings.Join(errs, "\n  "))
 	}
@@ -343,6 +385,7 @@ func (c *Config) Masked() *Config {
 	m.AdminBootstrapPassword = mask
 	m.DBPassword = mask
 	m.AnonSalt = mask
+	m.SMTPPassword = mask
 	// Deep-copy the slices so masking them does not mutate the snapshot.
 	if len(c.OAuth2) > 0 {
 		m.OAuth2 = make([]OAuth2Provider, len(c.OAuth2))
@@ -403,6 +446,15 @@ func (c *Config) Dump() []string {
 		"TRUSTED_PROXY_CIDRS="+c.trustedProxyRaw+" (thresholds in system_settings)",
 		"AUTH_INACTIVITY_LIMIT_DAYS="+itoa(c.AuthInactivityLimitDays)+" (0 = off)",
 		"APP_TIMEZONE="+c.AppTimezone,
+		"AUTH_REQUIRE_2FA="+boolStr(c.AuthRequire2FA),
+		"TOTP_ISSUER="+c.TotpIssuer,
+		"TFA_EMAIL_CODE_TTL="+itoa(c.TFAEmailCodeTTL),
+		"SMTP_HOST="+none(c.SMTPHost),
+		"SMTP_PORT="+itoa(c.SMTPPort),
+		"SMTP_SECURITY="+c.SMTPSecurity,
+		"SMTP_USERNAME="+none(c.SMTPUsername),
+		"SMTP_PASSWORD="+m,
+		"OTP_MAIL_FROM="+none(c.OTPMailFrom),
 	)
 	for _, p := range c.OAuth2 {
 		out = append(out,

@@ -22,13 +22,15 @@ func (h *Handler) registerAuth(mux *http.ServeMux) {
 }
 
 // loginRequest is the §4.3 body: provider only for oauth2/ldap, password
-// only for source "local" (GD-18). The password is never logged or audited
-// (REQ-AUTH-036).
+// only for source "local" (GD-18). mfa_code is supplied on the second call
+// of a two-factor challenge (REQ-API-114); codes are never logged or audited
+// (REQ-AUTH-036, REQ-AUTH-059).
 type loginRequest struct {
 	Email    string `json:"email"`
 	Source   string `json:"source"`
 	Provider string `json:"provider"`
 	Password string `json:"password"`
+	MFACode  string `json:"mfa_code"`
 }
 
 // login implements POST /api/v1/auth/login with the processing order of
@@ -112,6 +114,18 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Step 1.5 (Sequence G, GD-21): the second factor guards local and LDAP
+	// logins; the OAuth2 path is exempt because the identity provider owns
+	// its own second factor.
+	mfaFactor := ""
+	if body.Source != "oauth2" {
+		var proceed bool
+		_, mfaFactor, proceed = h.secondFactor(w, r, &body, u)
+		if !proceed {
+			return
+		}
+	}
+
 	// Steps 3–5: stamp auth_source + last_login_at (REQ-AUTH-005), audit
 	// login_success with the source (§3.1), respond with the user object.
 	if err := h.Store.TouchLastLogin(ctx, u.ID, body.Source); err != nil {
@@ -124,6 +138,9 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	if body.Provider != "" {
 		details["provider"] = body.Provider
 	}
+	if mfaFactor != "" {
+		details["mfa"] = mfaFactor // totp | email | recovery (Audit_Logging_Design.md §3.1)
+	}
 	if err := h.Audit.Insert(ctx, audit.Entry{
 		EventType: audit.LoginSuccess, Source: audit.SourceUI,
 		UserID: u.ID, Email: u.Email, Details: details,
@@ -131,7 +148,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		errInternal(w)
 		return
 	}
-	writeJSON(w, http.StatusOK, NewUserObject(u, now))
+	writeJSON(w, http.StatusOK, h.userObject(ctx, u, now)) // tfa_method per REQ-API-116
 }
 
 // isBootstrapEmail reports whether the email equals the configured
@@ -146,7 +163,7 @@ func (h *Handler) isBootstrapEmail(email string) bool {
 func (h *Handler) loginFailure(ctx context.Context, body *loginRequest, reason string) {
 	_ = h.Audit.Insert(ctx, audit.Entry{
 		EventType: audit.LoginFailure, Source: audit.SourceUI,
-		Email: body.Email,
+		Email:   body.Email,
 		Details: map[string]any{"source": body.Source, "email": body.Email, "reason": reason},
 	})
 }

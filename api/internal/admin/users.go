@@ -32,10 +32,19 @@ func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 		errInternal(w)
 		return
 	}
+	tfaMethods, err := h.Store.ListTFAMethods(r.Context()) // one batched lookup (REQ-API-116)
+	if err != nil {
+		errInternal(w)
+		return
+	}
 	now := time.Now().UTC()
 	out := make([]UserObject, 0, len(users))
 	for i := range users {
-		out = append(out, NewUserObject(&users[i], now))
+		obj := NewUserObject(&users[i], now)
+		if m, ok := tfaMethods[users[i].ID]; ok {
+			obj.TFAMethod = m
+		}
+		out = append(out, obj)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -167,10 +176,10 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if reEnabled {
-		writeJSON(w, http.StatusOK, NewUserObject(existing, now))
+		writeJSON(w, http.StatusOK, h.userObject(ctx, existing, now))
 		return
 	}
-	writeJSON(w, http.StatusCreated, NewUserObject(existing, now))
+	writeJSON(w, http.StatusCreated, h.userObject(ctx, existing, now))
 }
 
 func derefInt(p *int) int {
@@ -318,5 +327,5 @@ func (h *Handler) updateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, http.StatusOK, NewUserObject(&next, now))
+	writeJSON(w, http.StatusOK, h.userObject(ctx, &next, now))
 }

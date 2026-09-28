@@ -16,6 +16,9 @@ func clearAuthEnv(t *testing.T) {
 		"OAUTH2_1_CLIENT_SECRET", "LDAP_SERVER_1_URL", "LDAP_SERVER_1_SEARCH_BASE",
 		"ANON_SALT", "ANON_DATE_SHIFT_MIN", "ANON_DATE_SHIFT_MAX",
 		"AUTH_INACTIVITY_LIMIT_DAYS", "APP_TIMEZONE", "TRUSTED_PROXY_CIDRS",
+		"AUTH_REQUIRE_2FA", "TOTP_ISSUER", "TFA_EMAIL_CODE_TTL",
+		"SMTP_HOST", "SMTP_PORT", "SMTP_SECURITY", "SMTP_USERNAME",
+		"SMTP_PASSWORD", "OTP_MAIL_FROM",
 	} {
 		t.Setenv(k, "")
 	}
@@ -140,6 +143,9 @@ func TestMaskedRedactsSecrets(t *testing.T) {
 	t.Setenv("OAUTH2_1_ISSUER", "https://idp.example.org")
 	t.Setenv("OAUTH2_1_CLIENT_ID", "csms")
 	t.Setenv("OAUTH2_1_CLIENT_SECRET", "client-secret")
+	t.Setenv("SMTP_HOST", "smtp.example.org")
+	t.Setenv("SMTP_PASSWORD", "smtp-pass")
+	t.Setenv("OTP_MAIL_FROM", "codes@example.org")
 
 	cfg, err := Load()
 	if err != nil {
@@ -148,6 +154,9 @@ func TestMaskedRedactsSecrets(t *testing.T) {
 	m := cfg.Masked()
 	if m.InternalServiceToken != "***" || m.AdminBootstrapPassword != "***" || m.AnonSalt != "***" || m.DBPassword != "***" {
 		t.Errorf("Masked() failed to redact core secrets: %+v", m)
+	}
+	if m.SMTPPassword != "***" {
+		t.Error("Masked() failed to redact SMTP password (REQ-CFG-021)")
 	}
 	if len(cfg.OAuth2) != 1 || cfg.OAuth2[0].ClientSecret != "client-secret" {
 		t.Fatalf("original config should keep the real client secret; got %+v", cfg.OAuth2)
@@ -168,19 +177,103 @@ func TestDumpDoesNotLeakSecrets(t *testing.T) {
 	t.Setenv("INTERNAL_SERVICE_TOKEN", "svc-token")
 	t.Setenv("ANON_SALT", "the-salt")
 	t.Setenv("DB_PASSWORD", "db-pass")
+	t.Setenv("SMTP_HOST", "smtp.example.org")
+	t.Setenv("SMTP_PASSWORD", "smtp-pass")
+	t.Setenv("OTP_MAIL_FROM", "codes@example.org")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() returned error: %v", err)
 	}
 	dump := strings.Join(cfg.Dump(), "\n")
-	for _, secret := range []string{"bootstrap-pass", "svc-token", "the-salt", "db-pass"} {
+	for _, secret := range []string{"bootstrap-pass", "svc-token", "the-salt", "db-pass", "smtp-pass"} {
 		if strings.Contains(dump, secret) {
 			t.Errorf("Dump() leaked secret %q", secret)
 		}
 	}
 	if !strings.Contains(dump, "***") {
 		t.Error("Dump() should contain the *** mask marker")
+	}
+}
+
+// TestLoadTwoFactorDefaults checks the §3.11 defaults (REQ-CFG-027/028/029).
+func TestLoadTwoFactorDefaults(t *testing.T) {
+	clearAuthEnv(t)
+	t.Setenv("ADMIN_BOOTSTRAP_EMAIL", "admin@example.org")
+	t.Setenv("ADMIN_BOOTSTRAP_PASSWORD", "secret")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+	if cfg.AuthRequire2FA {
+		t.Error("AuthRequire2FA = true, want false (opt-in by default)")
+	}
+	if cfg.TotpIssuer != "CLARA" {
+		t.Errorf("TotpIssuer = %q, want CLARA", cfg.TotpIssuer)
+	}
+	if cfg.TFAEmailCodeTTL != 600 {
+		t.Errorf("TFAEmailCodeTTL = %d, want 600", cfg.TFAEmailCodeTTL)
+	}
+	if cfg.SMTPSecurity != "starttls" {
+		t.Errorf("SMTPSecurity = %q, want starttls", cfg.SMTPSecurity)
+	}
+	if cfg.SMTPConfigured() {
+		t.Error("SMTPConfigured() = true without SMTP_HOST")
+	}
+}
+
+// TestLoadTwoFactorValidation covers the startup matrix rows: an emailed
+// factor needs a sender, the security mode is closed, and the TTL positive.
+func TestLoadTwoFactorValidation(t *testing.T) {
+	cases := []struct {
+		name    string
+		set     map[string]string
+		wantErr string
+	}{
+		{
+			"relay without sender",
+			map[string]string{"SMTP_HOST": "smtp.example.org"},
+			"OTP_MAIL_FROM",
+		},
+		{
+			"unknown security mode",
+			map[string]string{"SMTP_SECURITY": "plaintext"},
+			"SMTP_SECURITY",
+		},
+		{
+			"non-positive code TTL",
+			map[string]string{"TFA_EMAIL_CODE_TTL": "0"},
+			"TFA_EMAIL_CODE_TTL",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			clearAuthEnv(t)
+			t.Setenv("ADMIN_BOOTSTRAP_EMAIL", "admin@example.org")
+			t.Setenv("ADMIN_BOOTSTRAP_PASSWORD", "secret")
+			for k, v := range tc.set {
+				t.Setenv(k, v)
+			}
+			_, err := Load()
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("Load() error = %v, want it to name %s", err, tc.wantErr)
+			}
+		})
+	}
+
+	// A complete relay block loads and reports itself configured.
+	clearAuthEnv(t)
+	t.Setenv("ADMIN_BOOTSTRAP_EMAIL", "admin@example.org")
+	t.Setenv("ADMIN_BOOTSTRAP_PASSWORD", "secret")
+	t.Setenv("SMTP_HOST", "smtp.example.org")
+	t.Setenv("OTP_MAIL_FROM", "codes@example.org")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+	if !cfg.SMTPConfigured() || cfg.SMTPPort != 587 {
+		t.Errorf("SMTP block = %+v, want configured on port 587", cfg)
 	}
 }
 

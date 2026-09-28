@@ -26,11 +26,14 @@ import (
 // removing one is breaking.
 const (
 	// §3.1 authentication and administration boundary
-	LoginSuccess         = "login_success"
-	LoginFailure         = "login_failure"
-	Logout               = "logout"
-	AdminRejected        = "admin_rejected"
-	AccountAutoDisabled  = "account_auto_disabled"
+	LoginSuccess        = "login_success"
+	LoginFailure        = "login_failure"
+	Logout              = "logout"
+	AdminRejected       = "admin_rejected"
+	AccountAutoDisabled = "account_auto_disabled"
+	TFAEnrolled         = "tfa_enrolled" // REQ-AUD-028
+	TFADisabled         = "tfa_disabled" // REQ-AUD-028
+	TFAReset            = "tfa_reset"    // REQ-AUD-028
 
 	// §3.2 data change events
 	RecordCreated         = "record_created"
@@ -59,36 +62,36 @@ const (
 	ProjectEnded        = "project_ended"
 
 	// §3.4 administration events
-	UserCreated         = "user_created"
-	UserUpdated         = "user_updated"
-	MembershipChanged   = "membership_changed"
-	TokenIssued         = "token_issued"
-	TokenRotated        = "token_rotated"
-	TokenRevoked        = "token_revoked"
-	RoleCreated         = "role_created"
-	I18nUpdated         = "i18n_updated"
-	SettingsUpdated     = "settings_updated" // REQ-AUD-027, REQ-API-112
+	UserCreated       = "user_created"
+	UserUpdated       = "user_updated"
+	MembershipChanged = "membership_changed"
+	TokenIssued       = "token_issued"
+	TokenRotated      = "token_rotated"
+	TokenRevoked      = "token_revoked"
+	RoleCreated       = "role_created"
+	I18nUpdated       = "i18n_updated"
+	SettingsUpdated   = "settings_updated" // REQ-AUD-027, REQ-API-112
 
 	// §3.5 export events
 	Export = "export"
 
 	// §3.6 survey events
-	SurveySubmitted    = "survey_submitted"
-	SurveyLinkIssued   = "survey_link_issued"
-	SurveyLinkRevoked  = "survey_link_revoked"
+	SurveySubmitted   = "survey_submitted"
+	SurveyLinkIssued  = "survey_link_issued"
+	SurveyLinkRevoked = "survey_link_revoked"
 
 	// §3.7 data access group events
-	DagCreated             = "dag_created"
-	DagDeleted             = "dag_deleted"
-	DagMembershipChanged   = "dag_membership_changed"
-	DagActiveSwitched      = "dag_active_switched"
-	DagRecordAssigned      = "dag_record_assigned"
+	DagCreated           = "dag_created"
+	DagDeleted           = "dag_deleted"
+	DagMembershipChanged = "dag_membership_changed"
+	DagActiveSwitched    = "dag_active_switched"
+	DagRecordAssigned    = "dag_record_assigned"
 
 	// §3.8 project mode and staging events
-	ProjectModeChanged  = "project_mode_changed"
-	StagingStarted      = "staging_started"
-	StagingCommitted    = "staging_committed"
-	StagingDiscarded    = "staging_discarded"
+	ProjectModeChanged = "project_mode_changed"
+	StagingStarted     = "staging_started"
+	StagingCommitted   = "staging_committed"
+	StagingDiscarded   = "staging_discarded"
 )
 
 // Source values for the fixed column (REQ-AUD-017).
@@ -119,9 +122,9 @@ type Writer struct {
 	DB      *sql.DB
 	Dialect string // "sqlite" | "mariadb"
 
-	mu       sync.Mutex
-	latched  int              // year covered by the last rollover
-	ensured  map[string]bool  // physical table names already known to exist
+	mu      sync.Mutex
+	latched int             // year covered by the last rollover
+	ensured map[string]bool // physical table names already known to exist
 }
 
 // NewWriter returns a writer for the store's dialect.

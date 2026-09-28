@@ -20,6 +20,8 @@ var wantFiles = []string{
 	"0004_project_modes.sql",
 	"0005_system_settings.sql",
 	"0006_rate_limit_block.sql",
+	"0007_instrument_completion.sql",
+	"0008_two_factor.sql",
 }
 
 var dialects = []string{"sqlite", "mariadb"}

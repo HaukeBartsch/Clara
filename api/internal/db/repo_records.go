@@ -85,6 +85,23 @@ func (s *Store) GetRecordEntityTx(ctx context.Context, tx *sql.Tx, projectID int
 	return &re, nil
 }
 
+// RecordExists reports whether the project holds a record entity with this
+// id — the existence check for endpoints that act on one record outside a
+// transaction.
+func (s *Store) RecordExists(ctx context.Context, projectID int64, recordID string) (bool, error) {
+	var one int
+	err := s.DB.QueryRowContext(ctx,
+		`SELECT 1 FROM record_entities WHERE project_id = ? AND record_id = ?`,
+		projectID, recordID).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // CreateRecordEntityTx inserts a record identity row inside tx; the DAG
 // assignment comes from the importing holder's active group (REQ-API-093).
 func (s *Store) CreateRecordEntityTx(ctx context.Context, tx *sql.Tx, re *RecordEntity) error {

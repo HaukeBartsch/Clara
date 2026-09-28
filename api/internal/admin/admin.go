@@ -23,6 +23,7 @@ import (
 	"csms/api/internal/authz"
 	"csms/api/internal/config"
 	"csms/api/internal/db"
+	"csms/api/internal/mailer"
 )
 
 // Handler serves the administration API against one store. Areas register
@@ -31,14 +32,18 @@ type Handler struct {
 	Store   *db.Store
 	Cfg     *config.Config
 	Audit   *audit.Writer
-	Handler http.Handler // the /api/v1/ mux, built by New
+	Mail    *mailer.Mailer // email second-factor codes (REQ-AUTH-057)
+	Handler http.Handler   // the /api/v1/ mux, built by New
+
+	tfaSends *sendLimiter // per-account cap on emailed codes (in-memory)
 }
 
 // New builds the administration handler and registers every area's routes.
 func New(store *db.Store, cfg *config.Config, aw *audit.Writer) *Handler {
-	h := &Handler{Store: store, Cfg: cfg, Audit: aw}
+	h := &Handler{Store: store, Cfg: cfg, Audit: aw, Mail: mailer.New(cfg), tfaSends: newSendLimiter()}
 	mux := http.NewServeMux()
 	h.registerAuth(mux)
+	h.registerTfa(mux)
 	h.registerUsers(mux)
 	h.registerProjects(mux)
 	h.registerModes(mux)
@@ -185,10 +190,10 @@ func (h *Handler) requireData(w http.ResponseWriter, r *http.Request, lv *authz.
 
 // Data level rank constants re-exported for area files.
 const (
-	LvlReadOnly    = 1
-	LvlViewEdit    = 2
-	LvlDelete      = 3
-	LvlEditSurvey  = 4
+	LvlReadOnly   = 1
+	LvlViewEdit   = 2
+	LvlDelete     = 3
+	LvlEditSurvey = 4
 )
 
 // --- pagination (§1 convention) ---
@@ -245,24 +250,27 @@ func NextCursor(rows int, limit int, createdAt string, id int64) any {
 // UserObject is the user representation of §4.3, used by login and all user
 // endpoints. status is derived (GD-19).
 type UserObject struct {
-	ID           int64   `json:"id"`
-	Email        string  `json:"email"`
-	DisplayName  string  `json:"display_name"`
-	Enabled      bool    `json:"enabled"`
-	IsAdmin      bool    `json:"is_admin"`
-	AuthSource   string  `json:"auth_source"`
-	UILanguage   string  `json:"ui_language"`
-	LastLoginAt  *string `json:"last_login_at"`
-	ValidUntil   *string `json:"valid_until"`
-	Status       string  `json:"status"`
+	ID          int64   `json:"id"`
+	Email       string  `json:"email"`
+	DisplayName string  `json:"display_name"`
+	Enabled     bool    `json:"enabled"`
+	IsAdmin     bool    `json:"is_admin"`
+	AuthSource  string  `json:"auth_source"`
+	UILanguage  string  `json:"ui_language"`
+	LastLoginAt *string `json:"last_login_at"`
+	ValidUntil  *string `json:"valid_until"`
+	Status      string  `json:"status"`
+	TFAMethod   string  `json:"tfa_method"` // off | totp | email (REQ-API-116)
 }
 
-// NewUserObject maps a db.User to the response shape.
+// NewUserObject maps a db.User to the response shape. tfa_method defaults to
+// "off"; callers that know the account's second factor overwrite it (the
+// users listing batches the lookup, login reads its own row).
 func NewUserObject(u *db.User, now time.Time) UserObject {
 	o := UserObject{
 		ID: u.ID, Email: u.Email, DisplayName: u.DisplayName,
 		Enabled: u.Enabled, IsAdmin: u.IsAdmin, AuthSource: u.AuthSource,
-		UILanguage: u.UILanguage, Status: authz.UserStatus(u, now),
+		UILanguage: u.UILanguage, Status: authz.UserStatus(u, now), TFAMethod: "off",
 	}
 	if u.LastLoginAt.Valid {
 		s := u.LastLoginAt.String
