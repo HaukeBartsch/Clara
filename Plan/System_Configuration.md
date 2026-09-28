@@ -6,49 +6,49 @@ This document outlines the configuration management for the clinical study manag
 - Method: Environment variables stored in a .env file (not tracked in version control).
 - Example Configuration:
 
-# Environment
+  Environment
 
-```yaml
-APP_ENV=development
-```
+    ```yaml
+    APP_ENV=development
+    ```
 
-# Database
+  Database
 
-```yaml
-DB_CONNECTION=sqlite
-DB_DATABASE=/path/to/database.sqlite
-# DB_CONNECTION=mariadb
-# DB_HOST=localhost
-# DB_PORT=3306
-# DB_DATABASE=clinical_db
-# DB_USERNAME=root
-# DB_PASSWORD=secret
-```
+    ```yaml
+    DB_CONNECTION=sqlite
+    DB_DATABASE=/path/to/database.sqlite
+    # DB_CONNECTION=mariadb
+    # DB_HOST=localhost
+    # DB_PORT=3306
+    # DB_DATABASE=clinical_db
+    # DB_USERNAME=root
+    # DB_PASSWORD=secret
+    ```
 
-# Authentication
+  Authentication
 
-```yaml
-OAUTH_PROVIDER_URL=https://auth.example.com
-LDAP_SERVER_1=ldap://ldap1.example.com
-LDAP_SERVER_2=ldap://ldap2.example.com
-LDAP_SERVER_3=ldap://ldap3.example.com
-```
+    ```yaml
+    OAUTH_PROVIDER_URL=https://auth.example.com
+    LDAP_SERVER_1=ldap://ldap1.example.com
+    LDAP_SERVER_2=ldap://ldap2.example.com
+    LDAP_SERVER_3=ldap://ldap3.example.com
+    ```
 
-# Two-factor authentication (GD-21)
+  Two-factor authentication (GD-21)
 
-```yaml
-AUTH_REQUIRE_2FA=0
-TOTP_ISSUER=CLARA
-TFA_EMAIL_CODE_TTL=600
-SMTP_HOST=mail.internal.example.org
-SMTP_PORT=587
-SMTP_SECURITY=starttls
-SMTP_USERNAME=
-SMTP_PASSWORD=
-OTP_MAIL_FROM=clara-noreply@example.org
-```
+    ```yaml
+    AUTH_REQUIRE_2FA=0
+    TOTP_ISSUER=CLARA
+    TFA_EMAIL_CODE_TTL=600
+    SMTP_HOST=mail.internal.example.org
+    SMTP_PORT=587
+    SMTP_SECURITY=starttls
+    SMTP_USERNAME=
+    SMTP_PASSWORD=
+    OTP_MAIL_FROM=clara-noreply@example.org
+    ```
 
-# Key Settings
+## Key Settings
 - APP_ENV: Toggles between development (SQLite default) and production (MariaDB).
 - DB_*: Database connection details.
 - OAUTH_ / LDAP_*:* Authentication server details.
