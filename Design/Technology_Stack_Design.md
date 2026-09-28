@@ -6,14 +6,14 @@
 
 ## 1. Purpose
 
-Fixes the concrete versions, the production dependency set, and the repository layout that the stack constraints (REQ-TECH-001…024) mandate. This document is normative for toolchain selection; any deviation is a requirements-level change.
+Fixes the concrete versions, the production dependency set, and the repository layout that the stack constraints (REQ-TECH-001…026) mandate. This document is normative for toolchain selection; any deviation is a requirements-level change.
 
 ## 2. Pinned Versions (normative)
 
 | Component | Version | Notes |
 |---|---|---|
 | Go | 1.26.x (pinned in CI; `go.mod` declares `go 1.26`) | built with `CGO_ENABLED=0` → single static binary (REQ-TECH-013) |
-| PHP | 8.4 standard distribution | extensions: `pdo_sqlite`, `pdo_mysql`, `ldap`, `curl`, `openssl`, `mbstring`; no Composer production dependencies (REQ-TECH-023) |
+| PHP | 8.4 standard distribution | extensions: `pdo_sqlite`, `pdo_mysql`, `ldap`, `curl`, `openssl`, `mbstring`; Composer dependencies only from the critical-function allowlist (§3, GD-25) — otherwise the standard distribution (REQ-TECH-023/026) |
 | SQLite | ≥ 3.45 (OS/toolchain-provided) | development and tests (REQ-TECH-005) |
 | MariaDB | 11.x LTS (≥ 11.4) | production (REQ-TECH-005) |
 | Bootstrap | 5.3.x | vendored under `web/assets/vendor/bootstrap/` (CSS + bundle JS only); no CDN (ASM-TECH-2) |
@@ -34,6 +34,8 @@ REQ-TECH-023 permits database drivers, the OpenAPI/Swagger UI static bundle, and
 Everything else is standard library: `net/http` (both surfaces, OpenAPI serving), `database/sql`, `encoding/csv` (streaming export, custom delimiter, REQ-TECH-011/REQ-API-029), `encoding/json`, `crypto/rand` (UUIDs, link tokens), `crypto/subtle` (constant-time service-token comparison, REQ-AUTH-012), `log/slog` (structured logging, REQ-TECH-016), and a hand-written recursive-descent parser for the two expression languages (`Data_Validation_Design.md` §6/§7) — no parser library.
 
 The OpenAPI document is a hand-maintained `openapi/openapi.json` (OpenAPI 3.1) next to the code; the interactive UI is the vendored `swagger-ui-dist` static bundle served by the API. No swaggo/code-generation tooling (REQ-TECH-004, REQ-API-002).
+
+**Critical-function library exceptions (GD-25, REQ-TECH-026).** For authentication protocol clients (OAuth2, LDAP), two-factor and token cryptography adjacent code, session handling, and i18n, additional vetted libraries MAY be admitted in Go, PHP, and JavaScript. Admission is by amendment to this section: one row per library with **component, module/package, pinned version + integrity hash, role, and the date of its security review**; re-review is required on every version bump, and each amendment needs owner approval. Admitted PHP code ships as a committed `vendor/` tree plus `composer.lock`; admitted JavaScript ships as vendored ES modules under `web/assets/vendor/` with no build step and no CDN (REQ-TECH-001, ASM-TECH-2). UI strings stay translated server-side (REQ-UI-008) — an admitted JS i18n library covers client-side formatting only. **Currently admitted beyond the tables above: none** — the mechanism exists so a vetted OAuth2 client or i18n formatter can be admitted without re-deciding the stack.
 
 ## 4. Repository Layout (normative)
 

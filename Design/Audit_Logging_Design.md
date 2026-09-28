@@ -30,6 +30,11 @@ The normative event catalog (event codes, `details` payload schemas), the record
 | `tfa_enrolled` | a user activates a two-factor method (`method`, self) — GD-21, REQ-AUD-028 | `{"method":"totp or email"}` |
 | `tfa_disabled` | a user turns their own second factor off (verified by a current code, REQ-API-115) — GD-21 | `{"method":"<method that was active>"}` |
 | `tfa_reset` | an administrator resets another account's two-factor authentication (`is_admin`, REQ-AUTH-059) — GD-21 | `{"target_email":"…"}` |
+| `user_invited` | an administrator sends a set-password invitation email to a local account (`is_admin`, REQ-API-117) — GD-22, REQ-AUD-029 | `{"target_email":"…"}` — never the token |
+| `invite_accepted` | the invited password was set through the token link (Sequence H; acting user = the invited account) — GD-22 | `{"email":"…"}` |
+| `password_changed` | a user changed their own local password (self-service, REQ-AUTH-061) — GD-23 | `{}` |
+| `password_reset_requested` | a forgot-password request (Sequence H; anonymous caller — recorded with the submitted address and source IP, REQ-AUTH-062) | `{"email":"…","ip":"…"}` — never a token |
+| `password_reset_completed` | a reset token was redeemed and the new password stored (acting user = the account) — GD-23 | `{"email":"…"}` |
 
 No IdP tokens, LDAP passwords, or service-token values ever appear in payloads (REQ-AUD-007, REQ-API-005).
 

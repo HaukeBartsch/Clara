@@ -110,6 +110,7 @@ The rate-limit **thresholds are not environment variables**: `rate_limit_enabled
 | Variable | Component | Type | Default | Required | Description |
 |---|---|---|---|---|---|
 | `AUTH_INACTIVITY_LIMIT_DAYS` | api | integer ≥ 0 | `180` | — | inactivity auto-disable limit (GD-19, REQ-CFG-024, REQ-AUTH-053): `last_login_at` older than this → auto-disabled at the next authentication check; `0` = rule off |
+| `AUTH_PASSWORD_TOKEN_TTL_DAYS` | api | integer ≥ 1 | `7` | — | validity in days of invite and password-reset tokens (GD-22/GD-23, REQ-CFG-030, REQ-AUTH-060/062; `password_tokens.expires_at`, `Authentication_Authorization_Design.md` §2.8) |
 | `APP_TIMEZONE` | api | IANA timezone name | `UTC` | — | default collection timezone (GD-16, REQ-CFG-026, REQ-VAL-041): the offset used for date/date-time values imported without an explicit zone (no browser zone, no `tz` parameter); resolved to the `±HH:MM` offset at the value's date (DST-aware) |
 
 ### 3.11 Two-factor authentication (api)
@@ -212,6 +213,7 @@ TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1
 
 # account policy and time (api)
 AUTH_INACTIVITY_LIMIT_DAYS=180
+AUTH_PASSWORD_TOKEN_TTL_DAYS=7
 APP_TIMEZONE=UTC
 
 # two-factor authentication (api, GD-21) — email method unavailable without SMTP_HOST

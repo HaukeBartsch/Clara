@@ -85,6 +85,16 @@ CREATE TABLE IF NOT EXISTS user_two_factor (     -- REQ-DB-038 (GD-21); absent r
     enrolled_at           DATETIME                 -- UTC; audit anchor for tfa_enrolled (REQ-AUD-028)
 );
 
+CREATE TABLE IF NOT EXISTS password_tokens (     -- REQ-DB-039 (GD-22/GD-23); Sequence H tokens
+    user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash   CHAR(64) NOT NULL UNIQUE,       -- SHA-256 hex of the emailed token; value never stored
+    purpose      VARCHAR(6) NOT NULL,            -- invite | reset
+    created_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,  -- inviting admin; NULL for self-service reset
+    created_at   DATETIME NOT NULL,
+    expires_at   DATETIME NOT NULL,              -- now + AUTH_PASSWORD_TOKEN_TTL_DAYS (REQ-CFG-030)
+    consumed_at  DATETIME                        -- UTC on first successful completion; expiry enforced at check
+);
+
 CREATE TABLE IF NOT EXISTS roles (               -- REQ-DB-009 (GD-2)
     id             INTEGER PRIMARY KEY,
     project_id     INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -412,6 +422,7 @@ Reference scale (REQ-DB-025): 100 projects × 10,000 records × 200 fields × 10
 | table-based authentication (master spec "Details", GD-18) | `users.password_hash` (nullable, bcrypt) + `auth_source = local` (§4); plaintext never stored |
 | account validity and inactivity (master spec "Details", GD-19) | `users.valid_until` (NULL = indefinite) + `users.last_login_at` (§4); auto-disable rule in `Authentication_Authorization_Design.md` §4.4 |
 | two-factor authentication (master spec "Details", GD-21) | `user_two_factor` — one row per user, method/secret/replay step/pending-code hash/recovery hashes (§4); verification and enrollment in `Authentication_Authorization_Design.md` §2.7 |
+| account onboarding and password lifecycle (GD-22/GD-23) | `password_tokens` — single-use hashed invite/reset tokens (§4); issuance, email, and completion in `Authentication_Authorization_Design.md` §2.8 |
 | project modes (master spec "Project modes", GD-20) | `projects.mode` (`development` default, §4) + `project_staging` JSON-snapshot table (§5 — the live structure tables stay untouched while a set is open); transition/staging rules normative in `API_Endpoints_Design.md` §4.21 |
 
 ## 12. Open Items

@@ -16,6 +16,7 @@
 | survey respondent | PHP route `/survey/{link}` (public, no session — GD-9) | opaque link token | fill-only on exactly one (record, survey instrument) (REQ-AUTH-039) |
 | IdP / LDAP | outbound from PHP | OAuth2 client secret / LDAP bind DN | identity assertion (email) |
 | local (table-based) account | PHP login form → API | email + password (verified against `users.password_hash`), plus the configured second factor when enrolled (GD-21, §2.7) | the account's normal permissions (GD-18, REQ-AUTH-050) |
+| invited / resetting person (pre-authentication) | PHP set-password page via the emailed link (public route, no session — GD-22/GD-23) | single-use hashed token (`password_tokens`, REQ-DB-039) | exactly one thing: set the password of the one addressed account (§2.8) — nothing else is reachable |
 
 The second factor (GD-21) guards the two CLARA-verified rows above — local and LDAP form logins — after first-factor success; the OAuth2 row is exempt (MFA there is the provider's responsibility, DEV-AUTH-10), as are survey links and data-API tokens (§4.3).
 
@@ -62,7 +63,7 @@ The PHP login form carries email + password for the **local (Sequence F) and LDA
 
 ### 2.3 Sequence C — API login call (REQ-AUTH-016, REQ-API-044)
 
-`POST /api/v1/auth/login` — the **only** administration endpoint exempt from `X-Internal-User-Id` (it establishes the user context; it still requires a valid `X-Internal-Service-Token` and is internal-only per §1.2). Request body:
+`POST /api/v1/auth/login` — one of the four administration endpoints exempt from `X-Internal-User-Id` (it establishes the user context; the other three are the pre-authentication password endpoints of Sequence H, §2.8 — DEV-API-16); it still requires a valid `X-Internal-Service-Token` and is internal-only per §1.2. Request body:
 
 ```json
 { "email": "user@example.org", "source": "oauth2", "provider": "https://idp.example.org" }
@@ -136,6 +137,20 @@ On success PHP establishes the session (§3) exactly as for the other paths; `au
 **Self-service management.** A signed-in user reaches the same wizard from the account page (`User_Interface_Design.md`): change method, view status, disable — disable requires a valid current code or recovery code, so a hijacked session cannot silently drop the factor (REQ-API-115). Audit: `tfa_enrolled`, `tfa_disabled`, `tfa_reset` (REQ-AUD-028).
 
 **Administrator reset.** `POST /api/v1/users/{id}/tfa/reset` (`is_admin`) deletes the row back to `off` and clears codes — for a user who lost their phone or email access; under a mandate the user re-enrolls at the next login (REQ-AUTH-059). The user overview shows each account's method (REQ-UI-011).
+
+### 2.8 Sequence H — out-of-band password setup: invite and reset (GD-22/GD-23, REQ-AUTH-060/062)
+
+**Shared token mechanics.** Invite and reset tokens are one mechanism with two purposes. Generation: 32 random bytes from `crypto/rand` (256 bits); the value is emailed, never stored — only its SHA-256 hash goes into `password_tokens` (`purpose` = `invite` | `reset`, expiry = now + `AUTH_PASSWORD_TOKEN_TTL_DAYS` days, default 7; REQ-CFG-030, REQ-DB-039). A new invite replaces the account's outstanding invite row (re-invite invalidates the old link, REQ-AUTH-060); a new reset request replaces the outstanding reset row. Completion verifies the hash in constant time and enforces purpose, expiry, and single use; **every failure answers the same 401 `invalid_setup_token`** — unknown, expired, consumed, or wrong purpose are not distinguished (REQ-API-120). The link URL carries the token as a query parameter to the PHP route `/set-password?token=…`; the proxy's `/api/` query-string logging rule is extended to the reset/invite email routes' URLs in PHP access logs (REQ-AUTH-049 by analogy — token values never land in logs).
+
+**Invite (admin-initiated).** `POST /api/v1/users/{id}/invite` (`is_admin`, REQ-API-117): requires the account to be on the local path (or intended for it) and SMTP configured (else 409 `smtp_not_configured` — with no relay the admin sets the password directly, REQ-AUTH-060). The email (translated, per §5.7 of the UI design) links to `/set-password?token=…`; audit `user_invited`. Completion (`POST /api/v1/auth/invite/complete`, purpose `invite`) stores the new bcrypt hash, consumes the token, and audits `invite_accepted` — the person then logs in through Sequence F normally; the second-factor gate is **not** bypassed (REQ-AUTH-060).
+
+**Reset request.** `POST /api/v1/auth/password-reset/request` with `{ "email": "…" }`: the response is a fixed 202 body regardless of outcome (REQ-AUTH-062 — no enumeration oracle). Internally: an **active local account** (`enabled = 1`, not expired, per §4.4) matching the address receives the emailed link; anything else sends nothing yet answers identically. Rate limit: default 3 requests / 15 minutes per address (plus the general IP limiter, `System_Configuration_Design.md` §3.9); audit `password_reset_requested` with the submitted address and source IP — never a token.
+
+**Reset completion.** `POST /api/v1/auth/password-reset/complete` with `{ "token": "…", "password": "***" }`: verifies per the shared mechanics (purpose `reset`), stores the new bcrypt hash, consumes the token, **invalidates all outstanding tokens of the account**, and audits `password_reset_completed`. No temporary password exists at any point (REQ-AUTH-062). Existing PHP sessions are not revoked — DEV-AUTH-13; they end via logout or timeout (REQ-AUTH-015).
+
+**Pre-authentication boundary.** The three Sequence H endpoints ride the same internal trust path as `POST /api/v1/auth/login`: service token required, no `X-Internal-User-Id` (the REQ-API-041 exception set — DEV-API-16), unreachable from outside (§1.2). PHP's public routes (`/password-reset`, `/set-password`) are the only browser-facing entry points and carry CSRF protection like every other form (REQ-AUTH-037); the token itself is the credential, so no session or identity is implied before completion.
+
+**Self-service change (signed-in).** Not part of Sequence H's pre-auth path: `PUT /api/v1/users/me/password` verifies `current_password` against the hash first (failure → 401 `bad_password`, audit-logged, counted toward the Sequence E lockout), then stores the new hash and audits `password_changed` (REQ-AUTH-061, REQ-API-118).
 
 ## 3. Session Schema (GD-1)
 
@@ -248,11 +263,11 @@ Rules:
 - `X-Internal-Service-Token` is compared in constant time (`crypto/subtle.ConstantTimeCompare`) and MUST NOT be logged (REQ-AUTH-012); a missing/invalid token → 401 + audit `admin_rejected` — enforced regardless of any other configuration (REQ-CFG-023).
 - `X-Internal-User-Id` is authoritative for authorization on `/api/v1/*` (REQ-AUTH-013); an unknown or disabled user → 403 + audit `admin_rejected`.
 - The proxy strips both headers from every externally-originated request (REQ-AUTH-014; configuration in `Technology_Stack_Design.md` §5).
-- `POST /api/v1/auth/login` (service token only, no user id — §2.3) is the sole exception.
+- `POST /api/v1/auth/login` (service token only, no user id — §2.3) and the three pre-authentication password endpoints of Sequence H (§2.8, DEV-API-16) are the exceptions.
 
 ## 7. Non-Functional Security
 
-- **Password handling** (REQ-AUTH-036, GD-18): the LDAP password exists only transiently — it goes over TLS to the directory and is never persisted or logged. Local (table-based) passwords are verified against a **bcrypt** hash (`cost ≥ 10`, constant-time compare — `golang.org/x/crypto/bcrypt` in the Go API) stored in `users.password_hash`; the plaintext exists only in flight (browser → PHP over TLS; PHP → API over the trusted internal path) and is never logged, never in audit `details`, and never returned by any endpoint. Setting/resetting a password stores only the new hash; clearing it sets the column to `NULL` (the account keeps its other paths).
+- **Password handling** (REQ-AUTH-036, GD-18): the LDAP password exists only transiently — it goes over TLS to the directory and is never persisted or logged. Local (table-based) passwords are verified against a **bcrypt** hash (`cost ≥ 10`, constant-time compare — `golang.org/x/crypto/bcrypt` in the Go API) stored in `users.password_hash`; the plaintext exists only in flight (browser → PHP over TLS; PHP → API over the trusted internal path) and is never logged, never in audit `details`, and never returned by any endpoint. Setting/resetting a password stores only the new hash; clearing it sets the column to `NULL` (the account keeps its other paths). Out-of-band setup tokens (Sequence H) exist in plaintext only inside the generated email and the completion request — the store holds only the SHA-256 hash (`password_tokens`, REQ-DB-039), and token values never appear in logs or audit details (REQ-AUTH-060/062, REQ-AUD-029).
 - **Two-factor material** (GD-21, REQ-AUTH-056/057/058): TOTP secrets are 160-bit `crypto/rand` values (base32 for the QR/`otpauth://` URI); RFC 6238 verification uses standard-library `crypto/hmac` + `crypto/sha1` — no new dependency. Email codes and recovery codes come from `crypto/rand`. Pending email codes and recovery codes are persisted **as one-way hashes only** (`user_two_factor`, REQ-DB-038); the TOTP secret is stored as issued, never returned by any endpoint after its single enrollment display, and never written to logs or audit details. Email delivery uses standard-library `net/smtp` from the API against the configured relay; message bodies (the code) are never logged.
 - **CSRF** (REQ-AUTH-037, REQ-UI-005): every state-changing browser request carries the per-session `csrf_token` (form field or `X-CSRF-Token` header); the administration API is additionally protected by the service-token boundary (GD-1).
 - **Trusted path** (REQ-AUTH-034): PHP→API traffic on loopback or TLS.
@@ -264,13 +279,14 @@ Rules:
 |---|---|
 | session ownership and schema (GD-1) | PHP-native session, key table §3; the API is stateless |
 | logout ordering (REQ-AUTH-015 vs REQ-API-045) | the audit call precedes session destruction (§2.4) |
-| `X-Internal-User-Id` on `POST /api/v1/auth/login` (REQ-API-041) | the login endpoint is the sole exception — service token only; the externally authenticated identity arrives in the body (§2.3) |
+| `X-Internal-User-Id` on `POST /api/v1/auth/login` (REQ-API-041) | the login endpoint is exempt — service token only; the externally authenticated identity arrives in the body (§2.3); the three Sequence H pre-auth endpoints share the exemption (§2.8, DEV-API-16) |
 | brute-force store and windows (REQ-AUTH-035) | in-memory per host; 5 failures / 10 min → 15 min lockout (§2.5) |
 | OAuth2 flow hardening | PKCE (S256) + single-use `state` (§2.1) |
 | `login_failure` reason vocabulary | `provider_unavailable \| state_mismatch \| bad_credentials \| bad_password \| account_not_found \| account_disabled \| account_expired \| rate_limited \| bad_mfa_code` (`Audit_Logging_Design.md` §3.1) |
 | table-based authentication (owner decision 2026-09-22, GD-18) | `users.password_hash` (bcrypt) + `auth_source = local`; Sequence F before the LDAP fallback; bootstrap password from `ADMIN_BOOTSTRAP_PASSWORD` (required at startup when no IdP is configured); `REQ-AUTH-036` revised to "no plaintext, hash only" (§2.2/§2.3/§2.6, §7) |
 | account validity and inactivity (owner decision 2026-09-22, GD-19) | `users.valid_until` / `users.last_login_at`; the account-active rule of §4.4 evaluated at every authentication check; auto-disable + `account_auto_disabled` audit; admin re-enable resets the inactivity clock |
 | two-factor authentication (owner decision 2026-09-28, GD-21) | `user_two_factor` (§2.7); Sequence C step 1.5 gate on local/LDAP logins only — OAuth2 MFA stays with the IdP (DEV-AUTH-10); TOTP (stdlib RFC 6238) + email codes (`net/smtp`); recovery codes; `tfa_pending` pre-auth session (§3); mandate `AUTH_REQUIRE_2FA`; admin reset |
+| account onboarding and password lifecycle (owner decision 2026-09-28, GD-22/GD-23) | Sequence H (§2.8): `password_tokens` (REQ-DB-039) — invite and reset share single-use hashed expiring tokens (`AUTH_PASSWORD_TOKEN_TTL_DAYS`, REQ-CFG-030); the three pre-auth endpoints extend the REQ-API-041 exception set (DEV-API-16); generic reset response (no enumeration), no temp passwords, current-password proof for self-service change; sessions not revoked (DEV-AUTH-13) |
 
 ## 9. Open Items
 

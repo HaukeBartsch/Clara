@@ -61,6 +61,7 @@ Defines how the system is configured across environments. The design document `D
 | REQ-CFG-027 | The two-factor mandate (`AUTH_REQUIRE_2FA`) MUST be configurable as `0`|`1` with default **`0`** (GD-21, REQ-AUTH-059): when `1`, every account without an enrolled method is directed to enroll after first-factor success, before login completes. |
 | REQ-CFG-028 | Delivery of the email two-factor codes MUST be configurable as an SMTP relay — host, port, transport security (`starttls` | `tls` | `none`), optional username/password, and the sender address (`SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `OTP_MAIL_FROM`) (GD-21, REQ-AUTH-057). The relay is **optional**: without it the `email` method is unavailable. `SMTP_PASSWORD` is a secret — environment-only, no built-in default, never logged (REQ-CFG-021); the code content never appears in any log. |
 | REQ-CFG-029 | The TOTP issuer label shown in authenticator apps (`TOTP_ISSUER`, string, default `CLARA`) and the email-code lifetime (`TFA_EMAIL_CODE_TTL`, integer seconds > 0, default **600**) MUST be configurable (GD-21, REQ-AUTH-056/057). |
+| REQ-CFG-030 | `AUTH_PASSWORD_TOKEN_TTL_DAYS` — validity in days of invite and password-reset tokens (REQ-AUTH-060/062); integer ≥ 1, default **7**. |
 
 ### 2.6 Security
 

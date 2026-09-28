@@ -64,16 +64,23 @@ Defines the mandatory technology constraints and the non-functional requirements
 |---|---|
 | REQ-TECH-021 | The Go API MUST be covered by automated tests (unit + integration against SQLite) that run in CI without external services. |
 | REQ-TECH-022 | The REDCap compatibility contract (Fiona call examples) MUST be encoded as executable regression tests. |
-| REQ-TECH-023 | Dependency footprint: the Go module MUST avoid non-standard-library dependencies except database drivers, an OpenAPI/Swagger UI static bundle, and at most two other production libraries. PHP MUST use the standard distribution (no Composer framework dependencies). |
+| REQ-TECH-023 | Dependency footprint: the Go module MUST avoid non-standard-library dependencies except database drivers, an OpenAPI/Swagger UI static bundle, and at most two other production libraries. PHP MUST use the standard distribution — **except** for critical functions under REQ-TECH-026, where allowlisted Composer packages MAY be used. |
+| REQ-TECH-026 | **Vetted libraries for critical functions (GD-25).** For the *critical functions* — authentication protocol clients (OAuth2, LDAP), two-factor and token cryptography adjacent code, session handling, and i18n — a small set of established, actively maintained libraries MAY be used in Go, PHP, and JavaScript. Admission is by explicit allowlist amendment: each candidate MUST be recorded in the production allowlist of `Design/Technology_Stack_Design.md` with version pin + integrity hash, pass a documented security review at adoption, and be re-reviewed on every version bump; the owner approves each amendment. All admitted code MUST be vendored locally — PHP via a committed `vendor/` tree plus `composer.lock`; JavaScript as vendored ES modules loaded without a build step (REQ-TECH-001, ASM-TECH-2 unchanged: no runtime CDN). Outside the critical functions the stdlib-first rule of REQ-TECH-023 stands; UI strings remain translated server-side (REQ-UI-008), so an admitted JS i18n library covers client-side formatting only (e.g. `Intl` fallbacks), not string transport. |
 
 ## 4. Assumptions
 
 | ID | Assumption |
 |---|---|
 | ASM-TECH-1 | A standard LAMP-style host (PHP-FPM + web server) is available for the web application; no container orchestration is required in phase 1. |
-| ASM-TECH-2 | Bootstrap and any small JS utility (none beyond vanilla ES2020) are vendored locally; no CDN dependency in production. |
+| ASM-TECH-2 | Bootstrap and any small JS utility (none beyond vanilla ES2020, apart from critical-function libraries admitted under REQ-TECH-026) are vendored locally; no CDN dependency in production. |
 | ASM-TECH-3 | The Go API and PHP app run on the same host or a trusted internal network segment. |
 
-## 5. Open Items
+## 5. Deviations from Plan
+
+| ID | Deviation | Rationale |
+|---|---|---|
+| DEV-TECH-1 | REQ-TECH-023's blanket "no Composer dependencies" relaxed to an allowlisted exception for critical functions (GD-25) | Owner decision (2026-09-28): authentication and i18n are security- and correctness-critical; a vetted standard library is lower risk than hand-rolled protocol code. The exception is bounded by the allowlist, pinning, local vendoring, and re-review on bump — not open-ended. `AGENTS.md` "Stack facts" updated accordingly (REQ-TECH-026). |
+
+## 6. Open Items
 
 None blocking. If the operator prefers containerized deployment later, the constraints above remain satisfied (single binary + static PHP app).

@@ -39,6 +39,9 @@ Common conventions (REQ-UI-001…008), binding on every page:
 | `GET /` | dashboard (§4) | any authenticated | `GET /api/v1/projects` |
 | `POST /lang` | language switch (redirect back) | any authenticated | `PUT /api/v1/users/me/ui-language` |
 | `GET /account/two-factor` | two-factor settings (§2.5) | any authenticated | `GET /api/v1/users/me/tfa`, `POST /api/v1/users/me/tfa/*` (GD-21, REQ-UI-039) |
+| `GET\|POST /account/password` | change own password (§2.6) | any authenticated | `PUT /api/v1/users/me/password` (GD-23, REQ-AUTH-061) |
+| `GET\|POST /password-reset` | forgot-password request (§2.6) | public — no session | `POST /api/v1/auth/password-reset/request` (GD-23, REQ-AUTH-062) |
+| `GET\|POST /set-password?token=…` | set password via invite/reset token (§2.6) | public — valid token, no session | `POST /api/v1/auth/invite/complete`, `POST /api/v1/auth/password-reset/complete` (GD-22/GD-23, Sequence H) |
 | `GET /admin/users` | user accounts (§5.1) | `is_admin` | `GET/POST /api/v1/users`, `PUT /api/v1/users/{id}` |
 | `GET /admin/projects` | project create/edit (§5.2) | `is_admin` | `POST /api/v1/projects`, `GET/PUT /api/v1/projects/{id}` |
 | `GET /admin/audit` | audit view (§5.6) | `is_admin` or member of a project (REQ-API-078) | `GET /api/v1/audit` |
@@ -62,6 +65,7 @@ There are no other browser-reachable routes. State-changing browser requests are
 
 - **Providers** (present only when at least one OAuth2 provider is configured): one button per configured provider — "Sign in with `<provider name>`" — initiating Sequence A (`Authentication_Authorization_Design.md` §2.1).
 - **Email + password form** (always present — on a first installation without an IdP it is the **only** path, GD-18, REQ-AUTH-051): email + password, initiating **Sequence F** (`Authentication_Authorization_Design.md` §2.6) — the API verifies the local (table-based) hash first, then falls back to Sequence B (LDAP) when servers are configured. The password travels only browser→PHP (TLS) and PHP→API (trusted internal path); it is never stored in plaintext and never logged (REQ-AUTH-036).
+- **"Forgot password?"** — a translated link beside the form to `/password-reset` (§2.6, GD-23, REQ-AUTH-062). Meaningful only for local accounts; the request page answers generically so the link discloses nothing.
 - Failure presentation: a single translated error line per the API reason — provider unavailable / state mismatch / **bad password** / bad credentials (LDAP) / **account disabled** (incl. "disabled after inactivity — an administrator must re-enable") / **account expired** ("validity period ended — an administrator must extend it") — no internals. Rate-limit rejection (429) shows the lockout duration (REQ-AUTH-035).
 - **Two-factor step** (GD-21, REQ-UI-038): on 401 `mfa_required` the page switches to a second panel — one code field with method-specific help ("Enter the code from your authenticator app" / "We sent a code to your email address" + a resend action, rate-limited) and an "use a recovery code" toggle. PHP holds the first-factor success in the pre-auth `tfa_pending` session (`Authentication_Authorization_Design.md` §2.7); no other page is reachable while it stands. 401 `bad_mfa_code` re-shows the panel with the failure line; on success the response completes the login exactly as without a second factor.
 - **Mandated enrollment** (GD-21, REQ-AUTH-059): on 401 `tfa_enrollment_required` (`AUTH_REQUIRE_2FA` on, account has no method) the page shows the enrollment wizard of §2.5; completing it resumes the login.
@@ -98,9 +102,9 @@ All authenticated pages (and the public survey page, §8.8, which renders a redu
   1. **Projects** (any authenticated user with ≥ 1 visible project): a link to the dashboard (`/`) and one entry per visible project (name + organization) to its home page (`/projects/{id}`).
   2. **Administration** (`is_admin` only): Users (`/admin/users`), Projects (`/admin/projects`), Audit log (`/admin/audit`), Translations (`/admin/i18n`).
   3. **Project context** — shown only while the user is on a page of a specific project (the brand bar shows that project's name): Setup, Design, Record status, Export (gated per §6.1), and — for `is_admin` — Members, Roles; — for `project_admin` or better — Groups. Selecting one of these loads that page in the panel (the master spec's "selecting different functions (like setup) should load the corresponding page in the right hand panel").
-  4. **Account**: the language selector (§9), a "Two-factor authentication" link (`GET /account/two-factor`, §2.5 — GD-21), and a "Sign out" action (`POST /logout`, CSRF token, REQ-UI-007).
+  4. **Account**: the language selector (§9), a "Two-factor authentication" link (`GET /account/two-factor`, §2.5 — GD-21), a "Password" link (`GET /account/password`, §2.6 — shown only when the account has a local credential, GD-23), and a "Sign out" action (`POST /logout`, CSRF token, REQ-UI-007).
 - **Responsive collapse** (REQ-UI-008): below the Bootstrap `lg` breakpoint the sidebar collapses to the standard off-canvas/overlay pattern (Bootstrap navbar + offcanvas); no mobile-specific optimization beyond Bootstrap defaults (ASM-UI-1).
-- The login page (§2.2) and the public survey page (§8.8) render **without** the sidebar (no session, no navigation) — the survey page is a single centered form panel (DEV-UI-1).
+- The login page (§2.2), the public password pages (`/password-reset`, `/set-password`, §2.6), and the public survey page (§8.8) render **without** the sidebar (no session, no navigation) — each is a single centered form panel (DEV-UI-1 pattern).
 
 ### 2.5 Two-factor settings (`GET /account/two-factor`, REQ-UI-039)
 
@@ -111,6 +115,14 @@ Self-service page in the shell, reachable by every signed-in user (also rendered
 - **Enable email**: "Send code" → six-digit confirmation field (+ resend, rate-limited); the option is absent when SMTP is not configured — `POST …/email/start` 409 maps to a hidden control server-side (REQ-AUTH-057). Recovery codes shown once as above.
 - **Disable**: asks for a current code or recovery code before `POST …/tfa/disable`; explains that the mandate re-prompts enrollment at the next login when on.
 - The secret and codes never re-render after their one-time display; reload shows status only (REQ-AUTH-056). All actions CSRF-protected (REQ-UI-005); strings translated server-side (REQ-UI-008).
+
+### 2.6 Password change, reset, and invite completion (GD-22/GD-23)
+
+**Change own password (`GET /account/password`, authenticated, in the shell).** Shown in the Account sidebar only when the account has a local credential (GD-23). One form: current password, new password + repeat; submits `PUT /api/v1/users/me/password` (CSRF, REQ-UI-005). A wrong current password shows the generic bad-password line (`API_Endpoints_Design.md` §4.2); success shows a confirmation and clears the fields. The account's **email address is displayed read-only** — identity changes go through an administrator (REQ-AUTH-061). Existing sessions stay valid (DEV-AUTH-13).
+
+**Forgot password (`GET /password-reset`, public, standalone panel).** One email field; submits `POST /api/v1/auth/password-reset/request`; the page always shows the same translated line — "If that address has an account with a local password, a reset link has been sent" — never revealing whether it did (REQ-AUTH-062). Rate-limit rejection (429) shows a retry-soon message.
+
+**Set password (`GET /set-password?token=…`, public, standalone panel).** Reached from the invite or reset email. Renders two new-password fields (+ repeat, client-side match check plus authoritative server check); on submit PHP routes by purpose — `POST /api/v1/auth/invite/complete` or `POST /api/v1/auth/password-reset/complete`. Any token failure (unknown, expired, consumed) shows one generic translated line with a link back to `/login` and, for the reset case, an offer to request a new link (`invalid_setup_token`, `API_Endpoints_Design.md` §4.2). Success: invite → "Password set — sign in" link to `/login`; reset → same. The token never re-renders into the page beyond the hidden form field carrying it; no session is established by this page (Sequence H, `Authentication_Authorization_Design.md` §2.8).
 
 ## 3. Common Components and Rendering Rules
 
@@ -201,10 +213,11 @@ Data: `GET /api/v1/users` (the full user object, `API_Endpoints_Design.md` §4.3
 
 | Action | Control | API | Notes |
 |---|---|---|---|
-| create account | form: `email` + `display_name` + **validity in days** (`0` = indefinite) + optional **local password** (repeat field; the value is shown once as masked text, never echoed back) | `POST /api/v1/users` (`valid_days`, `password`) | a disabled account with the same email is **re-enabled** by the same call (REQ-API-047) — the form therefore doubles as the re-enable action; `valid_days 0` → `valid_until = null` (REQ-AUTH-052) |
+| create account | form: `email` + `display_name` + **validity in days** (`0` = indefinite) + optional **local password** (repeat field; the value is shown once as masked text, never echoed back) | `POST /api/v1/users` (`valid_days`, `password`) | a disabled account with the same email is **re-enabled** by the same call (REQ-API-047) — the form therefore doubles as the re-enable action; `valid_days 0` → `valid_until = null` (REQ-AUTH-052); when created **without** a password the row offers "Send invite" as the next action (GD-22, REQ-AUTH-060) |
 | disable / re-enable | row button, confirmation modal on disable (naming the consequence for that user's tokens) | `PUT /api/v1/users/{id}` with `enabled` | idempotent; disabling takes effect at call time for that user's tokens (REQ-API-048); **re-enabling an auto-disabled account resets the inactivity clock** (REQ-AUTH-053) |
 | extend validity | row action (number input, days; `0` = indefinite) | `PUT /api/v1/users/{id}` with `valid_days` | re-sets `valid_until`; restores access for expired accounts (REQ-AUTH-052) |
 | set / reset local password | row action (password + repeat; empty = clear the local password) | `PUT /api/v1/users/{id}` with `password` | stored only as a bcrypt hash; never shown, never logged (REQ-AUTH-050, REQ-AUTH-036); `auth_source` then reports `local` after the next login (REQ-AUTH-005) |
+| send invite | row action "Send invite" (accounts on the local path; confirmation modal naming the target address) | `POST /api/v1/users/{id}/invite` | emails a single-use set-password link so the user chooses their own first password (GD-22, REQ-AUTH-060); re-sending invalidates the previous link; hidden when SMTP is not configured (`smtp_not_configured`, REQ-CFG-028) — direct "set / reset local password" is then the only path; audit `user_invited` |
 | reset two-factor | row action with confirmation ("the user will lose their enrolled method and recovery codes") | `POST /api/v1/users/{id}/tfa/reset` | clears method, secret, codes (GD-21, REQ-AUTH-059); audit `tfa_reset`; under `AUTH_REQUIRE_2FA` the user re-enrolls at next login |
 
 The `is_admin` flag is set by the bootstrap mechanism (GD-4, REQ-AUTH-007) — phase 1 offers no UI toggle for it (out of REQ-UI-011's scope).

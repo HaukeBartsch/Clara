@@ -277,7 +277,7 @@ Every other `content` (including `export` and `delete`), another record, or anot
 ### 4.1 Boundary and Authentication (REQ-API-040, REQ-API-041)
 
 - Reachable only from the trusted internal path (REQ-TECH-018, REQ-AUTH-014); the proxy strips `X-Internal-Service-Token` and `X-Internal-User-Id` from every externally-originated request (`Technology_Stack_Design.md` §5). The browser MUST NOT call this surface directly (GD-1, BR-006, REQ-API-040).
-- Every request MUST present a valid `X-Internal-Service-Token` and `X-Internal-User-Id` (REQ-API-041, REQ-AUTH-011…013); the sole exception is `POST /api/v1/auth/login` (§4.3, `Authentication_Authorization_Design.md` §2.3).
+- Every request MUST present a valid `X-Internal-Service-Token` and `X-Internal-User-Id` (REQ-API-041, REQ-AUTH-011…013); the exceptions are `POST /api/v1/auth/login` (§4.3, `Authentication_Authorization_Design.md` §2.3) and the three pre-authentication password endpoints of Sequence H (§4.3, `Authentication_Authorization_Design.md` §2.8 — DEV-API-16), which carry the service token only.
 - The service token (config per `System_Configuration_Design.md` §3.3) is compared in constant time (REQ-AUTH-012) and MUST NOT be logged (REQ-API-005); it is enforced regardless of any other configuration (REQ-CFG-023). Missing/invalid → 401 + audit `admin_rejected`.
 - `X-Internal-User-Id` is authoritative for authorization (REQ-AUTH-013): the API applies the acting user's effective levels (`Authentication_Authorization_Design.md` §4.1) — the PHP layer adds none. Unknown or disabled user → 403 + audit `admin_rejected`.
 - JSON request/response bodies with conventional REST semantics (GET read, POST create, PUT update, DELETE remove); all PUT endpoints are idempotent (REQ-API-042).
@@ -301,6 +301,7 @@ Every error is a JSON object with a consistent shape:
 | 401 | `service_token_invalid` | missing/invalid `X-Internal-Service-Token` (audit `admin_rejected`) |
 | 401 | `account_not_found` | login with an email that has no user row (REQ-AUTH-006; audit `login_failure`) |
 | 401 | `bad_password` | local login: the account has no stored hash, or the password does not match (GD-18, REQ-AUTH-050; the two cases are not distinguished; audit `login_failure`) |
+| 401 | `invalid_setup_token` | invite/reset completion with an unknown, expired, consumed, or wrong-purpose token (Sequence H, §4.3; the causes are not distinguished, REQ-API-120/121) |
 | 403 | `forbidden` | insufficient permission; project or record outside the acting user's visibility (uniform, REQ-API-007); unknown/disabled acting user (audit `admin_rejected`) |
 | 403 | `account_disabled` | login with a disabled account (including auto-disabled by the inactivity rule — `account_auto_disabled` audit first, REQ-AUTH-053; audit `login_failure`) |
 | 403 | `account_expired` | login with an account whose `valid_until` has passed (GD-19, REQ-AUTH-052; audit `login_failure`) |
@@ -310,7 +311,7 @@ Every error is a JSON object with a consistent shape:
 
 ### 4.3 Session (REQ-API-044, REQ-API-045)
 
-**`POST /api/v1/auth/login`** — called by the PHP application after successful OAuth2/LDAP authentication, **or with `source: "local"` and the password for table-based login** (GD-18, REQ-AUTH-050/051; REQ-AUTH-016). The only endpoint exempt from `X-Internal-User-Id`; it still requires the service token. Body:
+**`POST /api/v1/auth/login`** — called by the PHP application after successful OAuth2/LDAP authentication, **or with `source: "local"` and the password for table-based login** (GD-18, REQ-AUTH-050/051; REQ-AUTH-016). Exempt from `X-Internal-User-Id`, like the Sequence H endpoints below (DEV-API-16); it still requires the service token. Body:
 
 ```json
 { "email": "user@example.org", "source": "oauth2", "provider": "https://idp.example.org" }
@@ -338,6 +339,14 @@ Processing (in order, `Authentication_Authorization_Design.md` §2.3): for `sour
 
 **`POST /api/v1/auth/logout`** — records the `logout` audit event (REQ-AUTH-008) and returns 200. Destruction of the PHP session remains the PHP layer's responsibility, performed after this call (GD-1, REQ-AUTH-015; `Authentication_Authorization_Design.md` §2.4).
 
+**Out-of-band password endpoints (Sequence H — GD-22/GD-23).** Pre-authentication: service token only, no `X-Internal-User-Id` (DEV-API-16); full mechanics in `Authentication_Authorization_Design.md` §2.8.
+
+| Endpoint | Contract |
+|---|---|
+| `POST /api/v1/auth/password-reset/request` | body `{ "email": "…" }`; **always 202 with an identical body** — whether or not a matching active local account exists (no enumeration, REQ-AUTH-062); when one does, emails the set-password link with a single-use `reset` token (`password_tokens`, REQ-DB-039; TTL `AUTH_PASSWORD_TOKEN_TTL_DAYS`, REQ-CFG-030); rate-limited per address and IP (default 3/15 min/address); audit `password_reset_requested` (address + IP, never the token) (REQ-API-119) |
+| `POST /api/v1/auth/password-reset/complete` | body `{ "token": "…", "password": "***" }`; constant-time hash verification, purpose `reset`, expiry, single use; success stores the bcrypt hash, consumes the token, invalidates all outstanding tokens of the account, audits `password_reset_completed` → 200 `{ "ok": true }`; any failure → generic 401 `invalid_setup_token`; no temporary password exists (REQ-AUTH-062, REQ-API-120) |
+| `POST /api/v1/auth/invite/complete` | as above for purpose `invite` — sets the invited user's own chosen password, audits `invite_accepted`, generic 401 on any failure; login afterwards runs Sequence F with the full second-factor gate (REQ-AUTH-060, REQ-API-121) |
+
 ### 4.4 Users (REQ-API-046…048)
 
 All three require `is_admin`; a call by a non-admin is rejected (403 `forbidden`).
@@ -360,6 +369,8 @@ All three require `is_admin`; a call by a non-admin is rejected (403 `forbidden`
 | `POST /api/v1/users/me/tfa/disable` | requires a valid current code or recovery code; sets method `off`, clears secret/codes; audit `tfa_disabled` |
 
 Administrator (requires `is_admin`), REQ-API-116: `POST /api/v1/users/{id}/tfa/reset` — deletes the account's `user_two_factor` row back to `off` (lost device/email); 200; audit `tfa_reset`. No endpoint ever returns a secret, pending code, or recovery code outside its single enrollment/activation response.
+
+**Password lifecycle endpoints (GD-22/GD-23).** Administrator: `POST /api/v1/users/{id}/invite` — sends the invitation email with a single-use `invite` token to the account's address (REQ-AUTH-060); requires `is_admin`; 409 `smtp_not_configured` without a relay (the admin then sets the password directly); a re-invite replaces any outstanding invite token (the old link dies); 200 `{ "ok": true }` — the token value is never in the response; audit `user_invited` (REQ-API-117). Self-service: `PUT /api/v1/users/me/password` with `{ "current_password": "…", "new_password": "…" }` — current password verified against `password_hash` first (failure → 401 `bad_password`, audit-logged, counted toward the REQ-AUTH-035 lockout), then the new bcrypt hash is stored; accounts without a local credential → 409 `no_local_credential`; sessions are not revoked (DEV-AUTH-13); audit `password_changed` (REQ-AUTH-061, REQ-API-118).
 
 ### 4.5 Projects (REQ-API-049…052)
 
