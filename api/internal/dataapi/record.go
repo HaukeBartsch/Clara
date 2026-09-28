@@ -127,8 +127,13 @@ func (h *Handler) loadDict(ctx context.Context, projectID int64) (*projectDict, 
 
 // activeGroupID is the holder's data-access-group scope: the id of their
 // active membership when one exists, nil otherwise — a holder without a
-// group receives all records of the project (REQ-AUTH-045).
+// group receives all records of the project (REQ-AUTH-045). A survey link
+// has no member and therefore no group (REQ-AUTH-044): its record is placed
+// in no group rather than in someone's.
 func (h *Handler) activeGroupID(ctx context.Context, sub *subject) (*int64, error) {
+	if sub.isLink() {
+		return nil, nil
+	}
 	ms, err := h.Store.ListDAGMembershipsByAssignment(ctx, sub.Assignment.ID)
 	if err != nil {
 		return nil, err

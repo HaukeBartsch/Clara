@@ -170,6 +170,10 @@ func (h *Handler) contentMetadata(ctx context.Context, w http.ResponseWriter, en
 	for _, i := range ins {
 		form[i.ID] = i.Name
 	}
+	// forms[] narrows the render to those instruments; a survey link has its
+	// own name forced here, so it sees one instrument's definitions and no
+	// other (API_Endpoints_Design.md §3.10, REQ-API-083).
+	wantForms := toSet(p.Forms)
 	fields, err := h.Store.ListFields(ctx, pid)
 	if err != nil {
 		h.storeError(w, enc)
@@ -177,6 +181,9 @@ func (h *Handler) contentMetadata(ctx context.Context, w http.ResponseWriter, en
 	}
 	rows := make([]metaRow, 0, len(fields))
 	for i, f := range fields {
+		if wantForms != nil && !wantForms[form[f.InstrumentID]] {
+			continue
+		}
 		codes, labels := splitChoices(f.Choices.String)
 		rows = append(rows, metaRow{
 			FieldName:       f.FieldName,

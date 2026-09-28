@@ -65,6 +65,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+	// A survey-link caller is scoped to the two calls of §3.10 and never
+	// reaches the permission table below (REQ-API-083).
+	if sub.isLink() {
+		h.serveSurveyLink(ctx, w, r, enc, sub, p)
+		return
+	}
 	switch p.Content {
 	case "":
 		writeError(w, enc, http.StatusBadRequest, "Invalid content")
