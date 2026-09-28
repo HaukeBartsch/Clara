@@ -18,12 +18,23 @@ import (
 const (
 	settingRateLimitEnabled = "rate_limit_enabled"
 	settingRateLimitRPM     = "rate_limit_rpm"
+	settingRateLimitBlock   = "rate_limit_block_minutes"
+)
+
+// Seeded defaults and the accepted range of the blockout period: an IP over
+// its per-minute budget stays blocked that many minutes (REQ-API-113). The
+// upper bound keeps a mistyped value from locking every caller out for days.
+const (
+	defaultRateLimitRPM       = 600
+	defaultRateLimitBlockMins = 10
+	maxRateLimitBlockMinutes  = 1440
 )
 
 // SettingsObject is the §4.22 response shape.
 type SettingsObject struct {
-	RateLimitEnabled bool `json:"rate_limit_enabled"`
-	RateLimitRPM     int  `json:"rate_limit_rpm"`
+	RateLimitEnabled      bool `json:"rate_limit_enabled"`
+	RateLimitRPM          int  `json:"rate_limit_rpm"`
+	RateLimitBlockMinutes int  `json:"rate_limit_block_minutes"`
 }
 
 func (h *Handler) registerSettings(mux *http.ServeMux) {
@@ -39,11 +50,15 @@ func (h *Handler) settings(ctx context.Context) (SettingsObject, error) {
 		return SettingsObject{}, err
 	}
 	out := SettingsObject{
-		RateLimitEnabled: s[settingRateLimitEnabled] == "true",
-		RateLimitRPM:     600,
+		RateLimitEnabled:      s[settingRateLimitEnabled] == "true",
+		RateLimitRPM:          defaultRateLimitRPM,
+		RateLimitBlockMinutes: defaultRateLimitBlockMins,
 	}
 	if v, err := strconv.Atoi(s[settingRateLimitRPM]); err == nil && v >= 1 {
 		out.RateLimitRPM = v
+	}
+	if v, err := strconv.Atoi(s[settingRateLimitBlock]); err == nil && v >= 1 {
+		out.RateLimitBlockMinutes = v
 	}
 	return out, nil
 }
@@ -83,6 +98,7 @@ func (h *Handler) putSettings(w http.ResponseWriter, r *http.Request) {
 	old := map[string]string{
 		settingRateLimitEnabled: strconv.FormatBool(cur.RateLimitEnabled),
 		settingRateLimitRPM:     strconv.Itoa(cur.RateLimitRPM),
+		settingRateLimitBlock:   strconv.Itoa(cur.RateLimitBlockMinutes),
 	}
 
 	// Validate everything before writing anything.
@@ -100,6 +116,13 @@ func (h *Handler) putSettings(w http.ResponseWriter, r *http.Request) {
 			var n int
 			if err := json.Unmarshal(v, &n); err != nil || n < 1 {
 				errBadRequest(w, "rate_limit_rpm must be an integer >= 1")
+				return
+			}
+			next[k] = strconv.Itoa(n)
+		case settingRateLimitBlock:
+			var n int
+			if err := json.Unmarshal(v, &n); err != nil || n < 1 || n > maxRateLimitBlockMinutes {
+				errBadRequest(w, "rate_limit_block_minutes must be an integer 1..1440")
 				return
 			}
 			next[k] = strconv.Itoa(n)
