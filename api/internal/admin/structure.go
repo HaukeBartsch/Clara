@@ -295,6 +295,14 @@ func (h *Handler) listArms(w http.ResponseWriter, r *http.Request) {
 	if !ok || !h.requireRead(w, u, lv) {
 		return
 	}
+	if staged, err := h.stagedRead(r.Context(), projectID); err != nil {
+		errInternal(w)
+		return
+	} else if staged != nil {
+		// A staging set is open, so readers see the staged design (§4.21).
+		writeJSON(w, http.StatusOK, staged.armObjects())
+		return
+	}
 	arms, eventsByArm, err := h.CanonicalEvents(r.Context(), projectID)
 	if err != nil {
 		errInternal(w)
@@ -327,7 +335,7 @@ func (h *Handler) createArm(w http.ResponseWriter, r *http.Request) {
 		errBadRequest(w, "malformed JSON body")
 		return
 	}
-	if !RejectUnknownAttrs(w, supplied, "name") {
+	if !RejectUnknownAttrs(w, supplied, "name", "acknowledge_breaking") {
 		return
 	}
 	var body struct {
@@ -341,6 +349,30 @@ func (h *Handler) createArm(w http.ResponseWriter, r *http.Request) {
 	name := ""
 	if body.Name != nil {
 		name = *body.Name
+	}
+	var created stagedArm
+	apply := func(d *stagedDesign) *designError {
+		arm := d.putArm(db.Arm{
+			ProjectID: projectID, ArmNum: d.nextArmNum(),
+			Name: sql.NullString{String: name, Valid: name != ""},
+		})
+		created = *arm
+		return nil
+	}
+	target, staged, ok := h.structureWrite(w, r, projectID, acknowledgeFrom(supplied), apply)
+	if !ok {
+		return
+	}
+	if target == writeStaged {
+		// The arm joins the staged design; the live tables keep collecting
+		// against the active one until commit (REQ-API-107).
+		if !h.applyStagedChange(w, r, projectID, staged, apply) {
+			return
+		}
+		writeJSON(w, http.StatusCreated, armObject{
+			ID: created.ID, ArmNum: created.ArmNum, Name: name, Events: []armEventObject{},
+		})
+		return
 	}
 	arms, err := h.Store.ListArms(ctx, projectID)
 	if err != nil {
@@ -398,6 +430,14 @@ func (h *Handler) deleteArm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if arm == nil {
+		// An arm created while a staging set is open has no live row; the set
+		// holding it answers for it.
+		if handled, err := h.deleteStagedArm(w, r, u, armID); err != nil {
+			errInternal(w)
+			return
+		} else if handled {
+			return
+		}
 		errNotFound(w)
 		return
 	}
@@ -407,6 +447,28 @@ func (h *Handler) deleteArm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !h.requireProjectAdmin(w, r, lv) {
+		return
+	}
+	apply := func(d *stagedDesign) *designError {
+		a, ok := d.armByID(armID)
+		if !ok {
+			return conflictf("arm %d is not part of the staged design", armID)
+		}
+		if len(a.Events) > 0 {
+			return conflictf("arm still has events")
+		}
+		d.deleteArm(armID)
+		return nil
+	}
+	target, staged, ok := h.structureWrite(w, r, arm.ProjectID, false, apply)
+	if !ok {
+		return
+	}
+	if target == writeStaged {
+		if !h.applyStagedChange(w, r, arm.ProjectID, staged, apply) {
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	events, err := h.Store.ListEventsByArm(ctx, arm.ProjectID, arm.ID)
@@ -456,6 +518,13 @@ func (h *Handler) listEvents(w http.ResponseWriter, r *http.Request) {
 	if !ok || !h.requireRead(w, u, lv) {
 		return
 	}
+	if staged, err := h.stagedRead(r.Context(), projectID); err != nil {
+		errInternal(w)
+		return
+	} else if staged != nil {
+		writeJSON(w, http.StatusOK, staged.eventObjects())
+		return
+	}
 	arms, eventsByArm, err := h.CanonicalEvents(r.Context(), projectID)
 	if err != nil {
 		errInternal(w)
@@ -481,7 +550,8 @@ func (h *Handler) createEvent(w http.ResponseWriter, r *http.Request) {
 		errBadRequest(w, "malformed JSON body")
 		return
 	}
-	if !RejectUnknownAttrs(w, supplied, "arm_num", "event_name", "period", "safe_region_start", "safe_region_end") {
+	if !RejectUnknownAttrs(w, supplied, "arm_num", "event_name", "period",
+		"safe_region_start", "safe_region_end", "acknowledge_breaking") {
 		return
 	}
 	var body struct {
@@ -500,6 +570,46 @@ func (h *Handler) createEvent(w http.ResponseWriter, r *http.Request) {
 		errBadRequest(w, "arm_num and event_name are required")
 		return
 	}
+	label := *body.EventName
+	var created stagedEvent
+	var createdArmNum int
+	apply := func(d *stagedDesign) *designError {
+		a, ok := d.arm(*body.ArmNum)
+		if !ok {
+			return validationf("unknown arm number %d", *body.ArmNum)
+		}
+		unique := uniqueEventName(label, a.ArmNum)
+		for _, e := range a.Events {
+			if e.EventName == label {
+				return conflictf("event label '%s' already exists in arm %d", label, a.ArmNum)
+			}
+		}
+		if _, _, clash := d.eventByUniqueName(unique); clash {
+			return conflictf("unique event name '%s' already exists", unique)
+		}
+		ev, ok := d.putEvent(a.ID, db.Event{
+			ProjectID: projectID, ArmID: a.ID, EventName: label, UniqueEventName: unique,
+			Period:          nullInt64FromBody(body.Period),
+			SafeRegionStart: nullInt64FromBody(body.SafeRegionStart),
+			SafeRegionEnd:   nullInt64FromBody(body.SafeRegionEnd),
+		})
+		if !ok {
+			return validationf("unknown arm number %d", *body.ArmNum)
+		}
+		created, createdArmNum = *ev, a.ArmNum
+		return nil
+	}
+	target, staged, ok := h.structureWrite(w, r, projectID, acknowledgeFrom(supplied), apply)
+	if !ok {
+		return
+	}
+	if target == writeStaged {
+		if !h.applyStagedChange(w, r, projectID, staged, apply) {
+			return
+		}
+		writeJSON(w, http.StatusCreated, stagedEventObject(created, createdArmNum))
+		return
+	}
 	arm, err := h.Store.GetArmByNum(ctx, projectID, *body.ArmNum)
 	if err != nil {
 		errInternal(w)
@@ -509,7 +619,6 @@ func (h *Handler) createEvent(w http.ResponseWriter, r *http.Request) {
 		errBadRequest(w, "unknown arm number")
 		return
 	}
-	label := *body.EventName
 	unique := label + "_arm_" + strconv.Itoa(arm.ArmNum)
 	events, err := h.Store.ListEventsByArm(ctx, projectID, arm.ID)
 	if err != nil {
@@ -581,8 +690,77 @@ func (h *Handler) updateEvent(w http.ResponseWriter, r *http.Request) {
 		errInternal(w)
 		return
 	}
+	var supplied map[string]json.RawMessage
+	if err := decodeBody(r, &supplied); err != nil {
+		errBadRequest(w, "malformed JSON body")
+		return
+	}
+	if !RejectUnknownAttrs(w, supplied, "event_name", "period", "safe_region_start",
+		"safe_region_end", "acknowledge_breaking") {
+		return
+	}
+
+	// The same edit over a design snapshot: production routes it to the open set,
+	// and an event created while staging lives only there (§4.21).
+	var editedArmNum int
+	var edited stagedEvent
+	applyEdit := func(d *stagedDesign) *designError {
+		se, sa, ok := d.event(eventID)
+		if !ok {
+			return validationf("event %d is not part of the staged design", eventID)
+		}
+		if raw, present := supplied["event_name"]; present {
+			var label string
+			if err := json.Unmarshal(raw, &label); err != nil || label == "" {
+				return validationf("event_name must be a non-empty string")
+			}
+			if label != se.EventName {
+				unique := uniqueEventName(label, sa.ArmNum)
+				for _, other := range sa.Events {
+					if other.ID != se.ID && other.EventName == label {
+						return conflictf("event label '%s' already exists in arm %d", label, sa.ArmNum)
+					}
+				}
+				if _, _, clash := d.eventByUniqueName(unique); clash {
+					return conflictf("unique event name '%s' already exists", unique)
+				}
+				se.EventName, se.UniqueEventName = label, unique
+			}
+		}
+		for _, attr := range []struct {
+			key string
+			dst *sql.NullInt64
+		}{
+			{"period", &se.Period}, {"safe_region_start", &se.SafeRegionStart},
+			{"safe_region_end", &se.SafeRegionEnd},
+		} {
+			raw, present := supplied[attr.key]
+			if !present {
+				continue
+			}
+			var v *int64
+			if err := json.Unmarshal(raw, &v); err != nil {
+				return validationf("invalid value for %s", attr.key)
+			}
+			*attr.dst = nullInt64FromBody(v)
+		}
+		edited, editedArmNum = *se, sa.ArmNum
+		return nil
+	}
+	stagedResponse := func() {
+		writeJSON(w, http.StatusOK, stagedEventObject(edited, editedArmNum))
+	}
 	if ev == nil {
-		errNotFound(w)
+		handled, err := h.stagedObjectWrite(w, r, u,
+			func(d *stagedDesign) bool { _, _, ok := d.event(eventID); return ok },
+			applyEdit, stagedResponse)
+		if err != nil {
+			errInternal(w)
+			return
+		}
+		if !handled {
+			errNotFound(w)
+		}
 		return
 	}
 	lv, err := h.access(ctx, u, ev.ProjectID)
@@ -593,12 +771,15 @@ func (h *Handler) updateEvent(w http.ResponseWriter, r *http.Request) {
 	if !h.requireProjectAdmin(w, r, lv) {
 		return
 	}
-	var supplied map[string]json.RawMessage
-	if err := decodeBody(r, &supplied); err != nil {
-		errBadRequest(w, "malformed JSON body")
+	target, staged, ok := h.structureWrite(w, r, ev.ProjectID, acknowledgeFrom(supplied), applyEdit)
+	if !ok {
 		return
 	}
-	if !RejectUnknownAttrs(w, supplied, "event_name", "period", "safe_region_start", "safe_region_end") {
+	if target == writeStaged {
+		if !h.applyStagedChange(w, r, ev.ProjectID, staged, applyEdit) {
+			return
+		}
+		stagedResponse()
 		return
 	}
 
@@ -772,7 +953,7 @@ func (h *Handler) orderEvents(w http.ResponseWriter, r *http.Request) {
 		errBadRequest(w, "malformed JSON body")
 		return
 	}
-	if !RejectUnknownAttrs(w, supplied, "arm_num", "order") {
+	if !RejectUnknownAttrs(w, supplied, "arm_num", "order", "acknowledge_breaking") {
 		return
 	}
 	var body struct {
@@ -782,6 +963,36 @@ func (h *Handler) orderEvents(w http.ResponseWriter, r *http.Request) {
 	raw, _ := json.Marshal(supplied)
 	if err := json.Unmarshal(raw, &body); err != nil || body.ArmNum == nil {
 		errBadRequest(w, "arm_num and order are required")
+		return
+	}
+	apply := func(d *stagedDesign) *designError {
+		a, ok := d.arm(*body.ArmNum)
+		if !ok {
+			return validationf("unknown arm number %d", *body.ArmNum)
+		}
+		if !d.orderEvents(a.ID, body.Order) {
+			return validationf("order must list every event of the arm exactly once")
+		}
+		return nil
+	}
+	target, staged, ok := h.structureWrite(w, r, projectID, acknowledgeFrom(supplied), apply)
+	if !ok {
+		return
+	}
+	if target == writeStaged {
+		a, found := staged.arm(*body.ArmNum)
+		if !found {
+			errBadRequest(w, "unknown arm number")
+			return
+		}
+		if !h.applyStagedChange(w, r, projectID, staged, apply) {
+			return
+		}
+		out := make([]EventObject, 0, len(a.Events))
+		for _, e := range canonicalStagedEvents(a.Events) {
+			out = append(out, stagedEventObject(e, a.ArmNum))
+		}
+		writeJSON(w, http.StatusOK, out)
 		return
 	}
 	arm, err := h.Store.GetArmByNum(ctx, projectID, *body.ArmNum)
@@ -872,6 +1083,13 @@ func (h *Handler) listInstruments(w http.ResponseWriter, r *http.Request) {
 	if !ok || !h.requireRead(w, u, lv) {
 		return
 	}
+	if staged, err := h.stagedRead(r.Context(), projectID); err != nil {
+		errInternal(w)
+		return
+	} else if staged != nil {
+		writeJSON(w, http.StatusOK, staged.instrumentObjects())
+		return
+	}
 	ctx := r.Context()
 	instruments, err := h.Store.ListInstruments(ctx, projectID)
 	if err != nil {
@@ -926,7 +1144,7 @@ func (h *Handler) createInstrument(w http.ResponseWriter, r *http.Request) {
 		errBadRequest(w, "malformed JSON body")
 		return
 	}
-	if !RejectUnknownAttrs(w, supplied, "name") {
+	if !RejectUnknownAttrs(w, supplied, "name", "acknowledge_breaking") {
 		return
 	}
 	var body struct {
@@ -938,6 +1156,28 @@ func (h *Handler) createInstrument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := *body.Name
+	var created stagedInstrument
+	apply := func(d *stagedDesign) *designError {
+		if _, dup := d.instrumentByName(name); dup {
+			return conflictf("instrument '%s' already exists in this project", name)
+		}
+		inst := d.putInstrument(db.Instrument{ProjectID: projectID, Name: name})
+		created = *inst
+		return nil
+	}
+	target, staged, ok := h.structureWrite(w, r, projectID, acknowledgeFrom(supplied), apply)
+	if !ok {
+		return
+	}
+	if target == writeStaged {
+		if !h.applyStagedChange(w, r, projectID, staged, apply) {
+			return
+		}
+		writeJSON(w, http.StatusCreated, instrumentObject{
+			ID: created.ID, Name: name, Position: created.Position, FieldCount: 0,
+		})
+		return
+	}
 	if dupe, err := h.Store.GetInstrumentByName(ctx, projectID, name); err != nil {
 		errInternal(w)
 		return
@@ -978,7 +1218,7 @@ func (h *Handler) orderInstruments(w http.ResponseWriter, r *http.Request) {
 		errBadRequest(w, "malformed JSON body")
 		return
 	}
-	if !RejectUnknownAttrs(w, supplied, "order") {
+	if !RejectUnknownAttrs(w, supplied, "order", "acknowledge_breaking") {
 		return
 	}
 	var body struct {
@@ -987,6 +1227,42 @@ func (h *Handler) orderInstruments(w http.ResponseWriter, r *http.Request) {
 	raw, _ := json.Marshal(supplied)
 	if err := json.Unmarshal(raw, &body); err != nil {
 		errBadRequest(w, "malformed JSON body")
+		return
+	}
+	apply := func(d *stagedDesign) *designError {
+		if !d.orderInstruments(body.Order) {
+			return validationf("order must list every instrument of the project exactly once")
+		}
+		return nil
+	}
+	target, staged, ok := h.structureWrite(w, r, projectID, acknowledgeFrom(supplied), apply)
+	if !ok {
+		return
+	}
+	if target == writeStaged {
+		// GD-8 is about stored records, so the live check applies unchanged.
+		if len(body.Order) > 0 {
+			first, found := staged.instrument(body.Order[0])
+			if !found {
+				errBadRequest(w, "order must list every instrument of the project exactly once")
+				return
+			}
+			var newFirst int64
+			if fields := sortedFields(first.Fields); len(fields) > 0 {
+				newFirst = fields[0].ID
+			}
+			if bad, err := h.gd8Violation(ctx, projectID, newFirst); err != nil {
+				errInternal(w)
+				return
+			} else if bad {
+				errBadRequest(w, "reordering would move the record identifier field (GD-8)")
+				return
+			}
+		}
+		if !h.applyStagedChange(w, r, projectID, staged, apply) {
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 		return
 	}
 	instruments, err := h.Store.ListInstruments(ctx, projectID)
@@ -1431,6 +1707,19 @@ func (h *Handler) listFields(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	if staged, err := h.stagedRead(ctx, projectID); err != nil {
+		errInternal(w)
+		return
+	} else if staged != nil {
+		// The instrument may itself be staged (a provisional id), so it is
+		// resolved from the set rather than the live tables.
+		if _, ok := staged.instrument(instID); !ok {
+			errNotFound(w)
+			return
+		}
+		writeJSON(w, http.StatusOK, staged.fieldObjects(projectID, instID))
+		return
+	}
 	inst, err := h.Store.GetInstrument(ctx, instID)
 	if err != nil {
 		errInternal(w)
@@ -2306,6 +2595,13 @@ func (h *Handler) getMapping(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	if staged, err := h.stagedRead(ctx, projectID); err != nil {
+		errInternal(w)
+		return
+	} else if staged != nil {
+		writeJSON(w, http.StatusOK, staged.mappingObjects())
+		return
+	}
 	arms, eventsByArm, err := h.CanonicalEvents(ctx, projectID)
 	if err != nil {
 		errInternal(w)
