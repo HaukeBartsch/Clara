@@ -517,3 +517,11 @@ If an IP hits the currently active rate limit all requests from that IP should b
 - allow for more than one authentication source to have the same name
 - allow for multiple names per authentication source
 - for login try each authentication source with the same name in parallel - first "login ok" response wins
+
+## Instrument level completion info
+
+The 3-state record completion (binary today, REQ-API-074) is by instrument. The user interface should allow a user to set this instrument completion code as a new (always last in the instrument) field in the "record instrument" web view. If the instrument is marked as a survey this completion info is filled in automatically (complete, green).
+
+## Record history by field
+
+The "record instrument" web view shows all fields for an instrument with values by record, arm, repeating instrument. The web views shows after clicking an instrument button/icon in the "record status dashboard". In the record instrument web view next to each fields description (only editable in designer) and value (editable in record instrument) a small "history" button should allow the user to see a table with previous values (record-history with dates value was entered and the user account). See also `API_Endpoints_Design.md` §4.16.
