@@ -22,4 +22,4 @@ Export is gated by the acting user's (or token holder's) **export level for the 
 
 ## End-of-Project Provision
 - The end provision (delete or anonymize) is decided per project but is **no longer a `projects` attribute** — GD-17 removed it from the table along with the option flags. The owner records it as data in an ordinary instrument (e.g. `DataTransferProjects`) or outside the system; the REK end date remains project metadata (REQ-DB-032, BR-009).
-- At the end of the project (REK-END / end date), the stored data is handled according to the provision: deleted, or anonymized using the rules above. It is a one-shot action per project.
+- At the end of the project (REK-END / end date), the stored data is handled according to the provision: deleted, or anonymized using the rules above. It is a one-shot action per project, executed by an installation administrator (`is_admin`) via `POST /api/v1/projects/{id}/end-provision` with `{ "provision": "delete" | "anonymize" }`; a second execution conflicts (the `project_ended` audit event is the idempotency state) and the response reports the affected record and value counts (REQ-EXP-040).

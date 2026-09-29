@@ -50,7 +50,7 @@ One endpoint: `POST /api/` with an `application/x-www-form-urlencoded` body; `GE
 | `records[]` / `fields[]` / `forms[]` / `events[]` | arrays | — | both REDCap array syntax (`records[0]=…&records[1]=…`) and repeated single values (REQ-API-015) |
 | `filterLogic` | expression (§3.6.3) | — | export only (REQ-API-025) |
 | `rawOrLabel` | `raw` / `label` | `raw` | choice fields (REQ-API-027) |
-| `rawOrLabelHeaders` | `raw` / `label` / `both` | `raw` | field names (REQ-API-027) |
+| `rawOrLabelHeaders` | `raw` / `label` / `both` | `raw` | field names; `both` renders each header as `<Field Label> (field_name)` — the bare name where the field carries no label (REQ-API-027) |
 | `data[]` | import entries (§3.7.1) | — | import only (REQ-API-031) |
 | `tz` | IANA timezone name or `±HH:MM` offset | `APP_TIMEZONE` (REQ-CFG-026) | import only — timezone of collection for the call's date/date-time values (GD-16, REQ-VAL-041, REQ-API-031) |
 | `exportCheckboxLabel`, `exportSurveyFields`, `exportDataAccessGroups` | any | — | accepted and **ignored** (REQ-API-016, DEV-API-2) |
@@ -632,8 +632,10 @@ The response MUST NOT contain field values (REQ-API-074). A record-status read i
 | `format` | `csv` \| `json` | `csv` | encoding (REQ-API-075) |
 | `arm` | arm number, repeatable (`arm=1&arm=3`) | all arms the caller may export | restricts the export to those arms — this is what makes a higher per-arm sensitivity obtainable by separate per-arm exports (REQ-EXP-003); an arm the caller cannot export → 403 `forbidden`; an unknown arm number → 404 `not_found` |
 | `rawOrLabel` | `raw` \| `label` | `raw` | choice values as codes or labels (REQ-EXP-010, same semantics as the data API's `rawOrLabel`, §3.1) |
-| `rawOrLabelHeaders` | `raw` \| `label` \| `both` | `raw` | column names (REQ-EXP-010) |
+| `rawOrLabelHeaders` | `raw` \| `label` \| `both` | `raw` | column names; `both` renders each header as `<Field Label> (field_name)` — the bare name where the field carries no label (§3.1, REQ-EXP-010) |
 | `csvDelimiter` | single character | `,` | empty value = comma (REQ-EXP-013); CSV only |
+
+Known parameters validate strictly: `format`, `rawOrLabel`, or `rawOrLabelHeaders` outside their value sets, a multi-character `csvDelimiter`, or a non-numeric `arm` → 400 `invalid_request`; unknown parameter names stay accepted and ignored (REQ-API-017). A caller with no exportable arm — none by default, or any named arm `export_none` — gets 403 `forbidden`; a rejected call writes no audit entry (REQ-AUD-004).
 
 The response is streamed (REQ-TECH-011). Record selection follows the data-access-group rule (REQ-API-092). Sensitivity follows the acting user's export level per arm (the REQ-API-026 ladder — `export_full` → full dataset; `export_no_identifiers` → identifier fields removed; `export_de_identified` → de-identified per §3.6.1; `export_none` → 403 `forbidden`). **For an export spanning several arms the applied level is the lowest (most protective) level among those arms** — the minimum in the GD-2 ordering, so every row is delivered at a level no weaker than any arm allows (REQ-EXP-003, `Data_Export_Anonymization_Design.md` §4.3, decision D-4); `export_none` on any exported arm → 403 `forbidden`. The level recorded in the audit event and shown in the UI badge is exactly this applied minimum — never a higher level that some individual arm would have permitted.
 
@@ -758,6 +760,8 @@ Record scope and transformation are orthogonal (REQ-API-092, REQ-AUTH-045): the 
 { "provision": "delete", "records_affected": 42, "values_affected": 1287 }
 ```
 
+The counts report what the execution changed: `delete` counts the project's records (`record_entities` rows) and stored values removed; `anonymize` counts records with at least one rewritten value and the number of values rewritten — a value already in its target form stays untouched and counts neither (§7.4).
+
 Audit: `project_ended` with the provision and the affected counts (`Audit_Logging_Design.md` §3.3; `Data_Export_Anonymization_Design.md` §8).
 
 ### 4.21 Project modes and staging (GD-20, REQ-API-105…111)
@@ -842,6 +846,9 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirement.m
 |---|---|
 | data API `/api/` | the token's levels per §3 (data/export level per arm; link tokens scoped per §3.10) |
 | `GET/POST /api/v1/users`, `PUT /api/v1/users/{id}` | `is_admin` |
+| `POST /api/v1/users/{id}/invite` (§4.4, REQ-API-117) | `is_admin` |
+| `PUT /users/me/password` (§4.4, REQ-API-118) | any authenticated user (self, with local credential) |
+| `POST /api/v1/auth/password-reset/request`, `…/complete`, `POST /api/v1/auth/invite/complete` (§4.3, REQ-API-119/120/121) | pre-authentication — service token only, no user id (DEV-API-16) |
 | `POST /api/v1/projects` | `is_admin` |
 | `GET /api/v1/projects` | project visibility (REQ-API-007) |
 | `GET /api/v1/projects/{id}` | data access ≥ `read_only` + visibility |

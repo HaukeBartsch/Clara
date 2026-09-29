@@ -107,9 +107,9 @@ Field renames are `field_updated` with `"changes":{"name":{"old":"…","new":"�
 
 | Code | When | `details` payload |
 |---|---|---|
-| `export` | every data export on both surfaces — data API (`content=record&action=export`) and administration API (`GET /api/v1/projects/{id}/export`) | `{"surface":"data_api or ui","sensitivity":"full or no_identifiers or de_identified","filters":{"records":["…"],"fields":["…"],"forms":["…"],"events":["…"],"filter_logic":"[age]=\"42\""}}` |
+| `export` | every data export on both surfaces — data API (`content=record&action=export`) and administration API (`GET /api/v1/projects/{id}/export`) | `{"surface":"data_api or ui","sensitivity":"export_full or export_no_identifiers or export_de_identified","filters":{"records":["…"],"fields":["…"],"forms":["…"],"events":["…"],"filter_logic":"[age]=\"42\""}}` |
 
-Rules: omitted filters are empty arrays; `sensitivity` is the level applied per REQ-API-026/075 (for multi-arm exports, the **lowest / most protective** level among the exported arms — the one actually applied to every row, `Data_Export_Anonymization_Design.md` §4.3); the record-view row for data-API exports is written **in addition** to this entry (REQ-AUD-013, §4).
+Rules: omitted filters are empty arrays; `sensitivity` is the ladder name of the level applied per REQ-API-026/075 (for multi-arm exports, the **lowest / most protective** level among the exported arms — the one actually applied to every row, `Data_Export_Anonymization_Design.md` §4.3); a record-view row (§4) is written **in addition** to this entry for data-API exports only — the table is keyed by the call's token, which a UI export does not have, so its `export` event alone is the trail (REQ-AUD-013).
 
 ### 3.6 Survey events (REQ-AUD-021)
 

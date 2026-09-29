@@ -43,7 +43,7 @@ Common to both (normative):
 
 ### 3.1 CSV and JSON (REQ-API-013, REQ-API-075, master spec \"Export formats\")
 
-The master spec's \"CSV raw / CSV labels\" pair is the `rawOrLabel` axis on the data API (REQ-API-027) and is available on both surfaces — the same-named parameters on the data API (§3.1) and on the administration export (`rawOrLabel`, `rawOrLabelHeaders`, `csvDelimiter` on `GET /api/v1/projects/{id}/export`, `API_Endpoints_Design.md` §4.14, REQ-EXP-010/013); `format`/`returnFormat` selects the encoding (`json`/`csv`). Stored values remain choice codes (REQ-VAL-022); `rawOrLabel=label` renders dropdown/radio/matrix-row values as their labels, `rawOrLabelHeaders` renders the column names the same way (`raw`/`label`/`both`, REQ-API-027).
+The master spec's \"CSV raw / CSV labels\" pair is the `rawOrLabel` axis on the data API (REQ-API-027) and is available on both surfaces — the same-named parameters on the data API (§3.1) and on the administration export (`rawOrLabel`, `rawOrLabelHeaders`, `csvDelimiter` on `GET /api/v1/projects/{id}/export`, `API_Endpoints_Design.md` §4.14, REQ-EXP-010/013); `format`/`returnFormat` selects the encoding (`json`/`csv`). Stored values remain choice codes (REQ-VAL-022); `rawOrLabel=label` renders dropdown/radio/matrix-row values as their labels, `rawOrLabelHeaders` renders the column names the same way (`raw`/`label`; `both` reads each header `<Field Label> (field_name)`, the bare name where the field carries no label — REQ-API-027).
 
 ### 3.2 Row layout (REQ-API-028, `API_Endpoints_Design.md` §3.6.2)
 
@@ -158,7 +158,7 @@ The provision (delete or anonymize) is **not** system state (GD-17, REQ-DB-006/0
 
 ### 7.3 `provision=delete`
 
-Removes the project's stored record data: all EAV rows of the `data` table, `record_entities`, `survey_links`, and `anon_offsets` — every data-plane table keyed by `project_id` (`Database_Schema_Design.md` §6–§8). Kept: project metadata, structure (arms, events, instruments, fields, mapping), roles/memberships/tokens, and the audit trail — the project remains administrable and the action itself is auditable.
+Removes the project's stored record data: all EAV rows of the `data` table, `record_entities`, `survey_links`, and `anon_offsets` — every data-plane table keyed by `project_id` (`Database_Schema_Design.md` §6–§8). Kept: project metadata, structure (arms, events, instruments, fields, mapping), roles/memberships/tokens, and the audit trail — the project remains administrable and the action itself is auditable. The action reports `records_affected` (the project's `record_entities` rows) and `values_affected` (the `data` rows removed).
 
 ### 7.4 `provision=anonymize` (in-place)
 
@@ -167,9 +167,9 @@ Applies the §4.2 `export_de_identified` pipeline **in place** to the stored val
 1. values of direct identifier fields (§4.1) → cleared;
 2. values of personal fields → replaced by the §5.1 hash;
 3. values of free text fields with `export_approved = 0` → cleared (approved ones kept);
-4. date-bearing values → shifted by the §5.2 offset (offsets computed and persisted first).
+4. date-bearing values → shifted by the §5.2 offset (each record's offset computed and persisted in the same transaction before its dates shift).
 
-Afterwards, every read and export of that project — including `export_full` — returns the anonymized form. Irreversible; both provision branches close the action (one-shot, §7.2).
+A value already in its target form is left alone and counts as unchanged. The action reports `records_affected` — records with at least one rewritten value — and `values_affected` — the values rewritten (`API_Endpoints_Design.md` §4.20). Afterwards, every read and export of that project — including `export_full` — returns the anonymized form. Irreversible; both provision branches close the action (one-shot, §7.2).
 
 ## 8. Audit Integration (REQ-AUD-011/013…015, BR-008)
 
