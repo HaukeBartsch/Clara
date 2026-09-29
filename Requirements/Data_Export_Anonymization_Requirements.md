@@ -1,8 +1,8 @@
 # Data Export and Anonymization — Requirements Analysis
 
-**Project:** Clinical Study Management System (REDCap API Replacement)
-**Source plan:** `Plan/Data_Export_Anonymization.md`, `VISION_AND_REQUIREMENTS.md` (master spec)
-**Status:** Approved for development handoff
+**Project:** Clinical Study Management System (REDCap API Replacement)\
+**Source plan:** `Plan/Data_Export_Anonymization.md`, `VISION_AND_REQUIREMENTS.md` (master spec)\
+**Status:** Approved for development handoff\
 **Date:** 2026-09-23
 
 ## 1. Purpose
