@@ -512,7 +512,8 @@ If an IP hits the currently active rate limit all requests from that IP should b
 
 ## Authentication order
 
-- a user account should be able to select an authentication source by name
-- a name for an authentication source should be "Hospital 1", "Hospital 2", etc.
-- allow for more than one authentication source to have the same name, try each authentication source with the same name in parallel - first response wins
-
+- before a user logs in, they should be able to select an authentication source by name (resolves internally to table-based, or an LDAP(s) source or an OAuth provider)
+- a name presented to the user for an authentication source should be "Hospital 1", "Hospital 2", etc.
+- allow for more than one authentication source to have the same name
+- allow for multiple names per authentication source
+- for login try each authentication source with the same name in parallel - first "login ok" response wins
