@@ -1,7 +1,7 @@
 # Authentication & Authorization — Design
 
-**Project:** Clinical Study Management System (REDCap API Replacement)
-**Implements:** `Requirements/Authentication_Authorization_Requirements.md`
+**Project:** Clinical Study Management System (REDCap API Replacement)\
+**Implements:** `Requirements/Authentication_Authorization_Requirements.md`\
 **Date:** 2026-09-21
 
 ## 1. Trust Model
