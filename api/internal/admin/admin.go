@@ -22,6 +22,7 @@ import (
 	"csms/api/internal/audit"
 	"csms/api/internal/authz"
 	"csms/api/internal/config"
+	"csms/api/internal/dataapi"
 	"csms/api/internal/db"
 	"csms/api/internal/mailer"
 )
@@ -32,8 +33,9 @@ type Handler struct {
 	Store   *db.Store
 	Cfg     *config.Config
 	Audit   *audit.Writer
-	Mail    *mailer.Mailer // email second-factor codes and setup links (REQ-AUTH-057/060/062)
-	Handler http.Handler   // the /api/v1/ mux, built by New
+	Mail    *mailer.Mailer   // email second-factor codes and setup links (REQ-AUTH-057/060/062)
+	Data    *dataapi.Handler // serves the shared streaming export core (§4.14)
+	Handler http.Handler     // the /api/v1/ mux, built by New
 
 	// SendMail overrides Mail.Send for tests; nil uses the configured relay.
 	SendMail func(to, subject, body string) error
@@ -46,6 +48,7 @@ type Handler struct {
 // New builds the administration handler and registers every area's routes.
 func New(store *db.Store, cfg *config.Config, aw *audit.Writer) *Handler {
 	h := &Handler{Store: store, Cfg: cfg, Audit: aw, Mail: mailer.New(cfg),
+		Data:     &dataapi.Handler{Store: store, Cfg: cfg, Audit: aw},
 		tfaSends: newSendLimiter(), resetSends: newAddressLimiter(), lockouts: newAuthLockout()}
 	mux := http.NewServeMux()
 	h.registerAuth(mux)
@@ -59,6 +62,7 @@ func New(store *db.Store, cfg *config.Config, aw *audit.Writer) *Handler {
 	h.registerStructure(mux)
 	h.registerDAG(mux)
 	h.registerSurvey(mux)
+	h.registerExport(mux)
 	h.registerQueries(mux)
 	h.registerCompletion(mux)
 	h.registerI18n(mux)

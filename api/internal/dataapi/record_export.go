@@ -1,9 +1,12 @@
 package dataapi
 
-// content=record&action=export (API_Endpoints_Design.md §3.6). Row shape is
-// flat (normative) or simplified wide (DEV-API-1); the sensitivity pipeline
-// is Data_Export_Anonymization_Design.md §4.2; CSV streams with formula
-// neutralization (§3.3); every successful call is audited (§8).
+// content=record&action=export (API_Endpoints_Design.md §3.6) and the
+// administration export GET /api/v1/projects/{id}/export (§4.14) share one
+// streaming core: row shape flat (normative) or simplified wide (DEV-API-1),
+// the sensitivity pipeline of Data_Export_Anonymization_Design.md §4.2, CSV
+// formula neutralization (§3.3), and the export audit event (§8). Callers
+// resolve authorization — the applied level, candidate arms/events, DAG
+// scope — and hand the result to streamExport as an ExportSpec.
 
 import (
 	"encoding/csv"
@@ -16,6 +19,66 @@ import (
 	"csms/api/internal/db"
 	"csms/api/internal/validate"
 )
+
+// ExportSpec is one fully-resolved export. The caller has made every
+// authorization decision: Level is the applied sensitivity rank (the lowest
+// among Arms, D-4) and must be above none; Events/RestrictEvents bound the
+// candidate events; GroupID applies the data-access-group scope
+// (REQ-API-092). The two surfaces differ only in how they fill this in.
+type ExportSpec struct {
+	ProjectID  int64
+	User       *db.User // acting identity recorded on the audit rows
+	Token      string   // token column — the project/link token; "" for the UI surface
+	Surface    string   // audit.SourceAPI | audit.SourceUI (Details["surface"], §3.5)
+	RecordView bool     // write the audit_record_views row when values returned (§4)
+
+	Level  int      // applied export level rank (> expNone), caller-resolved
+	Arms   []int    // candidate arms; exactly one stamps the audit ArmNum
+	Events []string // candidate unique event names (see RestrictEvents)
+	// RestrictEvents filters the dictionary to Events — an explicitly empty
+	// set then exports no rows. Without it, every event is a candidate.
+	RestrictEvents bool
+	GroupID        *int64 // data-access-group filter; nil = all records
+
+	Records     []string // call parameters recorded in the audit filters (§3.5)
+	Fields      []string
+	Forms       []string
+	FilterLogic string
+	// FilterEvents is the events[] call parameter for the audit filters —
+	// distinct from Events, which on the administration surface carries the
+	// candidate arms' events rather than a filter the caller supplied.
+	FilterEvents []string
+
+	RawOrLabel        string // "label" renders choice labels (REQ-EXP-010)
+	RawOrLabelHeaders string // raw | label | both (REQ-API-027)
+	Type              string // "" flat (normative) | "wide" (§3.6.2)
+	Enc               string // "csv" | "json"
+	Delimiter         rune   // CSV separator; 0 = comma (REQ-EXP-013)
+
+	// Error renders a failure in the surface's own error shape (the data API
+	// speaks §3.2 text, the administration API §4.2 JSON). nil = REDCap text.
+	Error func(w http.ResponseWriter, status int, message string)
+}
+
+func (s ExportSpec) fail(w http.ResponseWriter, status int, message string) {
+	if s.Error != nil {
+		s.Error(w, status, message)
+		return
+	}
+	writeError(w, s.Enc, status, message)
+}
+
+// RunExport streams an export for another surface (the administration API,
+// §4.14). The spec carries the caller-resolved authorization; RunExport only
+// renders and audits.
+func (h *Handler) RunExport(w http.ResponseWriter, r *http.Request, s ExportSpec) {
+	d, err := h.loadDict(r.Context(), s.ProjectID)
+	if err != nil {
+		s.fail(w, http.StatusInternalServerError, "Internal error")
+		return
+	}
+	h.streamExport(w, r, d, s)
+}
 
 func (h *Handler) contentRecordExport(w http.ResponseWriter, r *http.Request, enc string, sub *subject, p Params) {
 	ctx := r.Context()
@@ -50,12 +113,66 @@ func (h *Handler) contentRecordExport(w http.ResponseWriter, r *http.Request, en
 		return
 	}
 
+	groupID, err := h.activeGroupID(ctx, sub)
+	if err != nil {
+		h.storeError(w, enc)
+		return
+	}
+
+	h.streamExport(w, r, d, ExportSpec{
+		ProjectID:         sub.Project.ID,
+		User:              sub.User,
+		Token:             p.Token,
+		Surface:           audit.SourceAPI,
+		RecordView:        true,
+		Level:             level,
+		Arms:              arms,
+		Events:            p.Events,
+		RestrictEvents:    len(p.Events) > 0,
+		GroupID:           groupID,
+		Records:           p.Records,
+		Fields:            p.Fields,
+		Forms:             p.Forms,
+		FilterLogic:       p.FilterLogic,
+		FilterEvents:      p.Events,
+		RawOrLabel:        p.RawOrLabel,
+		RawOrLabelHeaders: p.RawOrLabelHeaders,
+		Type:              p.Type,
+		Enc:               enc,
+		Delimiter:         p.Delimiter(),
+	})
+}
+
+// streamExport renders one export against an already-loaded dictionary.
+func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projectDict, s ExportSpec) {
+	ctx := r.Context()
+	enc := s.Enc
+	if enc == "" {
+		enc = "csv"
+	}
+
+	// Candidate events: the spec's event names filter the dictionary (the
+	// data API's events[] parameter; the administration surface passes its
+	// candidate arms' events). An empty unrestricted set is "every event";
+	// a restricted empty set exports no rows.
+	var events []eventRow
+	if s.RestrictEvents {
+		wantEvents := toSet(s.Events)
+		for _, e := range d.events {
+			if wantEvents != nil && wantEvents[e.UniqueEventName] {
+				events = append(events, e)
+			}
+		}
+	} else {
+		events = d.events
+	}
+
 	// Columns: value-carrying fields after the forms/fields filters, then
 	// the level's column removals (§4.2 steps 1 and 3 — removed means the
 	// column is absent, not empty). A filter naming a removed column is
 	// silently absent (REQ-API-092): the filter runs first, the level wins.
-	wantForms := toSet(p.Forms)
-	wantFields := toSet(p.Fields)
+	wantForms := toSet(s.Forms)
+	wantFields := toSet(s.Fields)
 	type column struct {
 		f       recField
 		cat     exportCategory
@@ -73,10 +190,10 @@ func (h *Handler) contentRecordExport(w http.ResponseWriter, r *http.Request, en
 			continue
 		}
 		cat := categorize(f, d.identifier)
-		if level < expFull && cat == catDirectID {
+		if s.Level < expFull && cat == catDirectID {
 			continue
 		}
-		if level == expDeIdentified && cat == catFreeText && !f.ExportApproved {
+		if s.Level == expDeIdentified && cat == catFreeText && !f.ExportApproved {
 			continue
 		}
 		cols = append(cols, column{f: f, cat: cat, dateBrg: isDateBearing(f.Field)})
@@ -84,42 +201,47 @@ func (h *Handler) contentRecordExport(w http.ResponseWriter, r *http.Request, en
 
 	// Records: visible under the data-access-group rule, intersected with
 	// records[] (filters combine — REQ-API-024).
-	groupID, err := h.activeGroupID(ctx, sub)
+	ids, err := h.Store.ListRecordIDs(ctx, s.ProjectID, s.GroupID)
 	if err != nil {
-		h.storeError(w, enc)
+		s.fail(w, http.StatusInternalServerError, "Internal error")
 		return
 	}
-	ids, err := h.Store.ListRecordIDs(ctx, sub.Project.ID, groupID)
-	if err != nil {
-		h.storeError(w, enc)
-		return
-	}
-	wantRecords := toSet(p.Records)
+	wantRecords := toSet(s.Records)
 
 	// filterLogic: a malformed expression is a client error, caught before
 	// any output starts (REQ-API-025; grammar of Data_Validation_Design.md §7).
 	evaluate := func(_ recordValues) bool { return true }
-	if p.FilterLogic != "" {
-		if err := validate.ValidateBranching(p.FilterLogic, nil); err != nil {
-			writeError(w, enc, http.StatusBadRequest, "Invalid request")
+	if s.FilterLogic != "" {
+		if err := validate.ValidateBranching(s.FilterLogic, nil); err != nil {
+			s.fail(w, http.StatusBadRequest, "Invalid request")
 			return
 		}
 		evaluate = func(rv recordValues) bool {
-			ok, _ := validate.EvalLogic(p.FilterLogic, rv.eval(d))
+			ok, _ := validate.EvalLogic(s.FilterLogic, rv.eval(d))
 			return ok
 		}
 	}
 
-	labelValues := strings.EqualFold(p.RawOrLabel, "label")
-	labelHeaders := strings.EqualFold(p.RawOrLabelHeaders, "label")
-	wide := strings.EqualFold(p.Type, "wide")
+	labelValues := strings.EqualFold(s.RawOrLabel, "label")
+	var labelHeaders, bothHeaders bool
+	switch strings.ToLower(s.RawOrLabelHeaders) {
+	case "label":
+		labelHeaders = true
+	case "both":
+		// REQ-API-027: "<Field Label> (field_name)".
+		bothHeaders = true
+	}
 
 	// Header. flat: the record identifier first (GD-8), then the redcap_*
 	// columns for projects with events (§3.2), then fields in dictionary
 	// order. wide: a field present in one event keeps its bare name; in
 	// several events it repeats as <field>_<unique_event_name>.
+	wide := strings.EqualFold(s.Type, "wide")
 	headerOf := func(c column) string {
-		if labelHeaders && c.f.FieldLabel.Valid && c.f.FieldLabel.String != "" {
+		if (labelHeaders || bothHeaders) && c.f.FieldLabel.Valid && c.f.FieldLabel.String != "" {
+			if bothHeaders {
+				return c.f.FieldLabel.String + " (" + c.f.FieldName + ")"
+			}
 			return c.f.FieldLabel.String
 		}
 		return c.f.FieldName
@@ -177,7 +299,10 @@ func (h *Handler) contentRecordExport(w http.ResponseWriter, r *http.Request, en
 
 	// --- stream ---
 	cw := csv.NewWriter(w)
-	cw.Comma = p.Delimiter()
+	cw.Comma = s.Delimiter
+	if cw.Comma == 0 {
+		cw.Comma = ','
+	}
 	if enc == "csv" {
 		w.Header().Set("Content-Type", "text/csv")
 		w.WriteHeader(http.StatusOK)
@@ -229,9 +354,9 @@ func (h *Handler) contentRecordExport(w http.ResponseWriter, r *http.Request, en
 		if wantRecords != nil && !wantRecords[id] {
 			continue
 		}
-		dvs, err := h.Store.ListDataValuesByRecord(ctx, sub.Project.ID, id)
+		dvs, err := h.Store.ListDataValuesByRecord(ctx, s.ProjectID, id)
 		if err != nil {
-			h.storeError(w, enc) // header may already be out; nothing better to do
+			s.fail(w, http.StatusInternalServerError, "Internal error") // header may already be out; nothing better to do
 			return
 		}
 		rv := valuesIndex(dvs)
@@ -243,13 +368,13 @@ func (h *Handler) contentRecordExport(w http.ResponseWriter, r *http.Request, en
 		// computed lazily only when a date-bearing column survives.
 		var offsetDays int
 		offsetReady := false
-		if level == expDeIdentified {
+		if s.Level == expDeIdentified {
 			for _, c := range cols {
 				if c.dateBrg {
-					off, err := db.EnsureAnonOffset(ctx, h.Store, sub.Project.ID, id,
+					off, err := db.EnsureAnonOffset(ctx, h.Store, s.ProjectID, id,
 						h.Cfg.AnonSalt, h.Cfg.AnonDateShiftMin, h.Cfg.AnonDateShiftMax)
 					if err != nil {
-						h.storeError(w, enc)
+						s.fail(w, http.StatusInternalServerError, "Internal error")
 						return
 					}
 					offsetDays, offsetReady = off, true
@@ -273,10 +398,10 @@ func (h *Handler) contentRecordExport(w http.ResponseWriter, r *http.Request, en
 			if v == "" {
 				return ""
 			}
-			if c.cat == catPersonal && level == expDeIdentified {
-				v = fieldHash(h.Cfg.AnonSalt, sub.Project.ID, c.f.FieldName, v)
+			if c.cat == catPersonal && s.Level == expDeIdentified {
+				v = fieldHash(h.Cfg.AnonSalt, s.ProjectID, c.f.FieldName, v)
 			}
-			if level == expDeIdentified && c.dateBrg && offsetReady {
+			if s.Level == expDeIdentified && c.dateBrg && offsetReady {
 				v = shiftDatePart(v, offsetDays)
 			}
 			if labelValues && c.f.Choices.String != "" {
@@ -300,21 +425,21 @@ func (h *Handler) contentRecordExport(w http.ResponseWriter, r *http.Request, en
 			} else if len(dvs) > 0 {
 				specs = append(specs, rowSpec{})
 			}
-			for _, s := range specs {
+			for _, rs := range specs {
 				cells := make([]string, 0, len(header))
 				if identifierCol >= 0 {
-					cells = append(cells, cell(cols[identifierCol], s.event))
+					cells = append(cells, cell(cols[identifierCol], rs.event))
 				}
 				if d.hasEvents {
-					cells = append(cells, s.event, "", "")
+					cells = append(cells, rs.event, "", "")
 				}
 				for _, sl := range slots {
-					cells = append(cells, cell(cols[sl.col], s.event))
+					cells = append(cells, cell(cols[sl.col], rs.event))
 				}
 				writeRow(cells)
 				returned = append(returned, id)
 				for _, sl := range slots {
-					if cellsValueHasData(cell(cols[sl.col], s.event)) {
+					if cellsValueHasData(cell(cols[sl.col], rs.event)) {
 						instruments[cols[sl.col].f.Instrument] = true
 					}
 				}
@@ -338,20 +463,25 @@ func (h *Handler) contentRecordExport(w http.ResponseWriter, r *http.Request, en
 		_, _ = w.Write([]byte("]"))
 	}
 
-	// Audit (§8): the export event on every successful call, the record-view
-	// row only when values were returned (REQ-AUD-015). No exported or
-	// transformed values are recorded (REQ-AUD-014).
+	// Audit (§8): the export event on every successful call; the record-view
+	// row is written for data-API exports when values were returned
+	// (REQ-AUD-013/015 — the table keys on the presented token, so UI exports
+	// carry only the export event). No exported or transformed values are
+	// recorded (REQ-AUD-014).
 	singleArm := 0
-	if len(arms) == 1 {
-		singleArm = arms[0]
+	if len(s.Arms) == 1 {
+		singleArm = s.Arms[0]
 	}
-	filters := map[string]any{}
-	addFilter(filters, "records", p.Records)
-	addFilter(filters, "fields", p.Fields)
-	addFilter(filters, "forms", p.Forms)
-	addFilter(filters, "events", p.Events)
-	if p.FilterLogic != "" {
-		filters["filter_logic"] = p.FilterLogic
+	surface := "data_api"
+	if s.Surface == audit.SourceUI {
+		surface = "ui"
+	}
+	filters := map[string]any{ // omitted filters are empty arrays (§3.5)
+		"records":      nonNil(s.Records),
+		"fields":       nonNil(s.Fields),
+		"forms":        nonNil(s.Forms),
+		"events":       nonNil(s.FilterEvents),
+		"filter_logic": s.FilterLogic,
 	}
 	instrList := make([]string, 0, len(instruments))
 	for i := range instruments {
@@ -360,35 +490,37 @@ func (h *Handler) contentRecordExport(w http.ResponseWriter, r *http.Request, en
 	sort.Strings(instrList)
 	h.writeExportAudit(ctx, audit.Entry{
 		EventType: audit.Export,
-		Source:    audit.SourceAPI,
-		UserID:    sub.User.ID,
-		Email:     sub.User.Email,
-		Token:     p.Token,
-		ProjectID: sub.Project.ID,
+		Source:    s.Surface,
+		UserID:    s.User.ID,
+		Email:     s.User.Email,
+		Token:     s.Token,
+		ProjectID: s.ProjectID,
 		ArmNum:    singleArm,
 		Details: map[string]any{
-			"sensitivity": exportName(level),
+			"surface":     surface,
+			"sensitivity": exportName(s.Level),
 			"filters":     filters,
 		},
 	}, audit.RecordView{
-		UserID:      sub.User.ID,
-		Email:       sub.User.Email,
-		Token:       p.Token,
-		ProjectID:   sub.Project.ID,
+		UserID:      s.User.ID,
+		Email:       s.User.Email,
+		Token:       s.Token,
+		ProjectID:   s.ProjectID,
 		RecordIDs:   returned,
 		Instruments: instrList,
-	}, len(returned) > 0)
+	}, s.RecordView && len(returned) > 0)
+}
+
+func nonNil(vals []string) []string {
+	if vals == nil {
+		return []string{}
+	}
+	return vals
 }
 
 // cellsValueHasData reports whether an emitted cell carried a value — the
 // record-view row lists instruments actually present in the returned rows.
 func cellsValueHasData(v string) bool { return v != "" }
-
-func addFilter(m map[string]any, key string, vals []string) {
-	if len(vals) > 0 {
-		m[key] = vals
-	}
-}
 
 func toSet(vals []string) map[string]bool {
 	if len(vals) == 0 {
