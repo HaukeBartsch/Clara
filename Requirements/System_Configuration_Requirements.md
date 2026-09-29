@@ -1,8 +1,8 @@
 # System Configuration — Requirements Analysis
 
-**Project:** Clinical Study Management System (REDCap API Replacement)
-**Source plan:** `Plan/System_Configuration.md`
-**Status:** Approved for development handoff
+**Project:** Clinical Study Management System (REDCap API Replacement)\
+**Source plan:** `Plan/System_Configuration.md`\
+**Status:** Approved for development handoff\
 **Date:** 2026-09-18
 
 ## 1. Purpose
