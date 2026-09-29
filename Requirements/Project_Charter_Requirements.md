@@ -1,8 +1,8 @@
 # Project Charter — Requirements Analysis
 
-**Project:** Clinical Study Management System (REDCap API Replacement)
-**Source plan:** `Plan/Project_Charter.md`, `Endpoints.md` (master spec)
-**Status:** Approved for development handoff
+**Project:** Clinical Study Management System (REDCap API Replacement)\
+**Source plan:** `Plan/Project_Charter.md`, `Endpoints.md` (master spec)\
+**Status:** Approved for development handoff\
 **Date:** 2026-09-18
 
 ## 1. Purpose
