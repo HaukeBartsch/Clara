@@ -1,7 +1,7 @@
 # API Endpoints — Design
 
-**Project:** Clinical Study Management System (REDCap API Replacement)
-**Implements:** `Requirements/API_Endpoints_Requirement.md`
+**Project:** Clinical Study Management System (REDCap API Replacement)\
+**Implements:** `Requirements/API_Endpoints_Requirement.md`\
 **Date:** 2026-09-21
 
 ## 1. Purpose and Conventions
