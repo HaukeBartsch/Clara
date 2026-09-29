@@ -51,6 +51,33 @@ func TestLoadDevelopmentDefaults(t *testing.T) {
 	if cfg.SessionCookieSecure {
 		t.Error("SessionCookieSecure = true, want false (dev default)")
 	}
+	if cfg.UITheme != "bootstrap" {
+		t.Errorf("UITheme = %q, want bootstrap (REQ-CFG-031 default)", cfg.UITheme)
+	}
+}
+
+// TestLoadUITheme covers the §4.1 row: the installation default theme is one
+// of the installed identifiers; an unknown value refuses startup (GD-26).
+func TestLoadUITheme(t *testing.T) {
+	clearAuthEnv(t)
+	t.Setenv("ADMIN_BOOTSTRAP_EMAIL", "admin@example.org")
+	t.Setenv("ADMIN_BOOTSTRAP_PASSWORD", "secret")
+
+	for _, want := range []string{"bootstrap", "darkly", "yeti"} {
+		t.Setenv("UI_THEME", want)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load(UI_THEME=%s): %v", want, err)
+		}
+		if cfg.UITheme != want {
+			t.Errorf("UITheme = %q, want %s", cfg.UITheme, want)
+		}
+	}
+
+	t.Setenv("UI_THEME", "cyborg")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "UI_THEME") {
+		t.Fatalf("Load(UI_THEME=cyborg) error = %v, want it to name UI_THEME", err)
+	}
 }
 
 func TestLoadProductionDefaults(t *testing.T) {

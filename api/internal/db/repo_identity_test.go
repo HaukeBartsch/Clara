@@ -52,6 +52,50 @@ func assertUUID(t *testing.T, tok string) {
 	}
 }
 
+// TestUITheme covers the users.ui_theme round-trip (REQ-DB-008, GD-26): a new
+// account carries no override, SetUITheme stores an identifier, and storing an
+// invalid NullString clears it back to "follow the installation default".
+func TestUITheme(t *testing.T) {
+	s := migrateTestStore(t)
+	ctx := context.Background()
+
+	id := seedUser(t, s, ctx, "theme@example.org")
+	got, err := s.GetUser(ctx, id)
+	if err != nil || got == nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+	if got.UITheme.Valid {
+		t.Errorf("new user UITheme = %q, want NULL (follow the default)", got.UITheme.String)
+	}
+
+	if err := s.SetUITheme(ctx, id, sql.NullString{String: "darkly", Valid: true}); err != nil {
+		t.Fatalf("SetUITheme: %v", err)
+	}
+	got, _ = s.GetUser(ctx, id)
+	if !got.UITheme.Valid || got.UITheme.String != "darkly" {
+		t.Errorf("UITheme = %+v, want darkly", got.UITheme)
+	}
+
+	if err := s.SetUITheme(ctx, id, sql.NullString{}); err != nil {
+		t.Fatalf("SetUITheme clear: %v", err)
+	}
+	got, _ = s.GetUser(ctx, id)
+	if got.UITheme.Valid {
+		t.Errorf("UITheme = %q after clear, want NULL", got.UITheme.String)
+	}
+
+	// The override survives CreateUser when supplied.
+	id2, err := s.CreateUser(ctx, &User{Email: "preset@example.org", DisplayName: "Preset",
+		Enabled: true, UITheme: sql.NullString{String: "yeti", Valid: true}})
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	got2, _ := s.GetUser(ctx, id2)
+	if !got2.UITheme.Valid || got2.UITheme.String != "yeti" {
+		t.Errorf("CreateUser UITheme = %+v, want yeti", got2.UITheme)
+	}
+}
+
 func TestUserLifecycle(t *testing.T) {
 	s := migrateTestStore(t)
 	ctx := context.Background()

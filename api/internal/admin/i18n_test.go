@@ -136,6 +136,81 @@ func TestPutMyUILanguage(t *testing.T) {
 	}
 }
 
+// TestPutMyUITheme covers REQ-API-122: a member sets their own theme override,
+// null clears it back to the installation default, only installed identifiers
+// are accepted, and the setting persists across requests.
+func TestPutMyUITheme(t *testing.T) {
+	e := newEnv(t)
+	member := e.mustUser("member@example.org")
+
+	// A fresh account carries no override — the response says null (GD-26).
+	rec := e.do("PUT", "/api/v1/users/me/ui-theme", map[string]any{"theme": "darkly"}, member)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("set theme: got %d %s", rec.Code, rec.Body.String())
+	}
+	var obj UserObject
+	e.decode(rec, &obj)
+	if obj.UITheme == nil || *obj.UITheme != "darkly" {
+		t.Errorf("response ui_theme = %v, want darkly", obj.UITheme)
+	}
+	if obj.ID != member.ID {
+		t.Errorf("response describes user %d, want the acting user %d", obj.ID, member.ID)
+	}
+
+	// Persisted — "across sessions" means stored, not request-scoped.
+	stored, err := e.Store.GetUser(context.Background(), member.ID)
+	if err != nil || stored == nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+	if !stored.UITheme.Valid || stored.UITheme.String != "darkly" {
+		t.Errorf("stored ui_theme = %+v, want darkly", stored.UITheme)
+	}
+
+	// Every installed identifier is accepted (REQ-TECH-027).
+	for _, id := range []string{"bootstrap", "yeti"} {
+		if rec := e.do("PUT", "/api/v1/users/me/ui-theme", map[string]any{"theme": id}, member); rec.Code != http.StatusOK {
+			t.Errorf("theme %q: got %d %s, want 200", id, rec.Code, rec.Body.String())
+		}
+	}
+
+	// null clears the override — stored NULL, response null (REQ-CFG-031).
+	recClear := e.do("PUT", "/api/v1/users/me/ui-theme", map[string]any{"theme": nil}, member)
+	if recClear.Code != http.StatusOK {
+		t.Fatalf("clear theme: got %d %s", recClear.Code, recClear.Body.String())
+	}
+	var cleared UserObject
+	e.decode(recClear, &cleared)
+	if cleared.UITheme != nil {
+		t.Errorf("response ui_theme = %q after clear, want null", *cleared.UITheme)
+	}
+	if stored, err = e.Store.GetUser(context.Background(), member.ID); err != nil || stored.UITheme.Valid {
+		t.Errorf("stored ui_theme = %+v after clear, want NULL", stored.UITheme)
+	}
+
+	// Unknown identifier, empty string, wrong type, and a missing key → 400.
+	for _, body := range []any{
+		map[string]any{"theme": "cyborg"},
+		map[string]any{"theme": ""},
+		map[string]any{"theme": 3},
+		map[string]any{},
+	} {
+		if rec := e.do("PUT", "/api/v1/users/me/ui-theme", body, member); rec.Code != http.StatusBadRequest {
+			t.Errorf("body %v: got %d %s, want 400", body, rec.Code, rec.Body.String())
+		}
+	}
+
+	// No actor at all — the handler's own guard, behind the boundary.
+	if rec := e.do("PUT", "/api/v1/users/me/ui-theme", map[string]any{"theme": "darkly"}, nil); rec.Code != http.StatusForbidden {
+		t.Errorf("unauthenticated: got %d, want 403", rec.Code)
+	}
+
+	// Another member's setting is untouched — the endpoint has no target user.
+	other := e.mustUser("other@example.org")
+	if storedOther, err := e.Store.GetUser(context.Background(), other.ID); err != nil || storedOther.UITheme.Valid {
+		t.Errorf("other member's theme = %+v, want NULL", storedOther.UITheme)
+	}
+}
+
 // TestI18nStrings covers REQ-API-099/100: upsert, the missing flag computed
 // against English, removal by empty text, per-key audit, and idempotence.
 func TestI18nStrings(t *testing.T) {
