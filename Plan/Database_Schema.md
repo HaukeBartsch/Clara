@@ -91,7 +91,7 @@ Maps users to projects, roles, and API tokens.
 - is_survey (Boolean - only survey-marked instruments may be filled out through a public survey link; GD-9)
 - An instrument becomes active in the project once it is mapped to an event.
 
-7. Fields (Data Dictionary)
+### 7. Fields (Data Dictionary)
 - id (Primary Key)
 - project_id (Foreign Key)
 - instrument_id (Foreign Key)
