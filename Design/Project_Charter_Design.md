@@ -103,7 +103,7 @@ System-level consequences of the phase-1 scope:
 
 | # | Criterion | Verified by |
 |---|---|---|
-| 1 | Every Fiona call example in `Endpoints.md` succeeds without modification of the caller | table-driven fixtures in CI (REQ-TECH-022, `Technology_Stack_Design.md` §6) |
+| 1 | Every Fiona call example in `VISION_AND_REQUIREMENTS.md` succeeds without modification of the caller | table-driven fixtures in CI (REQ-TECH-022, `Technology_Stack_Design.md` §6) |
 | 2 | A data-entry user can create, read, and update record values through the UI; all operations appear in the correct audit table | Go integration tests + PHP smoke tests (REQ-TECH-021, `Technology_Stack_Design.md` §6) |
 | 3 | An administrator can run the full project lifecycle — structure, members, roles, tokens — entirely through the web UI | integration coverage of the administration-API flows (REQ-TECH-021, `Technology_Stack_Design.md` §6) |
 | 4 | `export_de_identified` returns no direct identifiers and hashed personal fields; `export_no_identifiers` returns the same data with all identifier fields removed | pipeline tests of `Data_Export_Anonymization_Design.md` §4–§5 |

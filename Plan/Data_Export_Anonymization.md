@@ -1,6 +1,6 @@
 # Data Export and Anonymization Plan
 
-This document outlines the strategy for exporting data from the clinical study management system, including anonymization techniques to protect patient privacy. The master spec (Endpoints.md) defines the export permissions and the end provision; the anonymization mechanics below are system design decisions.
+This document outlines the strategy for exporting data from the clinical study management system, including anonymization techniques to protect patient privacy. The master spec (VISION_AND_REQUIREMENTS.md) defines the export permissions and the end provision; the anonymization mechanics below are system design decisions.
 
 ## Export Formats
 - CSV: For easy import into statistical software (e.g., R, SPSS).

@@ -520,7 +520,7 @@ If an IP hits the currently active rate limit all requests from that IP should b
 
 ## Instrument level completion info
 
-The 3-state record completion (binary today, REQ-API-074) is by instrument. The user interface should allow a user to set this instrument completion code as a new (always last in the instrument) field in the "record instrument" web view. If the instrument is marked as a survey this completion info is filled in automatically (complete, green).
+The 3-state record completion (binary today, REQ-API-074) is by instrument only (fix REQ-API-074). The user interface should allow a user to set the instrument completion code as a new (always last in the instrument) field in the "record instrument" web view. If the instrument is marked as a survey this completion info is filled in automatically (complete, green).
 
 ## Record history by field
 

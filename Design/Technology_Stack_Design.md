@@ -88,7 +88,7 @@ Rules: the PHP layer contains **no** SQL and no direct data access (REQ-TECH-006
 ## 6. Testing (REQ-TECH-021/022, REQ-TECH-009)
 
 - **Go:** unit tests per package; integration tests boot the real HTTP stack against a temporary SQLite file with `APP_ENV=development`; CI runs them with no external services (OAuth2/LDAP replaced by test doubles in the PHP flow; the API's login endpoint is exercised with fixture emails).
-- **REDCap compatibility:** every Fiona call example in `Endpoints.md` is encoded as a table-driven fixture (form-encoded request → expected status + body) run against a seeded project — the charter success criterion 1 as an executable regression test (REQ-TECH-022, REQ-API-037).
+- **REDCap compatibility:** every Fiona call example in `VISION_AND_REQUIREMENTS.md` is encoded as a table-driven fixture (form-encoded request → expected status + body) run against a seeded project — the charter success criterion 1 as an executable regression test (REQ-TECH-022, REQ-API-037).
 - **PHP:** no framework; smoke tests use a minimal stdlib test harness for route dispatch, CSRF validation, and the session flow. The normative coverage lives in the Go API (REQ-TECH-021).
 
 ## 7. Reference Hardware (REQ-TECH-010/011)

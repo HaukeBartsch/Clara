@@ -5,7 +5,7 @@ This document outlines the core database tables required for the system. The sch
 ## Core Tables
 
 ### 1. Projects
-Stores project-level metadata (see the project creation form in Endpoints.md).
+Stores project-level metadata (see the project creation form in VISION_AND_REQUIREMENTS.md).
 - id (Primary Key)
 - project_name (String, Unique)
 - organization (String: OTHER, VEST, HBE, SUS, FOR, FON, UIB, UIS, HVL, NAT EU)
@@ -142,7 +142,7 @@ At most one open staging set per project: a snapshot of the staged design, appli
 - opened_at (DateTime)
 
 ### 11. Data (Records)
-Entity-attribute-value layout, exactly as mandated by Endpoints.md: adding a new field or a new project never changes this table layout.
+Entity-attribute-value layout, exactly as mandated by VISION_AND_REQUIREMENTS.md: adding a new field or a new project never changes this table layout.
 - project_id (Foreign Key)
 - record_id (String)
 - unique_event_name (String, includes arm information)

@@ -1,7 +1,7 @@
 # Project Charter — Requirements Analysis
 
 **Project:** Clinical Study Management System (REDCap API Replacement)\
-**Source plan:** `Plan/Project_Charter.md`, `Endpoints.md` (master spec)\
+**Source plan:** `Plan/Project_Charter.md`, `VISION_AND_REQUIREMENTS.md` (master spec)\
 **Status:** Approved for development handoff\
 **Date:** 2026-09-18
 
@@ -109,13 +109,13 @@ These decisions were made explicit with the project owner and are binding for al
 | External OAuth2 identity provider(s) | Login flow (optional — table-based authentication is always available, GD-18); provider metadata (issuer, client id/secret) provisioned when used |
 | Up to 3 LDAP servers (fallback) | Login fallback (optional, GD-18); directory attributes for name/email mapping |
 | SMTP relay (internal mail server) | Delivery of the email two-factor codes (GD-21, optional — the `email` method is unavailable without it; TOTP needs no network service) |
-| Fiona / RIS (external caller) | Defines the compatibility contract for `/api/`; call examples in `Endpoints.md` become acceptance tests |
+| Fiona / RIS (external caller) | Defines the compatibility contract for `/api/`; call examples in `VISION_AND_REQUIREMENTS.md` become acceptance tests |
 | Existing REDCap deployments | Behavioral reference for response shapes (`project`, `metadata`, `event`, `formEventMapping`) |
 | Network topology | PHP and Go API on a trusted internal path; public exposure of `/api/` (REDCap protocol) via TLS termination |
 
 ## 7. Success Criteria
 
-1. Every Fiona call example in `Endpoints.md` (cURL and PHP) succeeds against the new system without modification of the caller.
+1. Every Fiona call example in `VISION_AND_REQUIREMENTS.md` (cURL and PHP) succeeds against the new system without modification of the caller.
 2. A data entry user can create, read, and update record values through the UI; all operations appear in the correct audit table.
 3. An administrator can create a project, build its structure (instruments, fields, events, mapping), assign users and roles, and issue project tokens — entirely through the web UI.
 4. An export at the `export_de_identified` level returns no direct identifiers and hashed personal fields; at the `export_no_identifiers` level the same data is returned with all identifier fields removed.

@@ -1,7 +1,7 @@
 # Authentication & Authorization — Requirements Analysis
 
 **Project:** Clinical Study Management System (REDCap API Replacement)\
-**Source plan:** `Plan/Authentication_Authorization.md`, `Endpoints.md` (master spec)\
+**Source plan:** `Plan/Authentication_Authorization.md`, `VISION_AND_REQUIREMENTS.md` (master spec)\
 **Status:** Approved for development handoff\
 **Date:** 2026-09-18
 
