@@ -1,7 +1,7 @@
 # System Configuration — Design
 
-**Project:** Clinical Study Management System (REDCap API Replacement)
-**Implements:** `Requirements/System_Configuration_Requirements.md`
+**Project:** Clinical Study Management System (REDCap API Replacement)\
+**Implements:** `Requirements/System_Configuration_Requirements.md`\
 **Date:** 2026-09-21
 
 ## 1. Purpose
