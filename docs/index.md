@@ -28,4 +28,4 @@ header-includes:
 
 # Introduction
 
-Welcome to the **Clara API** core documentation. This software development project is replacing database connectivity in FIONA.
+Welcome to the **Clara API** core documentation. This software development project is replacing database connectivity in FIONA and provides structured data capture for research data.
