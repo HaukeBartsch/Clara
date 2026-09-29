@@ -1,7 +1,7 @@
 # Data Export and Anonymization — Design
 
-**Project:** Clinical Study Management System (REDCap API Replacement)
-**Implements:** `Requirements/Data_Export_Anonymization_Requirements.md` (REQ-EXP-…, which consolidates the distributed area requirements REQ-API-013/016/017/024…030/075/076/092, REQ-AUTH-017…019/023/045, REQ-DB-013/014/023, REQ-CFG-015/016/021/022, REQ-AUD-004/011/013/014/015, REQ-VAL-022/032, REQ-TECH-011, and charter BR-008/BR-009, success criterion 4) — source plan `Plan/Data_Export_Anonymization.md` (full traceability: §10)
+**Project:** Clinical Study Management System (REDCap API Replacement)\
+**Implements:** `Requirements/Data_Export_Anonymization_Requirements.md` (REQ-EXP-…, which consolidates the distributed area requirements REQ-API-013/016/017/024…030/075/076/092, REQ-AUTH-017…019/023/045, REQ-DB-013/014/023, REQ-CFG-015/016/021/022, REQ-AUD-004/011/013/014/015, REQ-VAL-022/032, REQ-TECH-011, and charter BR-008/BR-009, success criterion 4) — source plan `Plan/Data_Export_Anonymization.md` (full traceability: §10)\
 **Date:** 2026-09-23
 
 ## 1. Purpose
