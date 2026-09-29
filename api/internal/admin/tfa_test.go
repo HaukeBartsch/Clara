@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -198,20 +199,49 @@ func TestTFAEnrollTwiceIsConflict(t *testing.T) {
 }
 
 // TestTFAEnrollmentMandated covers REQ-AUTH-055: with AUTH_REQUIRE_2FA an
-// account without a second factor cannot log in.
+// account without a second factor cannot log in. The 401 carries the pending
+// identity's user_id, and the wizard runs pre-session from that id alone —
+// PHP supplies X-Internal-User-Id for an identity whose first factor the
+// login call just verified (Authentication_Authorization_Design.md §2.7).
 func TestTFAEnrollmentMandated(t *testing.T) {
 	e := newEnv(t)
-	mustLocalUser(t, e, "user@example.org", "hunter2")
+	u := mustLocalUser(t, e, "user@example.org", "hunter2")
 	e.Cfg.AuthRequire2FA = true
 
 	rec := e.do("POST", "/api/v1/auth/login", loginBody("user@example.org", "hunter2", ""), nil)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("mandated login: %d, want 401", rec.Code)
 	}
-	var errBody ErrorBody
+	var errBody struct {
+		Error  string `json:"error"`
+		UserID int64  `json:"user_id"`
+	}
 	e.decode(rec, &errBody)
 	if errBody.Error != "tfa_enrollment_required" {
 		t.Errorf("error = %q, want tfa_enrollment_required", errBody.Error)
+	}
+	if errBody.UserID != u.ID {
+		t.Fatalf("user_id = %d, want %d", errBody.UserID, u.ID)
+	}
+
+	// Enrollment from the returned id alone (no session) — the boundary
+	// resolves it to the live row exactly as for any authenticated call —
+	// then login completes.
+	pending, err := e.Store.GetUser(context.Background(), errBody.UserID)
+	if err != nil || pending == nil {
+		t.Fatalf("resolve returned user_id: %v", err)
+	}
+	_, recovery := enrollTOTPComplete(t, e, pending)
+
+	// PHP resumes the login call: first the challenge, then a recovery code
+	// (a fresh TOTP code would fall in the confirm step's replay window).
+	rec = e.do("POST", "/api/v1/auth/login", loginBody("user@example.org", "hunter2", ""), nil)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("post-enrollment login: %d %s, want 401 mfa_required", rec.Code, rec.Body.String())
+	}
+	rec = e.do("POST", "/api/v1/auth/login", loginBody("user@example.org", "hunter2", recovery[0]), nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login with recovery code: %d %s, want 200", rec.Code, rec.Body.String())
 	}
 }
 

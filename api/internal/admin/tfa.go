@@ -314,8 +314,16 @@ func (h *Handler) secondFactor(w http.ResponseWriter, r *http.Request, body *log
 	}
 	if method == "off" {
 		if h.Cfg.AuthRequire2FA { // installation-wide mandate (REQ-AUTH-055)
-			APIError(w, http.StatusUnauthorized, "tfa_enrollment_required",
-				"this installation requires two-factor authentication — set it up to sign in")
+			// user_id carries the pending identity so PHP can drive the
+			// enrollment wizard pre-session: the self-service endpoints below
+			// accept X-Internal-User-Id for an identity whose first factor
+			// this very call just verified (REQ-AUTH-059,
+			// Authentication_Authorization_Design.md §2.7).
+			writeJSON(w, http.StatusUnauthorized, map[string]any{
+				"error":   "tfa_enrollment_required",
+				"user_id": u.ID,
+				"message": "this installation requires two-factor authentication — set it up to sign in",
+			})
 			return method, "", false
 		}
 		return method, "", true
