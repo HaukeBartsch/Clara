@@ -37,7 +37,7 @@ func TestProjectsCreateSingleArmAndAudit(t *testing.T) {
 	rec := e.do("POST", "/api/v1/projects", map[string]any{
 		"project_name": "8DISC", "organization": "NAT EU",
 		"pi_name": "Ansgar Espeland", "pi_email": "ansgar@example.org",
-		"rek_start_date": "2026-01-01",
+		"rek_start_date":    "2026-01-01",
 		"participant_names": "8DISC[0-9][0-9][0-9]",
 	}, admin)
 	if rec.Code != http.StatusCreated {

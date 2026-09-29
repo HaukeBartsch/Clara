@@ -48,7 +48,7 @@ func newProjectObject(p *db.Project) projectObject {
 		ID: p.ID, ProjectName: p.ProjectName, Organization: p.Organization,
 		PIName: p.PIName, PIEmail: p.PIEmail,
 		DMName: NullStrPtr(p.DMName), DMEmail: NullStrPtr(p.DMEmail),
-		RekNumber: NullStrPtr(p.RekNumber),
+		RekNumber:    NullStrPtr(p.RekNumber),
 		RekStartDate: NullStrPtr(p.RekStartDate), RekEndDate: NullStrPtr(p.RekEndDate),
 		StartDate: NullStrPtr(p.StartDate), EndDate: NullStrPtr(p.EndDate),
 		ParticipantNames: p.ParticipantNames, CreationTime: p.CreationTime,
@@ -273,7 +273,7 @@ func (h *Handler) createProject(w http.ResponseWriter, r *http.Request) {
 	p := &db.Project{
 		ProjectName: body.ProjectName, Organization: body.Organization,
 		PIName: body.PIName, PIEmail: body.PIEmail,
-		DMName:   toNullStr(body.DMName), DMEmail: toNullStr(body.DMEmail),
+		DMName: toNullStr(body.DMName), DMEmail: toNullStr(body.DMEmail),
 		RekNumber:    toNullStr(body.RekNumber),
 		RekStartDate: toNullStr(body.RekStartDate), RekEndDate: toNullStr(body.RekEndDate),
 		StartDate: toNullStr(body.StartDate), EndDate: toNullStr(body.EndDate),

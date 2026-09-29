@@ -257,8 +257,8 @@ type auditViewEntry struct {
 
 // auditPage is the paginated §4.15 envelope.
 type auditPage struct {
-	Entries    any  `json:"entries"`
-	NextCursor any  `json:"next_cursor"`
+	Entries    any `json:"entries"`
+	NextCursor any `json:"next_cursor"`
 }
 
 // listAudit returns audit entries in reverse chronological order with
@@ -629,11 +629,11 @@ func (h *Handler) recordHistory(w http.ResponseWriter, r *http.Request) {
 	var lastID int64
 	for rows.Next() {
 		var (
-			id       int64
-			created  any
-			userID   sql.NullInt64
-			display  sql.NullString
-			details  sql.NullString
+			id      int64
+			created any
+			userID  sql.NullInt64
+			display sql.NullString
+			details sql.NullString
 		)
 		if err := rows.Scan(&id, &created, &userID, &display, &details); err != nil {
 			errInternal(w)

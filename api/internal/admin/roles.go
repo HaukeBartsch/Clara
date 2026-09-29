@@ -133,9 +133,9 @@ func (h *Handler) listRoles(w http.ResponseWriter, r *http.Request) {
 // createRoleRequest is the §4.7 body: the role object minus id. An arm
 // absent from arms defaults to no_access / export_none (REQ-AUTH-019).
 type createRoleRequest struct {
-	Name         string                    `json:"name"`
-	ProjectAdmin bool                      `json:"project_admin"`
-	Arms         map[string]roleArmLevels  `json:"arms"`
+	Name         string                   `json:"name"`
+	ProjectAdmin bool                     `json:"project_admin"`
+	Arms         map[string]roleArmLevels `json:"arms"`
 }
 
 // createRole creates a project role (is_admin). A duplicate name within the
