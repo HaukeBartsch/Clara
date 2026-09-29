@@ -40,9 +40,13 @@ Go API ──► SQLite / MariaDB
 
 ## 2. Authentication Sequences
 
-### 2.1 Sequence A — OAuth2 authorization code (primary, REQ-AUTH-001/002)
+Every login starts with the user selecting an authentication source **by name** on the login page (Sequence I, §2.9 — REQ-AUTH-063); the sequences below describe what happens inside and after that selection.
 
-1. Browser opens `/login`. PHP generates `state` (16-byte random hex) and a PKCE `code_verifier` (random, challenge method S256), stores both in the session, and redirects to the provider's `authorize` endpoint with `response_type=code`, `client_id`, `redirect_uri = WEB_PUBLIC_URL + /auth/callback`, `state`, `code_challenge`.
+### 2.1 Sequence A — OAuth2 authorization code (REQ-AUTH-001/002/066)
+
+An OAuth2 source joins login only through a browser round-trip, never the credential race (§2.9): selecting a name mapped to exactly one OAuth2 source starts this sequence immediately; with several providers under the name, the user picks which one to complete (REQ-AUTH-066).
+
+1. Browser opens `/login`, where PHP lists the distinct configured source names (§2.9); the user selects a name whose set contains the OAuth2 provider. PHP generates `state` (16-byte random hex) and a PKCE `code_verifier` (random, challenge method S256), stores both in the session together with the selected name (`auth_source_name`, §3), and redirects to the provider's `authorize` endpoint with `response_type=code`, `client_id`, `redirect_uri = WEB_PUBLIC_URL + /auth/callback`, `state`, `code_challenge`.
 2. The user authenticates at the IdP; the provider redirects the browser to `/auth/callback?code&state`.
 3. PHP verifies `state` against the session value (**single use**; mismatch → abort, no session, `login_failure` with reason `state_mismatch`).
 4. PHP exchanges `code` + `code_verifier` + `client_secret` for tokens at the `token` endpoint — server-side, over TLS (REQ-AUTH-001).
@@ -50,24 +54,26 @@ Go API ──► SQLite / MariaDB
 6. PHP calls the API's login endpoint (Sequence C) with `source:"oauth2"`.
 7. On success PHP establishes the session (§3) and redirects to `/`.
 
-Any failure at steps 3–5 falls through to the LDAP fallback (Sequence B); if no LDAP server is configured either, the login fails and is audit-logged (`login_failure`, `Audit_Logging_Design.md` §3.1).
+Any failure at steps 3–5 does **not** silently move on to other sources: it is audit-logged (`login_failure`, `Audit_Logging_Design.md` §3.1) and the user returns to the login page (where the same name's credential form remains available if that name's set also contains credential sources — REQ-AUTH-066).
 
-### 2.2 Sequence B — LDAP fallback (up to 3 servers, REQ-AUTH-003)
+### 2.2 Sequence B — LDAP attempt (sources under the selected name, REQ-AUTH-003/065)
 
-The PHP login form carries email + password for the **local (Sequence F) and LDAP** paths; on the LDAP path the password is sent to the directory and never stored or logged (REQ-AUTH-036). Sequence B runs **after** the local attempt of Sequence F has failed (REQ-AUTH-051). For server `N` = 1, 2, 3 (in order; stop at the first success — REQ-AUTH-003):
+The PHP login form carries email + password for the **local and LDAP** paths; on the LDAP path the password is sent to the directory and never stored or logged (REQ-AUTH-036). All LDAP sources registered under the selected name are attempted **in parallel** with the local check of Sequence F — not sequentially, and not after it has failed (DEV-AUTH-14). For every LDAP source `N` in the selected set, concurrently:
 
 1. **Search** (using `LDAP_SERVER_N_BIND_DN`/`BIND_PASSWORD`, or anonymous): find the entry in `SEARCH_BASE` whose `UID_ATTR` matches the login name; read `EMAIL_ATTR` and `NAME_ATTR` (REQ-CFG-012).
-2. **Bind-as-user** (ASM-AUTH-2): simple bind with the entry DN and the supplied password. Success → identity is the entry's email (REQ-AUTH-004); bind failure → next server.
-3. On the first successful server: PHP calls the API's login endpoint (Sequence C) with `source:"ldap"`, `provider:"ldap-N"`, and the identity.
-4. All servers exhausted → `login_failure` (reason `bad_credentials` when an entry was found, `provider_unavailable` when unreachable).
+2. **Bind-as-user** (ASM-AUTH-2): simple bind with the entry DN and the supplied password. Success → identity is the entry's email (REQ-AUTH-004); a bind failure or per-source connect timeout settles that attempt as failed — other attempts continue unaffected.
+3. On the **first** successful server (first "login ok" wins, REQ-AUTH-065): PHP calls the API's login endpoint (Sequence C) with `source:"ldap"`, `provider:"ldap-N"`, and the identity; any later success from another source is discarded (§2.9 step 4).
+4. All attempts in the set settle as failed → `login_failure` (reason `bad_credentials` when an entry was found, `provider_unavailable` when unreachable) per §2.9 step 5.
 
 ### 2.3 Sequence C — API login call (REQ-AUTH-016, REQ-API-044)
 
-`POST /api/v1/auth/login` — one of the four administration endpoints exempt from `X-Internal-User-Id` (it establishes the user context; the other three are the pre-authentication password endpoints of Sequence H, §2.8 — DEV-API-16); it still requires a valid `X-Internal-Service-Token` and is internal-only per §1.2. Request body:
+`POST /api/v1/auth/login` — one of the five administration endpoints exempt from `X-Internal-User-Id` (it establishes the user context; the other four are the pre-authentication password endpoints of Sequence H, §2.8, and the side-effect-free `POST /api/v1/auth/verify-password` of Sequence I, §2.9 — DEV-API-16); it still requires a valid `X-Internal-Service-Token` and is internal-only per §1.2. `provider` names the concrete winning source (`"ldap-N"`, the provider issuer URL, or the local source id) and PHP passes the user-selected name through in the audit details (REQ-AUTH-067). Request body:
 
 ```json
-{ "email": "user@example.org", "source": "oauth2", "provider": "https://idp.example.org" }
+{ "email": "user@example.org", "source": "oauth2", "provider": "https://idp.example.org", "source_name": "Hospital 1" }
 ```
+
+`source_name` (optional, REQ-AUTH-067) is the name the user selected on the login page; the API records it in the `login_success` / `login_failure` audit details. It never affects authorization or identity resolution.
 
 ```json
 { "email": "user@example.org", "source": "local", "password": "***" }
@@ -113,14 +119,14 @@ Session inactivity timeout: `SESSION_LIFETIME` (default 8 h, REQ-AUTH-015, `Syst
 - The check runs **before** contacting the IdP/LDAP — and before the local hash check of Sequence F (fail fast; no credential probing against the directory or the hash column).
 - A successful login clears the counter for that email.
 
-### 2.6 Sequence F — local (table-based) login (GD-18, REQ-AUTH-050/051)
+### 2.6 Sequence F — local (table-based) attempt (GD-18, REQ-AUTH-050/051/065)
 
-The email+password form of the login page (present when no OAuth2 provider is configured, or as the fallback form beside the provider buttons — `User_Interface_Design.md` §2.2) initiates, in order:
+The email+password form of the login page (`User_Interface_Design.md` §2.2) initiates the credential race for the selected name (Sequence I, §2.9). When a local source is registered under that name, every submission includes this attempt:
 
-1. Brute-force check (Sequence E).
-2. PHP → API `POST /api/v1/auth/login` with `{ "email": "…", "source": "local", "password": "***" }` (service token; the password travels only on the trusted internal path, REQ-AUTH-034, and is never logged — REQ-AUTH-036). The API performs Sequence C step 0 (hash verification) and steps 1–5.
-3. On **401** (`account_not_found` or `bad_password`) **and** LDAP servers are configured: PHP runs Sequence B (LDAP); a successful LDAP bind logs the user in with `source: "ldap"`. On **403** (`account_disabled` / `account_expired`) PHP surfaces the specific reason and does **not** fall through (the account state — not the credential — is the problem).
-4. Otherwise: `login_failure` is already audit-logged by the API; the login page shows the translated failure line.
+1. Brute-force check (Sequence E) — once per submission, before any source is contacted (§2.5).
+2. **Verify** — PHP → API `POST /api/v1/auth/verify-password` with `{ "email": "…", "password": "***" }` (service token; the password travels only on the trusted internal path, REQ-AUTH-034, and is never logged — REQ-AUTH-036). The API runs Sequence C steps 0–1 **without side effects** — no `last_login_at`, no `auth_source` write, no audit event (that is what makes it safe to fire alongside the LDAP attempts of Sequence B) — and returns one of `ok` / `bad_password` (also for an unknown account) / `account_disabled` / `account_expired`.
+3. On `ok`, PHP **finalizes** with the single Sequence C call `POST /api/v1/auth/login` `{ "email": "…", "source": "local", "password": "***", "mfa_code"?: "…", "source_name": "Hospital 1" }`: the API re-verifies the hash (idempotent) and runs steps 1–5. Sequence C remains the only place login side effects happen, so a losing parallel attempt can never produce a second session or duplicate audit success (REQ-AUTH-065).
+4. If every attempt of the name settles as failed: any `account_disabled` / `account_expired` outcome is surfaced as the specific reason (the account state — not the credential — is the problem); otherwise the login page shows the generic translated failure line, and exactly one `login_failure` is recorded for the submission (§2.9 step 5).
 
 On success PHP establishes the session (§3) exactly as for the other paths; `auth_source` is `local`.
 
@@ -152,6 +158,28 @@ On success PHP establishes the session (§3) exactly as for the other paths; `au
 
 **Self-service change (signed-in).** Not part of Sequence H's pre-auth path: `PUT /api/v1/users/me/password` verifies `current_password` against the hash first (failure → 401 `bad_password`, audit-logged, counted toward the Sequence E lockout), then stores the new hash and audits `password_changed` (REQ-AUTH-061, REQ-API-118).
 
+### 2.9 Sequence I — named source selection and the parallel credential race (master spec "Authentication order", REQ-AUTH-063…067, DEV-AUTH-14)
+
+**Source registry.** Every configured authentication path is a **source**: kind `local` | `ldap` | `oauth2`, carrying one or more display **names**; the relation between names and sources is many-to-many (REQ-AUTH-064). Names extend the existing per-index configuration (`OAUTH2_N_*`, REQ-CFG-011; `LDAP_SERVER_N_*`, REQ-CFG-012) with a name list per source — the variable set is owned by `System_Configuration_Design.md` §3 (follow-up registration). The local kind exists at most once (one `users` table, GD-18) but may carry several names.
+
+**Login page.** `GET /login` renders the distinct set of names across all configured sources ("Hospital 1", "Hospital 2", … — REQ-AUTH-063). With exactly one distinct name the picker is skipped and that name applies implicitly; sources configured without a name form one implicit default set (REQ-AUTH-067). The selected name is stored in the session (`auth_source_name`, §3) before any credential exchange.
+
+**Dispatch on submit.** For the selected name, PHP dispatches concurrently:
+
+1. every **local** source under the name → the verify step of Sequence F (2.6);
+2. every **LDAP** source under the name → Sequence B (search + bind-as-user), each with its own connect timeout so one unreachable directory cannot stall the race;
+3. **OAuth2** sources under the name do **not** join the credential race — they are interactive: exactly one provider redirects immediately (Sequence A), several are offered for individual selection (REQ-AUTH-066).
+
+The submitted email+password is sent **only** to the sources under the selected name — never to a source registered under a different name (REQ-AUTH-063; this replaces the old chain, which forwarded a failed local password onward to every configured LDAP server).
+
+**First "login ok" wins.** The first successful attempt finalizes through Sequence C (with `source`, `provider` of the winner and `source_name`). A later success from another attempt is discarded at PHP before finalization — since non-winning attempts are side-effect-free (Sequence F step 2, Sequence B binds), no second session, duplicate audit success, or `last_login_at` / `auth_source` write can occur (REQ-AUTH-065). If a winner arrives while another attempt is still in flight, the in-flight result is simply ignored on arrival.
+
+**All failed.** When every attempt settles as failed: any `account_disabled` / `account_expired` outcome is surfaced as the specific reason; otherwise the generic credential failure line is shown. Exactly one `login_failure` audit event is recorded for the submission (reason `bad_credentials`, or `provider_unavailable` when no source could be reached), with the selected name and the per-source outcomes in `details` (`Audit_Logging_Design.md` §3.1).
+
+**New pre-auth endpoint.** `POST /api/v1/auth/verify-password` joins the `X-Internal-User-Id` exemption set (§2.3, §6 — DEV-API-16): service token required, internal-only (§1.2), rate-limit and lockout rules as every login path (Sequence E runs in PHP before dispatch). It performs Sequence C steps 0–1 only and returns `ok` / `bad_password` / `account_disabled` / `account_expired` without touching any row or writing audit events; the password is never logged (REQ-AUTH-036).
+
+**Interaction with the second factor.** The MFA gate stays in Sequence C step 1.5 on the winning source: the race answers *who you are*, the second factor then confirms it before any session exists (§2.7, REQ-AUTH-055) — losing attempts never reach the gate.
+
 ## 3. Session Schema (GD-1)
 
 The session is owned by the PHP web application: PHP-native session, file storage in `SESSION_DIR` (MUST NOT be the application database, REQ-CFG-017). The API never sees the session (GD-1, REQ-API-044).
@@ -165,6 +193,7 @@ The session is owned by the PHP web application: PHP-native session, file storag
 | `display_name` | login | string | |
 | `is_admin` | login | `0`/`1` | |
 | `auth_source` | login | `oauth2`/`ldap`/`local` | |
+| `auth_source_name` | `/login` selection (§2.9) | the user-selected source name (REQ-AUTH-067); updated at each login | |
 | `issued_at` | login | unix timestamp | |
 | `csrf_token` | session start | 32-byte random hex | session regeneration |
 | `oauth2_state` | `/login` | 16-byte random hex | callback (single use) |
@@ -263,7 +292,7 @@ Rules:
 - `X-Internal-Service-Token` is compared in constant time (`crypto/subtle.ConstantTimeCompare`) and MUST NOT be logged (REQ-AUTH-012); a missing/invalid token → 401 + audit `admin_rejected` — enforced regardless of any other configuration (REQ-CFG-023).
 - `X-Internal-User-Id` is authoritative for authorization on `/api/v1/*` (REQ-AUTH-013); an unknown or disabled user → 403 + audit `admin_rejected`.
 - The proxy strips both headers from every externally-originated request (REQ-AUTH-014; configuration in `Technology_Stack_Design.md` §5).
-- `POST /api/v1/auth/login` (service token only, no user id — §2.3) and the three pre-authentication password endpoints of Sequence H (§2.8, DEV-API-16) are the exceptions.
+- `POST /api/v1/auth/login` (service token only, no user id — §2.3), the three pre-authentication password endpoints of Sequence H (§2.8), and `POST /api/v1/auth/verify-password` (§2.9) are the exceptions.
 
 ## 7. Non-Functional Security
 
@@ -283,10 +312,11 @@ Rules:
 | brute-force store and windows (REQ-AUTH-035) | in-memory per host; 5 failures / 10 min → 15 min lockout (§2.5) |
 | OAuth2 flow hardening | PKCE (S256) + single-use `state` (§2.1) |
 | `login_failure` reason vocabulary | `provider_unavailable \| state_mismatch \| bad_credentials \| bad_password \| account_not_found \| account_disabled \| account_expired \| rate_limited \| bad_mfa_code` (`Audit_Logging_Design.md` §3.1) |
-| table-based authentication (owner decision 2026-09-22, GD-18) | `users.password_hash` (bcrypt) + `auth_source = local`; Sequence F before the LDAP fallback; bootstrap password from `ADMIN_BOOTSTRAP_PASSWORD` (required at startup when no IdP is configured); `REQ-AUTH-036` revised to "no plaintext, hash only" (§2.2/§2.3/§2.6, §7) |
+| table-based authentication (owner decision 2026-09-22, GD-18) | `users.password_hash` (bcrypt) + `auth_source = local`; Sequence F before the LDAP fallback (ordering superseded by Sequence I, DEV-AUTH-14); bootstrap password from `ADMIN_BOOTSTRAP_PASSWORD` (required at startup when no IdP is configured); `REQ-AUTH-036` revised to "no plaintext, hash only" (§2.2/§2.3/§2.6, §7) |
 | account validity and inactivity (owner decision 2026-09-22, GD-19) | `users.valid_until` / `users.last_login_at`; the account-active rule of §4.4 evaluated at every authentication check; auto-disable + `account_auto_disabled` audit; admin re-enable resets the inactivity clock |
 | two-factor authentication (owner decision 2026-09-28, GD-21) | `user_two_factor` (§2.7); Sequence C step 1.5 gate on local/LDAP logins only — OAuth2 MFA stays with the IdP (DEV-AUTH-10); TOTP (stdlib RFC 6238) + email codes (`net/smtp`); recovery codes; `tfa_pending` pre-auth session (§3); mandate `AUTH_REQUIRE_2FA`; admin reset |
 | account onboarding and password lifecycle (owner decision 2026-09-28, GD-22/GD-23) | Sequence H (§2.8): `password_tokens` (REQ-DB-039) — invite and reset share single-use hashed expiring tokens (`AUTH_PASSWORD_TOKEN_TTL_DAYS`, REQ-CFG-030); the three pre-auth endpoints extend the REQ-API-041 exception set (DEV-API-16); generic reset response (no enumeration), no temp passwords, current-password proof for self-service change; sessions not revoked (DEV-AUTH-13) |
+| authentication order (owner decision 2026-09-29, master spec "Authentication order") | Sequence I (§2.9): user selects a source **name** before login (many-to-many with sources); local+LDAP sources under the name race in parallel, first "login ok" wins via side-effect-free `verify-password` + single Sequence C finalization; OAuth2 stays interactive within the name; credentials confined to the selected set; supersedes the sequential LDAP fallback and local-first ordering (DEV-AUTH-14) |
 
 ## 9. Open Items
 

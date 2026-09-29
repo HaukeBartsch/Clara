@@ -35,7 +35,7 @@ The system is exactly these four components and no others. There is no scheduler
 
 | Flow | Path through the components | Normative sources |
 |---|---|---|
-| Login | browser → PHP (local first, then OAuth2/LDAP) → Go API (account check, bootstrap promotion) → session | `Authentication_Authorization_Design.md` §2 |
+| Login | browser → PHP (source name selected by the user; credential sources under it race in parallel, OAuth2 redirects — DEV-AUTH-14) → Go API (account check, bootstrap promotion) → session | `Authentication_Authorization_Design.md` §2, §2.9 |
 | Data entry | UI form → PHP → Go API import → validation → EAV upsert + same-transaction audit row | `API_Endpoints_Design.md` §3.7, `Data_Validation_Design.md` §2, `Audit_Logging_Design.md` §3 |
 | External pull (Fiona) | `POST /api/` → token/level check → export pipeline (level + anonymization) → streamed CSV/JSON + audit + record-view row | `Data_Export_Anonymization_Design.md` §2–§6, `API_Endpoints_Design.md` §3.6 |
 | Project end | operator → `POST /api/v1/projects/{id}/end-provision` (`is_admin`) → delete / in-place anonymize + `project_ended` audit | `Data_Export_Anonymization_Design.md` §7 |
@@ -80,7 +80,7 @@ The system is exactly these four components and no others. There is no scheduler
 | GD-15 | Event ordering: timepoint events by `period`, then no-timepoint events in user order (canonical per-arm order) | `Database_Schema_Design.md` §5; `API_Endpoints_Design.md` §4.9 (events-order endpoint) |
 | GD-16 | Date/date-time values carry the collection timezone; stored as collected, never converted | `Data_Validation_Design.md` §4.1 (canonical storage); `Data_Export_Anonymization_Design.md` §5.2 (shift preserves the offset) |
 | GD-17 | Simplified `projects` table; removed attributes are ordinary instrument data, no special handling | `Database_Schema_Design.md` §4 (REQ-DB-032); `API_Endpoints_Design.md` §4.5 (creation body) |
-| GD-18 | Table-based authentication: local password path tried first; bootstrap password from configuration | `Authentication_Authorization_Design.md` §2.6 (sequence F); `System_Configuration_Design.md` §3.3 |
+| GD-18 | Table-based authentication: local password path (ordering superseded by named-source parallel resolution, DEV-AUTH-14); bootstrap password from configuration | `Authentication_Authorization_Design.md` §2.6 (sequence F), §2.9; `System_Configuration_Design.md` §3.3 |
 | GD-19 | Account validity period + inactivity auto-disable, re-enableable by an administrator | `Authentication_Authorization_Design.md` §4.4 (account active rule); `System_Configuration_Design.md` §3.10 |
 | GD-20 | Project modes (development / production / analysis): admin-only transitions with any open staging set closed first, staging with breaking-change warning in production, data entry disabled in analysis with the same warning guarding immediate setup changes there | `API_Endpoints_Design.md` §4.21; `Database_Schema_Design.md` §4/§5 (`projects.mode`, `project_staging`); `User_Interface_Design.md` §6.6–§6.8; `Audit_Logging_Design.md` §3.8 |
 

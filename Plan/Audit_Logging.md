@@ -3,7 +3,7 @@
 This document outlines the strategy for tracking user activity and data changes within the clinical study management system.
 
 ## Logged Events
-- Authentication: Login attempts (success/failure) and logouts; two-factor enrollment, self-service disable, administrator reset, and failed second-factor attempts (GD-21, REQ-AUD-028). Secrets and codes are never in the trail.
+- Authentication: Login attempts (success/failure) and logouts; each login event names the authentication source and the user-selected source name (master spec "Authentication order", REQ-AUTH-067) — a parallel credential race under one name yields a single failure event with per-source outcomes in its details (REQ-AUD-008). Two-factor enrollment, self-service disable, administrator reset, and failed second-factor attempts (GD-21, REQ-AUD-028). Secrets and codes are never in the trail.
 - Data Changes: Creation, modification, and deletion of records.
 - Record Views: All views of records, i.e. every record a user pulls through the API.
 - Project Structure: Changes to instruments, fields, or project settings.

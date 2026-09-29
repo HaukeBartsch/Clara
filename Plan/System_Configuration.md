@@ -32,6 +32,10 @@ This document outlines the configuration management for the clinical study manag
     LDAP_SERVER_1=ldap://ldap1.example.com
     LDAP_SERVER_2=ldap://ldap2.example.com
     LDAP_SERVER_3=ldap://ldap3.example.com
+    # display names the sources are selected by on the login page ("Hospital 1", "Hospital 2")
+    OAUTH2_1_NAMES=Hospital 1
+    LDAP_SERVER_1_NAMES=Hospital 2
+    LOCAL_LOGIN_NAMES=Clinic A
     ```
 
   Two-factor authentication (GD-21)
@@ -52,6 +56,7 @@ This document outlines the configuration management for the clinical study manag
 - APP_ENV: Toggles between development (SQLite default) and production (MariaDB).
 - DB_*: Database connection details.
 - OAUTH_ / LDAP_*:* Authentication server details.
+- Authentication-source names (master spec "Authentication order"): `OAUTH2_N_NAMES`, `LDAP_SERVER_N_NAMES`, `LOCAL_LOGIN_NAMES` — comma-separated display names the user selects on the login page; many-to-many with sources, unset everywhere = one implicit default set (REQ-CFG-032, DEV-AUTH-14).
 - Two-factor (GD-21): `AUTH_REQUIRE_2FA` (installation-wide mandate, default off), `TOTP_ISSUER`, `TFA_EMAIL_CODE_TTL`, and the SMTP relay (`SMTP_*`, `OTP_MAIL_FROM`) that delivers email codes — optional; without a relay the `email` method is unavailable. Security posture keys stay environment-only, unlike the runtime-edited rate-limit settings (REQ-CFG-027/028/029).
 - Appearance (GD-26): `UI_THEME` selects the installation-wide default Bootstrap theme — `bootstrap` (standard, default), `darkly`, or `yeti`; users may override it personally (stored on the user row, not in the environment) (REQ-CFG-031, REQ-TECH-027).
 - Runtime system settings are not environment variables: the rate-limit enable flag, the requests-per-minute threshold per source IP and the blockout period an over-budget IP stays blocked live in the `system_settings` table and are edited in the administration interface (REQ-CFG-020, REQ-API-112/113). Only `TRUSTED_PROXY_CIDRS` — which proxy addresses may supply the caller IP for rate limiting — stays an environment variable.

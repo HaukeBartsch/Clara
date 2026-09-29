@@ -277,7 +277,7 @@ Every other `content` (including `export` and `delete`), another record, or anot
 ### 4.1 Boundary and Authentication (REQ-API-040, REQ-API-041)
 
 - Reachable only from the trusted internal path (REQ-TECH-018, REQ-AUTH-014); the proxy strips `X-Internal-Service-Token` and `X-Internal-User-Id` from every externally-originated request (`Technology_Stack_Design.md` §5). The browser MUST NOT call this surface directly (GD-1, BR-006, REQ-API-040).
-- Every request MUST present a valid `X-Internal-Service-Token` and `X-Internal-User-Id` (REQ-API-041, REQ-AUTH-011…013); the exceptions are `POST /api/v1/auth/login` (§4.3, `Authentication_Authorization_Design.md` §2.3) and the three pre-authentication password endpoints of Sequence H (§4.3, `Authentication_Authorization_Design.md` §2.8 — DEV-API-16), which carry the service token only.
+- Every request MUST present a valid `X-Internal-Service-Token` and `X-Internal-User-Id` (REQ-API-041, REQ-AUTH-011…013); the exceptions are `POST /api/v1/auth/login` (§4.3, `Authentication_Authorization_Design.md` §2.3), the three pre-authentication password endpoints of Sequence H (§4.3, `Authentication_Authorization_Design.md` §2.8 — DEV-API-16), and `POST /api/v1/auth/verify-password` (§4.3, `Authentication_Authorization_Design.md` §2.9 — DEV-API-17), which carry the service token only.
 - The service token (config per `System_Configuration_Design.md` §3.3) is compared in constant time (REQ-AUTH-012) and MUST NOT be logged (REQ-API-005); it is enforced regardless of any other configuration (REQ-CFG-023). Missing/invalid → 401 + audit `admin_rejected`.
 - `X-Internal-User-Id` is authoritative for authorization (REQ-AUTH-013): the API applies the acting user's effective levels (`Authentication_Authorization_Design.md` §4.1) — the PHP layer adds none. Unknown or disabled user → 403 + audit `admin_rejected`.
 - JSON request/response bodies with conventional REST semantics (GET read, POST create, PUT update, DELETE remove); all PUT endpoints are idempotent (REQ-API-042).
@@ -324,6 +324,10 @@ Every error is a JSON object with a consistent shape:
 ```json
 { "email": "user@example.org", "source": "local", "password": "***", "mfa_code": "492817" }
 ```
+
+An optional `source_name` carries the authentication-source name the user selected on the login page (REQ-AUTH-067); it is recorded in the `login_success` / `login_failure` audit details and never affects identity resolution or authorization.
+
+**`POST /api/v1/auth/verify-password`** — `{ "email": "…", "password": "***" }`: the side-effect-free verify step of the named-source credential race (`Authentication_Authorization_Design.md` §2.9, REQ-API-123). Runs the login endpoint's hash check and account-active rule only and answers `ok` / `bad_password` / `account_disabled` / `account_expired` — no `last_login_at`/`auth_source` write, no audit event, no user object; login finalizes exactly once through `POST /api/v1/auth/login`. Pre-authentication: service token only, no `X-Internal-User-Id` (DEV-API-17); password never logged (REQ-AUTH-036).
 
 Processing (in order, `Authentication_Authorization_Design.md` §2.3): for `source: "local"` — the row exists (401 `account_not_found`) and the bcrypt hash matches in constant time (else 401 `bad_password`; the password is never logged, REQ-AUTH-036); the account is active per the rule of `Authentication_Authorization_Design.md` §4.4 — `enabled`, not expired (403 `account_expired`), not inactive (auto-disable + 403 `account_disabled`, REQ-AUTH-053); **two-factor gate** (`source: "local"`/`"ldap"` only, GD-21, §2.7): method not `off` and no `mfa_code` → 401 `{"error":"mfa_required","method":"totp|email"}`; invalid/expired/replayed `mfa_code` → audit `login_failure` (`bad_mfa_code`) + 401 `bad_mfa_code`; `AUTH_REQUIRE_2FA` on with method `off` → 401 `tfa_enrollment_required`; bootstrap-admin promotion (REQ-AUTH-007): if the email equals `ADMIN_BOOTSTRAP_EMAIL`, ensure the row exists, is enabled, and has `is_admin = 1` (idempotent); set the row's `auth_source` and `last_login_at` (REQ-AUTH-005, REQ-AUTH-053); audit `login_success` with the source (and the factor used when the gate applied, REQ-AUD-028). The API MUST NOT create or store a session (GD-1).
 
@@ -849,6 +853,7 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirement.m
 | `POST /api/v1/users/{id}/invite` (§4.4, REQ-API-117) | `is_admin` |
 | `PUT /users/me/password` (§4.4, REQ-API-118) | any authenticated user (self, with local credential) |
 | `POST /api/v1/auth/password-reset/request`, `…/complete`, `POST /api/v1/auth/invite/complete` (§4.3, REQ-API-119/120/121) | pre-authentication — service token only, no user id (DEV-API-16) |
+| `POST /api/v1/auth/verify-password` (§4.3, REQ-API-123) | pre-authentication — service token only, no user id (DEV-API-17) |
 | `POST /api/v1/projects` | `is_admin` |
 | `GET /api/v1/projects` | project visibility (REQ-API-007) |
 | `GET /api/v1/projects/{id}` | data access ≥ `read_only` + visibility |

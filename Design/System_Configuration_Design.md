@@ -47,6 +47,7 @@ Defines the complete configuration variable inventory, the defaults, and the sta
 | `INTERNAL_SERVICE_TOKEN` | both (web sends, api verifies) | string (secret) | dev: `dev-internal-token` (accepted **only** when `APP_ENV=development`) | prod | shared secret for `X-Internal-Service-Token` (REQ-CFG-013, REQ-AUTH-011); no production default |
 | `ADMIN_BOOTSTRAP_EMAIL` | api | email | — | — | bootstrap administrator (GD-4, REQ-CFG-014); promoted on first login (REQ-AUTH-007) |
 | `ADMIN_BOOTSTRAP_PASSWORD` | api | string (secret) | — (no default) | if no OAuth2 provider **and** no LDAP server (§4.1) | local password of the bootstrap administrator (GD-18, REQ-CFG-025, REQ-AUTH-051); stored only as a bcrypt hash in `users.password_hash`; never logged (§4.4) |
+| `LOCAL_LOGIN_NAMES` | web | comma-separated display names | unset → implicit default set | — | names the table-based (local) source is selected by on the login page — the local kind exists at most once but may carry several names (master spec "Authentication order", REQ-CFG-032, REQ-AUTH-064; `Authentication_Authorization_Design.md` §2.9) |
 
 ### 3.4 OAuth2 (providers 1–3; at least one provider or one LDAP server required)
 
@@ -59,8 +60,9 @@ Per provider `N` (1…3):
 | `OAUTH2_N_CLIENT_SECRET` | web | string (secret) | — | if provider N used | (REQ-CFG-011) |
 | `OAUTH2_N_REDIRECT_URI` | web | absolute URL | `WEB_PUBLIC_URL + /auth/callback` | — | (REQ-CFG-011) |
 | `OAUTH2_N_EMAIL_ATTR` | web | string | `email` | — | claim/attribute mapped to the system user (REQ-CFG-011, REQ-AUTH-004) |
+| `OAUTH2_N_NAMES` | web | comma-separated display names | unset → implicit default set | — | names this provider is selected by on the login page (master spec "Authentication order", REQ-CFG-032, REQ-AUTH-063/064); entries empty after trimming rejected at startup (§4.1) |
 
-### 3.5 LDAP (servers 1–3, evaluated in order; 2 and 3 optional)
+### 3.5 LDAP (servers 1–3, tried in parallel within the selected source name; 2 and 3 optional)
 
 Per server `N` (1…3):
 
@@ -73,6 +75,7 @@ Per server `N` (1…3):
 | `LDAP_SERVER_N_UID_ATTR` | web | attribute | `uid` | — | (REQ-CFG-012) |
 | `LDAP_SERVER_N_EMAIL_ATTR` | web | attribute | `mail` | — | identity mapping (REQ-AUTH-004) |
 | `LDAP_SERVER_N_NAME_ATTR` | web | attribute | `cn` | — | display name (REQ-CFG-012) |
+| `LDAP_SERVER_N_NAMES` | web | comma-separated display names | unset → implicit default set | — | names this server is selected by on the login page (REQ-CFG-032, REQ-AUTH-063/064); all LDAP servers under the selected name are tried in parallel (`Authentication_Authorization_Design.md` §2.9) |
 
 ### 3.6 Anonymization (api)
 
@@ -145,6 +148,7 @@ The rate-limit **thresholds are not environment variables**: `rate_limit_enabled
 | an authentication path exists: at least one of `OAUTH2_N_ISSUER`, `LDAP_SERVER_N_URL` — **or** table-based bootstrap (GD-18, REQ-CFG-025): if **neither** an OAuth2 provider **nor** an LDAP server is configured, then `ADMIN_BOOTSTRAP_EMAIL` and `ADMIN_BOOTSTRAP_PASSWORD` | **required** (the system must be loggable-in on a first installation) | **required** |
 | `OAUTH2_N_CLIENT_ID`/`CLIENT_SECRET` for every provider with a set `ISSUER` | required | required |
 | `LDAP_SERVER_N_SEARCH_BASE` for every server with a set `URL` | required | required (REQ-CFG-012) |
+| every entry of `OAUTH2_N_NAMES` / `LDAP_SERVER_N_NAMES` / `LOCAL_LOGIN_NAMES` non-empty after trimming; duplicate entries within one list ignored | required | required (REQ-CFG-032) |
 | `ANON_DATE_SHIFT_MIN ≤ ANON_DATE_SHIFT_MAX` | required | required |
 | `SESSION_DIR` is a directory path and not equal to `DB_DATABASE` | required (REQ-CFG-017) | required |
 | `AUTH_INACTIVITY_LIMIT_DAYS` is an integer ≥ 0 (default 180; 0 = rule off) | required | required (REQ-CFG-024) |
@@ -193,8 +197,14 @@ OAUTH2_1_CLIENT_ID=csms
 OAUTH2_1_CLIENT_SECRET=***
 OAUTH2_1_REDIRECT_URI=http://localhost:8000/auth/callback
 OAUTH2_1_EMAIL_ATTR=email
+# names shown on the login page; sources may share names, one source may carry several (REQ-CFG-032)
+OAUTH2_1_NAMES=Hospital 1
 
-# LDAP server 1 (optional fallback)
+# local (table-based) source names — optional; unset everywhere = one implicit default set
+#LOCAL_LOGIN_NAMES=Clinic A
+
+# LDAP server 1 (optional — tried in parallel with the other sources under its name, REQ-AUTH-065)
+#LDAP_SERVER_1_NAMES=Hospital 2
 #LDAP_SERVER_1_URL=ldap://dir.example.org:389
 #LDAP_SERVER_1_SEARCH_BASE=ou=people,dc=example,dc=org
 #LDAP_SERVER_1_UID_ATTR=uid
@@ -252,6 +262,7 @@ OTP_MAIL_FROM=
 | inactivity auto-disable rule key (GD-19, master spec "Details") | `AUTH_INACTIVITY_LIMIT_DAYS` (default 180, 0 = off), §3.10 |
 | default collection timezone (GD-16, master spec "Details") | `APP_TIMEZONE` (IANA name, default `UTC`), §3.10 |
 | two-factor mandate, code lifetime, and mail relay (GD-21, master spec "Details") | `AUTH_REQUIRE_2FA`, `TOTP_ISSUER`, `TFA_EMAIL_CODE_TTL`, SMTP keys, §3.11; posture keys stay environment-only (DEV-CFG-4) |
+| authentication-source display names (master spec "Authentication order") | `OAUTH2_N_NAMES` (§3.4), `LDAP_SERVER_N_NAMES` (§3.5), `LOCAL_LOGIN_NAMES` (§3.3); validation §4.1; REQ-CFG-032, DEV-CFG-6 |
 
 ## 7. Open Items
 
