@@ -71,6 +71,8 @@ func newExportFixture(t *testing.T) *exportFixture {
 	add(db.Field{FieldName: "contact_email", FieldType: "text",
 		ValidationType: sql.NullString{String: "email", Valid: true}}, 5)
 	add(db.Field{FieldName: "secret", FieldType: "text", PersonalInformation: true}, 6)
+	add(db.Field{FieldName: "visit_date", FieldType: "text",
+		ValidationType: sql.NullString{String: "date", Valid: true}, ExportApproved: true}, 7)
 
 	must(e.Store.SetInstrumentEventsForArm(ctx, pid, arm1, []db.InstrumentEvent{
 		{InstrumentID: demoID, EventID: ev1}}))
@@ -94,6 +96,7 @@ func newExportFixture(t *testing.T) *exportFixture {
 			{"notes", "=SUM(1)"}, // formula-neutralised in CSV (REQ-VAL-032)
 			{"contact_email", "participant@example.org"},
 			{"secret", "very private"},
+			{"visit_date", "2026-05-04"},
 		} {
 			must(e.Store.UpsertDataValue(ctx, &db.DataValue{
 				ProjectID: pid, RecordID: recordID, UniqueEventName: event,
@@ -148,15 +151,16 @@ func csvRows(t *testing.T, body string) [][]string {
 	return rows
 }
 
-// lastExportAudit returns (source, details) of the newest export event.
-func (f *exportFixture) lastExportAudit(t *testing.T) (string, map[string]any) {
+// lastAudit returns (source, details) of the newest event of one type.
+func (f *exportFixture) lastAudit(t *testing.T, eventType string) (string, map[string]any) {
 	t.Helper()
 	var source, details string
 	err := f.e.Store.DB.QueryRow(
-		`SELECT source, details FROM audit_events WHERE event_type = 'export' ORDER BY id DESC LIMIT 1`,
+		`SELECT source, details FROM audit_events WHERE event_type = ? ORDER BY id DESC LIMIT 1`,
+		eventType,
 	).Scan(&source, &details)
 	if err == sql.ErrNoRows {
-		t.Fatalf("no export audit row")
+		t.Fatalf("no %s audit row", eventType)
 	}
 	if err != nil {
 		t.Fatalf("audit query: %v", err)
@@ -166,6 +170,12 @@ func (f *exportFixture) lastExportAudit(t *testing.T) (string, map[string]any) {
 		t.Fatalf("decode details %q: %v", details, err)
 	}
 	return source, d
+}
+
+// lastExportAudit returns (source, details) of the newest export event.
+func (f *exportFixture) lastExportAudit(t *testing.T) (string, map[string]any) {
+	t.Helper()
+	return f.lastAudit(t, "export")
 }
 
 func TestExportAdminFullCSVAndAudit(t *testing.T) {
@@ -181,7 +191,7 @@ func TestExportAdminFullCSVAndAudit(t *testing.T) {
 	}
 	rows := csvRows(t, rec.Body.String())
 	wantHeader := []string{"record_id", "redcap_event_name", "redcap_repeat_instrument",
-		"redcap_repeat_instance", "age", "status", "notes", "contact_email", "secret"}
+		"redcap_repeat_instance", "age", "status", "notes", "contact_email", "secret", "visit_date"}
 	if len(rows) != 3 || strings.Join(rows[0], ",") != strings.Join(wantHeader, ",") {
 		t.Fatalf("CSV = %v, want header %v and two data rows", rows, wantHeader)
 	}

@@ -267,6 +267,41 @@ func EnsureAnonOffset(ctx context.Context, s *Store, projectID int64, recordID, 
 	return off, nil
 }
 
+// EnsureAnonOffsetTx is EnsureAnonOffset inside the caller's transaction —
+// for writers that hold the project's write lock while they need offsets
+// (the in-place anonymization of §7.4); a second connection would race them.
+func EnsureAnonOffsetTx(ctx context.Context, tx *sql.Tx, projectID int64, recordID, salt string, min, max int) (int, error) {
+	var off int
+	err := tx.QueryRowContext(ctx,
+		`SELECT offset_days FROM anon_offsets WHERE project_id = ? AND record_id = ?`,
+		projectID, recordID).Scan(&off)
+	if err == nil {
+		return off, nil
+	}
+	if err != sql.ErrNoRows {
+		return 0, err
+	}
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%d:%s:%s", projectID, recordID, salt)))
+	n := new(big.Int).SetBytes(sum[:])
+	span := int64(max-min) + 1
+	off = min
+	if span > 0 {
+		off = min + int(new(big.Int).Mod(n, big.NewInt(span)).Int64())
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO anon_offsets (project_id, record_id, offset_days) VALUES (?, ?, ?)`,
+		projectID, recordID, off); err != nil {
+		// Concurrent first use: the row exists by now — use it.
+		if gerr := tx.QueryRowContext(ctx,
+			`SELECT offset_days FROM anon_offsets WHERE project_id = ? AND record_id = ?`,
+			projectID, recordID).Scan(&off); gerr == nil {
+			return off, nil
+		}
+		return 0, err
+	}
+	return off, nil
+}
+
 func placeholders(n int) string {
 	out := make([]byte, 0, n*2-1)
 	for i := range n {

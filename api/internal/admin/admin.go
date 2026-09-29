@@ -63,6 +63,7 @@ func New(store *db.Store, cfg *config.Config, aw *audit.Writer) *Handler {
 	h.registerDAG(mux)
 	h.registerSurvey(mux)
 	h.registerExport(mux)
+	h.registerEndProvision(mux)
 	h.registerQueries(mux)
 	h.registerCompletion(mux)
 	h.registerI18n(mux)
