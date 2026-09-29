@@ -1,5 +1,6 @@
 // Package mailer sends transactional email through the standard library's
-// net/smtp — currently only the two-factor login codes of REQ-AUTH-057. The
+// net/smtp: the two-factor login codes of REQ-AUTH-057 and the invite /
+// password-reset links of Sequence H (REQ-AUTH-060/062). The
 // API performs the send so SMTP credentials stay on the API side (Technology
 // Stack design §3, no new dependencies). Nothing here logs message contents:
 // a code must never reach a log line.

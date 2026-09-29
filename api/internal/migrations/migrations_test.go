@@ -23,6 +23,7 @@ var wantFiles = []string{
 	"0007_instrument_completion.sql",
 	"0008_two_factor.sql",
 	"0009_ui_theme.sql",
+	"0010_password_tokens.sql",
 }
 
 var dialects = []string{"sqlite", "mariadb"}

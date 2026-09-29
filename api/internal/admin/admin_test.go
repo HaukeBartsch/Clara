@@ -18,22 +18,23 @@ import (
 // and the assembled administration handler (the boundary middleware lives in
 // httpapi and is exercised there — handlers take the actor from the context).
 type env struct {
-	t     *testing.T
-	Store *db.Store
-	Cfg   *config.Config
-	Audit *audit.Writer
+	t       *testing.T
+	Store   *db.Store
+	Cfg     *config.Config
+	Audit   *audit.Writer
 	Handler *Handler
 }
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	cfg := &config.Config{
-		AppEnv:               "development",
-		DBConnection:         "sqlite",
-		DBDatabase:           filepath.Join(t.TempDir(), "admin.sqlite"),
-		AnonSalt:             "test-salt",
-		InternalServiceToken: "test-token",
-		WebPublicURL:         "https://csms.example.org",
+		AppEnv:                   "development",
+		DBConnection:             "sqlite",
+		DBDatabase:               filepath.Join(t.TempDir(), "admin.sqlite"),
+		AnonSalt:                 "test-salt",
+		InternalServiceToken:     "test-token",
+		WebPublicURL:             "https://csms.example.org",
+		AuthPasswordTokenTTLDays: 7,
 	}
 	store, err := db.Open(cfg)
 	if err != nil {

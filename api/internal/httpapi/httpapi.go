@@ -59,15 +59,26 @@ func rateLimit(store *db.Store, cfg *config.Config, l *dataapi.RateLimiter, next
 	})
 }
 
-// loginPath is the sole administration endpoint exempt from
-// X-Internal-User-Id (Authentication_Authorization_Design.md §2.3).
+// preAuthPaths are the administration endpoints exempt from
+// X-Internal-User-Id: login (Authentication_Authorization_Design.md §2.3)
+// plus the three Sequence H pre-authentication password endpoints, which
+// extend the REQ-API-041 exception set (§2.8, DEV-API-16). They still
+// require a valid service token; the credential rides in the request body.
 const loginPath = "/api/v1/auth/login"
+
+var preAuthPaths = map[string]bool{
+	"/api/v1/auth/login":                   true,
+	"/api/v1/auth/password-reset/request":  true,
+	"/api/v1/auth/password-reset/complete": true,
+	"/api/v1/auth/invite/complete":         true,
+}
 
 // AdminBoundary enforces the internal trust boundary on /api/v1/*
 // (REQ-API-041, REQ-AUTH-011…013): a valid X-Internal-Service-Token
-// (constant-time compare, never logged) and — except for login — an active
-// acting user from the authoritative X-Internal-User-Id header. Rejections
-// are audit-logged as admin_rejected (REQ-AUD-008).
+// (constant-time compare, never logged) and — except for the pre-auth
+// endpoints — an active acting user from the authoritative
+// X-Internal-User-Id header. Rejections are audit-logged as admin_rejected
+// (REQ-AUD-008).
 func AdminBoundary(next http.Handler, store *db.Store, cfg *config.Config, aw *audit.Writer) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		presented := r.Header.Get("X-Internal-Service-Token")
@@ -75,8 +86,8 @@ func AdminBoundary(next http.Handler, store *db.Store, cfg *config.Config, aw *a
 			rejectAdmin(w, r, aw, "service_token_invalid")
 			return
 		}
-		if r.URL.Path == loginPath {
-			next.ServeHTTP(w, r) // service token only; the identity rides in the body
+		if preAuthPaths[r.URL.Path] {
+			next.ServeHTTP(w, r) // service token only; the credential rides in the body
 			return
 		}
 

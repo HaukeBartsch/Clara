@@ -32,19 +32,26 @@ type Handler struct {
 	Store   *db.Store
 	Cfg     *config.Config
 	Audit   *audit.Writer
-	Mail    *mailer.Mailer // email second-factor codes (REQ-AUTH-057)
+	Mail    *mailer.Mailer // email second-factor codes and setup links (REQ-AUTH-057/060/062)
 	Handler http.Handler   // the /api/v1/ mux, built by New
 
-	tfaSends *sendLimiter // per-account cap on emailed codes (in-memory)
+	// SendMail overrides Mail.Send for tests; nil uses the configured relay.
+	SendMail func(to, subject, body string) error
+
+	tfaSends   *sendLimiter    // per-account cap on emailed codes (in-memory)
+	resetSends *addressLimiter // per-address cap on reset requests (REQ-API-119)
+	lockouts   *authLockout    // Sequence E brute-force store (§2.5)
 }
 
 // New builds the administration handler and registers every area's routes.
 func New(store *db.Store, cfg *config.Config, aw *audit.Writer) *Handler {
-	h := &Handler{Store: store, Cfg: cfg, Audit: aw, Mail: mailer.New(cfg), tfaSends: newSendLimiter()}
+	h := &Handler{Store: store, Cfg: cfg, Audit: aw, Mail: mailer.New(cfg),
+		tfaSends: newSendLimiter(), resetSends: newAddressLimiter(), lockouts: newAuthLockout()}
 	mux := http.NewServeMux()
 	h.registerAuth(mux)
 	h.registerTfa(mux)
 	h.registerUsers(mux)
+	h.registerPasswords(mux)
 	h.registerProjects(mux)
 	h.registerModes(mux)
 	h.registerMembers(mux)

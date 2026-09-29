@@ -13,9 +13,11 @@ import (
 	"csms/api/internal/authz"
 )
 
-// registerAuth mounts the session endpoints of §4.3: login (the only
-// endpoint reached without an acting user — REQ-API-041's sole exception)
-// and logout. The API is stateless: no session is created or stored (GD-1).
+// registerAuth mounts the session endpoints of §4.3: login and logout.
+// Login runs without an acting user — one of the four REQ-API-041 exceptions
+// together with the three Sequence H pre-authentication endpoints in
+// passwords.go (the exemption set lives in httpapi). The API is stateless:
+// no session is created or stored (GD-1).
 func (h *Handler) registerAuth(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/login", h.login)
 	mux.HandleFunc("POST /api/v1/auth/logout", h.logout)
@@ -52,6 +54,15 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+
+	// Sequence E (REQ-AUTH-035): a locked address is rejected before any
+	// credential probing — no IdP/LDAP contact, no hash comparison.
+	if h.lockouts.locked(body.Email, time.Now()) {
+		h.loginFailure(ctx, &body, "rate_limited")
+		APIError(w, http.StatusTooManyRequests, "rate_limited",
+			"too many failed attempts for this address — try again later")
+		return
+	}
 
 	u, err := h.Store.GetUserByEmail(ctx, body.Email)
 	if err != nil {
@@ -128,6 +139,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 
 	// Steps 3–5: stamp auth_source + last_login_at (REQ-AUTH-005), audit
 	// login_success with the source (§3.1), respond with the user object.
+	h.lockouts.success(body.Email) // a success clears the counter (§2.5)
 	if err := h.Store.TouchLastLogin(ctx, u.ID, body.Source); err != nil {
 		errInternal(w)
 		return
@@ -161,6 +173,9 @@ func (h *Handler) isBootstrapEmail(email string) bool {
 // stable reason — never the password (REQ-AUTH-036). The rejection response
 // is written by the caller; an audit write failure does not mask it.
 func (h *Handler) loginFailure(ctx context.Context, body *loginRequest, reason string) {
+	if reason != "rate_limited" { // the lockout rejection must not extend itself
+		h.lockouts.failure(body.Email, time.Now())
+	}
 	_ = h.Audit.Insert(ctx, audit.Entry{
 		EventType: audit.LoginFailure, Source: audit.SourceUI,
 		Email:   body.Email,

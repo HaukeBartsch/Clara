@@ -90,9 +90,10 @@ type Config struct {
 	trustedProxyRaw   string
 
 	// §3.10 account policy and time
-	AuthInactivityLimitDays int
-	AppTimezone             string
-	appLocation             *time.Location // resolved APP_TIMEZONE, for value offsets
+	AuthInactivityLimitDays  int
+	AuthPasswordTokenTTLDays int // AUTH_PASSWORD_TOKEN_TTL_DAYS — invite/reset link lifetime (REQ-CFG-030)
+	AppTimezone              string
+	appLocation              *time.Location // resolved APP_TIMEZONE, for value offsets
 
 	// §3.11 two-factor authentication (REQ-CFG-027/028/029, GD-21)
 	AuthRequire2FA  bool   // AUTH_REQUIRE_2FA — installation-wide mandate
@@ -354,6 +355,10 @@ func Load() (*Config, error) {
 	if cfg.AuthInactivityLimitDays < 0 {
 		fail("AUTH_INACTIVITY_LIMIT_DAYS: %d (want >= 0; 0 = rule off)", cfg.AuthInactivityLimitDays)
 	}
+	cfg.AuthPasswordTokenTTLDays = getInt(get, "AUTH_PASSWORD_TOKEN_TTL_DAYS", 7)
+	if cfg.AuthPasswordTokenTTLDays <= 0 {
+		fail("AUTH_PASSWORD_TOKEN_TTL_DAYS: %d (want > 0 days — Sequence H token lifetime)", cfg.AuthPasswordTokenTTLDays)
+	}
 	cfg.AppTimezone = getOr(get, "APP_TIMEZONE", "UTC")
 	if loc, err := time.LoadLocation(cfg.AppTimezone); err != nil {
 		fail("APP_TIMEZONE: %q is not a resolvable IANA timezone (%v)", cfg.AppTimezone, err)
@@ -473,6 +478,7 @@ func (c *Config) Dump() []string {
 		"SESSION_COOKIE_SECURE="+boolStr(c.SessionCookieSecure),
 		"TRUSTED_PROXY_CIDRS="+c.trustedProxyRaw+" (thresholds in system_settings)",
 		"AUTH_INACTIVITY_LIMIT_DAYS="+itoa(c.AuthInactivityLimitDays)+" (0 = off)",
+		"AUTH_PASSWORD_TOKEN_TTL_DAYS="+itoa(c.AuthPasswordTokenTTLDays),
 		"APP_TIMEZONE="+c.AppTimezone,
 		"AUTH_REQUIRE_2FA="+boolStr(c.AuthRequire2FA),
 		"TOTP_ISSUER="+c.TotpIssuer,

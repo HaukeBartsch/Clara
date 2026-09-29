@@ -477,6 +477,33 @@ func TestAdminBoundaryLoginExemption(t *testing.T) {
 // TestAdminBoundaryRejectionsAreAudited walks one rejection per reason and
 // checks the trail end to end (REQ-AUD-008): one row each, in order, with the
 // method-and-path the caller asked for and a source of "ui" (REQ-AUD-017).
+// The three Sequence H pre-authentication password endpoints share login's
+// exemption from X-Internal-User-Id (Authentication_Authorization_Design.md
+// §2.8, DEV-API-16): a valid service token reaches them without any user
+// header, and — like login — they still demand that token.
+func TestAdminBoundaryPreAuthPasswordEndpoints(t *testing.T) {
+	e := newEnv(t)
+	str := func(s string) *string { return &s }
+	paths := []string{
+		"/api/v1/auth/password-reset/request",
+		"/api/v1/auth/password-reset/complete",
+		"/api/v1/auth/invite/complete",
+	}
+	for _, p := range paths {
+		rec := e.do(http.MethodPost, p, str("test-token"), nil)
+		a := e.actor(rec) // no user id was sent; the probe must still run…
+		if a.ID != 0 {
+			t.Errorf("%s: probe saw actor %+v, want none", p, a)
+		}
+	}
+	for _, p := range paths {
+		before := e.rejections()
+		rec := e.do(http.MethodPost, p, nil, nil) // service token missing
+		e.mustError(rec, http.StatusUnauthorized, "service_token_invalid")
+		e.mustAuditOne(before, "service_token_invalid", "POST "+p)
+	}
+}
+
 func TestAdminBoundaryRejectionsAreAudited(t *testing.T) {
 	e := newEnv(t)
 	disabled := e.mustDisabled("gone@example.org")

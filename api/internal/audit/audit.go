@@ -72,6 +72,13 @@ const (
 	I18nUpdated       = "i18n_updated"
 	SettingsUpdated   = "settings_updated" // REQ-AUD-027, REQ-API-112
 
+	// password lifecycle (Sequence H) — token values never enter details (REQ-AUD-029)
+	UserInvited            = "user_invited"             // REQ-AUD-029, GD-22
+	InviteAccepted         = "invite_accepted"          // REQ-AUD-029, GD-22
+	PasswordChanged        = "password_changed"         // REQ-AUD-029, GD-23
+	PasswordResetRequested = "password_reset_requested" // REQ-AUD-029, GD-23
+	PasswordResetCompleted = "password_reset_completed" // REQ-AUD-029, GD-23
+
 	// §3.5 export events
 	Export = "export"
 
