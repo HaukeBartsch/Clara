@@ -327,9 +327,18 @@ Every error is a JSON object with a consistent shape:
 
 An optional `source_name` carries the authentication-source name the user selected on the login page (REQ-AUTH-067); it is recorded in the `login_success` / `login_failure` audit details and never affects identity resolution or authorization.
 
+An optional `attempts` carries the per-source outcomes of a failed named-source credential race (`Authentication_Authorization_Design.md` §2.9) so the single finalizing call yields exactly one `login_failure` with the losing attempts' detail (`Audit_Logging_Design.md` §3.1, DEV-AUD-5):
+
+```json
+{ "email": "user@example.org", "source": "ldap", "provider": "ldap-1",
+  "source_name": "Hospital 2", "attempts": { "local": "bad_password", "ldap-2": "unreachable" } }
+```
+
+The map is source-id → outcome (e.g. `bad_password`, `unreachable`) and MUST never contain credentials (REQ-AUTH-036). With attempts present, a credential rejection settles as `bad_credentials` — or `provider_unavailable` when every attempt was `unreachable`; account-state rejections keep their specific reason.
+
 **`POST /api/v1/auth/verify-password`** — `{ "email": "…", "password": "***" }`: the side-effect-free verify step of the named-source credential race (`Authentication_Authorization_Design.md` §2.9, REQ-API-123). Runs the login endpoint's hash check and account-active rule only and answers `ok` / `bad_password` / `account_disabled` / `account_expired` — no `last_login_at`/`auth_source` write, no audit event, no user object; login finalizes exactly once through `POST /api/v1/auth/login`. Pre-authentication: service token only, no `X-Internal-User-Id` (DEV-API-17); password never logged (REQ-AUTH-036).
 
-Processing (in order, `Authentication_Authorization_Design.md` §2.3): for `source: "local"` — the row exists (401 `account_not_found`) and the bcrypt hash matches in constant time (else 401 `bad_password`; the password is never logged, REQ-AUTH-036); the account is active per the rule of `Authentication_Authorization_Design.md` §4.4 — `enabled`, not expired (403 `account_expired`), not inactive (auto-disable + 403 `account_disabled`, REQ-AUTH-053); **two-factor gate** (`source: "local"`/`"ldap"` only, GD-21, §2.7): method not `off` and no `mfa_code` → 401 `{"error":"mfa_required","method":"totp|email"}`; invalid/expired/replayed `mfa_code` → audit `login_failure` (`bad_mfa_code`) + 401 `bad_mfa_code`; `AUTH_REQUIRE_2FA` on with method `off` → 401 `tfa_enrollment_required`; bootstrap-admin promotion (REQ-AUTH-007): if the email equals `ADMIN_BOOTSTRAP_EMAIL`, ensure the row exists, is enabled, and has `is_admin = 1` (idempotent); set the row's `auth_source` and `last_login_at` (REQ-AUTH-005, REQ-AUTH-053); audit `login_success` with the source (and the factor used when the gate applied, REQ-AUD-028). The API MUST NOT create or store a session (GD-1).
+Processing (in order, `Authentication_Authorization_Design.md` §2.3): for `source: "local"` — the row exists (401 `account_not_found`) and the bcrypt hash matches in constant time (else 401 `bad_password`; the password is never logged, REQ-AUTH-036); the account is active per the rule of `Authentication_Authorization_Design.md` §4.4 — `enabled`, not expired (403 `account_expired`), not inactive (auto-disable + 403 `account_disabled`, REQ-AUTH-053); **two-factor gate** (`source: "local"`/`"ldap"` only, GD-21, §2.7): method not `off` and no `mfa_code` → 401 `{"error":"mfa_required","method":"totp|email"}`; invalid/expired/replayed `mfa_code` → audit `login_failure` (`bad_mfa_code`) + 401 `bad_mfa_code`; `AUTH_REQUIRE_2FA` on with method `off` → 401 `{"error":"tfa_enrollment_required","user_id":<id>}` — the pending identity's id lets PHP drive the enrollment wizard (§4.4 TFA endpoints, presented as `X-Internal-User-Id`) before a session exists (`Authentication_Authorization_Design.md` §2.7); bootstrap-admin promotion (REQ-AUTH-007): if the email equals `ADMIN_BOOTSTRAP_EMAIL`, ensure the row exists, is enabled, and has `is_admin = 1` (idempotent); set the row's `auth_source` and `last_login_at` (REQ-AUTH-005, REQ-AUTH-053); audit `login_success` with the source (and the factor used when the gate applied, REQ-AUD-028). The API MUST NOT create or store a session (GD-1).
 
 200 — the user object (used by all §4.4 user endpoints):
 
@@ -721,12 +730,18 @@ Exactly one active group when `groups` is non-empty (otherwise 400 `invalid_requ
 
 Record scope and transformation are orthogonal (REQ-API-092, REQ-AUTH-045): the group governs **which records** the holder sees on both export surfaces; the export level governs **how** the data is transformed (the §3.6.1 ladder). A record created via import takes the holder's active group, or none (REQ-API-093, §3.7.2).
 
-### 4.19 i18n and appearance (GD-12/GD-26, REQ-API-097…100/122)
+### 4.19 i18n and appearance (GD-12/GD-26, REQ-API-097…100/122/124)
 
 **`GET /api/v1/i18n/languages`** — any authenticated user. 200 — the enabled languages (code, display name):
 
 ```json
 [ { "code": "en", "display_name": "English" }, { "code": "nb", "display_name": "Norsk bokmål" } ]
+```
+
+**`GET /api/v1/i18n/bundle?language=<code>`** — any authenticated user (REQ-API-124). The render-time read for the PHP shell: one language's translations as a flat key→text map, overlaid on the English strings the application carries (English is the source of truth and lives in the PHP layer, not the table — REQ-DB-031); a key absent from the map renders in English. Without `language`, the acting user's stored UI language is served (default `en`, REQ-API-098). An unknown or disabled language → 400 `invalid_request`. 200:
+
+```json
+{ "language": "nb", "strings": { "ui.dashboard.title": "Oversikt" } }
 ```
 
 **`PUT /api/v1/users/me/ui-language`** — any authenticated user (acting on themselves). Body `{ "language": "nb" }` — MUST be an enabled language (otherwise 400 `invalid_request`); the default is `en`. The setting persists across sessions (REQ-DB-008). 200 — the user object.

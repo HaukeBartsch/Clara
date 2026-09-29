@@ -19,6 +19,7 @@ import (
 // English rows define the key universe the missing flag is computed against.
 func (h *Handler) registerI18n(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/i18n/languages", h.listLanguages)
+	mux.HandleFunc("GET /api/v1/i18n/bundle", h.getBundle)
 	mux.HandleFunc("PUT /api/v1/users/me/ui-language", h.putMyUILanguage)
 	mux.HandleFunc("PUT /api/v1/users/me/ui-theme", h.putMyUITheme)
 	mux.HandleFunc("GET /api/v1/i18n/strings", h.listStrings)
@@ -146,6 +147,51 @@ func (h *Handler) putMyUITheme(w http.ResponseWriter, r *http.Request) {
 	}
 	u.UITheme = theme // the response carries the new setting (REQ-API-122)
 	writeJSON(w, http.StatusOK, NewUserObject(u, time.Now().UTC()))
+}
+
+// --- GET /api/v1/i18n/bundle (§4.19, REQ-API-124) ---
+
+// getBundle serves one language's translations as a flat key→text map for
+// render-time overlay (REQ-API-124). English is the application's source of
+// truth and lives in the PHP layer, not the table (REQ-DB-031), so this is
+// the member-accessible read the shell needs: PHP overlays the bundle on its
+// own English strings; a key absent here renders in English. Any
+// authenticated user may call it — every page renders translated (§9 of
+// User_Interface_Design.md) and PHP has no database access (REQ-TECH-006).
+// Without an explicit language parameter the acting user's stored
+// ui_language is served (default en, REQ-API-098).
+func (h *Handler) getBundle(w http.ResponseWriter, r *http.Request) {
+	u, ok := actor(r)
+	if !ok {
+		errForbidden(w)
+		return
+	}
+	code := r.URL.Query().Get("language")
+	if code == "" {
+		code = u.UILanguage
+		if code == "" {
+			code = defaultUILanguage
+		}
+	}
+	ctx := r.Context()
+	lang, err := h.Store.GetLanguageByCode(ctx, code)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	if lang == nil || !lang.Enabled {
+		errBadRequest(w, "unknown or disabled language")
+		return
+	}
+	strings, err := h.Store.ListI18nStringsByCode(ctx, code)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	if strings == nil {
+		strings = map[string]string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"language": code, "strings": strings})
 }
 
 // --- GET / PUT /api/v1/i18n/strings (§4.19, REQ-API-099/100) ---

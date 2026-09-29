@@ -318,3 +318,66 @@ func TestI18nStrings(t *testing.T) {
 		t.Errorf("missing entries: got %d, want 400", rec.Code)
 	}
 }
+
+// TestI18nBundle covers REQ-API-124: the member-accessible render-time read —
+// one language's translations as a flat map PHP overlays on its own English
+// base (REQ-DB-031, REQ-TECH-006).
+func TestI18nBundle(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	member := e.mustUser("member@example.org")
+
+	// Any authenticated user may read a bundle (contrast REQ-API-099).
+	if rec := e.do("GET", "/api/v1/i18n/bundle?language=nb", nil, member); rec.Code != http.StatusOK {
+		t.Fatalf("member bundle: got %d %s, want 200", rec.Code, rec.Body.String())
+	}
+
+	// Translating a key makes it appear in the bundle; removing it drops it
+	// again, so the PHP English fallback takes over.
+	if rec := e.do("PUT", "/api/v1/i18n/strings", map[string]any{
+		"language": "nb",
+		"entries":  []map[string]string{{"key": "ui.dashboard.title", "text": "Oversikt"}},
+	}, admin); rec.Code != http.StatusOK {
+		t.Fatalf("translate: got %d %s", rec.Code, rec.Body.String())
+	}
+	rec := e.do("GET", "/api/v1/i18n/bundle?language=nb", nil, member)
+	var bundle struct {
+		Language string            `json:"language"`
+		Strings  map[string]string `json:"strings"`
+	}
+	e.decode(rec, &bundle)
+	if bundle.Language != "nb" || bundle.Strings["ui.dashboard.title"] != "Oversikt" {
+		t.Fatalf("nb bundle = %+v", bundle)
+	}
+	if rec := e.do("PUT", "/api/v1/i18n/strings", map[string]any{
+		"language": "nb",
+		"entries":  []map[string]string{{"key": "ui.dashboard.title", "text": ""}},
+	}, admin); rec.Code != http.StatusOK {
+		t.Fatalf("remove: got %d %s", rec.Code, rec.Body.String())
+	}
+	var after struct {
+		Language string            `json:"language"`
+		Strings  map[string]string `json:"strings"`
+	}
+	rec = e.do("GET", "/api/v1/i18n/bundle?language=nb", nil, member)
+	e.decode(rec, &after)
+	if _, present := after.Strings["ui.dashboard.title"]; present {
+		t.Fatalf("removed translation still in bundle: %+v", after.Strings)
+	}
+
+	// Without a parameter the acting user's stored ui_language is served.
+	e.do("PUT", "/api/v1/users/me/ui-language", map[string]any{"language": "nn"}, member)
+	rec = e.do("GET", "/api/v1/i18n/bundle", nil, member)
+	e.decode(rec, &after)
+	if after.Language != "nn" {
+		t.Fatalf("default bundle language = %q, want nn", after.Language)
+	}
+
+	// Validation mirrors §4.19.
+	if rec := e.do("GET", "/api/v1/i18n/bundle?language=xx", nil, member); rec.Code != http.StatusBadRequest {
+		t.Errorf("unknown language: got %d, want 400", rec.Code)
+	}
+	if rec := e.do("GET", "/api/v1/i18n/bundle", nil, nil); rec.Code != http.StatusForbidden {
+		t.Errorf("pre-auth bundle: got %d, want 403", rec.Code)
+	}
+}
