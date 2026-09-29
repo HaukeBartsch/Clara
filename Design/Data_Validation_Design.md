@@ -1,7 +1,7 @@
 # Data Validation — Design
 
-**Project:** Clinical Study Management System (REDCap API Replacement)
-**Implements:** `Requirements/Data_Validation_Requirements.md`
+**Project:** Clinical Study Management System (REDCap API Replacement)\
+**Implements:** `Requirements/Data_Validation_Requirements.md`\
 **Date:** 2026-09-19
 
 ## 1. Purpose
