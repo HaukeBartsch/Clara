@@ -67,7 +67,6 @@ This document consolidates the business and product requirements for a research 
 **Out of scope (phase 1):**
 - Survey invitations, scheduling, and survey administration (the survey link filling of GD-9 is in scope); randomization, DDP, external modules (REDCap features never used by the planned callers).
 - Per-instrument access levels (see `Data_Export_Anonymization_Requirements.md`, deviation DEV-1).
-- Multi-language UI.
 - File/document upload storage (radiology/pathology options are no longer recorded as project metadata — GD-17: the owner MAY hold them as data, e.g. in a `DataTransferProjects` instrument; DICOM handling is a separate system).
 
 ## 5. Global Decisions and Conventions
