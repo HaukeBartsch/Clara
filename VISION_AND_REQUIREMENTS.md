@@ -509,3 +509,10 @@ Field validation should be extensible by adding additional validations (regular 
 
 Using the API from the web-application or from external scripts should be rate-limitted based on the incoming IP address. Allow up to 600 calls per minute from a single IP source. Check if our setup allows for unique IP addresses from incoming calls. Make rate-limitting threshold values customizable in the administration interface.
 If an IP hits the currently active rate limit all requests from that IP should be ignored for (configurable) 10min. After this period requests from that IP should be handeled again (restart rate limit check).
+
+## Authentication order
+
+- a user account should be able to select an authentication source by name
+- a name for an authentication source should be "Hospital 1", "Hospital 2", etc.
+- allow for more than one authentication source to have the same name, try each authentication source with the same name in parallel - first response wins
+
