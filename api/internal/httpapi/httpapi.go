@@ -60,14 +60,16 @@ func rateLimit(store *db.Store, cfg *config.Config, l *dataapi.RateLimiter, next
 }
 
 // preAuthPaths are the administration endpoints exempt from
-// X-Internal-User-Id: login (Authentication_Authorization_Design.md §2.3)
-// plus the three Sequence H pre-authentication password endpoints, which
-// extend the REQ-API-041 exception set (§2.8, DEV-API-16). They still
-// require a valid service token; the credential rides in the request body.
+// X-Internal-User-Id: login (Authentication_Authorization_Design.md §2.3),
+// the three Sequence H pre-authentication password endpoints (§2.8,
+// DEV-API-16), and the side-effect-free verify step of the named-source
+// credential race (§2.9, REQ-API-123 — DEV-API-17). They still require a
+// valid service token; the credential rides in the request body.
 const loginPath = "/api/v1/auth/login"
 
 var preAuthPaths = map[string]bool{
 	"/api/v1/auth/login":                   true,
+	"/api/v1/auth/verify-password":         true,
 	"/api/v1/auth/password-reset/request":  true,
 	"/api/v1/auth/password-reset/complete": true,
 	"/api/v1/auth/invite/complete":         true,

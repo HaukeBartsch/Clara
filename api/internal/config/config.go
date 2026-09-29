@@ -29,9 +29,13 @@ type OAuth2Provider struct {
 	ClientSecret string
 	RedirectURI  string
 	EmailAttr    string
+	Names        []string // OAUTH2_N_NAMES — login-page display names (REQ-CFG-032)
 }
 
-// LDAPServer is one configured server, in evaluation order (§3.5).
+// LDAPServer is one configured server. Servers no longer carry an evaluation
+// order (§3.5, DEV-CFG-6): the credential race for a selected source name
+// tries all servers registered under it in parallel
+// (Authentication_Authorization_Design.md §2.9).
 type LDAPServer struct {
 	N            int
 	URL          string
@@ -41,6 +45,7 @@ type LDAPServer struct {
 	UIDAttr      string
 	EmailAttr    string
 	NameAttr     string
+	Names        []string // LDAP_SERVER_N_NAMES — login-page display names (REQ-CFG-032)
 }
 
 // Config is the complete, immutable configuration snapshot (REQ-CFG-006).
@@ -64,6 +69,7 @@ type Config struct {
 	InternalServiceToken   string
 	AdminBootstrapEmail    string
 	AdminBootstrapPassword string
+	LocalLoginNames        []string // LOCAL_LOGIN_NAMES — names the local source is selected by (REQ-CFG-032)
 
 	// §3.4/§3.5 authentication
 	OAuth2 []OAuth2Provider
@@ -235,6 +241,12 @@ func Load() (*Config, error) {
 	}
 	cfg.AdminBootstrapEmail = get("ADMIN_BOOTSTRAP_EMAIL")
 	cfg.AdminBootstrapPassword = get("ADMIN_BOOTSTRAP_PASSWORD")
+	rawLocalNames := get("LOCAL_LOGIN_NAMES")
+	names, ok := parseNameList(rawLocalNames)
+	if !ok {
+		fail("LOCAL_LOGIN_NAMES: %q contains an entry that is empty after trimming (REQ-CFG-032)", rawLocalNames)
+	}
+	cfg.LocalLoginNames = names
 
 	// §3.4 OAuth2 providers 1–3
 	for n := 1; n <= 3; n++ {
@@ -252,6 +264,12 @@ func Load() (*Config, error) {
 			fail("OAUTH2_%d_CLIENT_SECRET: missing (required for a provider with OAUTH2_%d_ISSUER)", n, n)
 		}
 		p.RedirectURI = getOr(get, fmt.Sprintf("OAUTH2_%d_REDIRECT_URI", n), cfg.WebPublicURL+"/auth/callback")
+		rawNames := get(fmt.Sprintf("OAUTH2_%d_NAMES", n))
+		names, ok := parseNameList(rawNames)
+		if !ok {
+			fail("OAUTH2_%d_NAMES: %q contains an entry that is empty after trimming (REQ-CFG-032)", n, rawNames)
+		}
+		p.Names = names
 		cfg.OAuth2 = append(cfg.OAuth2, p)
 	}
 
@@ -274,6 +292,12 @@ func Load() (*Config, error) {
 		if s.SearchBase == "" {
 			fail("LDAP_SERVER_%d_SEARCH_BASE: missing (required when LDAP_SERVER_%d_URL is set)", n, n)
 		}
+		rawNames := get(fmt.Sprintf("LDAP_SERVER_%d_NAMES", n))
+		names, ok := parseNameList(rawNames)
+		if !ok {
+			fail("LDAP_SERVER_%d_NAMES: %q contains an entry that is empty after trimming (REQ-CFG-032)", n, rawNames)
+		}
+		s.Names = names
 		cfg.LDAP = append(cfg.LDAP, s)
 	}
 
@@ -468,6 +492,7 @@ func (c *Config) Dump() []string {
 		"INTERNAL_SERVICE_TOKEN="+m,
 		"ADMIN_BOOTSTRAP_EMAIL="+none(c.AdminBootstrapEmail),
 		"ADMIN_BOOTSTRAP_PASSWORD="+m,
+		"LOCAL_LOGIN_NAMES="+namesStr(c.LocalLoginNames)+" (local source; unset → implicit default set)",
 		"ANON_SALT="+m,
 		"ANON_DATE_SHIFT_MIN="+itoa(c.AnonDateShiftMin),
 		"ANON_DATE_SHIFT_MAX="+itoa(c.AnonDateShiftMax),
@@ -497,6 +522,7 @@ func (c *Config) Dump() []string {
 			fmt.Sprintf("OAUTH2_%d_CLIENT_ID=%s", p.N, none(p.ClientID)),
 			fmt.Sprintf("OAUTH2_%d_CLIENT_SECRET=%s", p.N, m),
 			fmt.Sprintf("OAUTH2_%d_EMAIL_ATTR=%s", p.N, p.EmailAttr),
+			fmt.Sprintf("OAUTH2_%d_NAMES=%s", p.N, namesStr(p.Names)),
 		)
 	}
 	for _, s := range c.LDAP {
@@ -505,6 +531,7 @@ func (c *Config) Dump() []string {
 			fmt.Sprintf("LDAP_SERVER_%d_SEARCH_BASE=%s", s.N, none(s.SearchBase)),
 			fmt.Sprintf("LDAP_SERVER_%d_BIND_DN=%s", s.N, none(s.BindDN)),
 			fmt.Sprintf("LDAP_SERVER_%d_BIND_PASSWORD=%s", s.N, m),
+			fmt.Sprintf("LDAP_SERVER_%d_NAMES=%s", s.N, namesStr(s.Names)),
 		)
 	}
 	return out
@@ -520,6 +547,37 @@ func getOr(get func(string) string, key, def string) string {
 		return v
 	}
 	return def
+}
+
+// parseNameList parses a comma-separated authentication-source display-name
+// list (REQ-CFG-032): entries are trimmed, duplicates within one list are
+// ignored, and an entry that is empty after trimming reports the list
+// invalid — startup rejects it. An unset/empty value yields no names: the
+// source then belongs to the implicit default set (REQ-AUTH-067).
+func parseNameList(raw string) (names []string, ok bool) {
+	if raw == "" {
+		return nil, true
+	}
+	seen := map[string]bool{}
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			return nil, false
+		}
+		if !seen[part] {
+			seen[part] = true
+			names = append(names, part)
+		}
+	}
+	return names, true
+}
+
+// namesStr renders a display-name list for the startup dump.
+func namesStr(names []string) string {
+	if len(names) == 0 {
+		return "(unset)"
+	}
+	return strings.Join(names, ", ")
 }
 
 // getInt returns key parsed as an integer, or def when unset/empty/unparseable.

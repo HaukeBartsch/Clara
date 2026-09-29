@@ -13,7 +13,8 @@ func clearAuthEnv(t *testing.T) {
 		"APP_ENV", "WEB_PUBLIC_URL", "DB_CONNECTION", "DB_HOST", "DB_USERNAME",
 		"DB_PASSWORD", "INTERNAL_SERVICE_TOKEN", "ADMIN_BOOTSTRAP_EMAIL",
 		"ADMIN_BOOTSTRAP_PASSWORD", "OAUTH2_1_ISSUER", "OAUTH2_1_CLIENT_ID",
-		"OAUTH2_1_CLIENT_SECRET", "LDAP_SERVER_1_URL", "LDAP_SERVER_1_SEARCH_BASE",
+		"OAUTH2_1_CLIENT_SECRET", "OAUTH2_1_NAMES", "LDAP_SERVER_1_URL",
+		"LDAP_SERVER_1_SEARCH_BASE", "LDAP_SERVER_1_NAMES", "LOCAL_LOGIN_NAMES",
 		"ANON_SALT", "ANON_DATE_SHIFT_MIN", "ANON_DATE_SHIFT_MAX",
 		"AUTH_INACTIVITY_LIMIT_DAYS", "APP_TIMEZONE", "TRUSTED_PROXY_CIDRS",
 		"AUTH_REQUIRE_2FA", "TOTP_ISSUER", "TFA_EMAIL_CODE_TTL",
@@ -140,6 +141,66 @@ func TestLoadNamesEveryInvalidVariable(t *testing.T) {
 	for _, want := range []string{"WEB_PUBLIC_URL", "ADMIN_BOOTSTRAP_EMAIL", "ADMIN_BOOTSTRAP_PASSWORD", "INTERNAL_SERVICE_TOKEN", "ANON_SALT"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("error should name %q, got: %s", want, msg)
+		}
+	}
+}
+
+// TestLoadSourceNames covers REQ-CFG-032 (master spec "Authentication order"):
+// display names parse per source — trimmed, duplicates within one list
+// ignored; unset lists leave the implicit default set (REQ-AUTH-067).
+func TestLoadSourceNames(t *testing.T) {
+	clearAuthEnv(t)
+	t.Setenv("ADMIN_BOOTSTRAP_EMAIL", "admin@example.org")
+	t.Setenv("ADMIN_BOOTSTRAP_PASSWORD", "secret")
+	t.Setenv("OAUTH2_1_ISSUER", "https://idp.example.org")
+	t.Setenv("OAUTH2_1_CLIENT_ID", "csms")
+	t.Setenv("OAUTH2_1_CLIENT_SECRET", "s3cret")
+	t.Setenv("OAUTH2_1_NAMES", "Hospital 1, Clinic A ,Hospital 1")
+	t.Setenv("LDAP_SERVER_1_URL", "ldaps://dir.example.org:636")
+	t.Setenv("LDAP_SERVER_1_SEARCH_BASE", "ou=people,dc=example,dc=org")
+	t.Setenv("LDAP_SERVER_1_NAMES", "Hospital 2")
+	t.Setenv("LOCAL_LOGIN_NAMES", "Clinic A, Walk-in")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+	if len(cfg.OAuth2) != 1 || strings.Join(cfg.OAuth2[0].Names, "|") != "Hospital 1|Clinic A" {
+		t.Errorf("OAUTH2_1_NAMES = %q, want [Hospital 1, Clinic A] (trimmed, deduplicated)",
+			cfg.OAuth2[0].Names)
+	}
+	if len(cfg.LDAP) != 1 || strings.Join(cfg.LDAP[0].Names, "|") != "Hospital 2" {
+		t.Errorf("LDAP_SERVER_1_NAMES = %q, want [Hospital 2]", cfg.LDAP[0].Names)
+	}
+	if strings.Join(cfg.LocalLoginNames, "|") != "Clinic A|Walk-in" {
+		t.Errorf("LOCAL_LOGIN_NAMES = %q, want [Clinic A, Walk-in]", cfg.LocalLoginNames)
+	}
+}
+
+// TestLoadSourceNameEmptyEntryRejected: an entry empty after trimming refuses
+// startup naming the variable (REQ-CFG-032, System_Configuration_Design.md §4.1).
+func TestLoadSourceNameEmptyEntryRejected(t *testing.T) {
+	for _, tc := range []struct{ key, value string }{
+		{"OAUTH2_1_NAMES", "Hospital 1,,X"},
+		{"LDAP_SERVER_1_NAMES", " ,Hospital 2"},
+		{"LOCAL_LOGIN_NAMES", "Clinic A,"},
+	} {
+		clearAuthEnv(t)
+		t.Setenv("ADMIN_BOOTSTRAP_EMAIL", "admin@example.org")
+		t.Setenv("ADMIN_BOOTSTRAP_PASSWORD", "secret")
+		t.Setenv("OAUTH2_1_ISSUER", "https://idp.example.org")
+		t.Setenv("OAUTH2_1_CLIENT_ID", "csms")
+		t.Setenv("OAUTH2_1_CLIENT_SECRET", "s3cret")
+		t.Setenv("LDAP_SERVER_1_URL", "ldaps://dir.example.org:636")
+		t.Setenv("LDAP_SERVER_1_SEARCH_BASE", "ou=people,dc=example,dc=org")
+		t.Setenv(tc.key, tc.value)
+
+		_, err := Load()
+		if err == nil {
+			t.Fatalf("%s=%q: Load() succeeded, want failure", tc.key, tc.value)
+		}
+		if !strings.Contains(err.Error(), tc.key) {
+			t.Errorf("error should name %s, got: %s", tc.key, err.Error())
 		}
 	}
 }

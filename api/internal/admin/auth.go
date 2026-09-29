@@ -13,26 +13,35 @@ import (
 	"csms/api/internal/authz"
 )
 
-// registerAuth mounts the session endpoints of §4.3: login and logout.
-// Login runs without an acting user — one of the four REQ-API-041 exceptions
-// together with the three Sequence H pre-authentication endpoints in
-// passwords.go (the exemption set lives in httpapi). The API is stateless:
-// no session is created or stored (GD-1).
+// registerAuth mounts the session endpoints of §4.3: login, the
+// side-effect-free verify step of the named-source credential race, and
+// logout. These run without an acting user — together with the three
+// Sequence H pre-authentication endpoints in passwords.go they form the
+// REQ-API-041 exception set (the exemption list lives in httpapi;
+// DEV-API-16/17). The API is stateless: no session is created or stored (GD-1).
 func (h *Handler) registerAuth(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/login", h.login)
+	mux.HandleFunc("POST /api/v1/auth/verify-password", h.verifyPassword)
 	mux.HandleFunc("POST /api/v1/auth/logout", h.logout)
 }
 
 // loginRequest is the §4.3 body: provider only for oauth2/ldap, password
 // only for source "local" (GD-18). mfa_code is supplied on the second call
 // of a two-factor challenge (REQ-API-114); codes are never logged or audited
-// (REQ-AUTH-036, REQ-AUTH-059).
+// (REQ-AUTH-036, REQ-AUTH-059). source_name is the authentication-source
+// name the user selected on the login page — recorded in the audit details
+// and nothing else (REQ-AUTH-067). attempts carries the per-source outcomes
+// of a failed named-source credential race so the single finalizing call
+// yields exactly one login_failure with the losing attempts' detail
+// (Audit_Logging_Design.md §3.1, DEV-AUD-5); it never contains credentials.
 type loginRequest struct {
-	Email    string `json:"email"`
-	Source   string `json:"source"`
-	Provider string `json:"provider"`
-	Password string `json:"password"`
-	MFACode  string `json:"mfa_code"`
+	Email      string            `json:"email"`
+	Source     string            `json:"source"`
+	Provider   string            `json:"provider"`
+	Password   string            `json:"password"`
+	MFACode    string            `json:"mfa_code"`
+	SourceName string            `json:"source_name"`
+	Attempts   map[string]string `json:"attempts"`
 }
 
 // login implements POST /api/v1/auth/login with the processing order of
@@ -150,6 +159,9 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	if body.Provider != "" {
 		details["provider"] = body.Provider
 	}
+	if body.SourceName != "" {
+		details["source_name"] = body.SourceName // REQ-AUTH-067
+	}
 	if mfaFactor != "" {
 		details["mfa"] = mfaFactor // totp | email | recovery (Audit_Logging_Design.md §3.1)
 	}
@@ -169,17 +181,99 @@ func (h *Handler) isBootstrapEmail(email string) bool {
 	return h.Cfg.AdminBootstrapEmail != "" && email == h.Cfg.AdminBootstrapEmail
 }
 
+// verifyPassword implements POST /api/v1/auth/verify-password (REQ-API-123,
+// DEV-API-17): the side-effect-free verify step of the named-source
+// credential race (Authentication_Authorization_Design.md §2.9). It runs
+// Sequence C steps 0–1 only — the bcrypt hash check and the account-active
+// rule — and answers ok / bad_password / account_disabled / account_expired.
+// No last_login_at or auth_source write, no audit event, no user object:
+// that is what makes it safe to fire alongside the LDAP binds of a race,
+// with login remaining the single place side effects happen (REQ-AUTH-065).
+// An unknown account and a wrong password are not distinguished (§2.6).
+// The brute-force check (Sequence E) runs in PHP before dispatch; the API's
+// shared IP limiter already covers this path. The password is never logged
+// (REQ-AUTH-036).
+func (h *Handler) verifyPassword(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	if err := decodeBody(r, &body); err != nil {
+		errBadRequest(w, "malformed JSON body")
+		return
+	}
+	if strings.TrimSpace(body.Email) == "" {
+		errBadRequest(w, "email is required")
+		return
+	}
+	ctx := r.Context()
+
+	u, err := h.Store.GetUserByEmail(ctx, body.Email)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	if u == nil || !u.PasswordHash.Valid ||
+		bcrypt.CompareHashAndPassword([]byte(u.PasswordHash.String), []byte(body.Password)) != nil {
+		APIError(w, http.StatusUnauthorized, "bad_password", "invalid email or password")
+		return
+	}
+
+	state, err := authz.CheckActive(ctx, h.Store, h.Audit, h.Cfg, u, time.Now())
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	switch state {
+	case authz.AccountExpired:
+		APIError(w, http.StatusForbidden, "account_expired", "this account has expired")
+		return
+	case authz.AccountDisabled:
+		APIError(w, http.StatusForbidden, "account_disabled", "this account is disabled")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 // loginFailure writes the login_failure entry (§3.1): source, email and a
 // stable reason — never the password (REQ-AUTH-036). The rejection response
-// is written by the caller; an audit write failure does not mask it.
+// is written by the caller; an audit write failure does not mask it. For a
+// failed named-source credential race the finalizing call carries the
+// per-source outcomes in attempts: they ride along in details, and a plain
+// credential rejection settles as bad_credentials — or provider_unavailable
+// when no source could be reached (Audit_Logging_Design.md §3.1, DEV-AUD-5).
+// Account-state rejections keep their specific reason (REQ-AUTH-065).
 func (h *Handler) loginFailure(ctx context.Context, body *loginRequest, reason string) {
 	if reason != "rate_limited" { // the lockout rejection must not extend itself
 		h.lockouts.failure(body.Email, time.Now())
 	}
+	if len(body.Attempts) > 0 {
+		switch reason {
+		case "bad_password", "account_not_found":
+			allUnreachable := true
+			for _, outcome := range body.Attempts {
+				if outcome != "unreachable" {
+					allUnreachable = false
+					break
+				}
+			}
+			reason = "bad_credentials"
+			if allUnreachable {
+				reason = "provider_unavailable"
+			}
+		}
+	}
+	details := map[string]any{"source": body.Source, "email": body.Email, "reason": reason}
+	if body.SourceName != "" {
+		details["source_name"] = body.SourceName // REQ-AUTH-067
+	}
+	if len(body.Attempts) > 0 {
+		details["attempts"] = body.Attempts
+	}
 	_ = h.Audit.Insert(ctx, audit.Entry{
 		EventType: audit.LoginFailure, Source: audit.SourceUI,
 		Email:   body.Email,
-		Details: map[string]any{"source": body.Source, "email": body.Email, "reason": reason},
+		Details: details,
 	})
 }
 

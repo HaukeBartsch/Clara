@@ -479,8 +479,9 @@ func TestAdminBoundaryLoginExemption(t *testing.T) {
 // method-and-path the caller asked for and a source of "ui" (REQ-AUD-017).
 // The three Sequence H pre-authentication password endpoints share login's
 // exemption from X-Internal-User-Id (Authentication_Authorization_Design.md
-// §2.8, DEV-API-16): a valid service token reaches them without any user
-// header, and — like login — they still demand that token.
+// §2.8, DEV-API-16), as does the verify step of the named-source credential
+// race (§2.9, REQ-API-123 — DEV-API-17): a valid service token reaches them
+// without any user header, and — like login — they still demand that token.
 func TestAdminBoundaryPreAuthPasswordEndpoints(t *testing.T) {
 	e := newEnv(t)
 	str := func(s string) *string { return &s }
@@ -488,6 +489,7 @@ func TestAdminBoundaryPreAuthPasswordEndpoints(t *testing.T) {
 		"/api/v1/auth/password-reset/request",
 		"/api/v1/auth/password-reset/complete",
 		"/api/v1/auth/invite/complete",
+		"/api/v1/auth/verify-password",
 	}
 	for _, p := range paths {
 		rec := e.do(http.MethodPost, p, str("test-token"), nil)

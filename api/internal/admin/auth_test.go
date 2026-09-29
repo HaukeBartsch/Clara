@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -294,5 +295,203 @@ func TestAuthLogout(t *testing.T) {
 	rec = e.do("POST", "/api/v1/auth/logout", nil, nil)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d without actor, want 403", rec.Code)
+	}
+}
+
+// --- POST /api/v1/auth/verify-password (REQ-API-123, Sequence I §2.9) ---
+
+// lastAuditDetails returns the details JSON of the newest event of a type.
+func lastAuditDetails(t *testing.T, e *env, eventType string) map[string]any {
+	t.Helper()
+	var raw string
+	err := e.Store.DB.QueryRow(
+		`SELECT details FROM audit_events WHERE event_type = ? ORDER BY id DESC LIMIT 1`,
+		eventType).Scan(&raw)
+	if err != nil {
+		t.Fatalf("query %s details: %v", eventType, err)
+	}
+	var d map[string]any
+	if err := json.Unmarshal([]byte(raw), &d); err != nil {
+		t.Fatalf("decode details %q: %v", raw, err)
+	}
+	return d
+}
+
+// TestVerifyPasswordOK: a correct password answers ok without any side
+// effect — no audit event, no last_login_at or auth_source write (REQ-AUTH-065).
+func TestVerifyPasswordOK(t *testing.T) {
+	e := newEnv(t)
+	u := mustLocalUser(t, e, "user@example.org", "hunter2")
+	before, err := e.Store.GetUser(context.Background(), u.ID)
+	if err != nil || before == nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+
+	rec := e.do("POST", "/api/v1/auth/verify-password", map[string]any{
+		"email": "user@example.org", "password": "hunter2",
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var resp map[string]string
+	e.decode(rec, &resp)
+	if resp["status"] != "ok" {
+		t.Errorf("response = %v, want status ok", resp)
+	}
+	if types := e.auditTypes(); len(types) != 0 {
+		t.Errorf("audit types = %v, want none — verify is side-effect-free", types)
+	}
+	stored, err := e.Store.GetUser(context.Background(), u.ID)
+	if err != nil || stored == nil {
+		t.Fatalf("GetUser: %v", err)
+	}
+	if stored.LastLoginAt != before.LastLoginAt || stored.AuthSource != before.AuthSource {
+		t.Errorf("stored row mutated: last_login_at %v→%v, auth_source %q→%q",
+			before.LastLoginAt, stored.LastLoginAt, before.AuthSource, stored.AuthSource)
+	}
+}
+
+// TestVerifyPasswordBadCredentials: a wrong password and an unknown account
+// answer identically with 401 bad_password (§2.6 step 2), no audit event.
+func TestVerifyPasswordBadCredentials(t *testing.T) {
+	e := newEnv(t)
+	mustLocalUser(t, e, "user@example.org", "hunter2")
+
+	for _, email := range []string{"user@example.org", "ghost@example.org"} {
+		rec := e.do("POST", "/api/v1/auth/verify-password", map[string]any{
+			"email": email, "password": "wrong",
+		}, nil)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s: status = %d, want 401", email, rec.Code)
+		}
+		var eb ErrorBody
+		e.decode(rec, &eb)
+		if eb.Error != "bad_password" {
+			t.Errorf("%s: error = %q, want bad_password (not distinguishable)", email, eb.Error)
+		}
+	}
+	if types := e.auditTypes(); len(types) != 0 {
+		t.Errorf("audit types = %v, want none", types)
+	}
+}
+
+// TestVerifyPasswordAccountState: the account-active rule is surfaced as the
+// specific reason (REQ-AUTH-065) — disabled and expired local accounts pass
+// the hash check first.
+func TestVerifyPasswordAccountState(t *testing.T) {
+	e := newEnv(t)
+
+	disabled := mustLocalUser(t, e, "off@example.org", "hunter2")
+	if _, err := e.Store.DB.Exec(`UPDATE users SET enabled = 0 WHERE id = ?`, disabled.ID); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	rec := e.do("POST", "/api/v1/auth/verify-password", map[string]any{
+		"email": "off@example.org", "password": "hunter2",
+	}, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("disabled: status = %d, want 403 (body %s)", rec.Code, rec.Body.String())
+	}
+	var eb ErrorBody
+	e.decode(rec, &eb)
+	if eb.Error != "account_disabled" {
+		t.Errorf("error = %q, want account_disabled", eb.Error)
+	}
+
+	expired := mustLocalUser(t, e, "old@example.org", "hunter2")
+	if err := e.Store.SetUserValidUntil(context.Background(), expired.ID,
+		sql.NullString{String: "2020-01-01", Valid: true}); err != nil {
+		t.Fatalf("SetUserValidUntil: %v", err)
+	}
+	rec = e.do("POST", "/api/v1/auth/verify-password", map[string]any{
+		"email": "old@example.org", "password": "hunter2",
+	}, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expired: status = %d, want 403", rec.Code)
+	}
+	e.decode(rec, &eb)
+	if eb.Error != "account_expired" {
+		t.Errorf("error = %q, want account_expired", eb.Error)
+	}
+}
+
+// TestLoginSourceNameAudited: the name the user selected on the login page is
+// recorded in the login_success and login_failure details and nothing else
+// (REQ-AUTH-067).
+func TestLoginSourceNameAudited(t *testing.T) {
+	e := newEnv(t)
+	mustLocalUser(t, e, "user@example.org", "hunter2")
+
+	rec := e.do("POST", "/api/v1/auth/login", map[string]any{
+		"email": "user@example.org", "source": "local",
+		"password": "hunter2", "source_name": "Hospital 1",
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if got := lastAuditDetails(t, e, "login_success")["source_name"]; got != "Hospital 1" {
+		t.Errorf("login_success source_name = %v, want Hospital 1", got)
+	}
+
+	rec = e.do("POST", "/api/v1/auth/login", map[string]any{
+		"email": "user@example.org", "source": "local",
+		"password": "wrong", "source_name": "Hospital 2",
+	}, nil)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	if got := lastAuditDetails(t, e, "login_failure")["source_name"]; got != "Hospital 2" {
+		t.Errorf("login_failure source_name = %v, want Hospital 2", got)
+	}
+}
+
+// TestLoginRaceFailureAudited: the finalizing call of a failed credential
+// race yields exactly one login_failure carrying the per-source outcomes in
+// attempts with reason bad_credentials — or provider_unavailable when no
+// source was reachable (DEV-AUD-5, Audit_Logging_Design.md §3.1).
+func TestLoginRaceFailureAudited(t *testing.T) {
+	e := newEnv(t)
+	mustLocalUser(t, e, "user@example.org", "hunter2")
+
+	rec := e.do("POST", "/api/v1/auth/login", map[string]any{
+		"email": "user@example.org", "source": "local", "password": "wrong",
+		"source_name": "Hospital 1",
+		"attempts":    map[string]string{"local": "bad_password", "ldap-2": "unreachable"},
+	}, nil)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	types := e.auditTypes()
+	if n := countType(types, "login_failure"); n != 1 {
+		t.Errorf("%d login_failure rows, want exactly one per submission", n)
+	}
+	d := lastAuditDetails(t, e, "login_failure")
+	if d["reason"] != "bad_credentials" {
+		t.Errorf("reason = %v, want bad_credentials", d["reason"])
+	}
+	attempts, ok := d["attempts"].(map[string]any)
+	if !ok || attempts["local"] != "bad_password" || attempts["ldap-2"] != "unreachable" {
+		t.Errorf("attempts = %v, want per-source outcomes", d["attempts"])
+	}
+
+	// All sources unreachable → provider_unavailable.
+	e.do("POST", "/api/v1/auth/login", map[string]any{
+		"email": "ghost@example.org", "source": "ldap",
+		"source_name": "Hospital 2",
+		"attempts":    map[string]string{"ldap-1": "unreachable", "ldap-2": "unreachable"},
+	}, nil)
+	if got := lastAuditDetails(t, e, "login_failure")["reason"]; got != "provider_unavailable" {
+		t.Errorf("reason = %v, want provider_unavailable", got)
+	}
+
+	// An account-state rejection keeps its specific reason (REQ-AUTH-065).
+	rec = e.do("POST", "/api/v1/auth/login", map[string]any{
+		"email": "user@example.org", "source": "local", "password": "wrong",
+		"attempts": map[string]string{"local": "bad_password"},
+	}, nil)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+	if got := lastAuditDetails(t, e, "login_failure")["reason"]; got != "bad_credentials" {
+		t.Errorf("reason = %v, want bad_credentials", got)
 	}
 }
