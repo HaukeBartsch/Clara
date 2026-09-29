@@ -1,11 +1,11 @@
 ---
 title: |
   \begin{tcolorbox}[colframe=white,opacityfill=0.4,arc=2pt,boxsep=2pt,width=\textwidth,fontupper=\linespread{.9}\selectfont]
-  Clara API Requirements, Plan and Design Documentation
+  Clara - Clinical Logbook for Automated Research Assistance
   \end{tcolorbox}
 subtitle: |
   \begin{tcolorbox}[colback=white,opacityfill=0.4,colframe=white,arc=2pt,boxsep=2pt,width=\textwidth,fontupper=\linespread{.9}\selectfont]
-  Clinical Logbook for Automated Research Assistance \\
+  API Requirements, Plan and Design Documentation \\
   v1.0.0, Hauke Bartsch 2026-09-30
   \end{tcolorbox}
 keywords: [API, Software, Documentation]
