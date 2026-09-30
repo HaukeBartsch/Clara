@@ -16,3 +16,8 @@ api-server
 
 # PHP session storage (REQ-CFG-017)
 web/sessions/
+
+# Playwright browser tests — development and CI tooling only, never served (REQ-TECH-028)
+e2e/node_modules/
+e2e/test-results/
+e2e/playwright-report/

@@ -133,7 +133,7 @@ Each milestone is a vertical slice that runs against the real API (SQLite, `APP_
 | M3 | Administration surface | `/admin/users`, `/admin/projects`, `/admin/audit`, `/admin/i18n`, `/admin/settings`, `/projects/{id}/members`, `/roles`, `/groups` | L | M2 |
 | M4 | Setup and designer | `/projects/{id}/setup` (blocks A–D, arm tabs), `/design`, `/design/instruments/{iid}`, expression editors + test panel, staging banner/commit/discard, analysis-mode acknowledge, mode card | **XL** | M3 |
 | M5 | Data entry and record view | `/projects/{id}/record-status` (colour grid, new participant, auto-name), `/projects/{id}/records/{record}` (form render, prefill from history, per-field history, completion control, branching evaluator, submit via data-API import), record actions (delete scoped, DAG assign, survey link) | **XL** | M4 |
-| M6 | Export, public survey, hardening | `/projects/{id}/export` (streamed), `/s/{link}`, responsive pass, error-mapping completeness, `nb`/`nn` catalog population, PHP smoke tests in CI | M | M5 |
+| M6 | Export, public survey, hardening | `/projects/{id}/export` (streamed), `/s/{link}`, responsive pass, error-mapping completeness, `nb`/`nn` catalog population, PHP smoke tests + Playwright browser tests (`REQ-TECH-028`) in CI | M | M5 |
 
 Ordering notes: M3 precedes M4 because members/roles must exist before a project can be designed and permissioned by a non-admin. M6's export slice is small and may be pulled forward into M3 if a demonstration of Fiona-parity download is wanted early. M4 and M5 are the two heaviest; nothing else can proceed in parallel with them beyond i18n catalog authoring, which is continuous work from M1 onward.
 
@@ -171,11 +171,12 @@ These are the ones most likely to be got wrong, gathered from the code-level fac
 
 ## 8. Testing and CI
 
-`ci/run.sh` is Go-only today; success criteria 2 and 3 need the web layer covered. Per `Technology_Stack_Design.md` §6 the normative coverage stays in Go, and PHP gets a minimal stdlib harness:
+`ci/run.sh` is Go-only today; success criteria 2 and 3 need the web layer covered. Per `Technology_Stack_Design.md` §6 the normative coverage stays in Go, PHP gets a minimal stdlib harness, and the essential client-side components get Playwright browser tests (`REQ-TECH-028`, `e2e/`):
 
 - **Static:** `php -l` over `web/`; a grep asserting no external URL in any template or asset reference (`ASM-TECH-2`).
 - **Unit (no HTTP):** router dispatch — including both shapes of one route, HTML and `Accept: application/json`, and that a data response passes the same gate as its page (`REQ-UI-044`), CSRF accept/reject, session idle timeout, `Messages.php` code→string mapping, `Permissions.php` gating decisions against fixture payloads, i18n fallback.
 - **Integration:** boot the real API on a temp SQLite file, serve `web/public` with `php -S`, and script the two charter paths — login → create project → design instrument → enter data → export (criteria 2/3) — asserting status codes and rendered markers rather than pixel output.
+- **Browser (`e2e/`, `REQ-TECH-028`):** Playwright (`@playwright/test` 1.63.x, Chromium on Node 20 LTS) drives that same stack through a real browser for what the server-side harness cannot reach — login/session flow, record entry and editing including client-side validation and branching feedback, a Tabulator-backed data table, and the client half of the page/JSON split (`REQ-UI-044`). Specs live in `e2e/`, never under `web/`, so nothing test-related is served and no build step is introduced (`REQ-TECH-001`); `node_modules/`, `test-results/` and `playwright-report/` are git-ignored. Blocked on the workstation upgrade to Node ≥ 20 (this host: 18.19.1) — until then the specs are written but cannot execute locally. First-time setup after that upgrade: `cd e2e && npm ci && npx playwright install --with-deps chromium`.
 - Reuse `api/internal/dataapi/fiona_test.go` as the authoritative wire examples for the data-API client (`DataApi.php`) instead of re-deriving them from REDCap docs.
 
 ## 9. Risks
