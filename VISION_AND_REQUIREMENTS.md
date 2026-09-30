@@ -536,3 +536,10 @@ The "record instrument" web view shows all fields for an instrument with values 
 ## Arms, events and instruments
 
 In all projects there should always be at least one arm ("arm_1"), event ("baseline") and instrument ("instrument"). Adding, deleting and re-ordering of arms, events, and instruments should be possible. Re-ordering should not change the arm, instrument, or events {id}. If the user deletes the last instrument, only the fields in that instrument should be deleted. The instrument should be renamed to "instrument". It should not be possible to delete the last remaining arm or event but a) the arm is renamed to "arm_1" and the event is renamed to "baseline" and b) the events offset days are reset to 0 +-0.
+
+A new project should display only two fields in its first "instrument". The record_id field (always first field in first instrument) and the complete (instrument level) dropdown field, which is always the last field. Deleting the last remaining instrument should result in the same setup.
+
+## Web interface generals
+
+The assets/table_based_authentication... is an example for a partial admin screeen (user accounts) only. Other pages/partial screens/applications are expected to have their relevant code in their own js/all.js.
+Build a new AC.php for web/ fixing issues and extending it to support table-based, LDAP(s) and OAuth flows.
