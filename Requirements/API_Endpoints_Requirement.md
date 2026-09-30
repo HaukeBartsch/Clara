@@ -12,7 +12,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 ## 2. Common Requirements (both surfaces)
 
 | ID | Requirement |
-|---|---|
+|---|--------|
 | REQ-API-001 | A single Go API process (REQ-TECH-003) MUST expose exactly two API surfaces: the REDCap-compatible data API at `/api/` and the administration API under `/api/v1/`. No application endpoints MAY exist beyond these, the API documentation, and the health endpoint (REQ-API-003). |
 | REQ-API-002 | Both surfaces MUST be described by an OpenAPI (Swagger) specification and served at a stable URL with an interactive documentation UI (REQ-TECH-004, BR-005). |
 | REQ-API-003 | An unauthenticated health/readiness endpoint (path per design document) MUST report process and database liveness without returning data. |
@@ -27,7 +27,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 ### 3.1 Protocol
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-API-009 | All REDCap protocol operations MUST be available on a single endpoint, `POST /api/` with a form-encoded body (`application/x-www-form-urlencoded`); `GET /api/` with parameters in the query string MUST also be accepted (master spec). |
 | REQ-API-010 | The caller's token MUST be passed as the `token` request parameter (body or query) and MUST NOT be read from an `Authorization` header (GD-5, REQ-AUTH-031). |
 | REQ-API-011 | A missing, invalid, or disabled token MUST produce HTTP 401 with a REDCap-style `Invalid token` error in the requested response format, without disclosing whether the token exists (REQ-AUTH-032). |
@@ -41,7 +41,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 ### 3.2 Read operations
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-API-018 | `content=project` MUST return the project identification (id, name/title, description, PI name/email, REK/IRB number, start/end dates, creation time); any valid token for the project suffices. Standard REDCap project-info keys the system does not store (e.g. `surveys_enabled`, `randomization_enabled`, and `project_end_provision` since GD-17) MUST be returned with neutral values (`0`/`\"\"`/`false`) rather than omitted, so naive parsers keep working (master spec example response). |
 | REQ-API-019 | `content=metadata` MUST return the full data dictionary in REDCap metadata shape (field name, instrument, section header, field type, label, choices, note, validation type/min/max, required, branching logic, matrix group, identifier flag `record_identifier`), plus this system's `direct_identifier` flag as an additional key (REQ-DB-013 — extra keys are tolerated by naive parsers, cf. REQ-API-018), with matrix rows expanded per REQ-DB-014. Requires data access level ≥ `read_only` (GD-2). |
 | REQ-API-020 | `content=event` MUST return one row per event with `event_name`, `arm_num`, `unique_event_name`, `event_id` (master spec), **in the canonical per-arm order** (GD-15, REQ-DB-011: timepoint events by `period` ascending — ties by position — then no-timepoint events by position). Requires data access level ≥ `read_only` (GD-2). |
@@ -52,7 +52,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 ### 3.3 Record export (`content=record&action=export`)
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-API-024 | The export MUST honor optional filters `records[]`, `fields[]`, `forms[]`, `events[]` (combined); with no filters, all records of the project visible to the holder under the data access group rule (REQ-AUTH-045) MUST be returned. |
 | REQ-API-025 | `filterLogic` MUST be supported: at minimum equality conditions on string fields of the form `[field]=\"value\"` (Fiona's use case, master spec); compound conditions (`&&`, `||`) and comparison operators SHOULD be supported per the design document. A field reference without an event (`[field]`) MUST resolve against the project's **first event** in canonical order (GD-15) — the fallback defined by `Data_Validation_Design.md` §7.1. |
 | REQ-API-026 | The sensitivity of the export MUST be determined by the token holder's export level for the arm of the exported data (GD-2): `export_full` → full dataset; `export_no_identifiers` → all identifier fields removed; `export_de_identified` → de-identified per `Data_Export_Anonymization_Requirements.md`; `export_none` → rejected (403). |
@@ -64,7 +64,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 ### 3.4 Record import (`content=record&action=import`)
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-API-031 | Imports MUST accept values in the REDCap import shape: `data[]` entries of (record, form/instrument, event, field, value); each value MUST be stored under the EAV key of REQ-DB-015. An import MAY carry an optional `tz` parameter (IANA timezone name or `±HH:MM` offset) supplying the **timezone of collection** for the date/date-time values of the call; without it, the deployment default `APP_TIMEZONE` applies (GD-16, REQ-VAL-041, REQ-CFG-026). |
 | REQ-API-032 | Every value MUST pass the field's validation rules (`Data_Validation_Requirements.md`) before storage; invalid values MUST NOT be stored. |
 | REQ-API-033 | Imports MUST upsert (REQ-DB-016): entering values for a new record or changing values of an existing record requires the data access level ≥ `view_edit` on the record's arm; a token at `read_only` or `no_access` MUST be rejected (GD-2). |
@@ -75,13 +75,13 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 ### 3.5 Record deletion (`content=record&action=delete`, GD-3)
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-API-036 | The deletion MUST remove the record's values (scoped by the supplied `records[]`/`events[]`/`fields[]`, or the whole record) and, when a record's last value is removed, the record itself; it requires the data access level ≥ `delete` on the record's arm (GD-2); the deletion including the deleted values MUST be audit-logged (GD-3). |
 
 ### 3.6 Compatibility and limits
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-API-037 | Every Fiona call example in `VISION_AND_REQUIREMENTS.md` (PHP and cURL) MUST succeed against this API without modification of the caller (charter success criterion 1) and MUST be encoded as executable regression tests (REQ-TECH-022). |
 | REQ-API-038 | Optional rate limiting (REQ-CFG-020): when enabled, the API MUST limit requests **per source IP address** per minute — on both surfaces (`/api/` and `/api/v1/`, so web-application traffic and external scripts alike) — and answer HTTP 429 with a REDCap-style error body when the limit is exceeded. Exceeding the budget additionally blocks the source IP for the configured blockout period (REQ-API-113). The source IP is derived per REQ-API-125; the enable flag and the thresholds are system settings stored in the database and editable in the administration interface (REQ-API-112; master spec "Rate limitter"). |
 | REQ-API-125 | The rate-limit source identity MUST be the caller's IP address: when the direct TCP peer is inside a configured trusted-proxy range (`TRUSTED_PROXY_CIDRS`, `System_Configuration_Design.md` §3.9), the proxy-provided `X-Real-IP` header is authoritative; otherwise the connection's remote address is used. A client-supplied `X-Real-IP` from an untrusted peer MUST be ignored, and the reverse proxy overwrites the header on every routed request (no forwarded-for chains; `Technology_Stack_Design.md` §5). The deployment MUST supply the header so every external caller keeps a distinct address — without it all web-application traffic would share the single application-host address (master spec "Rate limitter": unique incoming IPs verified). |
@@ -93,7 +93,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 ### 4.1 Boundary
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-API-040 | The administration API MUST be reachable only from the trusted internal path (REQ-TECH-018) and MUST be used exclusively by the PHP web application (GD-1, BR-006); the browser MUST NOT call it directly. |
 | REQ-API-041 | Every request MUST present a valid `X-Internal-Service-Token` and `X-Internal-User-Id`; the API MUST reject calls violating REQ-AUTH-011 through REQ-AUTH-014. |
 | REQ-API-042 | The surface MUST use JSON request/response bodies with conventional REST semantics (GET read, POST create, PUT update, DELETE remove); all PUT endpoints MUST be idempotent. |
@@ -102,7 +102,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 ### 4.2 Session
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-API-044 | `POST /api/v1/auth/login` (called by the PHP app after successful OAuth2/LDAP authentication, **or with `source: "local"` and the password for table-based login** — GD-18, REQ-AUTH-050/051) MUST accept the authenticated user's identity (email) in a JSON body, plus an optional `source_name` — the authentication-source name the user selected on the login page, recorded in the login audit details and nothing else (REQ-AUTH-067); for local login it MUST verify the stored bcrypt hash in constant time first (mismatch or absent hash → 401 `bad_password`, never logged, REQ-AUTH-036); then verify that the user row is active (REQ-AUTH-006: `enabled`, not expired `valid_until`, not inactive — `account_disabled`/`account_expired`), apply the bootstrap-admin promotion (REQ-AUTH-007), set `last_login_at` (REQ-AUTH-053), record a login audit event with the source (REQ-AUTH-008), and return the user object (id, email, display name, `is_admin`, authentication source, `ui_language`, `ui_theme` — GD-26). The API is stateless with respect to sessions (GD-1): it MUST NOT create or store a session. |
 | REQ-API-045 | `POST /api/v1/auth/logout` MUST record a logout audit event (REQ-AUTH-008) and return a 200 response; destruction of the PHP session remains the responsibility of the PHP layer before this call (GD-1, REQ-AUTH-015). |
 | REQ-API-114 | `POST /api/v1/auth/login` MUST support the two-factor step (GD-21, REQ-AUTH-055/058): when the first factor has succeeded and the account's method is not `off`, a call **without** `mfa_code` MUST be answered 401 `mfa_required` (with the account's method) and MUST NOT return the user object or set `last_login_at`; a call **with** `mfa_code` verifies it (TOTP step / email code / recovery code — REQ-AUTH-056/058) before completing login, and a wrong or expired code MUST be answered 401 `bad_mfa_code` (audit `login_failure`, counted toward the REQ-AUTH-035 lockout). When `AUTH_REQUIRE_2FA` is on and the account's method is `off`, the first-factor success MUST be answered 401 `tfa_enrollment_required` (REQ-AUTH-059). The OAuth2 path (`source: "oauth2"`) never challenges (DEV-AUTH-10). The API remains stateless: all second-factor state lives in the user's two-factor record (REQ-DB-038), not in the API. |
@@ -110,7 +110,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 ### 4.3 Users
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-API-046 | `GET /api/v1/users` MUST return the list of user accounts (id, email, display name, enabled, `is_admin`, authentication source, **last login `last_login_at`, validity end `valid_until`, derived status active/disabled/expired/auto-disabled — GD-19, REQ-AUTH-052/053) for an acting administrator; calls by non-`is_admin` users MUST be rejected (403). |
 | REQ-API-047 | `POST /api/v1/users` MUST create a user account by email address and display name; it MAY take `valid_days` (integer ≥ 0, `0` = indefinite → stored as `valid_until = today + valid_days` or `NULL`, REQ-AUTH-052) and a `password` (stored only as a bcrypt hash in `password_hash`, REQ-AUTH-050); if a disabled account with the same email exists, the call MUST re-enable it rather than fail (re-enabling resets the inactivity clock, REQ-AUTH-053). |
 | REQ-API-048 | `PUT /api/v1/users/{id}` MUST enable or disable the named account (idempotent, REQ-API-042; the supplied `enabled` flag is authoritative) and MAY change its `valid_days` (REQ-AUTH-052) or set/reset/clear its local `password` (a supplied hash is stored only, never returned or logged — REQ-AUTH-050, REQ-AUTH-036; an empty `password` clears `password_hash`); it requires `is_admin`. Re-enabling an auto-disabled account MUST reset the inactivity clock (REQ-AUTH-053). Disabling a user MUST deny the effective permissions of that user's API tokens at call time (REQ-AUTH-033). The operation MUST be audit-logged with the changed attributes (`password` never — REQ-API-043). |
@@ -126,7 +126,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 ### 4.4 Projects
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-API-049 | `GET /api/v1/projects` MUST return the projects visible to the acting user (`is_admin` or member, REQ-AUTH-026) with summary data for the dashboard (name, organization, record count, instrument count, field count); projects outside the acting user's visibility MUST NOT appear (REQ-API-007). |
 | REQ-API-050 | `POST /api/v1/projects` MUST create a project from the creation fields of the simplified `projects` (GD-17, REQ-DB-006: name, organization, PI, data manager, REK number/dates, start/end dates, participant naming pattern), reject a duplicate project name (409), create the first arm (single-arm start, REQ-DB-011; DEV-API-4) **together with its initial event `baseline`** (`unique_event_name = baseline_arm_1`, timepoint `period = 0`) **and one instrument `instrument`** — every project holds at least one arm, event and instrument from creation on (VISION "Arms, events and instruments") — and require the acting user to be `is_admin` (master spec: administrator users create projects). Further events are added through `POST /api/v1/projects/{id}/events` (REQ-API-062); `event_names` is no longer part of the creation body (GD-17). The creation MUST be audit-logged (REQ-API-043). |
 | REQ-API-051 | `GET /api/v1/projects/{id}` MUST return the project's full metadata plus its structure (arms, events, instruments with position, field count per instrument); it requires the data access level ≥ `read_only` (GD-2) and project visibility (REQ-API-007). |
@@ -136,7 +136,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 ### 4.5 Members and tokens
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-API-053 | `GET /api/v1/projects/{id}/users` MUST list the project's members with (user id, email, display name, role name or role-less, token present, enabled state); it requires `is_admin` (master spec: administrator users assign users to projects given a role). |
 | REQ-API-054 | `PUT /api/v1/projects/{id}/users/{uid}` MUST be the single mutation point for membership: add a member (with or without a role), change the role (including role-less = full permissions, REQ-AUTH-022), or remove a member; it requires `is_admin`. Every change MUST be audit-logged (REQ-API-043). |
 | REQ-API-055 | Token issuance and rotation MUST happen through REQ-API-054; the new token MUST be returned in the response (the UI displays it to the administrator), rotation MUST invalidate the previous token immediately, and member removal MUST invalidate the member's token immediately (REQ-AUTH-030). Token values MUST NOT appear in logs (REQ-API-005). |
@@ -145,14 +145,14 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 ### 4.6 Roles
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-API-056 | `GET /api/v1/projects/{id}/roles` MUST list the project's roles — presets and/or custom roles created for the project, possibly an empty list — with name and permission set (REQ-AUTH-020); it requires `is_admin`. |
 | REQ-API-057 | `POST /api/v1/projects/{id}/roles` MUST create a role with any name (unique within the project) and per-arm permission assignments — data access and export levels per arm (REQ-AUTH-017), optionally `project_admin`; roles are not limited to the example presets (REQ-AUTH-020). It requires `is_admin` (REQ-AUTH-021). The creation MUST be audit-logged (REQ-API-043). |
 
 ### 4.7 Arms
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-API-058 | `GET /api/v1/projects/{id}/arms` MUST list the arms with (arm_num, name, events); it requires the data access level ≥ `read_only` (GD-2; REQ-API-007). |
 | REQ-API-059 | `POST /api/v1/projects/{id}/arms` MUST add an arm (1-based `arm_num`, name); it requires `project_admin` (plan: \"permission project_admin\"). The creation MUST be audit-logged (REQ-API-043). |
 | REQ-API-060 | `DELETE /api/v1/arms/{id}` MUST remove an arm; it requires `project_admin` and MUST reject (409) an arm that still has events or data (ASM-API-4, DEV-API-6) — except when it is the last remaining arm of the project (REQ-API-128). The deletion MUST be audit-logged (REQ-API-043). |
@@ -162,7 +162,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 ### 4.8 Events
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-API-061 | `GET /api/v1/projects/{id}/events` MUST list the events per arm with (event_name, arm_num, unique_event_name, event_id, period — `null` when the event has no timepoint, GD-15, safe region, position) (REQ-DB-011), in the **canonical per-arm order** (GD-15); it requires the data access level ≥ `read_only` (GD-2). |
 | REQ-API-062 | `POST /api/v1/projects/{id}/events` MUST create an event for a given arm with (label, **optional** timepoint `period` in days — `null`/absent = no timepoint, GD-15, safe region start/end in days); the API MUST derive `unique_event_name` as `<label>_arm_<n>` (REQ-DB-011) and MUST reject a duplicate label within the same arm; the new event takes `position` = end of the arm's list; it requires `project_admin`. The creation MUST be audit-logged (REQ-API-043). |
 | REQ-API-063 | `PUT /api/v1/events/{id}` MUST update the event's label, timepoint `period` (setting or clearing it to `null`, GD-15), and safe region (idempotent, REQ-API-042); it requires `project_admin`. The semantics of a label change for an event that already holds data are defined by the design document (ASM-API-4). The change MUST be audit-logged (REQ-API-043). |
@@ -172,7 +172,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 ### 4.9 Instruments
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-API-064 | `GET /api/v1/projects/{id}/instruments` MUST list the instruments with (name, position, field count); it requires the data access level ≥ `read_only` (GD-2). |
 | REQ-API-065 | `POST /api/v1/projects/{id}/instruments` MUST create an instrument with a name unique within the project (REQ-DB-013); it requires `project_admin`. The creation MUST be audit-logged (REQ-API-043). |
 | REQ-API-066 | `PUT /api/v1/projects/{id}/instruments/order` MUST reorder the instrument list from a full ordered list in the body (idempotent, REQ-API-042); it requires `project_admin`. The record-identifier invariant MUST hold after reordering (GD-8: the first field of the first instrument is the record identifier). The change MUST be audit-logged (REQ-API-043). Reordering MUST NOT change any instrument's id. |
@@ -183,7 +183,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 ### 4.10 Fields (designer)
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-API-067 | `GET /api/v1/projects/{id}/instruments/{iid}/fields` MUST list the instrument's fields in position order with all data dictionary attributes (REQ-DB-013); it requires the data access level ≥ `read_only` (GD-2). |
 | REQ-API-068 | `POST /api/v1/projects/{id}/instruments/{iid}/fields` MUST create a field; the field name MUST be lower-case alphanumeric with underscores and unique within the project (REQ-DB-013), and names longer than 26 characters MUST be accepted (the warning after 26 characters is a UI concern, master spec); the `validation_type` MUST be empty, a built-in structured type, or an existing validation-type registry name — anything else rejected with a machine-readable reason (REQ-VAL-010/042) — and the `direct_identifier` flag MUST be accepted for any field, defaulting to set when the validation type is `email`, `MRN`, `international phone` or `national phone` (REQ-EXP-020); it requires `project_admin`. The creation MUST be audit-logged (REQ-API-043). |
 | REQ-API-069 | `PUT /api/v1/projects/{id}/instruments/{iid}/fields/{fid}` MUST update the field's attributes (including the calculation expression of a calculated field, REQ-VAL-033/034, the branching logic expression, REQ-VAL-029, and the `direct_identifier` flag — with the same validation-type registry check as creation, REQ-VAL-010/042; idempotent, REQ-API-042); it requires `project_admin`. The change MUST be audit-logged with old and new values (REQ-API-043). |
@@ -195,35 +195,35 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 ### 4.11 Instrument-event mapping
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-API-072 | `GET /api/v1/projects/{id}/instrument-event-mapping` MUST return the instrument × event matrix per arm (checked state per pair, REQ-DB-012); it requires the data access level ≥ `read_only` (GD-2). |
 | REQ-API-073 | `PUT /api/v1/projects/{id}/instrument-event-mapping` MUST replace the mapping of the supplied arm from a full matrix in the body (idempotent, REQ-API-042); it requires `project_admin`. An instrument is active for data entry once mapped to at least one event (REQ-DB-012). The change MUST be audit-logged (REQ-API-043). |
 
 ### 4.12 Record status
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-API-074 | `GET /api/v1/projects/{id}/record-status` MUST return all record_ids visible to the acting user under the data access group rule (REQ-AUTH-045), with their instruments per event, ordered per the instrument order of each arm, and a **three-state** completion state per (record, event, instrument) — `no_data`, `some_data`, or `finished` (DEV-API-11; master spec "Record status") — where `no_data`/`some_data` are derived from whether any field has a value and `finished` is the user-assigned state of REQ-API-110. A survey-marked instrument MUST report `finished` automatically — its completion info is filled in without an assignment (GD-9; master spec "Instrument level completion info"). It requires the data access level ≥ `read_only` (GD-2). The response MUST NOT contain field values. |
 | REQ-API-110 | A member MUST be able to set or clear the completion state of one (record, event, instrument) — the "finished" assignment made at the end of a data-collection instrument (not for surveys, GD-9) — and the state MUST persist per (record, event, instrument) and be returned by `record-status` (REQ-API-074, REQ-DB-036). Setting requires the data access level ≥ `view_edit` on the record's arm; it MUST NOT write or change any field value, and MUST be audit-logged (REQ-AUD-026). Clearing returns the state to its derived form (`no_data`/`some_data`). |
 
 ### 4.13 Export (UI)
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-API-075 | `GET /api/v1/projects/{id}/export` MUST return the project's data, streamed (REQ-TECH-011), as CSV or JSON per a `format` query parameter (default CSV). The sensitivity MUST follow the acting user's export level per arm (GD-2, as REQ-API-026): `export_full` → full dataset; `export_no_identifiers` → all identifier fields removed; `export_de_identified` → de-identified per `Data_Export_Anonymization_Requirements.md`; `export_none` → rejected (403). |
 | REQ-API-076 | Every export via this endpoint MUST be audit-logged as an export event with the acting user, the project, and the sensitivity level (audit plan \"Exports\"; BR-007). |
 
 ### 4.14 Audit log
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-API-077 | `GET /api/v1/audit` MUST return audit entries (`audit_events` and `audit_record_views`, selected by a `type` parameter) in reverse chronological order with pagination (limit/cursor). It MUST be read-only: no endpoint MUST exist that writes, updates, or deletes audit data (REQ-DB-024). |
 | REQ-API-078 | Audit log access MUST be restricted to authorized users (plan): a non-admin acting user MUST see only entries for projects they are a member of; an `is_admin` user MAY query all projects. A project filter parameter MUST be supported (REQ-API-007, ASM-API-2). |
 
 ### 4.15 Record history
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-API-079 | `GET /api/v1/projects/{id}/records/{record}/history` MUST return the record's change history from the audit trail: every data-change entry in chronological order with the timestamp (UTC), the acting user (id and display name), the action (create/update/delete), and per changed field (field name, instrument, event) the old and new value — for deletions, the deleted value (REQ-AUD-009). It requires the data access level ≥ `read_only` on the record's arm (GD-2), project visibility (REQ-API-007), and record visibility under the data access group rule (REQ-AUTH-045), and MUST be read-only with respect to the audit trail (REQ-AUD-002). |
 | REQ-API-080 | The history MUST be filterable by instrument, event, and field, and MUST be paginated (limit/cursor); it MUST cover all changes of the record since creation, transparent across the yearly rollover (REQ-AUD-006). |
 | REQ-API-081 | The data entry form (instrument display of a record) MUST present, per field, this history — who entered or changed the value, when, and the old → new values — fetched from REQ-API-079 (User_Interface plan, data entry form). |
@@ -231,7 +231,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 ### 4.16 Survey links (GD-9)
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-API-082 | `GET /api/v1/projects/{id}/records/{record}/instruments/{iid}/survey-link` MUST return the stable public link (URL carrying the link token) for a survey-marked instrument and record; it MUST be rejected for an instrument that is not marked as a survey (REQ-DB-011); it requires the data access level ≥ `view_edit` on the arm (GD-2) and record visibility under the data access group rule (REQ-AUTH-045). Issuance MUST be audit-logged (REQ-API-043). |
 | REQ-API-083 | A link token presented to the data API MUST be accepted only for the calls that render and fill that (record, instrument): the instrument's field definitions and `content=record&action=import` of values for that record and instrument (REQ-AUTH-039); every other content, record, or instrument MUST be rejected (403). Link tokens are subject to optional rate limiting (REQ-API-038). |
 | REQ-API-084 | The public survey page MUST be served by the PHP application; the browser MUST NOT call `/api/v1/*` from it; submissions MUST go through the data API (GD-1, REQ-TECH-002). |
@@ -240,7 +240,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 ### 4.17 Data Access Groups (GD-10)
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-API-086 | `GET /api/v1/projects/{id}/data-access-groups` MUST list the project's groups (id, name; possibly an empty list); it requires the data access level ≥ `read_only` (GD-2). |
 | REQ-API-087 | `POST /api/v1/projects/{id}/data-access-groups` MUST create a group with a name unique within the project (REQ-AUTH-043); it requires `project_admin` (an `is_admin` user is covered by REQ-AUTH-023). The creation MUST be audit-logged (REQ-API-043). |
 | REQ-API-088 | `DELETE /api/v1/projects/{id}/data-access-groups/{gid}` MUST remove a group and its member assignments; it MUST be rejected (409) while records are still assigned to it (ASM-AUTH-4); it requires `project_admin`. The deletion MUST be audit-logged (REQ-API-043). |
@@ -254,7 +254,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 ### 4.18 Multilingual UI and appearance (GD-12, GD-26)
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-API-097 | `GET /api/v1/i18n/languages` MUST list the enabled languages (code, display name); any authenticated user. |
 | REQ-API-124 | `GET /api/v1/i18n/bundle?language=<code>` MUST return one language's translations as a flat key→text map for render-time overlay on the English strings the application itself carries (REQ-DB-031); without the parameter, the acting user's stored UI language (REQ-API-098). Any authenticated user — every page renders translated (REQ-UI-008) and the PHP layer has no database access (REQ-TECH-006); `is_admin` is NOT required. An unknown or disabled language MUST be rejected (400). |
 | REQ-API-098 | `PUT /api/v1/users/me/ui-language` MUST set the acting user's UI language to an enabled language (default `en`); the setting MUST persist across sessions (REQ-DB-008). |
@@ -265,7 +265,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 ### 4.19 Project modes and staging (GD-20)
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-API-105 | `GET /api/v1/projects/{id}/mode` MUST return the project's current mode (`development` \| `production` \| `analysis`; new projects start in `development`, REQ-DB-034) and whether a staging set is open; it requires data access ≥ `read_only`. `PUT /api/v1/projects/{id}/mode` (idempotent, REQ-API-042) MUST change the mode per the transition rules of GD-20 and requires `is_admin` — an installation admin user; a project's own `project_admin` MUST be rejected (403) on this endpoint (GD-20, 2026-09-27): **development → production** MUST require an explicit `keep_data` body flag (`true` keeps the stored record data; `false` deletes it with the same scope as the end-provision `delete`, `Data_Export_Anonymization_Design.md` §7.3); **production → development**, **production → analysis**, **analysis → production** and **analysis → development** keep all data — a project enters `analysis` only from `production` but returns to `development` directly; **development → analysis** and any other transition MUST be rejected (409). A mode change of **any** kind while a staging set is open MUST be rejected (409) until the set is committed or discarded (GD-20, 2026-09-27). The change MUST be audit-logged with old and new mode and the `keep_data` decision (REQ-AUD-025, REQ-API-043). |
 | REQ-API-106 | Staging lifecycle (production mode only; all require `project_admin`): `POST /api/v1/projects/{id}/staging` opens a staging set holding a snapshot of the currently active design (REQ-DB-035) — opening a second set while one is open MUST be rejected (409); `GET /api/v1/projects/{id}/staging` returns the staging state (open/closed, opened when/by, and the staged change list with each change classified non-breaking or breaking per REQ-API-108); `POST /api/v1/projects/{id}/staging/commit` activates the whole staged set at once in a single transaction; `POST /api/v1/projects/{id}/staging/discard` removes the staged set unchanged. Every lifecycle event MUST be audit-logged (REQ-AUD-025). |
 | REQ-API-107 | In production mode a structure change (arms, events, instruments, fields, mapping — REQ-API-058…073) MUST require an open staging set (rejected 409 when none is open); while one is open the change MUST apply to the **staged** design and MUST NOT affect the active design. Data collection and export (`content=metadata`, `event`, `formEventMapping`, record import/export, record status) MUST continue to use the **active** design until commit. In development mode structure changes apply immediately (no staging). In analysis mode admin users can still change structure and those changes apply immediately, subject to the breaking-change acknowledgement of REQ-API-111. |
@@ -276,13 +276,13 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 ### 4.20 System settings
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-API-112 | `GET /api/v1/settings` MUST return and `PUT /api/v1/settings` MUST update the system-wide runtime settings persisted in the database (REQ-DB-037): `rate_limit_enabled` (boolean, default false), `rate_limit_rpm` (integer ≥ 1 requests per minute per source IP, default 600) and `rate_limit_block_minutes` (integer 1–1440 minutes an over-budget source IP stays blocked, default 10; REQ-API-113). Both endpoints require `is_admin`; a call by a non-admin is rejected (403 `forbidden`). PUT applies the supplied fields idempotently (REQ-API-042), rejects an out-of-range value (400 `bad_request`) and unknown attributes (400), and the applied values MUST take effect on the next request without a restart. Every applied change MUST be audit-logged with old and new values (REQ-AUD-027). |
 
 ### 4.21 Permission summary
 
 | Endpoint(s) | Required permission |
-|---|---|
+|---|------|
 | `GET /api/v1/users`, `POST /api/v1/users`, `PUT /api/v1/users/{id}` | `is_admin` |
 | `POST /api/v1/projects` | `is_admin` |
 | `GET /api/v1/projects` | project visibility only (REQ-API-007) |
@@ -320,7 +320,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 ## 5. Assumptions
 
 | ID | Assumption |
-|---|---|
+|---|------|
 | ASM-API-1 | The administration API paths follow `Plan/API_Endpoints.md` verbatim (including `DELETE /api/v1/arms/{id}` and `PUT /api/v1/events/{id}` without a project path segment); the normative request/response schemas and remaining status codes are defined in `Design/API_Endpoints_Design.md`. |
 | ASM-API-2 | \"authorized users only\" for `GET /api/v1/audit` (plan) is interpreted as `is_admin` (all projects) or a member of the queried project (REQ-API-078). |
 | ASM-API-3 | Data entry through the UI is performed as `content=record&action=import` against the data API (REQ-API-031), initiated by the PHP layer with the user's project token; the administration surface has no separate import endpoint (master spec: the UI accesses the backend exclusively through the API). |
@@ -330,7 +330,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 ## 6. Deviations from Plan
 
 | ID | Deviation | Rationale |
-|---|---|---|
+|---|------|------|
 | DEV-API-1 | `type=wide` accepted with simplified semantics; `flat` is normative | The plan lists `type (flat\|wide)` without defining wide semantics; all known callers (Fiona) use `flat`, so `wide` is accepted for compatibility (REQ-API-014). |
 | DEV-API-2 | `exportCheckboxLabel`, `exportSurveyFields`, `exportDataAccessGroups` accepted and ignored | Surveys and DAGs are out of phase-1 scope (charter §4); existing callers MUST keep working (REQ-API-016/017). |
 | DEV-API-3 | Explicit export level ladder on both surfaces | The GD-2 revision of 2026-09-19 (DEV-AUTH-5) defined the four export levels; both surfaces apply them per arm (REQ-API-026/075). Supersedes the earlier three-level deviation (cf. DEV-AUTH-1). |
