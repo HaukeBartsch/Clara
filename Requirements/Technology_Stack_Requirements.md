@@ -12,7 +12,7 @@ Defines the mandatory technology constraints and the non-functional requirements
 ## 2. Mandatory Technology Constraints
 
 | ID | Requirement |
-|---|------|
+|---|---------|
 | REQ-TECH-001 | **Frontend:** plain HTML and JavaScript only. No frontend framework, no build step. Bootstrap is the only UI library (responsive layout, forms, buttons, modals). |
 | REQ-TECH-002 | **Web application layer:** PHP. Responsible for page rendering, sessions, and the OAuth2/LDAP login flow. |
 | REQ-TECH-003 | **API layer:** Go (Golang). Responsible for all data access, validation, authorization, and audit writes. Exposes the REDCap-compatible protocol and the administration API. |
@@ -27,14 +27,14 @@ Defines the mandatory technology constraints and the non-functional requirements
 ### 3.1 Portability and Environments
 
 | ID | Requirement |
-|---|------|
+|---|---------|
 | REQ-TECH-008 | The system MUST start and pass its test suite with zero code changes when only the environment configuration changes from SQLite to MariaDB and back. |
 | REQ-TECH-009 | Development MUST be possible on a workstation without MariaDB, LDAP, or an OAuth2 provider (local substitutes or mocks acceptable). |
 
 ### 3.2 Performance
 
 | ID | Requirement |
-|---|------|
+|---|---------|
 | REQ-TECH-010 | Typical admin API responses (project metadata, field lists) < 300 ms p95 on reference hardware (see design document) with a project of 1,000 records × 200 fields × 10 events. |
 | REQ-TECH-011 | A full project export (same size as REQ-TECH-010, CSV, flat) MUST complete in under 10 s and MUST stream to the client (no full materialization in memory beyond one record page). |
 | REQ-TECH-012 | The data table layout MUST allow adding fields or projects without schema migration of the data table (EAV layout; BR from master spec). |
@@ -42,7 +42,7 @@ Defines the mandatory technology constraints and the non-functional requirements
 ### 3.3 Reliability and Operations
 
 | ID | Requirement |
-|---|------|
+|---|---------|
 | REQ-TECH-013 | The Go API MUST be deployable as a single static binary with no runtime language dependency beyond the OS. |
 | REQ-TECH-014 | The API MUST fail fast at startup when required configuration is missing or the database is unreachable. |
 | REQ-TECH-015 | The system MUST be operable behind a single reverse proxy / TLS termination point (see `Authentication_Authorization_Requirements.md` for the network trust model). |
@@ -51,7 +51,7 @@ Defines the mandatory technology constraints and the non-functional requirements
 ### 3.4 Security
 
 | ID | Requirement |
-|---|------|
+|---|---------|
 | REQ-TECH-017 | No secrets (DB credentials, service secret, OAuth client secrets, anonymization salt) MAY appear in source code or version control. |
 | REQ-TECH-018 | The administration API MUST be unreachable from the public network; only the REDCap-compatible `/api/` endpoint is exposed externally (see `Authentication_Authorization_Requirements.md`). |
 | REQ-TECH-019 | Session cookies MUST be `HttpOnly`, `Secure` (production), `SameSite=Lax`. |
@@ -61,7 +61,7 @@ Defines the mandatory technology constraints and the non-functional requirements
 ### 3.5 Maintainability
 
 | ID | Requirement |
-|---|------|
+|---|---------|
 | REQ-TECH-021 | The Go API MUST be covered by automated tests (unit + integration against SQLite) that run in CI without external services. |
 | REQ-TECH-022 | The REDCap compatibility contract (Fiona call examples) MUST be encoded as executable regression tests. |
 | REQ-TECH-023 | Dependency footprint: the Go module MUST avoid non-standard-library dependencies except database drivers, an OpenAPI/Swagger UI static bundle, and at most two other production libraries. PHP MUST use the standard distribution — **except** for critical functions under REQ-TECH-026, where allowlisted Composer packages MAY be used. |
@@ -73,7 +73,7 @@ Defines the mandatory technology constraints and the non-functional requirements
 
 
 | ID | Assumption |
-|---|------|
+|---|---------|
 | ASM-TECH-1 | A standard LAMP-style host (PHP-FPM + web server) is available for the web application; no container orchestration is required in phase 1. |
 | ASM-TECH-2 | Bootstrap and any small JS utility (none beyond vanilla ES2020, apart from critical-function libraries admitted under REQ-TECH-026) are vendored locally; no CDN dependency in production. |
 | ASM-TECH-3 | The Go API and PHP app run on the same host or a trusted internal network segment. |
@@ -81,7 +81,7 @@ Defines the mandatory technology constraints and the non-functional requirements
 ## 5. Deviations from Plan
 
 | ID | Deviation | Rationale |
-|---|---|---|
+|---|------|------|
 | DEV-TECH-1 | REQ-TECH-023's blanket "no Composer dependencies" relaxed to an allowlisted exception for critical functions (GD-25) | Owner decision (2026-09-28): authentication and i18n are security- and correctness-critical; a vetted standard library is lower risk than hand-rolled protocol code. The exception is bounded by the allowlist, pinning, local vendoring, and re-review on bump — not open-ended. `AGENTS.md` "Stack facts" updated accordingly (REQ-TECH-026). |
 | DEV-TECH-2 | Bootstrap theme files (Bootswatch `darkly` and `yeti`) admitted as selectable alternate stylesheets | Owner decision (2026-09-28, GD-26; "allow bootstrap themes like darkly and yeti in assets/"): themes are full-replacement vendored CSS with remote references stripped (REQ-TECH-027); installation-wide default via `UI_THEME` (REQ-CFG-031) plus a per-user override (REQ-UI-040/041, REQ-API-122). |
 

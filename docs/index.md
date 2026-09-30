@@ -24,6 +24,9 @@ code-block-font-size: \footnotesize
 # Inject LaTeX to make a transparent box behind text
 header-includes:
   - \usepackage{tcolorbox}
+  - |
+    \let\oldtexttt\texttt
+    \renewcommand{\texttt}[1]{\small\oldtexttt{#1}}
 ---
 
 # Introduction
