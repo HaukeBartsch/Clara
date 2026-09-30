@@ -29,6 +29,7 @@ func (h *Handler) registerStructure(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/projects/{id}/events", h.listEvents)
 	mux.HandleFunc("POST /api/v1/projects/{id}/events", h.createEvent)
 	mux.HandleFunc("PUT /api/v1/events/{id}", h.updateEvent)
+	mux.HandleFunc("DELETE /api/v1/events/{id}", h.deleteEventHTTP)
 	mux.HandleFunc("PUT /api/v1/projects/{id}/events/order", h.orderEvents)
 
 	mux.HandleFunc("GET /api/v1/projects/{id}/instruments", h.listInstruments)
@@ -106,6 +107,11 @@ type designCtx struct {
 	events   map[string]db.Event // by unique_event_name
 	activeAt map[string]map[int64]bool
 	deps     []db.CalculatedDependency
+	// firstEvent is the project's first event in canonical order (GD-15:
+	// arm_num ascending, then per arm timepoint events by period, ties and
+	// no-timepoint events by position). A bare [field] reference resolves as
+	// if it named this event (§7.1).
+	firstEvent string
 }
 
 func (h *Handler) loadDesign(ctx context.Context, projectID int64) (*designCtx, error) {
@@ -125,11 +131,30 @@ func (h *Handler) loadDesign(ctx context.Context, projectID int64) (*designCtx, 
 	if err != nil {
 		return nil, err
 	}
+	arms, err := h.Store.ListArms(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
 	d := &designCtx{
 		fields:   make(map[string]db.Field, len(fields)),
 		events:   make(map[string]db.Event, len(events)),
 		activeAt: map[string]map[int64]bool{},
 		deps:     deps,
+	}
+	// The first event in canonical order (GD-15) — the fallback target of a
+	// bare [field] reference. Arms come from ListArms in arm order; within an
+	// arm SortEventsCanonical is the GD-15 order.
+	byArm := map[int64][]db.Event{}
+	for _, e := range events {
+		byArm[e.ArmID] = append(byArm[e.ArmID], e)
+	}
+	for _, a := range arms {
+		list := byArm[a.ID]
+		SortEventsCanonical(list)
+		if len(list) > 0 {
+			d.firstEvent = list[0].UniqueEventName
+			break
+		}
 	}
 	for _, f := range fields {
 		d.fields[f.FieldName] = f
@@ -151,8 +176,13 @@ func (h *Handler) loadDesign(ctx context.Context, projectID int64) (*designCtx, 
 }
 
 // resolves reports whether a reference names an existing, value-carrying
-// field that is active at the referenced event (§6.2 rule 2, §7.2).
+// field that is active at the referenced event (§6.2 rule 2, §7.2). A bare
+// [field] reference (empty Event) falls back to the project's first event —
+// the branching-logic allowance of API_Endpoints_Design.md §3.6.3.
 func (d *designCtx) resolves(r validate.Ref) bool {
+	if r.Event == "" {
+		r.Event = d.firstEvent
+	}
 	if _, ok := d.events[r.Event]; !ok {
 		return false
 	}
@@ -909,6 +939,125 @@ func (h *Handler) updateEvent(w http.ResponseWriter, r *http.Request) {
 		out.ArmNum = arm.ArmNum
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// deleteEventHTTP removes one event (§4.9). A project always keeps at least
+// one event — deleting the last remaining event is 409 (its rename and
+// reorder stay available). The event's instrument–event mapping pairs go with
+// it; an event that holds values makes them unreachable, which analysis mode
+// acknowledges (§4.21). project_admin; 204. Audit `event_deleted`.
+func (h *Handler) deleteEventHTTP(w http.ResponseWriter, r *http.Request) {
+	u, ok := actor(r)
+	if !ok {
+		errForbidden(w)
+		return
+	}
+	eventID, ok := pathObjectID(r, "id")
+	if !ok {
+		errBadRequest(w, "invalid event id")
+		return
+	}
+	ctx := r.Context()
+	var supplied map[string]json.RawMessage
+	if err := decodeBody(r, &supplied); err != nil {
+		errBadRequest(w, "malformed JSON body")
+		return
+	}
+	ev, err := h.Store.GetEvent(ctx, eventID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	applyDelete := func(d *stagedDesign) *designError {
+		if _, _, ok := d.event(eventID); !ok {
+			return validationf("event %d is not part of the staged design", eventID)
+		}
+		if d.totalEvents() <= 1 {
+			return conflictf("a project must keep at least one event")
+		}
+		d.deleteEvent(eventID)
+		return nil
+	}
+	if ev == nil {
+		// An event created while a staging set is open has no live row; the
+		// set holding it answers for it (same route as DELETE /arms/{id}).
+		handled, err := h.stagedObjectWrite(w, r, u,
+			func(d *stagedDesign) bool { _, _, ok := d.event(eventID); return ok },
+			applyDelete, func() { w.WriteHeader(http.StatusNoContent) })
+		if err != nil {
+			errInternal(w)
+			return
+		}
+		if !handled {
+			errNotFound(w)
+		}
+		return
+	}
+	lv, err := h.access(ctx, u, ev.ProjectID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	if !h.requireProjectAdmin(w, r, lv) {
+		return
+	}
+	target, staged, breakingAcknowledged, ok := h.structureWrite(
+		w, r, ev.ProjectID, acknowledgeFrom(supplied), applyDelete)
+	if !ok {
+		return
+	}
+	if target == writeStaged {
+		if !h.applyStagedChange(w, r, ev.ProjectID, staged, applyDelete) {
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	events, err := h.Store.ListEvents(ctx, ev.ProjectID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	if len(events) <= 1 {
+		errConflict(w, "a project must keep at least one event")
+		return
+	}
+	tx, err := h.Store.DB.BeginTx(ctx, nil)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM instrument_events WHERE event_id = ?`, eventID); err != nil {
+		errInternal(w)
+		return
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM calculated_dependencies WHERE project_id = ? AND ref_unique_event_name = ?`,
+		ev.ProjectID, ev.UniqueEventName); err != nil {
+		errInternal(w)
+		return
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM events WHERE id = ?`, eventID); err != nil {
+		errInternal(w)
+		return
+	}
+	if err := h.Audit.InsertTx(ctx, tx, audit.Entry{
+		EventType: audit.EventDeleted, Source: audit.SourceUI,
+		UserID: u.ID, Email: u.Email, ProjectID: ev.ProjectID,
+		Details: withBreakingAcknowledgement(map[string]any{
+			"event_id": eventID, "unique_event_name": ev.UniqueEventName,
+		}, breakingAcknowledged),
+	}); err != nil {
+		errInternal(w)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		errInternal(w)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // nullInt64Param renders a sql.NullInt64 as an SQL parameter.

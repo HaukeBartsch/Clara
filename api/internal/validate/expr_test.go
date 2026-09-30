@@ -141,6 +141,35 @@ func TestValidateBranching(t *testing.T) {
 	}
 }
 
+// TestBareFieldReferences: the branching grammar accepts a single-segment
+// [field] reference (the §3.6.3 minimum form — empty Event, callers resolve
+// it against the project's first event); the calc grammar keeps the
+// event-qualified shape of §6.1.
+func TestBareFieldReferences(t *testing.T) {
+	if err := ValidateBranching(`[age] = "42"`, nil); err != nil {
+		t.Errorf(`bare [field] equality: %v`, err)
+	}
+	if err := ValidateBranching(`[yn] && is_blank([txt]) || text_contains([txt], "a")`, nil); err != nil {
+		t.Errorf("bare refs in compounds: %v", err)
+	}
+	refs, err := ParseBranchingRefs(`[age] > 18 && [e][yn] = "y"`)
+	if err != nil || len(refs) != 2 ||
+		refs[0] != (Ref{Field: "age"}) || refs[1] != (Ref{Event: "e", Field: "yn"}) {
+		t.Errorf("ParseBranchingRefs = %v, %v; want bare then qualified", refs, err)
+	}
+	if _, err := ParseCalcExpression("[age] * 2"); err == nil {
+		t.Error("calc grammar must keep event-qualified references")
+	}
+	// EvalLogic hands the empty Event to the resolver unchanged.
+	vals := map[string]string{"|age": "42"}
+	ok, err := EvalLogic(`[age] = "42"`, LogicEval{
+		Value: func(r Ref) string { return vals[r.Event+"|"+r.Field] },
+	})
+	if err != nil || !ok {
+		t.Errorf("bare ref eval = %v, %v; want true", ok, err)
+	}
+}
+
 func TestFormatNumber(t *testing.T) {
 	for _, c := range []struct {
 		v    float64

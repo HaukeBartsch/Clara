@@ -29,7 +29,8 @@ func contains(haystack, needle string) bool {
 }
 
 // TestProjectsCreateSingleArmAndAudit: creation is 201 with the project
-// object, creates arm 1 only (REQ-DB-011), and audits project_created.
+// object, creates arm 1 only (REQ-DB-011) together with its first event
+// "baseline" (REQ-API-050), and audits project_created.
 func TestProjectsCreateSingleArmAndAudit(t *testing.T) {
 	e := newEnv(t)
 	admin := e.mustAdmin("admin@example.org")
@@ -56,6 +57,17 @@ func TestProjectsCreateSingleArmAndAudit(t *testing.T) {
 	arm, err := e.Store.GetArmByNum(context.Background(), p.ID, 1)
 	if err != nil || arm == nil {
 		t.Fatalf("arm 1 missing after creation (REQ-DB-011): %v", err)
+	}
+	// The first event "baseline" (timepoint day 0) is created with the arm —
+	// every project holds at least one event from creation on.
+	events, err := e.Store.ListEventsByArm(context.Background(), p.ID, arm.ID)
+	if err != nil {
+		t.Fatalf("ListEventsByArm: %v", err)
+	}
+	if len(events) != 1 || events[0].EventName != "baseline" ||
+		events[0].UniqueEventName != "baseline_arm_1" ||
+		!events[0].Period.Valid || events[0].Period.Int64 != 0 {
+		t.Errorf("events after creation = %+v, want the single baseline event (period 0)", events)
 	}
 	if !hasType(e.auditTypes(), "project_created") {
 		t.Errorf("audit types = %v, want project_created", e.auditTypes())

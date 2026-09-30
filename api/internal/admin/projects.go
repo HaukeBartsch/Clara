@@ -225,9 +225,10 @@ func validDate(v *string) bool {
 }
 
 // createProject creates a project (is_admin — master spec). Single-arm per
-// REQ-DB-011/DEV-API-4: arm 1 is created here; initial events come through
-// §4.9 afterwards (GD-17). A duplicate name is 409 conflict. 201 with the
-// project object; audit `project_created`.
+// REQ-DB-011/DEV-API-4: arm 1 is created here together with its first event
+// "baseline" — every project holds at least one event from creation on
+// (REQ-API-050); further events come through §4.9 afterwards. A duplicate
+// name is 409 conflict. 201 with the project object; audit `project_created`.
 func (h *Handler) createProject(w http.ResponseWriter, r *http.Request) {
 	u, ok := requireAdmin(w, r)
 	if !ok {
@@ -285,8 +286,18 @@ func (h *Handler) createProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.ID = id
-	// Creation is single-arm (REQ-DB-011): arm 1 only, unnamed.
-	if _, err := h.Store.AddArm(ctx, &db.Arm{ProjectID: id, ArmNum: 1}); err != nil {
+	// Creation is single-arm (REQ-DB-011): arm 1 only, unnamed. The arm opens
+	// with its first event "baseline" (timepoint day 0) — a project always
+	// holds at least one event (REQ-API-050).
+	armID, err := h.Store.AddArm(ctx, &db.Arm{ProjectID: id, ArmNum: 1})
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	if _, err := h.Store.AddEvent(ctx, &db.Event{
+		ProjectID: id, ArmID: armID, EventName: "baseline", UniqueEventName: "baseline_arm_1",
+		Period: sql.NullInt64{Int64: 0, Valid: true},
+	}); err != nil {
 		errInternal(w)
 		return
 	}

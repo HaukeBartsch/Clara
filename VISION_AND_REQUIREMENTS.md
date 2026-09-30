@@ -208,6 +208,8 @@ SQLite is supported as the development database, while production runs on MariaD
 
 # Endpoints used by Fiona
 
+Use a clean-room design for the whole development and duplicate the functional interface.
+
 Implement an API endpoint using golang and OpenAPI with Swagger that support calls from the research information system like:
 
 ```
@@ -530,3 +532,7 @@ The 3-state record completion (binary today, REQ-API-074) is by instrument only 
 ## Record history by field
 
 The "record instrument" web view shows all fields for an instrument with values by record, arm, repeating instrument. The web views shows after clicking an instrument button/icon in the "record status dashboard". In the record instrument web view next to each fields description (only editable in designer) and value (editable in record instrument) a small "history" button should allow the user to see a table with previous values (record-history with dates value was entered and the user account). See also `API_Endpoints_Design.md` §4.16.
+
+## Arms, events and instruments
+
+In all projects there should always be at least one arm ("arm_1"), event ("baseline") and instrument ("instrument"). Adding, deleting and re-ordering of arms, events, and instruments should be possible. Re-ordering should not change the arm, instrument, or events {id}. If the user deletes the last instrument, only the fields in that instrument should be deleted. The instrument should be renamed to "instrument". It should not be possible to delete the last remaining arm or event but a) the arm is renamed to "arm_1" and the event is renamed to "baseline" and b) the events offset days are reset to 0 +-0.

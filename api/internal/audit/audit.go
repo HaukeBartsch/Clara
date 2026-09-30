@@ -50,6 +50,7 @@ const (
 	ArmDeleted          = "arm_deleted"
 	EventCreated        = "event_created"
 	EventUpdated        = "event_updated"
+	EventDeleted        = "event_deleted"
 	EventReordered      = "event_reordered"
 	InstrumentCreated   = "instrument_created"
 	InstrumentUpdated   = "instrument_updated"

@@ -118,6 +118,156 @@ func TestDeleteArm(t *testing.T) {
 	}
 }
 
+// TestBranchingBareFieldReference: design-time branching validation resolves
+// a bare [field] reference against the project's first event in canonical
+// order (§3.6.3) — a field active there validates; a field that is not does
+// not, even when it exists at another event.
+func TestBranchingBareFieldReference(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	ctx := context.Background()
+	projectID := e.mustProject("Bare Ref Study")
+	armID, err := e.Store.AddArm(ctx, &db.Arm{ProjectID: projectID, ArmNum: 1})
+	if err != nil {
+		t.Fatalf("AddArm: %v", err)
+	}
+	baseID, err := e.Store.AddEvent(ctx, &db.Event{
+		ProjectID: projectID, ArmID: armID, EventName: "baseline", UniqueEventName: "baseline_arm_1",
+	})
+	if err != nil {
+		t.Fatalf("AddEvent: %v", err)
+	}
+	folID, err := e.Store.AddEvent(ctx, &db.Event{
+		ProjectID: projectID, ArmID: armID, EventName: "followup", UniqueEventName: "followup_arm_1",
+	})
+	if err != nil {
+		t.Fatalf("AddEvent: %v", err)
+	}
+	intakeID, err := e.Store.AddInstrument(ctx, &db.Instrument{ProjectID: projectID, Name: "intake"})
+	if err != nil {
+		t.Fatalf("AddInstrument: %v", err)
+	}
+	laterID, err := e.Store.AddInstrument(ctx, &db.Instrument{ProjectID: projectID, Name: "later"})
+	if err != nil {
+		t.Fatalf("AddInstrument: %v", err)
+	}
+	if err := e.Store.SetInstrumentEventsForArm(ctx, projectID, armID, []db.InstrumentEvent{
+		{InstrumentID: intakeID, EventID: baseID},
+		{InstrumentID: laterID, EventID: folID},
+	}); err != nil {
+		t.Fatalf("SetInstrumentEventsForArm: %v", err)
+	}
+	addField := func(instrID int64, name string) {
+		t.Helper()
+		if _, err := e.Store.AddField(ctx, &db.Field{
+			ProjectID: projectID, InstrumentID: instrID, FieldName: name, FieldType: "text",
+		}); err != nil {
+			t.Fatalf("AddField %s: %v", name, err)
+		}
+	}
+	addField(intakeID, "age")       // active at the first event
+	addField(laterID, "later_only") // active only at followup
+
+	// Bare [field] resolves against baseline_arm_1 — age is active there.
+	rec := e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/instruments/"+itoa(intakeID)+"/fields",
+		map[string]any{"field_name": "flag", "field_type": "text",
+			"branching_logic": `[age] = "x"`}, admin)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("bare ref at first event: %d %s, want 201", rec.Code, rec.Body.String())
+	}
+	// later_only is not active at the first event → rejected with the reason.
+	rec = e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/instruments/"+itoa(intakeID)+"/fields",
+		map[string]any{"field_name": "bad", "field_type": "text",
+			"branching_logic": `[later_only] = "x"`}, admin)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bare ref elsewhere: %d %s, want 400", rec.Code, rec.Body.String())
+	}
+	// The event-qualified form keeps working unchanged.
+	rec = e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/instruments/"+itoa(intakeID)+"/fields",
+		map[string]any{"field_name": "ok_qualified", "field_type": "text",
+			"branching_logic": `[followup_arm_1][later_only] = "x"`}, admin)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("qualified ref: %d %s, want 201", rec.Code, rec.Body.String())
+	}
+}
+
+// TestDeleteEvent: DELETE /api/v1/events/{id} removes one event with its
+// mapping pairs (204 + audit); the last remaining event of the project cannot
+// be deleted (409 — rename and reorder stay available, REQ-API-125).
+func TestDeleteEvent(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	ctx := context.Background()
+	projectID := e.mustProject("Event Study")
+	armID, err := e.Store.AddArm(ctx, &db.Arm{ProjectID: projectID, ArmNum: 1})
+	if err != nil {
+		t.Fatalf("AddArm: %v", err)
+	}
+	baseID, err := e.Store.AddEvent(ctx, &db.Event{
+		ProjectID: projectID, ArmID: armID, EventName: "baseline", UniqueEventName: "baseline_arm_1",
+	})
+	if err != nil {
+		t.Fatalf("AddEvent: %v", err)
+	}
+
+	// The last remaining event cannot be deleted.
+	rec := e.do("DELETE", "/api/v1/events/"+itoa(baseID), nil, admin)
+	if rec.Code != http.StatusConflict || !contains(rec.Body.String(), "at least one event") {
+		t.Fatalf("delete last event: %d %s, want 409", rec.Code, rec.Body.String())
+	}
+
+	// With a second event the deletion goes through and takes the event's
+	// mapping pairs with it.
+	rec = e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/events", map[string]any{
+		"arm_num": 1, "event_name": "follow_up",
+	}, admin)
+	var ev2 EventObject
+	e.decode(rec, &ev2)
+	iid, err := e.Store.AddInstrument(ctx, &db.Instrument{ProjectID: projectID, Name: "intake"})
+	if err != nil {
+		t.Fatalf("AddInstrument: %v", err)
+	}
+	rec = e.do("PUT", "/api/v1/projects/"+itoa(projectID)+"/instrument-event-mapping",
+		map[string]any{"arm_num": 1, "mapping": map[string][]string{
+			"intake": {"baseline_arm_1", "follow_up_arm_1"},
+		}}, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("put mapping: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = e.do("DELETE", "/api/v1/events/"+itoa(ev2.ID), nil, admin)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete event: %d %s", rec.Code, rec.Body.String())
+	}
+	events, err := e.Store.ListEvents(ctx, projectID)
+	if err != nil || len(events) != 1 || events[0].ID != baseID {
+		t.Fatalf("events after delete = %+v (%v), want only baseline", events, err)
+	}
+	pairs, err := e.Store.ListInstrumentEvents(ctx, projectID)
+	if err != nil || len(pairs) != 1 || pairs[0].InstrumentID != iid {
+		t.Fatalf("mapping pairs after delete = %+v (%v), want only the baseline pair", pairs, err)
+	}
+	var audited bool
+	for _, typ := range e.auditTypes() {
+		if typ == "event_deleted" {
+			audited = true
+		}
+	}
+	if !audited {
+		t.Errorf("audit types = %v, want event_deleted", e.auditTypes())
+	}
+
+	// project_admin only; an unknown id is 404.
+	regular := e.mustUser("user@example.org")
+	rec = e.do("DELETE", "/api/v1/events/"+itoa(baseID), nil, regular)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("non-admin delete: %d, want 403", rec.Code)
+	}
+	rec = e.do("DELETE", "/api/v1/events/999999", nil, admin)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("unknown event: %d, want 404", rec.Code)
+	}
+}
+
 // armIDOfEvent looks up the arm id of an event row directly.
 func armIDOfEvent(t *testing.T, e *env, eventID int64) int64 {
 	t.Helper()

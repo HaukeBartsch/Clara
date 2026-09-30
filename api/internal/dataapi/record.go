@@ -162,20 +162,19 @@ func valuesIndex(dvs []db.DataValue) recordValues {
 }
 
 // eval returns the filterLogic/branching evaluator over these values
-// (§7.3): a reference without an event resolves to the first non-empty
-// value across the record's events; choices come from the dictionary.
+// (§7.3): a bare [field] reference (empty Event) falls back to the project's
+// first event in canonical order GD-15; choices come from the dictionary.
 func (rv recordValues) eval(d *projectDict) validate.LogicEval {
+	firstEvent := ""
+	if len(d.events) > 0 {
+		firstEvent = d.events[0].UniqueEventName
+	}
 	return validate.LogicEval{
 		Value: func(ref validate.Ref) string {
-			if ref.Event != "" {
-				return rv[ref.Event][ref.Field]
+			if ref.Event == "" {
+				return rv[firstEvent][ref.Field]
 			}
-			for _, byField := range rv {
-				if v := byField[ref.Field]; v != "" {
-					return v
-				}
-			}
-			return ""
+			return rv[ref.Event][ref.Field]
 		},
 		Choices: func(ref validate.Ref) string {
 			if f, ok := d.byName[ref.Field]; ok {

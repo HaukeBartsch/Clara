@@ -527,6 +527,23 @@ func (d *stagedDesign) designContext(projectID int64) *designCtx {
 	for _, e := range events {
 		ctx.events[e.UniqueEventName] = e
 	}
+	// First event in canonical order (GD-15) — the fallback target of a bare
+	// [field] reference; arms ascending, within an arm the GD-15 order.
+	snapshotArms := make([]stagedArm, len(d.Arms))
+	copy(snapshotArms, d.Arms)
+	sort.SliceStable(snapshotArms, func(i, j int) bool { return snapshotArms[i].ArmNum < snapshotArms[j].ArmNum })
+	for _, a := range snapshotArms {
+		if len(a.Events) == 0 {
+			continue
+		}
+		evs := make([]db.Event, 0, len(a.Events))
+		for _, e := range a.Events {
+			evs = append(evs, e.event(projectID, a.ID))
+		}
+		SortEventsCanonical(evs)
+		ctx.firstEvent = evs[0].UniqueEventName
+		break
+	}
 	for _, p := range d.dbPairs(projectID) {
 		var unique string
 		for _, e := range events {
@@ -919,6 +936,15 @@ func (d *stagedDesign) putEvent(armID int64, e db.Event) (*stagedEvent, bool) {
 	}
 	arm.Events = append(arm.Events, stageEvent(e))
 	return &arm.Events[len(arm.Events)-1], true
+}
+
+// totalEvents counts every event of the snapshot, across all arms.
+func (d *stagedDesign) totalEvents() int {
+	n := 0
+	for _, a := range d.Arms {
+		n += len(a.Events)
+	}
+	return n
 }
 
 // deleteEvent removes one event and the mapping pairs that named it.

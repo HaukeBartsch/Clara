@@ -62,7 +62,12 @@ type token struct {
 
 // tokenize splits an expression into tokens. It reports a scan error for an
 // unterminated string, a malformed reference, or an unexpected character.
-func tokenize(s string) ([]token, error) {
+// bareRefs selects the branching-logic allowance of API_Endpoints_Design.md
+// §3.6.3: a single-segment [field] reference (empty Event — callers resolve
+// it against the project's first event in canonical order GD-15), which is
+// the minimum normative filterLogic form callers like Fiona send. The calc
+// grammar keeps the event-qualified [event][field] shape of §6.1.
+func tokenize(s string, bareRefs bool) ([]token, error) {
 	var toks []token
 	i := 0
 	runes := []rune(s)
@@ -80,15 +85,20 @@ func tokenize(s string) ([]token, error) {
 			ev := string(runes[i+1 : i+1+end])
 			j := i + end + 2 // index just past the first ']'
 			if j >= len(runes) || runes[j] != '[' {
-				return nil, fmt.Errorf("expected a [event][field] reference at offset %d", i)
+				if !bareRefs {
+					return nil, fmt.Errorf("expected a [event][field] reference at offset %d", i)
+				}
+				toks = append(toks, token{kind: tokRef, ref: Ref{Field: ev}, text: "[" + ev + "]"})
+				i = j
+			} else {
+				close2 := strings.IndexRune(string(runes[j+1:]), ']')
+				if close2 < 0 {
+					return nil, fmt.Errorf("unterminated field reference at offset %d", j)
+				}
+				fld := string(runes[j+1 : j+1+close2])
+				toks = append(toks, token{kind: tokRef, ref: Ref{Event: ev, Field: fld}, text: "[" + ev + "][" + fld + "]"})
+				i = j + close2 + 2
 			}
-			close2 := strings.IndexRune(string(runes[j+1:]), ']')
-			if close2 < 0 {
-				return nil, fmt.Errorf("unterminated field reference at offset %d", j)
-			}
-			fld := string(runes[j+1 : j+1+close2])
-			toks = append(toks, token{kind: tokRef, ref: Ref{Event: ev, Field: fld}, text: "[" + ev + "][" + fld + "]"})
-			i = j + close2 + 2
 		case c == '"':
 			var sb strings.Builder
 			i++
@@ -273,7 +283,7 @@ type calcParser struct {
 // referenced fields (in first-seen order). A parse error means the expression
 // is not well-formed (§6.2 rule 1).
 func ParseCalcExpression(s string) ([]Ref, error) {
-	toks, err := tokenize(s)
+	toks, err := tokenize(s, false) // §4 keeps event-qualified references
 	if err != nil {
 		return nil, err
 	}
@@ -368,7 +378,7 @@ func (p *calcParser) parseFactor() (calcNode, error) {
 // problem (§6.3); problems lists each distinct operand-scoped issue. A parse
 // error is returned as an error (the caller validates at design time first).
 func EvalCalc(expr string, resolve func(Ref) (string, bool)) (value string, problems []Problem, err error) {
-	toks, terr := tokenize(expr)
+	toks, terr := tokenize(expr, false) // §4 keeps event-qualified references
 	if terr != nil {
 		return "", nil, terr
 	}
@@ -415,7 +425,7 @@ func formatNumber(v float64) string {
 // checking only. A nil resolver skips reference resolution (well-formedness
 // check alone).
 func ValidateBranching(expr string, resolve func(Ref) bool) error {
-	toks, err := tokenize(expr)
+	toks, err := tokenize(expr, true) // §3.6.3 minimum form: [field]="value"
 	if err != nil {
 		return err
 	}
@@ -444,7 +454,7 @@ type branchParser struct {
 // field-delete check: deleting a field referenced by any stored expression
 // is rejected while the reference is in use (§6.2 invariant).
 func ParseBranchingRefs(s string) ([]Ref, error) {
-	toks, err := tokenize(s)
+	toks, err := tokenize(s, true) // same grammar as ValidateBranching
 	if err != nil {
 		return nil, err
 	}
@@ -620,7 +630,7 @@ type LogicEval struct {
 // record's values and reports whether it holds (the single normative
 // semantics of §7.3 — filterLogic, REQ-API-025, uses the same evaluator).
 func EvalLogic(expr string, ev LogicEval) (bool, error) {
-	toks, err := tokenize(expr)
+	toks, err := tokenize(expr, true) // same grammar as ValidateBranching
 	if err != nil {
 		return false, err
 	}

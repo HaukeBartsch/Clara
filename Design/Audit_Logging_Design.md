@@ -76,6 +76,7 @@ Rules: `old` is `null` for `create`; for `delete`, `new` is `null` and the `old`
 | `arm_deleted` | REQ-API-060 | `{"arm_num":2,"name":"…"}` |
 | `event_created` | REQ-API-062 | `{"event_name":"…","unique_event_name":"…","arm_num":1}` |
 | `event_updated` | REQ-API-063 | `{"event_id":7,"changes":{"label":{"old":"…","new":"…"},"period_days":{"old":0,"new":14}}}` |
+| `event_deleted` | REQ-API-125 | `{"event_id":9,"unique_event_name":"follow_up_arm_1"}` |
 | `event_reordered` | `PUT …/events/order` (REQ-API-103) | `{"arm_num":1,"order":[9,4,7]}` |
 | `instrument_created` | REQ-API-065 | `{"name":"intake","position":1}` |
 | `instrument_updated` | REQ-API-101 | `{"name":"…","changes":{"is_survey":{"old":0,"new":1}}}` |

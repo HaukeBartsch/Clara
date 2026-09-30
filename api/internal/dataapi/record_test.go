@@ -338,6 +338,23 @@ func TestRecordExportFilterLogic(t *testing.T) {
 	if len(rows) != 1 || rows[0]["record_id"] != "8DISC002" {
 		t.Fatalf("is_blank filter rows = %v, want only 8DISC002", rows)
 	}
+	// A bare [field] reference falls back to the project's first event
+	// (baseline_arm_1): 8DISC001 matches on its baseline age of 42 — never
+	// on the follow-up value of 43. Whole records are kept, so 8DISC001
+	// contributes both of its event rows.
+	rows = f.exportJSON(t, "tok-admin", url.Values{"filterLogic": {`[age] = "42"`}})
+	if len(rows) != 2 {
+		t.Fatalf("bare [field] filter rows = %v, want the two rows of 8DISC001", rows)
+	}
+	for _, row := range rows {
+		if row["record_id"] != "8DISC001" {
+			t.Errorf("bare [field] filter row = %v, want only 8DISC001", row)
+		}
+	}
+	rows = f.exportJSON(t, "tok-admin", url.Values{"filterLogic": {`[age] = "43"`}})
+	if len(rows) != 0 {
+		t.Fatalf("bare [field] must resolve at the first event only, got %v", rows)
+	}
 	// A malformed expression is a request error before any output.
 	code, body := f.call(t, url.Values{"token": {"tok-admin"}, "content": {"record"}, "filterLogic": {"[age"}})
 	mustStatus(t, code, 400, body)

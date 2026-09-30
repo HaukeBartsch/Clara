@@ -206,7 +206,7 @@ Branching logic is **display-only**: it decides which fields and which instrumen
 
 Tokens (whitespace ignored):
 
-- **Field reference:** `[<unique_event_name>][<field_name>]`
+- **Field reference:** `[<unique_event_name>][<field_name>]`, or the shorthand `[<field_name>]` — a single-segment reference names no event and resolves to the project's **first event** in canonical order (GD-15: arm_num ascending, then per arm timepoint events by period, ties and no-timepoint events by position). The shorthand is the minimum normative `filterLogic` form of `API_Endpoints_Design.md` §3.6.3; the calculated-field grammar (§6.1) keeps event-qualified references.
 - **Constants:** a numeric literal (§4 grammar) or a double-quoted string (backslash escapes `\"` and `\\` only)
 - **Comparison operators:** `=`, `!=`, `<`, `>`, `<=`, `>=`
 - **Functions:** `text_contains(ref, "substring")`, `is_blank(ref)`, `is_not_blank(ref)`
@@ -229,7 +229,7 @@ No cycle rule applies: branching logic produces no value, so no dependency graph
 
 The semantics below are the single normative definition; every evaluator (data entry form, survey page) MUST implement them (REQ-VAL-004).
 
-- **Operand resolution.** A reference resolves to the record's stored value (empty if absent at the referenced event). A string constant that exactly matches a choice label of a choice field (dropdown/radio/matrix row) is resolved to that choice's code before comparison — the stored value remains the code (REQ-VAL-022). A radio reference used by itself evaluates to `1` when selected (a value is present) and `0` when not (REQ-VAL-029).
+- **Operand resolution.** A reference resolves to the record's stored value (empty if absent at the referenced event); a shorthand `[field]` reference (§7.1) resolves at the project's first event in canonical order GD-15. A string constant that exactly matches a choice label of a choice field (dropdown/radio/matrix row) is resolved to that choice's code before comparison — the stored value remains the code (REQ-VAL-022). A radio reference used by itself evaluates to `1` when selected (a value is present) and `0` when not (REQ-VAL-029).
 - **Comparison.** If either operand is a missing/empty referenced value → `0` for every operator (ASM-VAL-6). Otherwise: both numeric → numeric comparison; both valid dates/date-times (in the reference's `validation_format` or canonical form, §4.1) → chronological comparison of **absolute instants** (each value's wall time interpreted with its stored collection offset — GD-16, REQ-VAL-041); otherwise → lexicographic (byte-wise UTF-8) comparison.
 - **Truthiness.** A reference used outside a comparison: empty → `0`; non-empty → `1` (ASM-VAL-6). For choice fields this is exactly "selected → `1`, not selected → `0`" (REQ-VAL-029), regardless of the code value; for numeric text fields the value `0`/`0.0` → `0`.
 - **Functions.** `is_blank(ref)` → `1` if the referenced value is missing/empty, else `0`; `is_not_blank(ref)` → its negation; `text_contains(ref, s)` → `1` if `s` is a substring of the referenced value, else `0` (missing/empty → `0`).

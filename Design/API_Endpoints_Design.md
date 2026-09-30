@@ -191,7 +191,7 @@ All require data access ≥ `read_only` except `generateNextRecordName` (≥ `vi
 
 #### 3.6.3 `filterLogic` (REQ-API-025)
 
-Minimum normative support: equality on string fields, `[field]="value"`, and compound conditions with `&&` / `||` and parentheses — the full grammar (value comparisons `=`, `!=`, `<`, `>`, `<=`, `>=`, numeric/chronological/string comparison semantics, `text_contains`, `is_blank`, `is_not_blank`, precedence) is the branching-logic grammar of `Data_Validation_Design.md` §7, evaluated against the record's stored values. `filterLogic` filters which **records** are returned; it never changes the sensitivity level.
+Minimum normative support: equality on string fields, `[field]="value"`, and compound conditions with `&&` / `||` and parentheses — the full grammar (value comparisons `=`, `!=`, `<`, `>`, `<=`, `>=`, numeric/chronological/string comparison semantics, `text_contains`, `is_blank`, `is_not_blank`, precedence) is the branching-logic grammar of `Data_Validation_Design.md` §7, evaluated against the record's stored values. A single-segment reference `[field]` names no event and falls back to the project's **first event** in canonical order GD-15 (`Data_Validation_Design.md` §7.1). `filterLogic` filters which **records** are returned; it never changes the sensitivity level.
 
 ### 3.7 `content=record&action=import`
 
@@ -306,7 +306,7 @@ Every error is a JSON object with a consistent shape:
 | 403 | `account_disabled` | login with a disabled account (including auto-disabled by the inactivity rule — `account_auto_disabled` audit first, REQ-AUTH-053; audit `login_failure`) |
 | 403 | `account_expired` | login with an account whose `valid_until` has passed (GD-19, REQ-AUTH-052; audit `login_failure`) |
 | 404 | `not_found` | an unknown path resource (a user, project, arm, event, instrument, field, or group that does not exist) |
-| 409 | `conflict` | a state violation — duplicate name (project, role, event label, instrument, field, group); deleting an arm that still has events or data (DEV-API-6); deleting a group that still has records (ASM-AUTH-4); deleting a field referenced by an active expression; an event rename colliding with an existing `unique_event_name` (§4.9); a mode transition outside the allowed set, any mode change while a staging set is open, opening a second staging set, committing breaking changes without acknowledgement, a structure change in production mode while no staging set is open, or a breaking structure change in analysis mode sent without `acknowledge_breaking` (§4.21) |
+| 409 | `conflict` | a state violation — duplicate name (project, role, event label, instrument, field, group); deleting an arm that still has events or data (DEV-API-6); deleting the last remaining event of a project (§4.9, REQ-API-125); deleting a group that still has records (ASM-AUTH-4); deleting a field referenced by an active expression; an event rename colliding with an existing `unique_event_name` (§4.9); a mode transition outside the allowed set, any mode change while a staging set is open, opening a second staging set, committing breaking changes without acknowledgement, a structure change in production mode while no staging set is open, or a breaking structure change in analysis mode sent without `acknowledge_breaking` (§4.21) |
 | 500 | `internal` | unexpected failure; `message` carries no details |
 
 ### 4.3 Session (REQ-API-044, REQ-API-045)
@@ -406,7 +406,7 @@ Administrator (requires `is_admin`), REQ-API-116: `POST /api/v1/users/{id}/tfa/r
 }
 ```
 
-The removed attributes — `end_provision`, the `option_*` flags, `agreed_to_end_user_contract`, `event_names` — are rejected as unknown attributes (400 `invalid_request`, REQ-API-052); if the owner wants them they are data in an ordinary instrument (e.g. `DataTransferProjects`, REQ-DB-032). A duplicate `project_name` → 409 `conflict`. Creation is single-arm (REQ-DB-011, DEV-API-4): the API creates **arm 1 only** — initial events are added afterwards through `POST /api/v1/projects/{id}/events` (REQ-API-062; `event_names` is no longer part of creation, GD-17). 201 — the project object (`id` + the supplied fields + `creation_time`). Audit `project_created`.
+The removed attributes — `end_provision`, the `option_*` flags, `agreed_to_end_user_contract`, `event_names` — are rejected as unknown attributes (400 `invalid_request`, REQ-API-052); if the owner wants them they are data in an ordinary instrument (e.g. `DataTransferProjects`, REQ-DB-032). A duplicate `project_name` → 409 `conflict`. Creation is single-arm (REQ-DB-011, DEV-API-4): the API creates **arm 1 only**, together with its first event **`baseline`** (`unique_event_name = baseline_arm_1`, timepoint `period = 0`) — every project holds at least one event from creation on (§4.9, REQ-API-050). Further events are added afterwards through `POST /api/v1/projects/{id}/events` (REQ-API-062; `event_names` is no longer part of creation, GD-17). 201 — the project object (`id` + the supplied fields + `creation_time`). Audit `project_created`.
 
 **`GET /api/v1/projects/{id}`** — data access ≥ `read_only` + project visibility. 200 — full metadata plus structure:
 
@@ -518,6 +518,8 @@ Both endpoints require `is_admin`. Roles are project-scoped (REQ-AUTH-024) and n
 The API derives `unique_event_name = <label>_arm_<n>` (REQ-DB-011); a duplicate label within the same arm → 409 `conflict`; the new event takes `position` = end of the arm's list. 201 — the event object. Audit `event_created`.
 
 **`PUT /api/v1/events/{id}`** — `project_admin` (path verbatim, ASM-API-1); idempotent (REQ-API-042). Body: any subset of `{ "event_name", "period", "safe_region_start", "safe_region_end" }` — `period: null` **clears** the timepoint (the event becomes user-orderable, GD-15). A label change re-derives `unique_event_name`; a collision with an existing `unique_event_name` → 409 `conflict` (§4.2). An event that already holds data keeps its values — the rename updates the stored `unique_event_name` key in the same transaction (ASM-API-4). Audit `event_updated` with old and new values.
+
+**`DELETE /api/v1/events/{id}`** — `project_admin` (path verbatim, ASM-API-1). Removes the event together with its instrument–event mapping pairs; values keyed on the event's `unique_event_name` become unreachable, so the change is breaking in analysis mode (§4.21). **A project always keeps at least one event** — deleting the last remaining event → 409 `conflict`; its rename and reorder stay available (REQ-API-125; VISION "Arms, events and instruments"). 204. Audit `event_deleted`.
 
 **`PUT /api/v1/projects/{id}/events/order`** — `project_admin`; idempotent (REQ-API-103). Body — the **full** ordered list of the supplied arm's event ids (a partial list → 400 `invalid_request`):
 
