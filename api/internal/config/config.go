@@ -91,7 +91,7 @@ type Config struct {
 
 	// §3.9 rate limiting — trusted-proxy ranges only; the enable flag and
 	// per-source-IP threshold are system settings in the database
-	// (REQ-CFG-020, REQ-API-111/112, DEV-CFG-3)
+	// (REQ-CFG-020, REQ-API-112/125, DEV-CFG-3)
 	TrustedProxyCIDRs []*net.IPNet
 	trustedProxyRaw   string
 
@@ -148,7 +148,7 @@ func (c *Config) AppLocation() *time.Location {
 
 // IsTrustedProxy reports whether ip sits inside a configured trusted-proxy
 // range — only then may the proxy-provided X-Real-IP header be authoritative
-// for rate limiting (REQ-API-111).
+// for rate limiting (REQ-API-125).
 func (c *Config) IsTrustedProxy(ip net.IP) bool {
 	if ip == nil {
 		return false

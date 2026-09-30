@@ -155,7 +155,7 @@ const (
 	maxRateLimitBlockMinutes = 1440
 )
 
-// SourceIP derives the rate-limit identity of a request (REQ-API-111): the
+// SourceIP derives the rate-limit identity of a request (REQ-API-125): the
 // proxy-provided X-Real-IP when the direct TCP peer is inside a trusted
 // proxy range, otherwise the connection's remote address. A client-supplied
 // X-Real-IP from an untrusted peer is ignored.

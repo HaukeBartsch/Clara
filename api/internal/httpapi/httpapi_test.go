@@ -598,7 +598,7 @@ func TestRateLimitMiddleware(t *testing.T) {
 
 	send := func(ip string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/users", nil)
-		req.RemoteAddr = ip + ":1234" // the connection address is the key (REQ-API-111)
+		req.RemoteAddr = ip + ":1234" // the connection address is the key (REQ-API-125)
 		return serve(t, h, req)
 	}
 	setting := func(key, value string) {

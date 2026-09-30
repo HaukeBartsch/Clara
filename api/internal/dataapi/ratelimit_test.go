@@ -211,7 +211,7 @@ func TestRateLimiterSweepPrunesStaleKeys(t *testing.T) {
 	}
 }
 
-// SourceIP (REQ-API-111): X-Real-IP is authoritative only from a trusted
+// SourceIP (REQ-API-125): X-Real-IP is authoritative only from a trusted
 // proxy; everything else keys on the connection address.
 func TestSourceIP(t *testing.T) {
 	cfg := &config.Config{TrustedProxyCIDRs: parseNets(t, "127.0.0.0/8")}
