@@ -833,6 +833,8 @@ Every project is in exactly one mode (`projects.mode`, `Database_Schema_Design.m
 - **`POST /api/v1/projects/{id}/staging/commit`** — `project_admin`; body optionally `{ "acknowledge_breaking": true }`. The staged diff is classified per the table below; if it contains breaking changes and `acknowledge_breaking` is not `true` → 409 `conflict` listing them. On success the snapshot is applied to the live structure tables in **one transaction** (the whole set activates at once, GD-20) and the staging row is removed. 200 — `{ "applied": { "instruments": 2, "fields": 5, "events": 1, "mapping_pairs": 3 } }`. Audit `staging_committed` with the applied counts and the acknowledged breaking changes.
 - **`POST /api/v1/projects/{id}/staging/discard`** — `project_admin`. 204; the staging row is removed without applying. Audit `staging_discarded`.
 
+**A commit does not recompute calculated values (owner decision 2026-09-29).** A staged change to a `calculated` field's expression updates that field's dependency rows with the rest of the set, and the values already stored keep their previous result; REQ-VAL-037's same-transaction recomputation runs on the live paths (the field endpoints' own edits, import) but not at commit. Recomputing a whole project inside the commit transaction is deliberately out of scope — it is offered as a separate action instead, so an operator triggers it knowingly. Until that action exists, a deployment treats values derived from a committed expression change as stale.
+
 **Breaking-change classification (normative, REQ-API-108).** The rule: a change is breaking when it would make existing recorded data inconsistent or inaccessible; everything else is non-breaking.
 
 | Staged change | Classification |

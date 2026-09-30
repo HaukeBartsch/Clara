@@ -195,31 +195,48 @@ func (h *Handler) stagingAccess(w http.ResponseWriter, r *http.Request) (*db.Use
 }
 
 // structureWrite runs one structure change through the mode rules of §4.21 and
-// returns where it lands. It writes the rejection itself: production without an
-// open set (409), or an analysis-mode change that breaks stored data arriving
-// without acknowledge_breaking (409, naming the change). apply is the mutation
-// expressed over a snapshot — the same closure the caller applies on the staged
-// path, which is what lets analysis classify it before it touches anything.
+// returns where it lands, as a writeDecision: production without an open set
+// (409), or an analysis-mode change that breaks stored data arriving without
+// acknowledge_breaking (409, naming the change), are answered here and leave ok
+// false. apply is the mutation expressed over a snapshot — the same closure the
+// caller applies on the staged path, which is what lets analysis classify it
+// before it touches anything.
+//
+// The third result reports a breaking change the caller acknowledged. It is only
+// ever true in analysis mode (production acknowledges at commit, REQ-API-108),
+// and a handler that audits its change records it on the event (REQ-AUD-025).
 func (h *Handler) structureWrite(
 	w http.ResponseWriter, r *http.Request, projectID int64, acknowledge bool, apply applyFunc,
-) (writeTarget, *stagedDesign, bool) {
-	target, staged, ok := h.designWriteGate(w, r, projectID)
+) (target writeTarget, staged *stagedDesign, breakingAcknowledged, ok bool) {
+	target, staged, ok = h.designWriteGate(w, r, projectID)
 	if !ok {
-		return writeLive, nil, false
+		return writeLive, nil, false, false
 	}
 	if target == writeStaged {
-		return writeStaged, staged, true
+		return writeStaged, staged, false, true
 	}
 	breaking, err := h.analysisGuard(r.Context(), projectID, apply)
 	if err != nil {
 		errInternal(w)
-		return writeLive, nil, false
+		return writeLive, nil, false, false
 	}
 	if len(breaking) > 0 && !acknowledge {
 		h.writeBreakingChanges(w, breaking)
-		return writeLive, nil, false
+		return writeLive, nil, false, false
 	}
-	return writeLive, nil, true
+	return writeLive, nil, len(breaking) > 0, true
+}
+
+// withBreakingAcknowledgement adds to a structure event's details that the change
+// broke stored data and went ahead because the caller said so, which is what
+// makes the warning the admin saw recoverable from the trail
+// (Audit_Logging_Design.md §3.8, REQ-AUD-025). Details come back unchanged for
+// the ordinary case where no acknowledgement was needed.
+func withBreakingAcknowledgement(details map[string]any, acknowledged bool) map[string]any {
+	if acknowledged {
+		details["breaking_acknowledged"] = true
+	}
+	return details
 }
 
 // applyStagedChange writes the mutated snapshot back and reports the failure as
@@ -259,6 +276,19 @@ func acknowledgeFrom(supplied map[string]json.RawMessage) bool {
 // the decision that every reader sees the staged design while a set is up).
 func (h *Handler) stagedRead(ctx context.Context, projectID int64) (*stagedDesign, error) {
 	return h.openStagingDesign(ctx, projectID)
+}
+
+// stagedInstrumentOr404 resolves one instrument inside the open set — the
+// staged twin of Store.GetInstrument. An instrument created while a set is open
+// carries a provisional id and has no live row, so the snapshot is the only
+// place it exists (REQ-API-107).
+func (h *Handler) stagedInstrumentOr404(w http.ResponseWriter, d *stagedDesign, instID int64) (*stagedInstrument, bool) {
+	si, ok := d.instrument(instID)
+	if !ok {
+		errNotFound(w)
+		return nil, false
+	}
+	return si, true
 }
 
 // stagedProjectFor finds the open staging set that contains an object two

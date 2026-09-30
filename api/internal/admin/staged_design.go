@@ -614,6 +614,28 @@ func (d *stagedDesign) instrumentObjects() []instrumentObject {
 	return out
 }
 
+// instrumentObjectFor renders one §4.10 instrument with its staged field count —
+// what create and update answer with, in place of the live path's fieldCounts
+// lookup, so a staged response reports the set's field count rather than the
+// active design's.
+func (d *stagedDesign) instrumentObjectFor(instID int64) (instrumentObject, bool) {
+	si, ok := d.instrument(instID)
+	if !ok {
+		return instrumentObject{}, false
+	}
+	return instrumentObject{
+		ID: si.ID, Name: si.Name, Position: si.Position, FieldCount: len(si.Fields),
+		IsSurvey: si.IsSurvey, BranchingLogic: si.BranchingLogic.String,
+	}, true
+}
+
+// isFirstInstrument reports whether instID is the instrument at position 1 —
+// the one whose first field is the record identifier (GD-8).
+func (d *stagedDesign) isFirstInstrument(instID int64) bool {
+	sorted := sortedInstruments(d.Instruments)
+	return len(sorted) > 0 && sorted[0].ID == instID
+}
+
 // fieldObjects renders §4.11 for one instrument, in position order. The objects
 // come from the same newFieldObject the live listing uses, so a staged read is
 // indistinguishable from an unstaged one.

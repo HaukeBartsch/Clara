@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 
 	"csms/api/internal/audit"
@@ -379,4 +380,287 @@ func containsType(types []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// TestProductionStructureWritesRequireOpenSet is the REQ-API-107 gate on the
+// instrument, field and mapping endpoints: with no set open in production every
+// one of them is refused, and none of them reaches the live tables.
+func TestProductionStructureWritesRequireOpenSet(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	projectID := e.mustProject("Production Gate")
+	f := e.seedDesign(projectID)
+	hb := e.mustFieldID(projectID, "hb")
+	e.mustProduction(projectID, admin)
+
+	base := "/api/v1/projects/" + itoa(projectID)
+	for _, step := range []struct {
+		method, path string
+		body         any
+	}{
+		{"POST", base + "/instruments", map[string]any{"name": "unsent_instrument"}},
+		{"PUT", base + "/instruments/" + itoa(f.instrumentA), map[string]any{"is_survey": true}},
+		{"POST", base + "/instruments/" + itoa(f.instrumentA) + "/fields",
+			map[string]any{"field_name": "unsent_field", "field_type": "text"}},
+		{"PUT", base + "/instruments/" + itoa(f.instrumentB) + "/fields/" + itoa(hb),
+			map[string]any{"field_label": "Haemoglobin"}},
+		{"DELETE", base + "/instruments/" + itoa(f.instrumentB) + "/fields/" + itoa(hb), nil},
+		{"PUT", base + "/instruments/" + itoa(f.instrumentA) + "/fields/order", map[string]any{"order": []int64{3, 1, 2}}},
+		{"PUT", base + "/instrument-event-mapping",
+			map[string]any{"arm_num": 1, "mapping": map[string][]string{"intake": {}, "labs": {"baseline_arm_1"}}}},
+	} {
+		rec := e.do(step.method, step.path, step.body, admin)
+		if rec.Code != http.StatusConflict {
+			t.Errorf("%s %s = %d, want 409 (%s)", step.method, step.path, rec.Code, rec.Body.String())
+		}
+	}
+
+	// Nothing landed: the design is exactly what seedDesign built.
+	if got := e.countRows("fields", projectID); got != 4 {
+		t.Errorf("live fields = %d, want 4 (no structure change applied)", got)
+	}
+	if got := e.countRows("instruments", projectID); got != 2 {
+		t.Errorf("live instruments = %d, want 2", got)
+	}
+	var surveys int
+	if err := e.Store.DB.QueryRow(
+		`SELECT COUNT(*) FROM instruments WHERE project_id = ? AND is_survey = 1`, projectID).Scan(&surveys); err != nil {
+		t.Fatalf("count surveys: %v", err)
+	}
+	if surveys != 0 {
+		t.Errorf("survey instruments = %d, want 0 (the PUT was refused)", surveys)
+	}
+}
+
+// mustFieldID looks a field up by its project-unique name.
+func (e *env) mustFieldID(projectID int64, name string) int64 {
+	e.t.Helper()
+	f, err := e.Store.GetFieldByName(context.Background(), projectID, name)
+	if err != nil || f == nil {
+		e.t.Fatalf("GetFieldByName(%s): %v", name, err)
+	}
+	return f.ID
+}
+
+// TestStagedFieldEditsStayInSet covers the field endpoints on the staged path:
+// each edit answers as it would live, carries a provisional id, and leaves the
+// tables alone until commit (REQ-API-107).
+func TestStagedFieldEditsStayInSet(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	projectID := e.mustProject("Staged Fields")
+	f := e.seedDesign(projectID)
+	e.mustProduction(projectID, admin)
+	if code := e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/staging", nil, admin).Code; code != http.StatusCreated {
+		t.Fatalf("start staging: %d", code)
+	}
+
+	base := "/api/v1/projects/" + itoa(projectID)
+	rec := e.do("POST", base+"/instruments/"+itoa(f.instrumentA)+"/fields",
+		map[string]any{"field_name": "blood_pressure", "field_type": "text"}, admin)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create staged field = %d, want 201 (%s)", rec.Code, rec.Body.String())
+	}
+	var created fieldObject
+	e.decode(rec, &created)
+	if created.ID >= 0 {
+		t.Errorf("staged field id = %d, want a provisional negative id", created.ID)
+	}
+
+	// The edit is visible to a structure read and invisible to the tables.
+	rec = e.do("GET", base+"/instruments/"+itoa(f.instrumentA)+"/fields", nil, admin)
+	var listed []fieldObject
+	e.decode(rec, &listed)
+	if len(listed) != 4 {
+		t.Fatalf("staged fields = %d, want 4 (three staged plus the new one)", len(listed))
+	}
+	if got := e.countRows("fields", projectID); got != 4 {
+		t.Errorf("live fields = %d while staged, want 4", got)
+	}
+
+	// The provisional id addresses the field: rename it through the endpoint.
+	rec = e.do("PUT", base+"/instruments/"+itoa(f.instrumentA)+"/fields/"+itoa(created.ID),
+		map[string]any{"field_label": "Blood pressure"}, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rename staged field = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	var renamed fieldObject
+	e.decode(rec, &renamed)
+	if renamed.ID != created.ID || renamed.FieldLabel != "Blood pressure" {
+		t.Errorf("renamed = %+v, want id %d with the new label", renamed, created.ID)
+	}
+
+	// And delete it: the set is back to the active design, so nothing is pending.
+	rec = e.do("DELETE", base+"/instruments/"+itoa(f.instrumentA)+"/fields/"+itoa(created.ID), nil, admin)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete staged field = %d, want 204 (%s)", rec.Code, rec.Body.String())
+	}
+	rec = e.do("GET", base+"/staging", nil, admin)
+	var state stagingState
+	e.decode(rec, &state)
+	if !state.Open {
+		t.Fatal("the set closed on a staged delete")
+	}
+	if len(state.Changes) != 0 {
+		t.Errorf("changes after add-then-remove = %+v, want none", state.Changes)
+	}
+}
+
+// TestStagedFieldUniquenessIsTheSetsOwn asserts that the dictionary rules run
+// against the snapshot: a name another staged field took is refused even though
+// no live row carries it yet.
+func TestStagedFieldUniquenessIsTheSetsOwn(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	projectID := e.mustProject("Staged Uniqueness")
+	f := e.seedDesign(projectID)
+	e.mustProduction(projectID, admin)
+	if code := e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/staging", nil, admin).Code; code != http.StatusCreated {
+		t.Fatalf("start staging: %d", code)
+	}
+
+	base := "/api/v1/projects/" + itoa(projectID)
+	for round, want := range []int{http.StatusCreated, http.StatusConflict} {
+		rec := e.do("POST", base+"/instruments/"+itoa(f.instrumentB)+"/fields",
+			map[string]any{"field_name": "weight", "field_type": "text"}, admin)
+		if rec.Code != want {
+			t.Errorf("create #%d = %d, want %d (%s)", round+1, rec.Code, want, rec.Body.String())
+		}
+	}
+	// A name the live design already used is refused as well.
+	if rec := e.do("POST", base+"/instruments/"+itoa(f.instrumentB)+"/fields",
+		map[string]any{"field_name": "hb", "field_type": "text"}, admin); rec.Code != http.StatusConflict {
+		t.Errorf("reuse of a live field name = %d, want 409 (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestStagedProvisionalInstrumentAcceptsFields is the round trip that provisional
+// ids exist for: an instrument created in the set has no live row, and its id has
+// to address it for the field endpoints.
+func TestStagedProvisionalInstrumentAcceptsFields(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	projectID := e.mustProject("Staged Provisional")
+	e.seedDesign(projectID)
+	e.mustProduction(projectID, admin)
+	if code := e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/staging", nil, admin).Code; code != http.StatusCreated {
+		t.Fatalf("start staging: %d", code)
+	}
+
+	base := "/api/v1/projects/" + itoa(projectID)
+	rec := e.do("POST", base+"/instruments", map[string]any{"name": "visits"}, admin)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create staged instrument = %d, want 201 (%s)", rec.Code, rec.Body.String())
+	}
+	var inst instrumentObject
+	e.decode(rec, &inst)
+	if inst.ID >= 0 {
+		t.Fatalf("staged instrument id = %d, want a provisional negative id", inst.ID)
+	}
+
+	rec = e.do("POST", base+"/instruments/"+itoa(inst.ID)+"/fields",
+		map[string]any{"field_name": "visit_note", "field_type": "text"}, admin)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("field on the staged instrument = %d, want 201 (%s)", rec.Code, rec.Body.String())
+	}
+	rec = e.do("GET", base+"/instruments/"+itoa(inst.ID)+"/fields", nil, admin)
+	var listed []fieldObject
+	e.decode(rec, &listed)
+	if len(listed) != 1 || listed[0].FieldName != "visit_note" {
+		t.Errorf("staged instrument fields = %+v, want just visit_note", listed)
+	}
+
+	// Commit brings both rows across together.
+	rec = e.do("POST", base+"/staging/commit", nil, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	var out commitResponse
+	e.decode(rec, &out)
+	if out.Applied.Instruments != 1 || out.Applied.Fields != 1 {
+		t.Errorf("applied = %+v, want 1 instrument and 1 field", out.Applied)
+	}
+	if got := e.countRows("fields", projectID); got != 5 {
+		t.Errorf("live fields after commit = %d, want 5", got)
+	}
+}
+
+// TestAnalysisModeBreakingDeleteNeedsAcknowledgement covers REQ-API-111 with the
+// acknowledgement a DELETE carries in its body, and REQ-AUD-025's rule that the
+// structure event records it: the first call names the change and applies
+// nothing, the retry goes through and says so on the trail.
+func TestAnalysisModeBreakingDeleteNeedsAcknowledgement(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	projectID := e.mustProject("Analysis Ack")
+	f := e.seedDesign(projectID)
+	// An unreferenced field with a stored value: deleting it is breaking, and no
+	// expression blocks the way (unlike labs.hb, which the fixture's calculated
+	// field names).
+	weight := e.mustField(projectID, f.instrumentB, "weight", "text", 2)
+	e.mustValue(projectID, "REC001", "baseline_arm_1", "", "weight", "70")
+	e.mustProduction(projectID, admin)
+	if code := e.do("PUT", "/api/v1/projects/"+itoa(projectID)+"/mode",
+		map[string]any{"mode": "analysis"}, admin).Code; code != http.StatusOK {
+		t.Fatalf("enter analysis: %d", code)
+	}
+
+	path := "/api/v1/projects/" + itoa(projectID) + "/instruments/" + itoa(f.instrumentB) + "/fields/" + itoa(weight)
+	rec := e.do("DELETE", path, nil, admin)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("unacknowledged delete = %d, want 409 (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "acknowledge_breaking") {
+		t.Errorf("rejection does not name the acknowledgement: %s", rec.Body.String())
+	}
+	if got := e.countRows("fields", projectID); got != 5 {
+		t.Errorf("live fields = %d after the refused delete, want 5", got)
+	}
+	if n := e.auditCount(audit.FieldDeleted, projectID); n != 0 {
+		t.Errorf("field_deleted entries = %d after a refused change, want 0 (REQ-AUD-004)", n)
+	}
+
+	rec = e.do("DELETE", path, map[string]any{"acknowledge_breaking": true}, admin)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("acknowledged delete = %d, want 204 (%s)", rec.Code, rec.Body.String())
+	}
+	if got := e.countRows("fields", projectID); got != 4 {
+		t.Errorf("live fields = %d after the acknowledged delete, want 4", got)
+	}
+	details := e.auditDetails(audit.FieldDeleted, projectID)
+	if len(details) != 1 {
+		t.Fatalf("field_deleted entries = %d, want 1", len(details))
+	}
+	if acknowledged, _ := details[0]["breaking_acknowledged"].(bool); !acknowledged {
+		t.Errorf("field_deleted details carry no acknowledgement: %v", details[0])
+	}
+}
+
+// TestAnalysisModeNonBreakingEditNeedsNoAcknowledgement is the other half of
+// REQ-API-111: a non-breaking setup edit in analysis mode applies straight away,
+// and its event claims no acknowledgement it never needed.
+func TestAnalysisModeNonBreakingEditNeedsNoAcknowledgement(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	projectID := e.mustProject("Analysis Plain")
+	f := e.seedDesign(projectID)
+	hb := e.mustFieldID(projectID, "hb")
+	e.mustProduction(projectID, admin)
+	if code := e.do("PUT", "/api/v1/projects/"+itoa(projectID)+"/mode",
+		map[string]any{"mode": "analysis"}, admin).Code; code != http.StatusOK {
+		t.Fatalf("enter analysis: %d", code)
+	}
+
+	rec := e.do("PUT", "/api/v1/projects/"+itoa(projectID)+"/instruments/"+itoa(f.instrumentB)+"/fields/"+itoa(hb),
+		map[string]any{"field_label": "Haemoglobin"}, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("non-breaking analysis edit = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	details := e.auditDetails(audit.FieldUpdated, projectID)
+	if len(details) != 1 {
+		t.Fatalf("field_updated entries = %d, want 1", len(details))
+	}
+	if _, present := details[0]["breaking_acknowledged"]; present {
+		t.Errorf("a non-breaking change recorded an acknowledgement: %v", details[0])
+	}
 }

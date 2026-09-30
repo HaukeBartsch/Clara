@@ -359,7 +359,7 @@ func (h *Handler) createArm(w http.ResponseWriter, r *http.Request) {
 		created = *arm
 		return nil
 	}
-	target, staged, ok := h.structureWrite(w, r, projectID, acknowledgeFrom(supplied), apply)
+	target, staged, breakingAcknowledged, ok := h.structureWrite(w, r, projectID, acknowledgeFrom(supplied), apply)
 	if !ok {
 		return
 	}
@@ -402,7 +402,7 @@ func (h *Handler) createArm(w http.ResponseWriter, r *http.Request) {
 	if err := h.Audit.Insert(ctx, audit.Entry{
 		EventType: audit.ArmCreated, Source: audit.SourceUI,
 		UserID: u.ID, Email: u.Email, ProjectID: projectID,
-		Details: map[string]any{"arm_num": next, "name": name},
+		Details: withBreakingAcknowledgement(map[string]any{"arm_num": next, "name": name}, breakingAcknowledged),
 	}); err != nil {
 		errInternal(w)
 		return
@@ -418,7 +418,7 @@ func (h *Handler) deleteArm(w http.ResponseWriter, r *http.Request) {
 		errForbidden(w)
 		return
 	}
-	armID, ok := pathID(r, "id")
+	armID, ok := pathObjectID(r, "id")
 	if !ok {
 		errBadRequest(w, "invalid arm id")
 		return
@@ -460,7 +460,9 @@ func (h *Handler) deleteArm(w http.ResponseWriter, r *http.Request) {
 		d.deleteArm(armID)
 		return nil
 	}
-	target, staged, ok := h.structureWrite(w, r, arm.ProjectID, false, apply)
+	// Nothing to acknowledge here: an arm that holds events or recorded data
+	// cannot be deleted at all (DEV-API-6), so the change is never breaking.
+	target, staged, _, ok := h.structureWrite(w, r, arm.ProjectID, false, apply)
 	if !ok {
 		return
 	}
@@ -599,7 +601,7 @@ func (h *Handler) createEvent(w http.ResponseWriter, r *http.Request) {
 		created, createdArmNum = *ev, a.ArmNum
 		return nil
 	}
-	target, staged, ok := h.structureWrite(w, r, projectID, acknowledgeFrom(supplied), apply)
+	target, staged, breakingAcknowledged, ok := h.structureWrite(w, r, projectID, acknowledgeFrom(supplied), apply)
 	if !ok {
 		return
 	}
@@ -653,7 +655,9 @@ func (h *Handler) createEvent(w http.ResponseWriter, r *http.Request) {
 	if err := h.Audit.Insert(ctx, audit.Entry{
 		EventType: audit.EventCreated, Source: audit.SourceUI,
 		UserID: u.ID, Email: u.Email, ProjectID: projectID,
-		Details: map[string]any{"event_name": label, "unique_event_name": unique, "arm_num": arm.ArmNum},
+		Details: withBreakingAcknowledgement(map[string]any{
+			"event_name": label, "unique_event_name": unique, "arm_num": arm.ArmNum,
+		}, breakingAcknowledged),
 	}); err != nil {
 		errInternal(w)
 		return
@@ -679,7 +683,7 @@ func (h *Handler) updateEvent(w http.ResponseWriter, r *http.Request) {
 		errForbidden(w)
 		return
 	}
-	eventID, ok := pathID(r, "id")
+	eventID, ok := pathObjectID(r, "id")
 	if !ok {
 		errBadRequest(w, "invalid event id")
 		return
@@ -771,7 +775,7 @@ func (h *Handler) updateEvent(w http.ResponseWriter, r *http.Request) {
 	if !h.requireProjectAdmin(w, r, lv) {
 		return
 	}
-	target, staged, ok := h.structureWrite(w, r, ev.ProjectID, acknowledgeFrom(supplied), applyEdit)
+	target, staged, breakingAcknowledged, ok := h.structureWrite(w, r, ev.ProjectID, acknowledgeFrom(supplied), applyEdit)
 	if !ok {
 		return
 	}
@@ -890,7 +894,7 @@ func (h *Handler) updateEvent(w http.ResponseWriter, r *http.Request) {
 		if err := h.Audit.InsertTx(ctx, tx, audit.Entry{
 			EventType: audit.EventUpdated, Source: audit.SourceUI,
 			UserID: u.ID, Email: u.Email, ProjectID: ev.ProjectID,
-			Details: map[string]any{"event_id": ev.ID, "changes": changes},
+			Details: withBreakingAcknowledgement(map[string]any{"event_id": ev.ID, "changes": changes}, breakingAcknowledged),
 		}); err != nil {
 			errInternal(w)
 			return
@@ -975,7 +979,7 @@ func (h *Handler) orderEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		return nil
 	}
-	target, staged, ok := h.structureWrite(w, r, projectID, acknowledgeFrom(supplied), apply)
+	target, staged, breakingAcknowledged, ok := h.structureWrite(w, r, projectID, acknowledgeFrom(supplied), apply)
 	if !ok {
 		return
 	}
@@ -1040,7 +1044,7 @@ func (h *Handler) orderEvents(w http.ResponseWriter, r *http.Request) {
 	if err := h.Audit.InsertTx(ctx, tx, audit.Entry{
 		EventType: audit.EventReordered, Source: audit.SourceUI,
 		UserID: u.ID, Email: u.Email, ProjectID: projectID,
-		Details: map[string]any{"arm_num": arm.ArmNum, "order": body.Order},
+		Details: withBreakingAcknowledgement(map[string]any{"arm_num": arm.ArmNum, "order": body.Order}, breakingAcknowledged),
 	}); err != nil {
 		errInternal(w)
 		return
@@ -1165,7 +1169,7 @@ func (h *Handler) createInstrument(w http.ResponseWriter, r *http.Request) {
 		created = *inst
 		return nil
 	}
-	target, staged, ok := h.structureWrite(w, r, projectID, acknowledgeFrom(supplied), apply)
+	target, staged, breakingAcknowledged, ok := h.structureWrite(w, r, projectID, acknowledgeFrom(supplied), apply)
 	if !ok {
 		return
 	}
@@ -1195,7 +1199,7 @@ func (h *Handler) createInstrument(w http.ResponseWriter, r *http.Request) {
 	if err := h.Audit.Insert(ctx, audit.Entry{
 		EventType: audit.InstrumentCreated, Source: audit.SourceUI,
 		UserID: u.ID, Email: u.Email, ProjectID: projectID,
-		Details: map[string]any{"name": name, "position": inst.Position},
+		Details: withBreakingAcknowledgement(map[string]any{"name": name, "position": inst.Position}, breakingAcknowledged),
 	}); err != nil {
 		errInternal(w)
 		return
@@ -1235,7 +1239,7 @@ func (h *Handler) orderInstruments(w http.ResponseWriter, r *http.Request) {
 		}
 		return nil
 	}
-	target, staged, ok := h.structureWrite(w, r, projectID, acknowledgeFrom(supplied), apply)
+	target, staged, breakingAcknowledged, ok := h.structureWrite(w, r, projectID, acknowledgeFrom(supplied), apply)
 	if !ok {
 		return
 	}
@@ -1323,7 +1327,7 @@ func (h *Handler) orderInstruments(w http.ResponseWriter, r *http.Request) {
 	if err := h.Audit.InsertTx(ctx, tx, audit.Entry{
 		EventType: audit.InstrumentReordered, Source: audit.SourceUI,
 		UserID: u.ID, Email: u.Email, ProjectID: projectID,
-		Details: map[string]any{"order": names},
+		Details: withBreakingAcknowledgement(map[string]any{"order": names}, breakingAcknowledged),
 	}); err != nil {
 		errInternal(w)
 		return
@@ -1382,12 +1386,78 @@ func (h *Handler) updateInstrument(w http.ResponseWriter, r *http.Request) {
 	if !ok || !h.requireProjectAdmin(w, r, lv) {
 		return
 	}
-	instID, ok := pathID(r, "iid")
+	instID, ok := pathObjectID(r, "iid")
 	if !ok {
 		errBadRequest(w, "invalid instrument id")
 		return
 	}
 	ctx := r.Context()
+	var supplied map[string]json.RawMessage
+	if err := decodeBody(r, &supplied); err != nil {
+		errBadRequest(w, "malformed JSON body")
+		return
+	}
+	if !RejectUnknownAttrs(w, supplied, "is_survey", "branching_logic", "acknowledge_breaking") {
+		return
+	}
+
+	// While a set is open the instrument is the snapshot's — one created during
+	// staging has no live row to read or write (REQ-API-107). With no set open the
+	// gate below answers 409 in production, so the live row is resolved after it.
+	staged, err := h.stagedRead(ctx, projectID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	if staged != nil {
+		if _, found := h.stagedInstrumentOr404(w, staged, instID); !found {
+			return
+		}
+	}
+
+	// The edit over a design snapshot: production applies it to the open set, and
+	// analysis mode runs it against a throwaway copy only to classify it (§4.21).
+	// References resolve against the design being edited, so an expression naming a
+	// staged field validates here rather than failing against the active tables.
+	apply := func(d *stagedDesign) *designError {
+		si, found := d.instrument(instID)
+		if !found {
+			return validationf("instrument %d is not part of the staged design", instID)
+		}
+		if raw, present := supplied["is_survey"]; present {
+			var v bool
+			if err := json.Unmarshal(raw, &v); err != nil {
+				return validationf("is_survey must be a boolean")
+			}
+			si.IsSurvey = v
+		}
+		if raw, present := supplied["branching_logic"]; present {
+			var expr string
+			if err := json.Unmarshal(raw, &expr); err != nil {
+				return validationf("branching_logic must be a string")
+			}
+			if expr != "" {
+				if verr := validate.ValidateBranching(expr, d.designContext(projectID).resolves); verr != nil {
+					return validationf("branching logic is not valid: %s", verr)
+				}
+			}
+			si.BranchingLogic = sql.NullString{String: expr, Valid: expr != ""}
+		}
+		return nil
+	}
+	target, set, breakingAcknowledged, ok := h.structureWrite(w, r, projectID, acknowledgeFrom(supplied), apply)
+	if !ok {
+		return
+	}
+	if target == writeStaged {
+		if !h.applyStagedChange(w, r, projectID, set, apply) {
+			return
+		}
+		obj, _ := set.instrumentObjectFor(instID)
+		writeJSON(w, http.StatusOK, obj)
+		return
+	}
+
 	inst, err := h.Store.GetInstrument(ctx, instID)
 	if err != nil {
 		errInternal(w)
@@ -1395,14 +1465,6 @@ func (h *Handler) updateInstrument(w http.ResponseWriter, r *http.Request) {
 	}
 	if inst == nil || inst.ProjectID != projectID {
 		errNotFound(w)
-		return
-	}
-	var supplied map[string]json.RawMessage
-	if err := decodeBody(r, &supplied); err != nil {
-		errBadRequest(w, "malformed JSON body")
-		return
-	}
-	if !RejectUnknownAttrs(w, supplied, "is_survey", "branching_logic") {
 		return
 	}
 	next := *inst
@@ -1448,7 +1510,7 @@ func (h *Handler) updateInstrument(w http.ResponseWriter, r *http.Request) {
 		if err := h.Audit.Insert(ctx, audit.Entry{
 			EventType: audit.InstrumentUpdated, Source: audit.SourceUI,
 			UserID: u.ID, Email: u.Email, ProjectID: projectID,
-			Details: map[string]any{"name": inst.Name, "changes": changes},
+			Details: withBreakingAcknowledgement(map[string]any{"name": inst.Name, "changes": changes}, breakingAcknowledged),
 		}); err != nil {
 			errInternal(w)
 			return
@@ -1538,20 +1600,20 @@ var reservedFieldNames = map[string]bool{
 
 // validateFieldDesign enforces the §9 dictionary rules on the proposed field
 // state. selfID is 0 for a new field; uniqueness and cycle checks exclude it.
-// It returns the validated calculation references when the field is
+// d is the design the proposal is checked against — the live tables on a direct
+// edit, the open set's snapshot while one is up (stagedDesign.designContext) —
+// which is also what carries the uniqueness rule: field_name is unique per
+// project on both sides, so the dictionary view answers for the UNIQUE constraint
+// either way. It returns the validated calculation references when the field is
 // calculated (nil otherwise).
-func (h *Handler) validateFieldDesign(ctx context.Context, projectID int64, f *db.Field, selfID int64) ([]validate.Ref, *designError) {
+func (h *Handler) validateFieldDesign(ctx context.Context, f *db.Field, selfID int64, d *designCtx) ([]validate.Ref, *designError) {
 	if !fieldNameRE.MatchString(f.FieldName) {
 		return nil, validationf("field_name must match ^[a-z0-9_]+$")
 	}
 	if reservedFieldNames[f.FieldName] {
 		return nil, validationf("field_name %q is reserved", f.FieldName)
 	}
-	dupe, err := h.Store.GetFieldByName(ctx, projectID, f.FieldName)
-	if err != nil {
-		return nil, &designError{status: http.StatusInternalServerError, msg: "internal"}
-	}
-	if dupe != nil && dupe.ID != selfID {
+	if dupe, taken := d.fields[f.FieldName]; taken && dupe.ID != selfID {
 		return nil, conflictf("field_name %q already exists in this project", f.FieldName)
 	}
 	if !fieldTypes[f.FieldType] {
@@ -1627,12 +1689,9 @@ func (h *Handler) validateFieldDesign(ctx context.Context, projectID int64, f *d
 	if calc != "" && f.FieldType != "calculated" {
 		return nil, validationf("calculation is only allowed for calculated fields")
 	}
-	d, err := h.loadDesign(ctx, projectID)
-	if err != nil {
-		return nil, &designError{status: http.StatusInternalServerError, msg: "internal"}
-	}
-	// The snapshot must see this field under its (possibly new) name so that
-	// expression checks resolve it (§6.2).
+	// The dictionary must see this field under its (possibly new) name so that
+	// expression checks resolve it (§6.2). d belongs to this request alone — every
+	// caller loads or derives it fresh — so the overlay cannot leak into a later read.
 	d.fields[f.FieldName] = *f
 	if f.FieldType == "calculated" {
 		if calc == "" {
@@ -1701,7 +1760,7 @@ func (h *Handler) listFields(w http.ResponseWriter, r *http.Request) {
 	if !ok || !h.requireRead(w, u, lv) {
 		return
 	}
-	instID, ok := pathID(r, "iid")
+	instID, ok := pathObjectID(r, "iid")
 	if !ok {
 		errBadRequest(w, "invalid instrument id")
 		return
@@ -1762,29 +1821,34 @@ type fieldInput struct {
 	DirectIdentifier    *bool   `json:"direct_identifier"`
 }
 
+// fieldInputAttrs are the writable §4.11 dictionary attributes plus
+// acknowledge_breaking, which every structure write accepts (§4.21: an
+// analysis-mode breaking change applies only once the caller acknowledges it;
+// in production and development the flag is ignored). It is not design data, so
+// fieldInput has no matching attribute — decodeFieldInput reports it separately.
 var fieldInputAttrs = []string{
 	"field_name", "field_label", "field_type", "section_header", "choices", "field_note",
 	"validation_type", "validation_format", "validation_min", "validation_max",
 	"required", "branching_logic", "calculation", "matrix_group",
-	"personal_information", "direct_identifier",
+	"personal_information", "direct_identifier", "acknowledge_breaking",
 }
 
-func (h *Handler) decodeFieldInput(w http.ResponseWriter, r *http.Request) (*fieldInput, bool) {
+func (h *Handler) decodeFieldInput(w http.ResponseWriter, r *http.Request) (*fieldInput, bool, bool) {
 	var supplied map[string]json.RawMessage
 	if err := decodeBody(r, &supplied); err != nil {
 		errBadRequest(w, "malformed JSON body")
-		return nil, false
+		return nil, false, false
 	}
 	if !RejectUnknownAttrs(w, supplied, fieldInputAttrs...) {
-		return nil, false
+		return nil, false, false
 	}
 	var in fieldInput
 	raw, _ := json.Marshal(supplied)
 	if err := json.Unmarshal(raw, &in); err != nil {
 		errBadRequest(w, "malformed JSON body")
-		return nil, false
+		return nil, false, false
 	}
-	return &in, true
+	return &in, acknowledgeFrom(supplied), true
 }
 
 // apply overlays the present attributes onto the proposed field state and
@@ -1832,12 +1896,68 @@ func (h *Handler) createField(w http.ResponseWriter, r *http.Request) {
 	if !ok || !h.requireProjectAdmin(w, r, lv) {
 		return
 	}
-	instID, ok := pathID(r, "iid")
+	instID, ok := pathObjectID(r, "iid")
 	if !ok {
 		errBadRequest(w, "invalid instrument id")
 		return
 	}
 	ctx := r.Context()
+	in, ack, ok := h.decodeFieldInput(w, r)
+	if !ok {
+		return
+	}
+	if in.FieldName == nil || in.FieldType == nil {
+		errBadRequest(w, "field_name and field_type are required")
+		return
+	}
+
+	// While a set is open the instrument may itself be staged — an instrument
+	// created during staging has a provisional id and no live row, so it resolves
+	// from the snapshot and nowhere else (REQ-API-107).
+	staged, err := h.stagedRead(ctx, projectID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	if staged != nil {
+		if _, found := h.stagedInstrumentOr404(w, staged, instID); !found {
+			return
+		}
+	}
+
+	var created stagedField
+	apply := func(d *stagedDesign) *designError {
+		f := &db.Field{ProjectID: projectID, InstrumentID: instID, FieldName: *in.FieldName, FieldType: *in.FieldType}
+		in.apply(f)
+		// AddField presets the identifier flag from a direct-identifier validation
+		// type; a staged field writes no row, so the preset happens here (REQ-EXP-020).
+		if !f.DirectIdentifier && validate.PresetDirectIdentifier(f.ValidationType.String) {
+			f.DirectIdentifier = true
+		}
+		// Dictionary rules run against the snapshot: uniqueness is the project's,
+		// and an expression may name a field that only exists in this set (§6.2).
+		if _, derr := h.validateFieldDesign(ctx, f, 0, d.designContext(projectID)); derr != nil {
+			return derr
+		}
+		sf, placed := d.putField(instID, *f)
+		if !placed {
+			return validationf("instrument %d is not part of the staged design", instID)
+		}
+		created = *sf
+		return nil
+	}
+	target, set, breakingAcknowledged, ok := h.structureWrite(w, r, projectID, ack, apply)
+	if !ok {
+		return
+	}
+	if target == writeStaged {
+		if !h.applyStagedChange(w, r, projectID, set, apply) {
+			return
+		}
+		writeJSON(w, http.StatusCreated, newFieldObject(created.field(projectID)))
+		return
+	}
+
 	inst, err := h.Store.GetInstrument(ctx, instID)
 	if err != nil {
 		errInternal(w)
@@ -1847,17 +1967,14 @@ func (h *Handler) createField(w http.ResponseWriter, r *http.Request) {
 		errNotFound(w)
 		return
 	}
-	in, ok := h.decodeFieldInput(w, r)
-	if !ok {
-		return
-	}
-	if in.FieldName == nil || in.FieldType == nil {
-		errBadRequest(w, "field_name and field_type are required")
+	design, err := h.loadDesign(ctx, projectID)
+	if err != nil {
+		errInternal(w)
 		return
 	}
 	f := &db.Field{ProjectID: projectID, InstrumentID: instID, FieldName: *in.FieldName, FieldType: *in.FieldType}
 	in.apply(f)
-	refs, derr := h.validateFieldDesign(ctx, projectID, f, 0)
+	refs, derr := h.validateFieldDesign(ctx, f, 0, design)
 	if derr != nil {
 		writeDesignError(w, derr)
 		return
@@ -1887,7 +2004,9 @@ func (h *Handler) createField(w http.ResponseWriter, r *http.Request) {
 	if err := h.Audit.Insert(ctx, audit.Entry{
 		EventType: audit.FieldCreated, Source: audit.SourceUI,
 		UserID: u.ID, Email: u.Email, ProjectID: projectID,
-		Details: map[string]any{"instrument": inst.Name, "field": f.FieldName, "type": f.FieldType},
+		Details: withBreakingAcknowledgement(map[string]any{
+			"instrument": inst.Name, "field": f.FieldName, "type": f.FieldType,
+		}, breakingAcknowledged),
 	}); err != nil {
 		errInternal(w)
 		return
@@ -1923,17 +2042,85 @@ func (h *Handler) updateField(w http.ResponseWriter, r *http.Request) {
 	if !ok || !h.requireProjectAdmin(w, r, lv) {
 		return
 	}
-	instID, ok := pathID(r, "iid")
+	instID, ok := pathObjectID(r, "iid")
 	if !ok {
 		errBadRequest(w, "invalid instrument id")
 		return
 	}
-	fieldID, ok := pathID(r, "fid")
+	fieldID, ok := pathObjectID(r, "fid")
 	if !ok {
 		errBadRequest(w, "invalid field id")
 		return
 	}
 	ctx := r.Context()
+	in, ack, ok := h.decodeFieldInput(w, r)
+	if !ok {
+		return
+	}
+
+	// While a set is open either id may be provisional — an instrument or a field
+	// created during staging exists only in the snapshot (REQ-API-107).
+	staged, err := h.stagedRead(ctx, projectID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	if staged != nil {
+		if _, found := h.stagedInstrumentOr404(w, staged, instID); !found {
+			return
+		}
+		if sf, found := staged.field(fieldID); !found || sf.InstrumentID != instID {
+			errNotFound(w)
+			return
+		}
+	}
+
+	// One edit over a design snapshot. A rename stays a rename here: the staged
+	// row keeps its id and changes name, which is what commit reads as "move the
+	// stored values with it" rather than a delete plus an add (REQ-VAL-014).
+	var edited db.Field
+	apply := func(d *stagedDesign) *designError {
+		sf, found := d.field(fieldID)
+		if !found || sf.InstrumentID != instID {
+			return validationf("field %d is not part of the staged design", fieldID)
+		}
+		next := sf.field(projectID)
+		changes := in.apply(&next)
+		renamed := in.FieldName != nil && *in.FieldName != sf.FieldName
+		if renamed {
+			next.FieldName = *in.FieldName
+		}
+		if len(changes) == 0 && !renamed {
+			edited = next // the response reports the field as it stands
+			return nil    // an idempotent repeat writes nothing, as on the live path
+		}
+		// A validation type that names a direct identifier presets the flag the way
+		// AddField does, unless the request sets it explicitly.
+		if in.DirectIdentifier == nil && !next.DirectIdentifier &&
+			validate.PresetDirectIdentifier(next.ValidationType.String) {
+			next.DirectIdentifier = true
+		}
+		if _, derr := h.validateFieldDesign(ctx, &next, fieldID, d.designContext(projectID)); derr != nil {
+			return derr
+		}
+		if _, placed := d.putField(instID, next); !placed {
+			return validationf("instrument %d is not part of the staged design", instID)
+		}
+		edited = next
+		return nil
+	}
+	target, set, breakingAcknowledged, ok := h.structureWrite(w, r, projectID, ack, apply)
+	if !ok {
+		return
+	}
+	if target == writeStaged {
+		if !h.applyStagedChange(w, r, projectID, set, apply) {
+			return
+		}
+		writeJSON(w, http.StatusOK, newFieldObject(edited))
+		return
+	}
+
 	inst, err := h.Store.GetInstrument(ctx, instID)
 	if err != nil {
 		errInternal(w)
@@ -1950,10 +2137,6 @@ func (h *Handler) updateField(w http.ResponseWriter, r *http.Request) {
 	}
 	if old == nil || old.InstrumentID != instID {
 		errNotFound(w)
-		return
-	}
-	in, ok := h.decodeFieldInput(w, r)
-	if !ok {
 		return
 	}
 	next := *old
@@ -1973,7 +2156,12 @@ func (h *Handler) updateField(w http.ResponseWriter, r *http.Request) {
 	}
 	calcChanged := next.FieldType == "calculated" && next.Calculation.String != old.Calculation.String
 	if len(changes) > 0 {
-		refs, derr := h.validateFieldDesign(ctx, projectID, &next, fieldID)
+		design, err := h.loadDesign(ctx, projectID)
+		if err != nil {
+			errInternal(w)
+			return
+		}
+		refs, derr := h.validateFieldDesign(ctx, &next, fieldID, design)
 		if derr != nil {
 			writeDesignError(w, derr)
 			return
@@ -2031,7 +2219,9 @@ func (h *Handler) updateField(w http.ResponseWriter, r *http.Request) {
 		if err := h.Audit.InsertTx(ctx, tx, audit.Entry{
 			EventType: audit.FieldUpdated, Source: audit.SourceUI,
 			UserID: u.ID, Email: u.Email, ProjectID: projectID,
-			Details: map[string]any{"instrument": inst.Name, "field": next.FieldName, "changes": changes},
+			Details: withBreakingAcknowledgement(map[string]any{
+				"instrument": inst.Name, "field": next.FieldName, "changes": changes,
+			}, breakingAcknowledged),
 		}); err != nil {
 			errInternal(w)
 			return
@@ -2176,17 +2366,72 @@ func (h *Handler) deleteField(w http.ResponseWriter, r *http.Request) {
 	if !ok || !h.requireProjectAdmin(w, r, lv) {
 		return
 	}
-	instID, ok := pathID(r, "iid")
+	instID, ok := pathObjectID(r, "iid")
 	if !ok {
 		errBadRequest(w, "invalid instrument id")
 		return
 	}
-	fieldID, ok := pathID(r, "fid")
+	fieldID, ok := pathObjectID(r, "fid")
 	if !ok {
 		errBadRequest(w, "invalid field id")
 		return
 	}
 	ctx := r.Context()
+
+	// A DELETE carries the acknowledgement in its body (§4.21 spells the retry out
+	// as the same call returning with acknowledge_breaking): deleting a field is
+	// breaking by construction, so without a way to acknowledge it an
+	// analysis-mode project could never drop a field at all.
+	var supplied map[string]json.RawMessage
+	if err := decodeBody(r, &supplied); err != nil {
+		errBadRequest(w, "malformed JSON body")
+		return
+	}
+
+	// While a set is open the field may be a staged one, and removing it edits the
+	// snapshot — its stored values stay where they are until commit (REQ-API-107).
+	staged, err := h.stagedRead(ctx, projectID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	if staged != nil {
+		if _, found := h.stagedInstrumentOr404(w, staged, instID); !found {
+			return
+		}
+		if sf, found := staged.field(fieldID); !found || sf.InstrumentID != instID {
+			errNotFound(w)
+			return
+		}
+	}
+
+	apply := func(d *stagedDesign) *designError {
+		sf, found := d.field(fieldID)
+		if !found || sf.InstrumentID != instID {
+			return validationf("field %d is not part of the staged design", fieldID)
+		}
+		// The expression guard reads the design that is about to become active, so a
+		// staged expression still naming this field blocks the removal (§6.2).
+		if referenced, err := designReferencesField(d, sf.FieldName); err != nil {
+			return &designError{status: http.StatusInternalServerError, msg: "internal"}
+		} else if referenced {
+			return conflictf("field is referenced by an active expression; update the expression first")
+		}
+		d.deleteField(fieldID)
+		return nil
+	}
+	target, set, breakingAcknowledged, ok := h.structureWrite(w, r, projectID, acknowledgeFrom(supplied), apply)
+	if !ok {
+		return
+	}
+	if target == writeStaged {
+		if !h.applyStagedChange(w, r, projectID, set, apply) {
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	inst, err := h.Store.GetInstrument(ctx, instID)
 	if err != nil {
 		errInternal(w)
@@ -2246,7 +2491,9 @@ func (h *Handler) deleteField(w http.ResponseWriter, r *http.Request) {
 	if err := h.Audit.InsertTx(ctx, tx, audit.Entry{
 		EventType: audit.FieldDeleted, Source: audit.SourceUI,
 		UserID: u.ID, Email: u.Email, ProjectID: projectID,
-		Details: map[string]any{"instrument": inst.Name, "field": f.FieldName, "values_removed": removed},
+		Details: withBreakingAcknowledgement(map[string]any{
+			"instrument": inst.Name, "field": f.FieldName, "values_removed": removed,
+		}, breakingAcknowledged),
 	}); err != nil {
 		errInternal(w)
 		return
@@ -2313,27 +2560,18 @@ func (h *Handler) orderFields(w http.ResponseWriter, r *http.Request) {
 	if !ok || !h.requireProjectAdmin(w, r, lv) {
 		return
 	}
-	instID, ok := pathID(r, "iid")
+	instID, ok := pathObjectID(r, "iid")
 	if !ok {
 		errBadRequest(w, "invalid instrument id")
 		return
 	}
 	ctx := r.Context()
-	inst, err := h.Store.GetInstrument(ctx, instID)
-	if err != nil {
-		errInternal(w)
-		return
-	}
-	if inst == nil || inst.ProjectID != projectID {
-		errNotFound(w)
-		return
-	}
 	var supplied map[string]json.RawMessage
 	if err := decodeBody(r, &supplied); err != nil {
 		errBadRequest(w, "malformed JSON body")
 		return
 	}
-	if !RejectUnknownAttrs(w, supplied, "order") {
+	if !RejectUnknownAttrs(w, supplied, "order", "acknowledge_breaking") {
 		return
 	}
 	var body struct {
@@ -2342,6 +2580,58 @@ func (h *Handler) orderFields(w http.ResponseWriter, r *http.Request) {
 	raw, _ := json.Marshal(supplied)
 	if err := json.Unmarshal(raw, &body); err != nil {
 		errBadRequest(w, "malformed JSON body")
+		return
+	}
+
+	// While a set is open the instrument and its fields may both be staged, so the
+	// order lands on the snapshot (REQ-API-107).
+	staged, err := h.stagedRead(ctx, projectID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	if staged != nil {
+		if _, found := h.stagedInstrumentOr404(w, staged, instID); !found {
+			return
+		}
+	}
+
+	apply := func(d *stagedDesign) *designError {
+		if !d.orderFields(instID, body.Order) {
+			return validationf("order must list every field of the instrument exactly once")
+		}
+		return nil
+	}
+	target, set, breakingAcknowledged, ok := h.structureWrite(w, r, projectID, acknowledgeFrom(supplied), apply)
+	if !ok {
+		return
+	}
+	if target == writeStaged {
+		// GD-8 is about stored records, so the live check applies unchanged — and it
+		// applies when the instrument being ordered is itself staged.
+		if set.isFirstInstrument(instID) && len(body.Order) > 0 {
+			if bad, err := h.gd8Violation(ctx, projectID, body.Order[0]); err != nil {
+				errInternal(w)
+				return
+			} else if bad {
+				errBadRequest(w, "reordering would move the record identifier field (GD-8)")
+				return
+			}
+		}
+		if !h.applyStagedChange(w, r, projectID, set, apply) {
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+
+	inst, err := h.Store.GetInstrument(ctx, instID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	if inst == nil || inst.ProjectID != projectID {
+		errNotFound(w)
 		return
 	}
 	fields, err := h.Store.ListFieldsByInstrument(ctx, projectID, instID)
@@ -2405,7 +2695,7 @@ func (h *Handler) orderFields(w http.ResponseWriter, r *http.Request) {
 	if err := h.Audit.InsertTx(ctx, tx, audit.Entry{
 		EventType: audit.FieldReordered, Source: audit.SourceUI,
 		UserID: u.ID, Email: u.Email, ProjectID: projectID,
-		Details: map[string]any{"instrument": inst.Name, "order": names},
+		Details: withBreakingAcknowledgement(map[string]any{"instrument": inst.Name, "order": names}, breakingAcknowledged),
 	}); err != nil {
 		errInternal(w)
 		return
@@ -2473,7 +2763,7 @@ func (h *Handler) testField(w http.ResponseWriter, r *http.Request) {
 	if !ok || !h.requireProjectAdmin(w, r, lv) {
 		return
 	}
-	fieldID, ok := pathID(r, "fid")
+	fieldID, ok := pathObjectID(r, "fid")
 	if !ok {
 		errBadRequest(w, "invalid field id")
 		return
@@ -2664,7 +2954,7 @@ func (h *Handler) putMapping(w http.ResponseWriter, r *http.Request) {
 		errBadRequest(w, "malformed JSON body")
 		return
 	}
-	if !RejectUnknownAttrs(w, supplied, "arm_num", "mapping") {
+	if !RejectUnknownAttrs(w, supplied, "arm_num", "mapping", "acknowledge_breaking") {
 		return
 	}
 	var body struct {
@@ -2676,6 +2966,41 @@ func (h *Handler) putMapping(w http.ResponseWriter, r *http.Request) {
 		errBadRequest(w, "arm_num and mapping are required")
 		return
 	}
+
+	// The same replace over a design snapshot: while a set is open the matrix names
+	// the staged instruments and events, which may have no live row yet. Unknown
+	// names are rejected here — the mutator would drop them silently, and a matrix
+	// that quietly lost a row would commit as a partial answer (REQ-API-073).
+	apply := func(d *stagedDesign) *designError {
+		sa, found := d.arm(*body.ArmNum)
+		if !found {
+			return validationf("unknown arm number")
+		}
+		for name, eventNames := range body.Mapping {
+			if _, ok := d.instrumentByName(name); !ok {
+				return validationf("unknown instrument name: %s", name)
+			}
+			for _, evName := range eventNames {
+				if _, ok := eventInArm(*sa, evName); !ok {
+					return validationf("unknown event name for arm %d: %s", *body.ArmNum, evName)
+				}
+			}
+		}
+		d.setMappingForArm(*body.ArmNum, body.Mapping)
+		return nil
+	}
+	target, set, breakingAcknowledged, ok := h.structureWrite(w, r, projectID, acknowledgeFrom(supplied), apply)
+	if !ok {
+		return
+	}
+	if target == writeStaged {
+		if !h.applyStagedChange(w, r, projectID, set, apply) {
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+
 	arm, err := h.Store.GetArmByNum(ctx, projectID, *body.ArmNum)
 	if err != nil {
 		errInternal(w)
@@ -2760,7 +3085,9 @@ func (h *Handler) putMapping(w http.ResponseWriter, r *http.Request) {
 	if err := h.Audit.Insert(ctx, audit.Entry{
 		EventType: audit.MappingUpdated, Source: audit.SourceUI,
 		UserID: u.ID, Email: u.Email, ProjectID: projectID,
-		Details: map[string]any{"arm_num": arm.ArmNum, "pairs": pairsAudit},
+		Details: withBreakingAcknowledgement(map[string]any{
+			"arm_num": arm.ArmNum, "pairs": pairsAudit,
+		}, breakingAcknowledged),
 	}); err != nil {
 		errInternal(w)
 		return

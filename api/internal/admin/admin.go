@@ -153,6 +153,17 @@ func pathID(r *http.Request, name string) (int64, bool) {
 	return n, err == nil && n > 0
 }
 
+// pathObjectID parses the id of an object a structure route addresses. Unlike
+// pathID it admits a negative value: while a staging set is open the structure
+// endpoints hand out provisional ids (staged_design.go), and an object created
+// during staging has no live row to be addressed by anything else — so
+// `…/instruments/-1/fields` names the staged instrument, not a malformed id.
+// Zero is still rejected; it names nothing on either side.
+func pathObjectID(r *http.Request, name string) (int64, bool) {
+	n, err := strconv.ParseInt(r.PathValue(name), 10, 64)
+	return n, err == nil && n != 0
+}
+
 // --- acting user and guards ---
 
 // actor returns the acting user set by the middleware. A missing actor means

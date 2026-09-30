@@ -476,7 +476,7 @@ Upgrades: Support either a full installation or, a rolling versioned update inst
 
 ## Project modes
 
-Every project is in exactly one of three modes: development, production, or analysis. Only project admins can change the mode.
+Every project is in exactly one of three modes: development, production, or analysis. Only an installation admin user (`is_admin`) can change the mode — a project's own project admin cannot (owner decision 2026-09-27). Staging is run by the project admin as before.
 
 ### Development
 - Default mode for new projects.
@@ -493,13 +493,18 @@ Every project is in exactly one of three modes: development, production, or anal
 ### Analysis
 Data entry is disabled; viewing and exporting remain available according to each user's permissions. Admin users can still interact with the project.
 
+- Setup changes are allowed for admin users and apply immediately — no staging set. A change that classifies as breaking warns first and applies only on the admin's confirmation, using the production classification (owner decision 2026-09-27).
+
 ### Transitions
 
 | From → To	| Who |	Prompt / effect |
 |-------|--------|--------|
-| development → production	| project admin	| Ask whether previously stored data should be kept or deleted |
-| production → development	| project admin	| Keep all data |
-| production ↔ analysis	| project admin	|  Keep all data |
+| development → production	| installation admin	| Ask whether previously stored data should be kept or deleted |
+| production → development	| installation admin	| Keep all data |
+| production ↔ analysis	| installation admin	|  Keep all data |
+| analysis → development	| installation admin	| Keep all data — the way out of analysis without passing through production again (owner decision 2026-09-27) |
+
+A project enters analysis only from production, where the data entry it disables has actually happened; development → analysis is not offered. No mode change of any kind is possible while a staging set is open — commit or discard it first (owner decision 2026-09-27).
 
 ## Field validation
 
