@@ -1732,9 +1732,11 @@ func (h *Handler) recordIdentifierField(ctx context.Context, projectID int64) (i
 	return fields[0].ID, err
 }
 
-// updateInstrument sets is_survey and/or branching_logic (REQ-API-101). An
-// invalid branching expression is rejected at design time (§7.2).
-// project_admin.
+// updateInstrument sets name, is_survey and/or branching_logic (REQ-API-101,
+// REQ-API-130). A name rename keeps the name unique within the project and
+// rewrites no stored value — data is keyed by field name and event, not
+// instrument name. An invalid branching expression is rejected at design time
+// (§7.2). project_admin.
 func (h *Handler) updateInstrument(w http.ResponseWriter, r *http.Request) {
 	u, lv, projectID, ok := h.structureAccess(w, r)
 	if !ok || !h.requireProjectAdmin(w, r, lv) {
@@ -1751,7 +1753,7 @@ func (h *Handler) updateInstrument(w http.ResponseWriter, r *http.Request) {
 		errBadRequest(w, "malformed JSON body")
 		return
 	}
-	if !RejectUnknownAttrs(w, supplied, "is_survey", "branching_logic", "acknowledge_breaking") {
+	if !RejectUnknownAttrs(w, supplied, "name", "is_survey", "branching_logic", "acknowledge_breaking") {
 		return
 	}
 
@@ -1777,6 +1779,16 @@ func (h *Handler) updateInstrument(w http.ResponseWriter, r *http.Request) {
 		si, found := d.instrument(instID)
 		if !found {
 			return validationf("instrument %d is not part of the staged design", instID)
+		}
+		if raw, present := supplied["name"]; present {
+			var name string
+			if err := json.Unmarshal(raw, &name); err != nil || name == "" {
+				return validationf("name must be a non-empty string")
+			}
+			if other, dup := d.instrumentByName(name); dup && other.ID != instID {
+				return conflictf("instrument '%s' already exists in this project", name)
+			}
+			d.renameInstrument(instID, name) // carries the mapping entries (REQ-API-130)
 		}
 		if raw, present := supplied["is_survey"]; present {
 			var v bool
@@ -1823,6 +1835,24 @@ func (h *Handler) updateInstrument(w http.ResponseWriter, r *http.Request) {
 	}
 	next := *inst
 	changes := map[string]any{}
+	if raw, present := supplied["name"]; present {
+		var name string
+		if err := json.Unmarshal(raw, &name); err != nil || name == "" {
+			errBadRequest(w, "name must be a non-empty string")
+			return
+		}
+		if name != inst.Name {
+			if clash, err := h.Store.GetInstrumentByName(ctx, projectID, name); err != nil {
+				errInternal(w)
+				return
+			} else if clash != nil && clash.ID != instID {
+				errConflict(w, "instrument '"+name+"' already exists in this project")
+				return
+			}
+			changes["name"] = map[string]any{"old": inst.Name, "new": name}
+			next.Name = name
+		}
+	}
 	if raw, present := supplied["is_survey"]; present {
 		var v bool
 		if err := json.Unmarshal(raw, &v); err != nil {

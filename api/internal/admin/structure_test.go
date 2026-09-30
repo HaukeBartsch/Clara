@@ -3,7 +3,9 @@ package admin
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"csms/api/internal/db"
@@ -717,6 +719,164 @@ func TestInstrumentsAndBranching(t *testing.T) {
 	e.decode(rec, &list)
 	if len(list) != 1 || list[0].FieldCount != 1 {
 		t.Fatalf("listing: %s", rec.Body.String())
+	}
+}
+
+// TestInstrumentRename covers the name rename of PUT …/instruments/{iid}
+// (REQ-API-130): a label change — unique within the project, mapping pairs and
+// stored values untouched — audited with old and new name.
+func TestInstrumentRename(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	projectID := e.mustProject("Rename Study")
+	armID := e.mustArm(projectID, 1)
+	e.mustEvent(projectID, armID, "baseline", "baseline_arm_1")
+	instID := e.mustInstrument(projectID, "intake")
+	e.mustInstrument(projectID, "labs")
+
+	base := "/api/v1/projects/" + itoa(projectID)
+	instURL := base + "/instruments/" + itoa(instID)
+
+	// intake holds a mapping pair the rename must carry along.
+	rec := e.do("PUT", base+"/instrument-event-mapping", map[string]any{
+		"arm_num": 1, "mapping": map[string][]string{"intake": {"baseline_arm_1"}},
+	}, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("put mapping: %d %s", rec.Code, rec.Body.String())
+	}
+
+	countAudit := func(eventType string) int {
+		var n int
+		if err := e.Store.DB.QueryRow(
+			`SELECT COUNT(*) FROM audit_events WHERE event_type = ?`, eventType).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	// Empty or non-string name → 400; a collision with another instrument → 409.
+	if code := e.do("PUT", instURL, map[string]any{"name": ""}, admin).Code; code != http.StatusBadRequest {
+		t.Fatalf("empty name: %d, want 400", code)
+	}
+	if code := e.do("PUT", instURL, map[string]any{"name": 7}, admin).Code; code != http.StatusBadRequest {
+		t.Fatalf("non-string name: %d, want 400", code)
+	}
+	if code := e.do("PUT", instURL, map[string]any{"name": "labs"}, admin).Code; code != http.StatusConflict {
+		t.Fatalf("colliding name: %d, want 409", code)
+	}
+
+	// Idempotence (REQ-API-042): the current name answers 200 and writes no entry.
+	before := countAudit("instrument_updated")
+	rec = e.do("PUT", instURL, map[string]any{"name": "intake"}, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("same-name rename: %d %s", rec.Code, rec.Body.String())
+	}
+	if n := countAudit("instrument_updated"); n != before {
+		t.Fatalf("same-name rename wrote an audit entry (%d → %d)", before, n)
+	}
+
+	// Rename together with the survey flag in one PUT.
+	rec = e.do("PUT", instURL, map[string]any{"name": "follow_up", "is_survey": true}, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rename: %d %s", rec.Code, rec.Body.String())
+	}
+	var obj instrumentObject
+	e.decode(rec, &obj)
+	if obj.Name != "follow_up" || !obj.IsSurvey || obj.ID != instID {
+		t.Fatalf("renamed object: %+v", obj)
+	}
+
+	// Audit carries the old and new name inside changes.
+	var details string
+	if err := e.Store.DB.QueryRow(
+		`SELECT details FROM audit_events WHERE event_type = 'instrument_updated' ORDER BY id DESC LIMIT 1`,
+	).Scan(&details); err != nil {
+		t.Fatal(err)
+	}
+	var entry struct {
+		Name    string `json:"name"`
+		Changes struct {
+			Name struct {
+				Old string `json:"old"`
+				New string `json:"new"`
+			} `json:"name"`
+		} `json:"changes"`
+	}
+	if err := json.Unmarshal([]byte(details), &entry); err != nil {
+		t.Fatalf("audit details: %s (%v)", details, err)
+	}
+	if entry.Changes.Name.Old != "intake" || entry.Changes.Name.New != "follow_up" {
+		t.Fatalf("audit name change: %s", details)
+	}
+
+	// The listing and the mapping answer under the new name; nothing else moved.
+	rec = e.do("GET", base+"/instruments", nil, admin)
+	var list []instrumentObject
+	e.decode(rec, &list)
+	if len(list) != 2 || list[0].Name != "follow_up" || list[0].Position != 1 {
+		t.Fatalf("listing after rename: %s", rec.Body.String())
+	}
+	rec = e.do("GET", base+"/instrument-event-mapping", nil, admin)
+	var mapping []armMappingObject
+	e.decode(rec, &mapping)
+	if len(mapping[0].Mapping["follow_up"]) != 1 || len(mapping[0].Mapping["intake"]) != 0 {
+		t.Fatalf("mapping after rename: %s", rec.Body.String())
+	}
+}
+
+// TestInstrumentRenameStaged renames through the endpoint while a staging set
+// is open (production mode): the snapshot answers, the live tables wait for
+// commit, and the change classifies as the non-breaking instrument_renamed
+// (§4.21, REQ-API-130).
+func TestInstrumentRenameStaged(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	admin := e.mustAdmin("admin@example.org")
+	projectID := e.mustProject("Staged Rename")
+	f := e.seedDesign(projectID)
+
+	e.mustProduction(projectID, admin)
+	if rec := e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/staging", nil, admin); rec.Code != http.StatusCreated {
+		t.Fatalf("start staging: %d %s", rec.Code, rec.Body.String())
+	}
+
+	instURL := "/api/v1/projects/" + itoa(projectID) + "/instruments/" + itoa(f.instrumentA)
+	rec := e.do("PUT", instURL, map[string]any{"name": "checkin"}, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("staged rename: %d %s", rec.Code, rec.Body.String())
+	}
+	var obj instrumentObject
+	e.decode(rec, &obj)
+	if obj.Name != "checkin" {
+		t.Fatalf("staged object: %+v", obj)
+	}
+
+	// The staging diff names the rename as non-breaking.
+	rec = e.do("GET", "/api/v1/projects/"+itoa(projectID)+"/staging", nil, admin)
+	if !strings.Contains(rec.Body.String(), "instrument_renamed") {
+		t.Fatalf("staging diff: %s", rec.Body.String())
+	}
+
+	// The live tables keep the old name until commit.
+	if live, err := e.Store.GetInstrument(ctx, f.instrumentA); err != nil || live.Name != "intake" {
+		t.Fatalf("live instrument before commit: %+v (%v)", live, err)
+	}
+
+	rec = e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/staging/commit", nil, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: %d %s", rec.Code, rec.Body.String())
+	}
+	live, err := e.Store.GetInstrument(ctx, f.instrumentA)
+	if err != nil || live.Name != "checkin" {
+		t.Fatalf("live instrument after commit: %+v (%v)", live, err)
+	}
+
+	// The mapping pairs followed the name through commit.
+	rec = e.do("GET", "/api/v1/projects/"+itoa(projectID)+"/instrument-event-mapping", nil, admin)
+	var mapping []armMappingObject
+	e.decode(rec, &mapping)
+	if len(mapping[0].Mapping["checkin"]) != 1 {
+		t.Fatalf("mapping after commit: %s", rec.Body.String())
 	}
 }
 

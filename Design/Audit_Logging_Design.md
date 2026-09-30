@@ -81,7 +81,7 @@ Rules: `old` is `null` for `create`; for `delete`, `new` is `null` and the `old`
 | `event_deleted` | REQ-API-126 | `{"event_id":9,"unique_event_name":"follow_up_arm_1"}` |
 | `event_reordered` | `PUT …/events/order` (REQ-API-103) | `{"arm_num":1,"order":[9,4,7]}` |
 | `instrument_created` | REQ-API-065 | `{"name":"intake","position":1}` |
-| `instrument_updated` | REQ-API-101 | `{"name":"…","changes":{"is_survey":{"old":0,"new":1}}}`; with `"last_instrument_reset":true,"fields_removed":N,"values_removed":M` when deleting the last instrument deleted only its fields and renamed it to `instrument` (REQ-API-127) |
+| `instrument_updated` | REQ-API-101, REQ-API-130 | `{"name":"…","changes":{"is_survey":{"old":0,"new":1}}}`; a rename adds `"name":{"old":"…","new":"…"}` to `changes` (REQ-API-130); with `"last_instrument_reset":true,"fields_removed":N,"values_removed":M` when deleting the last instrument deleted only its fields and renamed it to `instrument` (REQ-API-127) |
 | `instrument_deleted` | REQ-API-127 | `{"instrument_id":5,"name":"…","fields_removed":3,"values_removed":42}` |
 | `instrument_reordered` | REQ-API-066 | `{"order":["intake","follow_up"]}` |
 | `field_created` | REQ-API-068 | `{"instrument":"intake","field":"age","type":"text"}` |

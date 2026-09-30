@@ -537,7 +537,7 @@ The API derives `unique_event_name = <label>_arm_<n>` (REQ-DB-011); a duplicate 
 
 Writes `position` (1…n) for the arm's events; the canonical order of GD-15 then governs the display (timepoint events by `period`, ties and no-timepoint events by the written `position`). 200. Audit `event_reordered` with the new order (REQ-API-103, `Audit_Logging_Design.md` §3.3).
 
-### 4.10 Instruments (REQ-API-064…066, REQ-API-101)
+### 4.10 Instruments (REQ-API-064…066, REQ-API-101, REQ-API-130)
 
 **`GET /api/v1/projects/{id}/instruments`** — data access ≥ `read_only`. 200:
 
@@ -556,7 +556,7 @@ Writes `position` (1…n) for the arm's events; the canonical order of GD-15 the
 
 The record-identifier invariant MUST hold after reordering (GD-8: the first field of the first instrument is the record identifier) — a violation → 400 `invalid_request` (§4.2). Audit `instrument_reordered`.
 
-**`PUT /api/v1/projects/{id}/instruments/{iid}`** — `project_admin`; idempotent (REQ-API-101). Body: `{ "is_survey": true }`, `{ "branching_logic": "[baseline][consent]=\"1\"" }`, or both. An invalid branching expression is rejected at design time → 400 `validation_error` (REQ-VAL-029, `Data_Validation_Design.md` §7.2). 200 — the instrument object. Audit `instrument_updated` with old and new values.
+**`PUT /api/v1/projects/{id}/instruments/{iid}`** — `project_admin`; idempotent (REQ-API-101). Body: any subset of `{ "name", "is_survey", "branching_logic" }`, e.g. `{ "is_survey": true }`, `{ "branching_logic": "[baseline][consent]=\"1\"" }`. A `name` rename keeps the name unique within the project — a collision → 409 `conflict`, an empty or non-string name → 400 `validation_error` (REQ-API-130). The rename is a label: stored values are keyed by field name and event, not instrument name, so nothing is rewritten and the mapping pairs stay. An invalid branching expression is rejected at design time → 400 `validation_error` (REQ-VAL-029, `Data_Validation_Design.md` §7.2). 200 — the instrument object. Audit `instrument_updated` with old and new values.
 
 **`DELETE /api/v1/projects/{id}/instruments/{iid}`** — `project_admin`. Removes the instrument together with its fields, their stored values (same transaction, like REQ-API-070) and its mapping pairs; losing recorded values makes the change breaking in analysis mode (§4.21). An expression that survives the change naming a doomed field → 409 `conflict` — references inside the deleted design go with it, which is what commit checks against the post-change design too. 204. Audit `instrument_deleted` with the removed field and value counts (REQ-API-127). **A project always keeps at least one instrument**: deleting the last remaining one only deletes its fields and renames the shell to `instrument` — id, position, survey flag and branching logic stay — answering 200 with the object and auditing `instrument_updated` with `last_instrument_reset` (VISION "Arms, events and instruments": "only the fields in that instrument should be deleted. The instrument should be renamed to 'instrument'").
 
@@ -855,6 +855,7 @@ Every project is in exactly one mode (`projects.mode`, `Database_Schema_Design.m
 | map an instrument to an event; unmap a pair that holds no values | non-breaking |
 | change a field label/description, field note, section header; reorder fields/instruments/events (GD-8 invariant enforced as ever) | non-breaking |
 | rename a field (stored values renamed in the same transaction, REQ-VAL-014) | non-breaking — values stay accessible under the new name |
+| rename an instrument (REQ-API-130) | non-breaking — values are keyed by field name and event, not instrument name |
 | add options to an existing dropdown/radio/matrix | non-breaking |
 | delete a field | **breaking** — its stored values are removed (DEV-API-5) |
 | change a field's type, or its validation type beyond the current values | **breaking** — stored values may no longer satisfy the new rules |
