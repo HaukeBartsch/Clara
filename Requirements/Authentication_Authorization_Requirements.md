@@ -12,7 +12,7 @@ Defines the authentication (**named authentication sources** resolving to OAuth2
 ## 2. Authentication Requirements
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-AUTH-001 | The system MUST authenticate users against an external OAuth2 server using the authorization-code flow: redirect to provider → code returned → code exchanged for a token → local session established. |
 | REQ-AUTH-002 | The system MUST support multiple OAuth2 providers (generic integration) configured per REQ-CFG-011 and presented to the user for selection by authentication-source name before login (REQ-AUTH-063/066). |
 | REQ-AUTH-003 | LDAP servers are queried **within the selected authentication-source set** (REQ-AUTH-065): all LDAP sources registered under the selected name are tried **in parallel**, first successful bind wins — superseding the earlier sequential fallback of servers 1→2→3 (DEV-AUTH-14). |
@@ -25,7 +25,7 @@ Defines the authentication (**named authentication sources** resolving to OAuth2
 ### 2.1 Table-based (local) authentication (decision GD-18)
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-AUTH-050 | The system MUST support a third authentication path: **table-based (local) login** with the user's email and password, verified against the account's stored bcrypt hash (`users.password_hash`, REQ-DB-008). A local password is the **only** credential the system MAY persist — never plaintext, never logged; the OAuth2 and LDAP paths remain passwordless (REQ-AUTH-036 revised). |
 | REQ-AUTH-051 | Local login is one of the credential-checked sources tried **in parallel** under the selected authentication-source name (REQ-AUTH-065; supersedes the earlier local-first-then-LDAP-falls-through ordering, DEV-AUTH-14). The bootstrap admin (GD-4) MUST be usable on a first installation without any OAuth2 provider or LDAP server: when neither is configured, the API MUST provision the bootstrap account's local password from `ADMIN_BOOTSTRAP_PASSWORD` (configuration, REQ-CFG-025), and the system MUST refuse to start in that configuration without it (startup rule, `System_Configuration_Design.md` §4.1). An administrator MAY set, reset, or clear a user's local password through the users API (REQ-API-047/048); the password value MUST NOT appear in logs or audit details. |
 | REQ-AUTH-052 | **Account validity:** an account MAY carry a validity period, stored as the end date `valid_until` (date, UTC; `NULL` = indefinite). The period is supplied as days (`0` = indefinite) at account creation or update (REQ-API-047/048); `valid_until = today + valid_days`. An account whose `valid_until` is before today MUST be rejected at every authentication check with `account_expired` (the account stays enabled; an administrator restores access by setting a new validity period). |
@@ -34,7 +34,7 @@ Defines the authentication (**named authentication sources** resolving to OAuth2
 ### 2.2 Session (decision GD-1)
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-AUTH-009 | The session MUST be owned by the PHP web application (PHP-native session, `HttpOnly`/`Secure`/`SameSite=Lax` cookie). The session MUST store at least: user id, email, display name, `is_admin`, authentication source, and issue time. |
 | REQ-AUTH-010 | The browser MUST NOT call the administration API (`/api/v1/*`) directly; all administration API calls are made server-side by PHP with the session context. |
 | REQ-AUTH-011 | PHP MUST identify itself to the API with the shared service token and the user id: headers `X-Internal-Service-Token` (shared secret) and `X-Internal-User-Id`. The API MUST reject `/api/v1/*` calls lacking a valid service token. |
@@ -47,7 +47,7 @@ Defines the authentication (**named authentication sources** resolving to OAuth2
 ### 2.3 Two-factor authentication (decision GD-21)
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-AUTH-054 | Each user account MUST support a **by-user configurable two-factor authentication** with the methods `off` (default), `totp`, and `email`. `totp` is RFC 6238 time-based one-time codes from a phone authenticator app (works without internet access); `email` sends a random one-time code to the account's email address. The user selects and changes the method self-service; the administrator sees each account's method but the choice remains the user's unless mandated (REQ-AUTH-059). |
 | REQ-AUTH-055 | The second factor MUST be verified **after a successful first factor on the CLARA-verified login paths** — the local (table-based, Sequence F) and LDAP form logins (Sequences B/F) — and **before** any session is established; without a valid second factor no session data or user object is returned. The OAuth2 path (Sequence A) is exempt: MFA there is the identity provider's responsibility (DEV-AUTH-10). Survey link access and API-token calls are unaffected (GD-5, GD-9). |
 | REQ-AUTH-056 | **Enrollment (self-service).** TOTP: the system generates a shared secret, presents it as a QR code plus manual-entry key, and activates only after the user returns one valid current code. Email: activation only after the user confirms a code delivered to the account's address. On activation the system MUST issue a set of single-use **recovery codes** shown exactly once; they verify in place of a regular code. The secret is never displayed again after enrollment, and secrets, sent codes, and recovery codes MUST NOT appear in logs or audit details (REQ-AUTH-036 extended). |
@@ -58,7 +58,7 @@ Defines the authentication (**named authentication sources** resolving to OAuth2
 ### 2.4 Account onboarding and password lifecycle (decisions GD-22/GD-23)
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-AUTH-060 | **Emailed invite (local accounts).** When an administrator creates a local account without a password, the system MUST offer to send an invitation: an email to the account's address carrying a link with a cryptographically random single-use token (`crypto/rand`, ≥ 128 bits; stored only as a one-way hash in `password_tokens`, REQ-DB-039) to the set-password page (public PHP route, no session). The token MUST expire after `AUTH_PASSWORD_TOKEN_TTL_DAYS` (REQ-CFG-030, default 7), be consumed on first successful use, and be invalidated by a re-invite. Completing it sets `password_hash` (bcrypt, REQ-AUTH-050) and marks the account as having a usable local credential; the user then logs in normally — the second factor is **not** bypassed (Sequence C step 1.5 still applies). Invitations apply only to local accounts; an OAuth2/LDAP-only account MUST NOT receive one. When no SMTP relay is configured (REQ-CFG-028), the invite action MUST be unavailable and the admin sets the password directly. Token values MUST NOT appear in logs or audit details. |
 | REQ-AUTH-061 | **Self-service local password change.** A signed-in account with a local credential MUST be able to change its own password on the account page by proving the current password (verified against `password_hash` before the change is accepted; failure is shown generically and audit-logged). The change takes effect immediately for subsequent logins. The account's **email address is not self-editable** — it is the identity across all authentication paths (REQ-AUTH-004) and changes only by an administrator. Changing a password MUST NOT terminate existing PHP sessions (the API is stateless, GD-1); they end via logout or the inactivity timeout (REQ-AUTH-015) — an accepted phase-1 trade-off, recorded as DEV-AUTH-13. |
 | REQ-AUTH-062 | **Forgot-password reset (local accounts).** The login page MUST offer a password-reset request: submit an email address; the response MUST be identical whether or not an account with a local credential exists (no enumeration oracle — corrects the reference's `newPassword.php`). When a matching active local account exists, the system sends an email carrying a single-use token link (same token mechanics as REQ-AUTH-060); the completion page takes the **new password directly** — no temporary password is ever generated, transmitted, or stored. Requests MUST be rate-limited per address and per source IP (stricter than the general limiter; default 3 per 15 minutes per address). Reset applies only to active local accounts; disabled/expired accounts get the same generic response and remain subject to REQ-AUTH-006 at next login. OAuth2/LDAP-only accounts are unaffected (their credential lives with the IdP/directory). All events audit-log per REQ-AUD-029 without token values or password material. |
@@ -66,7 +66,7 @@ Defines the authentication (**named authentication sources** resolving to OAuth2
 ### 2.5 Named authentication sources and authentication order (master spec "Authentication order")
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-AUTH-063 | **Named authentication sources.** Before a user logs in, the system MUST present the configured authentication sources for selection by name; a name presented to the user SHOULD read like "Hospital 1", "Hospital 2". Each source resolves internally to exactly one kind — table-based (local), LDAP(s), or an OAuth2 provider. A login attempt MUST be made only against the sources registered under the name the user selected; credentials entered for a name MUST NOT be sent to any other source. |
 | REQ-AUTH-064 | **Many-to-many names.** More than one authentication source MAY share the same name, and one source MAY carry more than one name. The login page presents the distinct set of names across all configured sources; selecting a name selects its entire set of sources. |
 | REQ-AUTH-065 | **Parallel resolution — first "login ok" wins.** On a login under a selected name, every credential-checked source in that set (local and LDAP) MUST be tried **in parallel** with the submitted email+password; the first successful response wins and establishes the identity, all other responses are discarded without producing a second session, duplicate audit success, or `last_login_at`/`auth_source` update. A source-specific account-state rejection (`account_disabled` / `account_expired`, REQ-AUTH-006) on any attempted source is surfaced when no source succeeds; if all attempts fail the login fails with the generic credential failure. |
@@ -78,7 +78,7 @@ Defines the authentication (**named authentication sources** resolving to OAuth2
 ### 3.1 Permission Set (decision GD-2)
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-AUTH-017 | The permission set MUST be exactly (GD-2, revised 2026-09-19): per arm — a **data access level** (`no_access`, `read_only`, `view_edit`, `delete`, `edit_survey_responses`) and an **export level** (`export_none`, `export_de_identified`, `export_no_identifiers`, `export_full`); plus the project-level `project_admin`. An arm not listed in a role defaults to `no_access` / `export_none` (no implicit access, REQ-AUTH-019). The former seven permissions (view/change/add/export_*) are superseded by these levels. |
 | REQ-AUTH-018 | Permission semantics (per arm, ordered — a higher level includes everything below): **data access** — `no_access` = the arm and its data are hidden (absent from the UI, REQ-AUTH-027; rejected by the API); `read_only` = read the arm's record values and the project structure; `view_edit` = additionally enter and change record values on the arm; `delete` = additionally delete values/records on the arm; `edit_survey_responses` = additionally modify responses collected via a survey link (GD-9). **Export** — `export_none` = no export of the arm's data; `export_de_identified` = direct identifiers removed, personal fields hashed, dates shifted (`Data_Export_Anonymization_Requirements.md`); `export_no_identifiers` = all identifier fields removed; `export_full` = full dataset. **Project** — `project_admin` = modify project structure and metadata. |
 | REQ-AUTH-019 | Every API operation and every UI action MUST require an explicit permission (see mapping tables in the API and UI requirement documents); there MUST be no implicit access. |
@@ -86,7 +86,7 @@ Defines the authentication (**named authentication sources** resolving to OAuth2
 ### 3.2 Roles
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-AUTH-020 | Roles are defined per project, and a project MAY have none at all (role-less members then hold full permissions, REQ-AUTH-022). `data-manager` (suggested: per arm `delete` + `export_full`, plus `project_admin`), `data-entry` (per arm `view_edit` + `export_none`), and `controller` (per arm `read_only` + `export_none`) are examples/presets that a project MAY create — they are not mandatory built-ins; a project MAY create its own variants with different names, arms, and level combinations (DEV-AUTH-4, DEV-AUTH-5). |
 | REQ-AUTH-021 | An administrator MUST be able to create roles per project with any name and any combination of per-arm data access and export levels (REQ-AUTH-017), optionally with `project_admin`; role creation MUST NOT be limited to the example presets of REQ-AUTH-020. |
 | REQ-AUTH-022 | A project member without an assigned role MUST hold the highest levels on every arm (`edit_survey_responses` + `export_full`) plus `project_admin`, for that project only (master spec, BR-002). |
@@ -97,7 +97,7 @@ Defines the authentication (**named authentication sources** resolving to OAuth2
 ### 3.3 Project Visibility and UI Gating
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-AUTH-026 | A project MUST be visible to a user only if the user is `is_admin` or is a member of the project. |
 | REQ-AUTH-027 | The UI MUST present a page, section, or action only if the user's effective permission allows it (e.g. no admin interface for non-admins; no Setup action without `project_admin`). Hidden means absent from the DOM, not merely disabled. |
 | REQ-AUTH-028 | A user who is not a member of any project and not an admin MUST land on an information page explaining how to apply for project access (authentication plan, "info page only with instructions"). |
@@ -105,7 +105,7 @@ Defines the authentication (**named authentication sources** resolving to OAuth2
 ### 3.4 API Tokens
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-AUTH-029 | Each (user, project) assignment MUST carry one token (UUID, GD-5). Tokens MUST be globally unique. |
 | REQ-AUTH-030 | Tokens MUST be created and rotatable from the admin interface (member assignment screen); rotation MUST invalidate the previous token immediately and be audit-logged. |
 | REQ-AUTH-031 | The REDCap-compatible API MUST accept the token only as the `token` request-body parameter (REDCap protocol), not in an Authorization header (GD-5). |
@@ -115,7 +115,7 @@ Defines the authentication (**named authentication sources** resolving to OAuth2
 ### 3.5 Surveys (decision GD-9)
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-AUTH-038 | An instrument MAY be marked as a survey (`is_survey`, REQ-DB-011); ONLY survey-marked instruments can be filled out via a public survey link (GD-9). |
 | REQ-AUTH-039 | A survey link MUST be a stable, record-specific public web URL carrying an opaque link token; it MUST grant a person without a login fill-only access to exactly that (record, survey instrument): read the instrument's field definitions for that record, and submit or change values for it. It MUST grant nothing else (no other record or instrument, no export, no structure, no administration API). |
 | REQ-AUTH-040 | Link tokens MUST be revocable; revocation MUST take effect immediately for all further calls and MUST be audit-logged (REQ-AUD-021). |
@@ -125,7 +125,7 @@ Defines the authentication (**named authentication sources** resolving to OAuth2
 ### 3.6 Data Access Groups (decision GD-10)
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-AUTH-043 | A project MAY have none, one, or several data access groups; a group name MUST be unique within the project (GD-10, REQ-DB-028). |
 | REQ-AUTH-044 | A member MAY be assigned to none, one, or several groups of the project; with one or more assigned, exactly one MUST be active. Assignments are managed by `is_admin` (membership management, REQ-API-054 context); a member's own active group is visible to and switchable by the member (REQ-AUTH-046). |
 | REQ-AUTH-045 | Visibility rule: a member with an active group G MUST see and access (read, export, record status, history) only the records whose data access group is G; a member without a group MUST see all records of the project regardless of their assignment; an `is_admin` user sees all records (REQ-AUTH-023). The rule is orthogonal to the permission levels (GD-2): the level governs which actions are allowed, the group governs which records they apply to. |
@@ -136,7 +136,7 @@ Defines the authentication (**named authentication sources** resolving to OAuth2
 ## 4. Non-Functional Security Requirements
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-AUTH-034 | All inter-component traffic between the web application and the API MUST be over a trusted path (loopback or internal network) or TLS. |
 | REQ-AUTH-035 | Brute-force protection: after 5 failed logins for the same email within 10 minutes, further attempts for that email MUST be rejected for 15 minutes (per host, in memory or session store); failures are audit-logged. |
 | REQ-AUTH-036 | User passwords MUST NOT be stored in plaintext and MUST NOT appear in logs or audit details. The **only** persisted credential is the one-way bcrypt hash of a local (table-based) account's password (`users.password_hash`, GD-18, REQ-AUTH-050); the OAuth2 and LDAP paths remain passwordless (the LDAP password goes to the directory and is never persisted). |
@@ -146,7 +146,7 @@ Defines the authentication (**named authentication sources** resolving to OAuth2
 ## 5. Assumptions
 
 | ID | Assumption |
-|---|---|
+|---|------|
 | ASM-AUTH-1 | The OAuth2 provider exposes standard authorization-code endpoints (authorize, token, userinfo or ID token with email). Provider-specific quirks are out of scope beyond generic OAuth2. |
 | ASM-AUTH-2 | LDAP servers accept simple bind for authentication (bind-as-user); directory reads use a configured bind DN. |
 | ASM-AUTH-3 | The "administrator group" of the master spec is realized by `is_admin` (GD-4), not by an IdP group. |

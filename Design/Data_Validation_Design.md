@@ -120,7 +120,7 @@ The result of step 4 is the stored value. Steps 1–3 reject with `CONTENT_INVAL
 **Worked examples:**
 
 | Stored input | Stored output |
-|---|---|
+|---|------|
 | `hello <b>world</b>` | `hello <b>world</b>` |
 | `<div>note: <a href=\"https://x.no\">link</a></div>` | `note: <a href=\"https://x.no\">link</a>` |
 | `<a href=\"javascript:alert(1)\">x</a>` | `x` |
@@ -179,7 +179,7 @@ The recomputation runs in the transaction that triggered it (REQ-VAL-037, REQ-AP
 **Triggers** (each in the transaction of the triggering write):
 
 | Trigger | Scope of recomputation |
-|---|---|
+|---|------|
 | a referenced (event, field) value is changed or cleared for that record | all calculated fields that (transitively) reference that (event, field), found via `calculated_dependencies` (REQ-DB-030), evaluated in topological order of the dependency graph (acyclic by REQ-VAL-035) |
 | a calculated field's expression changes (REQ-API-069) | all records of the project, same transaction (ASM-VAL-4) |
 | a record is deleted (REQ-API-036) | none — the calculated values are removed with the record |
@@ -187,7 +187,7 @@ The recomputation runs in the transaction that triggered it (REQ-VAL-037, REQ-AP
 **Worked examples** (record with `a = 5`, `b = 2`, `c = 0`, `d` unset, `n = "abc"`):
 
 | Expression | Result |
-|---|---|
+|---|------|
 | `[e1][a] + [e1][b] * 2` | `9` |
 | `([e1][a] - [e1][b]) / [e1][c]` | empty (division by zero; application-logged) |
 | `[e1][d] * 3` | empty (missing operand) |
@@ -252,7 +252,7 @@ The display state MUST be re-evaluated whenever a referenced field's value chang
 When creating or updating a field (REQ-API-068/069) or instrument (REQ-API-065/101), the API validates the dictionary entry itself:
 
 | Attribute | Rule |
-|---|---|
+|---|------|
 | `field_name` | `^[a-z0-9_]+$` (REQ-VAL-011); unique within the project (REQ-VAL-012); longer than 26 characters accepted — the warning after 26 is UI-only (REQ-VAL-013); reserved (design decision — the flat export row would otherwise be ambiguous, REQ-API-028): `redcap_event_name`, `redcap_repeat_instrument`, `redcap_repeat_instance` MUST NOT be used |
 | `validation_type` | empty, a built-in structured type (`integer`, `floating point`, `date`, `datetime`), or an existing validation-type registry name whose pattern compiles (§4.2; REQ-VAL-010/042) |
 | `validation_min`/`max` | if present, a valid number per the field's type (integer → §4 integer grammar; floating point → decimal grammar) and min ≤ max; ignored for other types (REQ-VAL-020) |
@@ -268,7 +268,7 @@ Every rejection is a design-time error with a machine-readable reason (REQ-API-0
 ## 10. Resolved Deferred Items
 
 | Deferred in | Resolution here |
-|---|---|
+|---|------|
 | ASM-VAL-1 (canonical date forms) | dates `YYYY-MM-DD±HH:MM`; date-times `YYYY-MM-DD HH:MM±HH:MM` — the canonical form carries the timezone of collection (GD-16, REQ-VAL-041): offset from the import-supplied zone (browser tz / `tz` parameter) else `APP_TIMEZONE`; the API converts between the field's accepted format and the canonical form on store and on export; values are never converted to UTC (§4.1) |
 | ASM-VAL-2 (free-text length cap) | no application cap beyond the storage type by default (REQ-VAL-021); a finite cap MAY be set in configuration — the key is defined in `System_Configuration_Design.md` (§5.1) |
 | ASM-VAL-3 (partial records) | `required` is advisory at import; completion is tracked, not enforced (§8) |
@@ -279,7 +279,7 @@ Every rejection is a design-time error with a machine-readable reason (REQ-API-0
 ## 11. Open Items
 
 | Item | Owner |
-|---|---|
+|---|------|
 | finite value-length cap configuration key (if set) | `System_Configuration_Design.md` |
 | `details` JSON shape of the calculated-field recomputation audit event (REQ-AUD-023) | `Audit_Logging_Design.md` |
 | advisory client-side validation attributes per field type (mirror of §4) | `User_Interface_Design.md` |

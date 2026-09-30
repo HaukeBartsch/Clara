@@ -62,7 +62,7 @@ Unknown parameters are accepted and ignored, never rejected — existing callers
 The error body is rendered in the requested response format (or `csv` when omitted):
 
 | `returnFormat` | Error body |
-|---|---|
+|---|------|
 | `json` | `{ "error": "Invalid token" }` |
 | `csv` | `Invalid token` (single line) |
 
@@ -150,7 +150,7 @@ Requires data access ≥ `read_only`. JSON response: one object per field, matri
 All require data access ≥ `read_only` except `generateNextRecordName` (≥ `view_edit` on the target arm — REQ-API-023).
 
 | content | Response shape (JSON) |
-|---|---|
+|---|------|
 | `event` (REQ-API-020) | `[ {"event_name":"baseline","arm_num":1,"unique_event_name":"baseline_arm_1","event_id":4}, … ]` — events in the **canonical per-arm order** (GD-15: timepoint events by `period` ascending, ties by position; then no-timepoint events by position) |
 | `formEventMapping` (REQ-API-021) | `[ {"form_name":"intake","event_name":"baseline","arm_num":1,"unique_event_name":"baseline_arm_1","form_event_mapping":"1"}, … ]` — events in the canonical per-arm order (GD-15) |
 | `exportFieldNames` (REQ-API-022) | `[ {"field_name":"record_id","form_name":"intake"}, … ]` — restricted to `forms[]` when supplied |
@@ -224,7 +224,7 @@ HTTP 200 with one result row per imported record:
 ```
 
 | `import_record_id` | Meaning |
-|---|---|
+|---|------|
 | `1` | record added |
 | `2` | record updated |
 | `0` | validation error(s) — `import_form_name` lists the per-field detail `<field>: <CODE> — <message>`, joined by `; ` (rule codes from `Data_Validation_Design.md` §3) |
@@ -266,7 +266,7 @@ The state is two maps keyed by source IP — the hit timestamps of the rolling w
 A survey link token (`survey_links.token`, `Database_Schema_Design.md` §8) is accepted as the `token` parameter of the data API, but only for the calls that render and fill its (record, instrument):
 
 | Call | Allowed scope |
-|---|---|
+|---|------|
 | `content=metadata` | the field definitions of that instrument (a `forms[]` naming another instrument → 403) |
 | `content=record&action=import` | values for that record and that instrument |
 
@@ -355,7 +355,7 @@ Processing (in order, `Authentication_Authorization_Design.md` §2.3): for `sour
 **Out-of-band password endpoints (Sequence H — GD-22/GD-23).** Pre-authentication: service token only, no `X-Internal-User-Id` (DEV-API-16); full mechanics in `Authentication_Authorization_Design.md` §2.8.
 
 | Endpoint | Contract |
-|---|---|
+|---|------|
 | `POST /api/v1/auth/password-reset/request` | body `{ "email": "…" }`; **always 202 with an identical body** — whether or not a matching active local account exists (no enumeration, REQ-AUTH-062); when one does, emails the set-password link with a single-use `reset` token (`password_tokens`, REQ-DB-039; TTL `AUTH_PASSWORD_TOKEN_TTL_DAYS`, REQ-CFG-030); rate-limited per address and IP (default 3/15 min/address); audit `password_reset_requested` (address + IP, never the token) (REQ-API-119) |
 | `POST /api/v1/auth/password-reset/complete` | body `{ "token": "…", "password": "***" }`; constant-time hash verification, purpose `reset`, expiry, single use; success stores the bcrypt hash, consumes the token, invalidates all outstanding tokens of the account, audits `password_reset_completed` → 200 `{ "ok": true }`; any failure → generic 401 `invalid_setup_token`; no temporary password exists (REQ-AUTH-062, REQ-API-120) |
 | `POST /api/v1/auth/invite/complete` | as above for purpose `invite` — sets the invited user's own chosen password, audits `invite_accepted`, generic 401 on any failure; login afterwards runs Sequence F with the full second-factor gate (REQ-AUTH-060, REQ-API-121) |
@@ -365,7 +365,7 @@ Processing (in order, `Authentication_Authorization_Design.md` §2.3): for `sour
 All three require `is_admin`; a call by a non-admin is rejected (403 `forbidden`).
 
 | Endpoint | Contract |
-|---|---|
+|---|------|
 | `GET /api/v1/users` | 200 — array of user objects (`id`, `email`, `display_name`, `enabled`, `is_admin`, `auth_source`, `last_login_at`, `valid_until`, `status`, **`tfa_method`** (`off` \| `totp` \| `email`, GD-21, REQ-API-116) — the full user object of §4.3) (REQ-API-046) |
 | `POST /api/v1/users` | body `{ "email": "…", "display_name": "…", "valid_days": 90, "password": "***" }` (`valid_days` ≥ 0, `0` = indefinite; `password` optional — stored only as a bcrypt hash, REQ-AUTH-050); a new account → 201 user object; a disabled account with the same email is re-enabled → 200 user object (re-enabling resets the inactivity clock, REQ-AUTH-053) (REQ-API-047); audit `user_created` (`re_enabled` flag, `valid_until`) |
 | `PUT /api/v1/users/{id}` | body — any subset of `{ "enabled": true\|false, "valid_days": 90, "password": "***" }`; `enabled` is authoritative (idempotent, REQ-API-042); `valid_days` re-sets `valid_until` (`0` → `NULL` = indefinite, REQ-AUTH-052); `password` set/resets the local hash, an **empty string clears** it (never returned, never logged, REQ-AUTH-036); re-enabling resets the inactivity clock (REQ-AUTH-053); 200 user object; disabling a user denies the effective permissions of that user's API tokens at call time (REQ-AUTH-033, REQ-API-048); audit `user_updated` with the changed attributes (`enabled`, `valid_until`, `password_changed` — the password value itself is never in the trail) |
@@ -373,7 +373,7 @@ All three require `is_admin`; a call by a non-admin is rejected (403 `forbidden`
 **Two-factor endpoints (GD-21).** Self-service (acting user = self; also valid in the pending-first-factor context of `Authentication_Authorization_Design.md` §2.7 under a mandate), REQ-API-115:
 
 | Endpoint | Contract |
-|---|---|
+|---|------|
 | `GET /api/v1/users/me/tfa` | 200 `{ "method": "off\|totp\|email", "enrolled_at": … }` — never the secret or a code |
 | `POST /api/v1/users/me/tfa/totp/enroll` | 200 `{ "secret": "<base32>", "otpauth_uri": "otpauth://totp/…" }` — shown once; pending until confirmed (REQ-AUTH-056) |
 | `POST /api/v1/users/me/tfa/totp/confirm` | body `{ "code": "…" }`; a valid current RFC 6238 code activates `totp` and returns `{ "recovery_codes": [ … ] }` exactly once; wrong → 400 `bad_code`; audit `tfa_enrolled` |
@@ -671,7 +671,7 @@ Every call is audit-logged as an `export` event with `surface: "ui"`, the projec
 **`GET /api/v1/audit`** — `is_admin` (all projects) or a member of the queried project (REQ-API-078, ASM-API-2). Query parameters:
 
 | Parameter | Meaning |
-|---|---|
+|---|------|
 | `type` | `events` (default) or `views` — selects `audit_events` or `audit_record_views` |
 | `project` | project id filter — **required** for a non-admin |
 | `user` / `event_type` | filter by user id / event code |
@@ -850,7 +850,7 @@ Every project is in exactly one mode (`projects.mode`, `Database_Schema_Design.m
 **Breaking-change classification (normative, REQ-API-108).** The rule: a change is breaking when it would make existing recorded data inconsistent or inaccessible; everything else is non-breaking.
 
 | Staged change | Classification |
-|---|---|
+|---|------|
 | add an arm / event / instrument / field | non-breaking |
 | map an instrument to an event; unmap a pair that holds no values | non-breaking |
 | change a field label/description, field note, section header; reorder fields/instruments/events (GD-8 invariant enforced as ever) | non-breaking |
@@ -868,7 +868,7 @@ Every project is in exactly one mode (`projects.mode`, `Database_Schema_Design.m
 Both endpoints require `is_admin`; a call by a non-admin is rejected (403 `forbidden`). The values live in `system_settings` (`Database_Schema_Design.md` §8, REQ-DB-037); the rate limiter reads them per request (§3.9), so an applied change takes effect on the next request without a restart.
 
 | Endpoint | Behavior |
-|---|---|
+|---|------|
 | `GET /api/v1/settings` | 200 — `{ "rate_limit_enabled": false, "rate_limit_rpm": 600, "rate_limit_block_minutes": 10 }` (the effective values: the stored row when present, the seeded default otherwise) |
 | `PUT /api/v1/settings` | Body: any subset of the fields (idempotent, REQ-API-042). Validation: `rate_limit_enabled` a boolean; `rate_limit_rpm` an integer ≥ 1; `rate_limit_block_minutes` an integer 1–1440 — else 400 `bad_request`; unknown attributes → 400. The upper bound keeps a mistyped value from locking every caller out for days. 200 — the full settings object after the update. Audit `settings_updated` with the old and new value of each changed key (REQ-AUD-027); a PUT that changes nothing writes no entry |
 
@@ -877,7 +877,7 @@ Both endpoints require `is_admin`; a call by a non-admin is rejected (403 `forbi
 The normative endpoint → permission mapping is in `API_Endpoints_Requirement.md` §4.21; it is reproduced here as an overview:
 
 | Endpoints | Required permission |
-|---|---|
+|---|------|
 | data API `/api/` | the token's levels per §3 (data/export level per arm; link tokens scoped per §3.10) |
 | `GET/POST /api/v1/users`, `PUT /api/v1/users/{id}` | `is_admin` |
 | `POST /api/v1/users/{id}/invite` (§4.4, REQ-API-117) | `is_admin` |

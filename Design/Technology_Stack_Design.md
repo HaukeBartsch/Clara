@@ -28,7 +28,7 @@ Fixes the concrete versions, the production dependency set, and the repository l
 REQ-TECH-023 permits database drivers, the OpenAPI/Swagger UI static bundle, and at most two other production libraries. The complete set is:
 
 | Module | Role |
-|---|---|
+|---|------|
 | `modernc.org/sqlite` | SQLite driver — pure Go, so the static-binary rule (REQ-TECH-013) holds without cgo |
 | `github.com/go-sql-driver/mysql` | MariaDB driver |
 | `github.com/microcosm-cc/bluemonday` | HTML sanitizer for the free-form content policy (`Data_Validation_Design.md` §5.2) |
@@ -103,7 +103,7 @@ The performance targets are measured on: 4 vCPU, 8 GB RAM, SSD, MariaDB on the s
 ## 8. Resolved Deferred Items
 
 | Deferred in | Resolution here |
-|---|---|
+|---|------|
 | "reference hardware (see design document)" (REQ-TECH-010) | defined in §7 |
 | static-binary mechanism (REQ-TECH-013) | pure-Go SQLite driver + `CGO_ENABLED=0` (§3/§5) |
 | Swagger UI hosting (REQ-TECH-004) | hand-maintained OpenAPI 3.1 + vendored `swagger-ui-dist`, no generator (§3) |
@@ -111,6 +111,6 @@ The performance targets are measured on: 4 vCPU, 8 GB RAM, SSD, MariaDB on the s
 ## 9. Open Items
 
 | Item | Owner |
-|---|---|
+|---|------|
 | exact nginx configuration file for the deployment target | operations (rules fixed in §5) |
 | Node.js 20 LTS on developer workstations and CI images — Playwright ≥ 1.62 refuses to run on the Node 18.19.1 currently installed, so `e2e/` tests cannot execute until it is upgraded (§2, REQ-TECH-028) | operations / each developer |

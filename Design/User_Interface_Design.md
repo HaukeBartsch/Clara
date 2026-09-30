@@ -153,7 +153,7 @@ These rules apply on every page of §2.1 and are the single implementation of th
 The PHP layer maps the stable `error` code of `API_Endpoints_Design.md` §4.2 to a **translated** user message; the API's `message` is shown only when it is a design-time reason the requirements mandate displaying (validation reasons, REQ-VAL-029). Mapping:
 
 | API `error` / status | User presentation |
-|---|---|
+|---|------|
 | `invalid_request` (400) | "The form contains invalid values" + the API `message` when it names the offending attribute |
 | `validation_error` (400) | the `message` verbatim (design-time expression/dictionary reason — REQ-VAL-029, REQ-UI-021/022) |
 | `forbidden` (403) | "You do not have permission for this action" — uniform; never "project not found" (REQ-API-007) |
@@ -387,7 +387,7 @@ The project home (§6.1) shows the current mode as a **badge** next to the proje
 The **Mode card** (`is_admin` only — a project's own `project_admin` gets no mode control; REQ-UI-003) offers `PUT /api/v1/projects/{id}/mode` through `?action=` on the project route (CSRF, §3.3), presenting **only the allowed transitions**:
 
 | Transition | Confirmation modal |
-|---|---|
+|---|------|
 | development → production | asks whether previously stored data should be **kept or deleted** (radio pair); choosing delete states the consequence in full — every record value is removed, metadata/structure/memberships/audit remain (same scope as §6.5 `delete`) — and requires a second explicit confirm click (§3.5) |
 | production → development | "all data is kept" |
 | production → analysis | "all data is kept", plus the warning that data entry stops for everyone from then on (§8.1) |
@@ -556,7 +556,7 @@ A standalone PHP route — **no login, outside the session** (GD-1, REQ-API-084,
 ## 10. Resolved Deferred Items
 
 | Deferred in | Resolution here |
-|---|---|
+|---|------|
 | page layouts, component details, interaction specifications (`User_Interface_Requirements.md` §1) | this document — routes §2.1, layout §2.4, pages §4–§8 |
 | locale-specific date/number formatting (ASM-UI-1) | displayed as stored — system timestamps in UTC `YYYY-MM-DD HH:MM:SS`; clinical date/date-time values **with their collection offset** (GD-16); no locale reformatting, no conversion (§1) |
 | token source for UI data entry (ASM-API-3; conflict with `Authentication_Authorization_Design.md` §3 "never in the session") | the self-service fetch `GET …/users/{uid}/token` (REQ-API-102) + a **session cache** invalidated on 401/rotate (§8.6); the session stores it as a cache, never as an authorization input (owner decision, 2026-09-22, master spec "Details") |

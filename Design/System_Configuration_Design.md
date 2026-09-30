@@ -252,7 +252,7 @@ OTP_MAIL_FROM=
 ## 6. Resolved Deferred Items
 
 | Deferred in | Resolution here |
-|---|---|
+|---|------|
 | `anon_salt` configuration key (`Database_Schema_Design.md` §12) | `ANON_SALT` + range keys, §3.6 |
 | finite value-length cap key (`Data_Validation_Design.md` §11) | `MAX_VALUE_BYTES`, §3.7 |
 | date-shift "sane defaults" (REQ-CFG-016) | 0…364 days, §3.6 |

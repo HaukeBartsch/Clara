@@ -25,7 +25,7 @@ This document consolidates the business and product requirements for a research 
 ## 3. Business Requirements
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | BR-001 | The system must be a secure, token-based access system mapped to user accounts (OAuth2, LDAP fallback, and table-based local-password authentication — GD-18). |
 | BR-002 | The system must enforce granular, per-arm and project-scoped permissions per user role. |
 | BR-003 | The system must support flexible project structures: study arms, events, instruments, and instrument-by-event mappings. |
@@ -74,7 +74,7 @@ This document consolidates the business and product requirements for a research 
 These decisions were made explicit with the project owner and are binding for all area documents:
 
 | ID | Decision |
-|---|---|
+|---|------|
 | GD-1 | **Administration API authentication:** the PHP web application owns the session (PHP-native session cookie). The browser never calls `/api/v1/*` directly. PHP invokes the Go API server-side, presenting a shared service secret plus the authenticated user's ID in headers (`X-Internal-Service-Token`, `X-Internal-User-Id`). The API trusts PHP as the sole admin-API client. |
 | GD-2 | **Permission model (revised 2026-09-19):** permissions are assigned per arm. **Data access level** (ordered, higher includes lower): `no_access` (arm hidden), `read_only`, `view_edit` (enter and change values), `delete`, `edit_survey_responses` (additionally modify responses collected via survey links). **Export level** (ordered): `export_none`, `export_de_identified` (direct identifiers removed, personal fields hashed, dates shifted), `export_no_identifiers` (all identifier fields removed), `export_full` (full dataset). **Project level:** `project_admin` (structure and metadata). The former seven permissions (view/change/add/export_all/export_anonymized/export_non_sensitive) are superseded by these levels. |
 | GD-3 | **Record deletion is in scope:** the REDCap-compatible API supports `content=record&action=delete`, the data entry UI offers a confirmed delete action, and deletions (including deleted values) are audit-logged. |
@@ -105,7 +105,7 @@ These decisions were made explicit with the project owner and are binding for al
 ## 6. Dependencies
 
 | Dependency | Impact |
-|---|---|
+|---|------|
 | External OAuth2 identity provider(s) | Login flow (optional — table-based authentication is always available, GD-18); provider metadata (issuer, client id/secret) provisioned when used |
 | Up to 3 LDAP servers (fallback) | Login fallback (optional, GD-18); directory attributes for name/email mapping |
 | SMTP relay (internal mail server) | Delivery of the email two-factor codes (GD-21, optional — the `email` method is unavailable without it; TOTP needs no network service) |
@@ -125,7 +125,7 @@ These decisions were made explicit with the project owner and are binding for al
 ## 8. Traceability
 
 | Area | Requirements document |
-|---|---|
+|---|------|
 | API surface | `API_Endpoints_Requirements.md` |
 | Security | `Authentication_Authorization_Requirements.md` |
 | Audit | `Audit_Logging_Requirements.md` |

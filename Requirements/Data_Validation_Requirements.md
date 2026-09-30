@@ -12,7 +12,7 @@ Defines the validation requirements that apply to all data written into the syst
 ## 2. General Requirements
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-VAL-001 | Every value written to the database — on any entry path (data API import, UI data entry, survey link submission) — MUST pass server-side validation in the Go API before storage (BR-004, REQ-API-032); invalid values MUST NOT be stored. |
 | REQ-VAL-002 | Validation MUST be authoritative in the API (master spec: \"authoritative validation in the API\"); client-side feedback (JavaScript + HTML5 validation attributes) is advisory only and MUST NOT be relied upon for integrity (User_Interface plan, data entry form; REQ-TECH-006). |
 | REQ-VAL-003 | Validation rules MUST be derived entirely from the field's data dictionary entry (REQ-DB-013): field type, choices, validation type + min/max, required flag; there MUST be no hard-coded, per-project, or per-caller rule sets. |
@@ -27,7 +27,7 @@ Defines the validation requirements that apply to all data written into the syst
 ## 3. Field Name Rules (data dictionary)
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-VAL-011 | A field name MUST consist of lower-case alphanumeric characters and underscores only (REQ-DB-013, master spec). |
 | REQ-VAL-012 | A field name MUST be unique within a project (REQ-DB-013). |
 | REQ-VAL-013 | A field name longer than 26 characters MUST be accepted; the warning after 26 characters is a UI concern, not an API rejection (master spec; REQ-API-068). |
@@ -38,7 +38,7 @@ Defines the validation requirements that apply to all data written into the syst
 ### 4.1 Text validation types
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-VAL-015 | `integer`: the value MUST be a whole number (optional leading minus, digits only, no decimal point, no exponent) and, when `validation_min`/`validation_max` are set, MUST lie within the inclusive range (REQ-DB-013). |
 | REQ-VAL-016 | `floating point`: the value MUST be a decimal number (optional sign, digits, single decimal point) and, when min/max are set, MUST lie within the inclusive range. |
 | REQ-VAL-017 | `email`: the value MUST match a standard email format (local part, `@`, single domain); the exact grammar is the seeded registry entry defined in the design document. |
@@ -53,25 +53,25 @@ Defines the validation requirements that apply to all data written into the syst
 ### 4.2 Choice fields (dropdown, radio)
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-VAL-022 | The value MUST be one of the field's predefined numeric codes; it is stored as the code, not the label (plan §2, master spec: \"choice is stored as code\"). |
 
 ### 4.3 Matrix fields
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-VAL-023 | Each matrix row (the expanded field rows of a `matrix_group`, REQ-DB-014) MUST be validated against the choices/validation shared by the group; an invalid selection fails that row's field with per-field error detail (REQ-VAL-008). |
 
 ### 4.4 Empty values
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-VAL-024 | An empty-string value MUST be treated as \"no value\": it is exempt from type validation, clears an existing stored value (or creates none), and round-trips with the export's empty string for missing values (REQ-API-028; DEV-VAL-2). An empty value on import is therefore an **intentional clear**: the web application MUST NOT send empty values for fields whose previous value the user has not removed (GD-14, REQ-UI-031). |
 
 ### 4.5 Free-form text content policy
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-VAL-030 | All free-form text values MUST pass a single centralized content policy enforced by the Go API at storage, applied identically on every entry path (data API import, UI data entry, survey link submission — REQ-VAL-001/004). The policy covers: valid UTF-8, a maximum length (design document; the default remains REQ-VAL-021), rejection of C0 control characters other than tab/newline, and an **HTML allowlist**: free-form text MAY contain HTML restricted to the safe elements `a`, `b`, `br`, `code`, `em`, `i`, `li`, `ol`, `p`, `s`, `strong`, `u`, `ul`, `blockquote` (the exact list is final in the design document, ASM-VAL-5); no attributes are allowed except `href` on `a` with scheme allowlist `http`/`https`/`mailto`; any markup outside the allowlist MUST be stripped at storage, with its text content preserved as plain text. |
 | REQ-VAL-031 | Rendering: free-form text values are stored as sanitized allowlist HTML (REQ-VAL-030) and MAY be rendered as HTML in the UI (data entry form, record view, record history, audit views); **all other** user-supplied content (choice values, field labels, record names, user names, audit fields) MUST be escaped server-side (REQ-TECH-020); the Content-Security-Policy header remains the backstop (REQ-TECH-020). |
 | REQ-VAL-032 | An exported CSV cell whose value begins with a formula-triggering character (`=`, `+`, `-`, `@`) MUST be neutralized so that spreadsheet software does not evaluate it (e.g. single-quote prefix; the mechanism is in the design document) (REQ-API-029). |
@@ -79,7 +79,7 @@ Defines the validation requirements that apply to all data written into the syst
 ### 4.6 Calculated fields (GD-11)
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-VAL-033 | A new field type `calculated` MUST be supported. The field carries a calculation expression (stored with the field, REQ-DB-013) composed of field references of the form `[<unique_event_name>][<field_name>]`, numeric constants, the operators `+`, `-`, `*`, `/`, and optional parentheses with standard precedence (ASM-VAL-4). The expression MUST be validated at creation and update. |
 | REQ-VAL-034 | A field reference MUST name an existing value-carrying field of the project that is active at the referenced event (REQ-DB-012); a reference to another calculated field is allowed if the dependency graph stays acyclic (REQ-VAL-035). An expression referencing a nonexistent field, a non-value field (description/header), or a field not active at that event MUST be rejected at design time (REQ-API-065/069). |
 | REQ-VAL-035 | The dependency graph of calculated fields MUST be acyclic: a creation or update that would introduce a cycle MUST be rejected. |
@@ -90,7 +90,7 @@ Defines the validation requirements that apply to all data written into the syst
 ## 5. Record Identifier Rules (GD-8)
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-VAL-025 | The record identifier is the field at position 1 of the instrument at position 1 of the project (GD-8); its value is the record name (`record_id`, REQ-DB-020). |
 | REQ-VAL-026 | On import, the identifier field's value for a row MUST be non-empty (this overrides the no-value semantics of REQ-VAL-024 for the identifier field); it determines the record's identity for the upsert (REQ-API-033) and the EAV key (REQ-DB-015). |
 | REQ-VAL-027 | In phase 1, the identifier value of an existing record MUST NOT be changed; an import attempting to change it MUST be rejected with a validation error (DEV-VAL-3). Correction of a wrong identifier is available through delete + re-import (GD-3, REQ-API-036). |
@@ -98,7 +98,7 @@ Defines the validation requirements that apply to all data written into the syst
 ## 6. Required and Branching Logic (GD-13)
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-VAL-028 | The `required` flag MUST be exposed in the metadata and the designer; in phase 1, an import MUST NOT be rejected because a required value is missing (partial records are first-class, ASM-VAL-3); the data entry form MUST present required fields and validate them before submission (User_Interface plan, data entry form). |
 | REQ-VAL-029 | A field's branching logic MUST be an expression over other fields of the same project, arm, and record: references `[event][field]`, with the shorthand `[field]` allowed — a reference naming no event resolves to the project's first event in canonical order (GD-15, `Data_Validation_Design.md` §7.1); value comparisons with the operators `=`, `!=`, `<`, `>`, `<=`, `>=` between a reference or a constant (e.g. `[ev][age] >= 18`, `[ev][status] = "done"`); the usual functions `text_contains(ref, "substring")`, `is_blank(ref)`, `is_not_blank(ref)`; logical AND/OR; parentheses (GD-13); a radio/checkbox reference evaluates to `1` when checked/selected and `0` otherwise; a missing value evaluates to `0` (ASM-VAL-6); the field is displayed only while the expression evaluates to true (1), in surveys (GD-9) and in normal data entry; the display state MUST be re-evaluated whenever a referenced field's value changes; branching logic MUST NOT affect import, export, or audit (display-only; DEV-VAL-5); an invalid expression (unknown field, syntax error) MUST be rejected at design time. |
 | REQ-VAL-040 | An instrument's branching logic MUST use the same expression grammar (GD-13, REQ-VAL-029); the instrument — and with it all of its fields — is displayed only while the expression evaluates to true (1); a hidden instrument hides its fields regardless of their own branching logic; it applies in surveys and in normal data entry; it MUST NOT affect import, export, or audit (display-only). |
@@ -107,7 +107,7 @@ Defines the validation requirements that apply to all data written into the syst
 ## 7. Assumptions
 
 | ID | Assumption |
-|---|---|
+|---|------|
 | ASM-VAL-1 | The canonical storage form for dates and date-times (after validating against the field's specified format) is defined by the design document; it carries the timezone of collection (GD-16, REQ-VAL-041) — values are stored as collected, not normalized to UTC; anonymized export requires parseable dates (REQ-DB-023) and shifts the date part, preserving the offset. |
 | ASM-VAL-2 | There is no fixed maximum length for free-text values beyond the storage type (`TEXT`/`LONGTEXT`, REQ-DB-019); the design document MAY define an upper bound. |
 | ASM-VAL-3 | Partial records are a first-class state: the record status dashboard tracks per-instrument completion (User_Interface plan §6), so completion is tracked rather than enforced at import. |

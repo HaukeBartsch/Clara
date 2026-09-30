@@ -111,7 +111,7 @@ No Composer dependency in phase 1: OAuth2 authorization-code + PKCE with `curl` 
 ## 5. Foundation layer (built once, in M0–M1)
 
 | Component | Contract worth stating up front |
-|---|---|
+|---|------|
 | `ApiClient` | Adds `X-Internal-Service-Token` + `X-Internal-User-Id` on every call; forwards the caller's address as `X-Real-IP` (`Technology_Stack_Design.md` §5, `REQ-API-125`). **Admin writes reject unknown attributes with 400** (`admin.go:435`) — send exactly the whitelisted names, per area. Data-API calls behave oppositely: unknown parameters are dropped. Maps `{error,message,status}` to an exception carrying the stable code for `Messages.php` |
 | `Session` | Keys and lifetimes exactly as `Authentication_Authorization_Design.md` §3; `session_regenerate_id(true)` on login and on TFA promotion; identity only — permissions never cached, project tokens excepted per the §8.6 cache rule |
 | `Auth` | `require_login()` as the FIONA `AC.php` pattern: first statement of every controller; expired session → redirect `/login`. `tfa_pending` is pre-authentication and must be rejected by every page guard |

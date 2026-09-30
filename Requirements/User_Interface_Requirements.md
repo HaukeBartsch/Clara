@@ -12,7 +12,7 @@ Defines the web user interface requirements: the views, the permission gating of
 ## 2. Common Requirements (all views)
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-UI-001 | The UI MUST be plain HTML and vanilla JavaScript with Bootstrap as the only UI library; no frontend framework and no build step (REQ-TECH-001). Pages are rendered by the PHP layer, which delegates all data access to the API (REQ-TECH-006, master spec). |
 | REQ-UI-002 | The browser MUST talk only to PHP routes; it MUST NOT call `/api/v1/*` directly — PHP invokes the API server-side with the service token and acting user id (GD-1, REQ-AUTH-010, REQ-TECH-006). |
 | REQ-UI-003 | Every page, section, and action MUST be present in the UI only when the acting user's effective permissions allow it (REQ-AUTH-027); "hidden" means absent from the DOM, not merely disabled. |
@@ -31,14 +31,14 @@ Defines the web user interface requirements: the views, the permission gating of
 ## 3. Dashboard
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-UI-009 | The start page after login MUST list the projects visible to the user with quick statistics (record and field counts) as per `GET /api/v1/projects` (REQ-API-049); the administration entry point MUST be shown to `is_admin` users only (REQ-UI-003). |
 | REQ-UI-010 | For a member with one or more data access groups, the dashboard MUST show the currently active group and offer a switch to any of the member's assigned groups (self-service, REQ-API-090, REQ-AUTH-046); the switch MUST take effect on the next data page load. |
 
 ## 4. Administration Interface (`is_admin` only)
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-UI-011 | **User accounts.** A list of accounts (email, display name, enabled, `is_admin`, authentication source — incl. `local`, **last login**, **validity end**, the derived status active / disabled / expired / auto-disabled — GD-19, REQ-AUTH-052/053 — and the **two-factor method** off / totp / email — GD-21, REQ-API-116) and actions to create an account (email + display name, optional validity in days with `0` = indefinite, optional local password), set/extend the validity, set or reset the local password, re-enable a disabled (incl. auto-disabled) one — which MUST restart the inactivity clock — disable one, and **reset two-factor authentication** for an account that lost its device or email access (confirm first; REQ-AUTH-059, REQ-API-116). Auto-disabled accounts MUST be visually distinguishable with the inactivity reason (REQ-AUTH-053). |
 | REQ-UI-012 | **Projects.** A project creation form covering the simplified creation fields of REQ-DB-006 (name, organization = main supporting institution, PI name/email, data manager, REK/IRB number, REK start/end dates, start/end dates, participant naming pattern — GD-17; the option flags, end provision, end-user-contract confirmation, and initial-events list are **absent**) and a project edit form for the same metadata (REQ-API-050/052). Events are created in the project's Setup page (REQ-UI-018). |
 | REQ-UI-013 | **Assignments.** Per project: the member list with role, data access groups, and token state; assign a member choosing a role from the project's actual roles — which MAY be empty — plus "no role" (full permissions, REQ-AUTH-020/022); issue and rotate tokens, displaying the new token exactly once with an explicit copy affordance (REQ-API-055); set a member's data access group assignments and active group (REQ-API-089, REQ-AUTH-044). |
@@ -50,7 +50,7 @@ Defines the web user interface requirements: the views, the permission gating of
 ## 5. Project Workspace
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-UI-017 | The project screen MUST show the project summary (record count, instrument count, field count — REQ-API-051) and the actions **Setup**, **Design**, **Record status**, and **Export**, each present only when allowed: Setup and Design require `project_admin` (REQ-UI-003), Record status requires data access ≥ `read_only`, Export requires a non-`export_none` level for the arm (REQ-API-075). |
 | REQ-UI-018 | **Setup page.** Manage arms, events (label, **timepoint `period` — optional, blank = no timepoint** — safe region; displayed in the canonical per-arm order of GD-15 with **reorder controls for no-timepoint events** via the events-order endpoint, REQ-API-103), instruments (including the survey flag and the branching logic expression, REQ-DB-011), and the instrument-by-event mapping as per-arm checkboxes (REQ-API-058…073, REQ-API-103); an arm with events is hidden everywhere (REQ-AUTH-027) once removed. |
 | REQ-UI-019 | **Record status dashboard.** A table of records × events with the instruments per arm in order and a **three-state** completion indicator per (record, event, instrument) — no data / some data / finished, grey / amber / green (REQ-API-074, DEV-UI-8) — without revealing field values (REQ-API-074, plan §6); a survey-marked instrument's indicator shows green automatically, its completion filled in without an assignment (GD-9); rows MUST be restricted to records visible under the data access group rule (REQ-AUTH-045). |
@@ -63,7 +63,7 @@ Defines the web user interface requirements: the views, the permission gating of
 ## 6. Instrument Designer (`project_admin`)
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-UI-021 | Select an instrument and manage its fields: add, edit, remove, reorder (REQ-API-064…071) with the full attribute set (name, label, type including `calculated`, section header, choices, note, validation type/min/max — the type selector lists the built-in structured types plus every entry of the validation-type registry (REQ-VAL-042/043) — required, personal-information flag, direct-identifier flag (offered on any field, preset for `email`/`MRN`/phone types, clearing it warned — REQ-EXP-020/021), matrix group, branching logic expression — REQ-DB-013); the branching logic editor MUST offer `[event][field]` reference assistance, value comparisons, the usual functions, AND/OR, and parentheses (GD-13, REQ-VAL-029), and invalid expressions MUST be rejected with the reason shown (REQ-VAL-029); a warning MUST be shown for field names longer than 26 characters (REQ-VAL-013). |
 | REQ-UI-022 | **Calculated field editor.** An expression editor for the calculation expression with references `[event][field]`, numeric constants, `+ - * /`, and parentheses (REQ-VAL-033); invalid expressions (nonexistent/inactive fields, cycles) MUST be rejected by the API and the reason shown to the designer (REQ-VAL-034/035). |
 | REQ-UI-023 | **Test a calculation.** A record picker plus a run action invoking the dry-run test (REQ-API-096); the result MUST be displayed and every evaluation problem (missing/empty reference, non-numeric operand, division by zero) MUST be flagged visibly (REQ-VAL-038); the test MUST NOT change stored values. |
@@ -72,7 +72,7 @@ Defines the web user interface requirements: the views, the permission gating of
 ## 7. Data Entry and Record View
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-UI-025 | The data entry form MUST render the instrument's fields for the selected (record, event) — text inputs, dropdowns, radio groups, matrix rows expanded (REQ-DB-014) — and submit via the data API import path (REQ-UI-031). Client-side real-time validation is advisory only; the API is authoritative (REQ-VAL-002). Required fields MUST be presented as such and checked before submission (REQ-VAL-028); field and instrument branching logic MUST show or hide fields and whole instruments while the expression evaluates to true (1), and the display state MUST update when a referenced field's value changes (GD-13, REQ-VAL-029/040); Calculated fields MUST be rendered read-only (REQ-VAL-036). |
 | REQ-UI-026 | **Per-field change history.** Next to each field's description and value in the "record instrument" web view, a small **history button** MUST open a table of that field's previous values — who entered or changed each value (user account), when, and old → new values — from the record history endpoint filtered to the field (REQ-API-079/081); values MUST be escaped (REQ-UI-004); the view MUST be read-only with respect to the audit trail (REQ-AUD-002). |
 | REQ-UI-027 | **Record actions.** Delete the record or scoped values with an explicit confirmation (GD-3, REQ-API-036); show the record's current data access group and offer assign/change group to `project_admin` users (REQ-API-091); all actions gated per REQ-UI-003. |
@@ -83,21 +83,21 @@ Defines the web user interface requirements: the views, the permission gating of
 ## 8. Multilingual (GD-12)
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-UI-029 | The UI MUST offer a language selector listing the enabled languages (REQ-API-097); the choice MUST be persisted to the acting user's setting (REQ-API-098), apply from the next page load, and default to English for users without a setting. |
 | REQ-UI-030 | **Translation management (administration).** Per language: a list of translation keys with translated/missing status (REQ-API-099) and an editor to add, change, or clear translations (REQ-API-100); missing translations MUST be visible in the list and MUST fall back to English at render time (REQ-UI-008); translated strings MUST be escaped on render (REQ-UI-004). |
 
 ## 9. Appearance (GD-26)
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-UI-040 | The PHP layer MUST render exactly one Bootstrap stylesheet per page — the standard `bootstrap.min.css` **or** one vendored theme file (GD-26, REQ-TECH-027) — chosen server-side: the acting user's theme override when set (REQ-DB-008), else the installation default (`UI_THEME`, REQ-CFG-031). Theme stylesheets MUST be served same-origin from the vendored tree (no CDN, ASM-TECH-2); markup is identical across themes, so no page content changes with the theme. |
 | REQ-UI-041 | The UI MUST offer a theme selector beside the language selector (§8 pattern): a pick of the installed themes plus a "Default" choice that clears the personal override; the choice MUST be persisted to the acting user's setting (REQ-API-122), apply from the next page load, and never affect stored data or the login/public pages' correctness (those render with the installation default). |
 
 ## 10. Assumptions
 
 | ID | Assumption |
-|---|---|
+|---|------|
 | ASM-UI-1 | Desktop-first responsive layout, no mobile-specific optimization beyond Bootstrap defaults. Locale-specific date/number formatting is a design-document concern; the language setting applies to UI strings only — never to stored data, field labels, or choice values (GD-5, GD-12). |
 | ASM-UI-2 | All UI obligations parked in the other area documents (record history REQ-API-081, DAG switcher/record reassignment REQ-API-094, calculated-field test REQ-API-096, required/branching presentation REQ-VAL-028/029, escaping in value views REQ-VAL-031) are consolidated here and are normative via their cross-references. |
 | ASM-UI-3 | The role editor presents the per-arm level pickers (data access level + export level per arm, plus `project_admin`); "no role" is an explicit choice meaning full permissions (REQ-AUTH-022). |

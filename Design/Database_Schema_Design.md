@@ -382,7 +382,7 @@ Notes:
 ## 9. Indexes and Capacity (REQ-DB-017, REQ-DB-025/026)
 
 | Access pattern | Index |
-|---|---|
+|---|------|
 | all values of one project (exports, REQ-API-024) | `idx_data_project` |
 | all values of one record (data entry, history) | `idx_data_record` |
 | upsert uniqueness (REQ-DB-016) | `data` unique key |
@@ -413,7 +413,7 @@ Reference scale (REQ-DB-025): 100 projects × 10,000 records × 200 fields × 10
 ## 11. Resolved Deferred Items
 
 | Deferred in | Resolution here |
-|---|---|
+|---|------|
 | ASM-VAL-1 (canonical date forms) | dates `YYYY-MM-DD±HH:MM`; date-times `YYYY-MM-DD HH:MM±HH:MM` — with the timezone of collection (GD-16, REQ-VAL-041); stored as collected, never converted to UTC (§1) |
 | REQ-VAL-030 (max length) | no application cap beyond storage — `LONGTEXT`/`TEXT` (§1, REQ-VAL-021 default) |
 | choices encoding | REDCap-style `code$label##code$label` (§1) |
@@ -429,7 +429,7 @@ Reference scale (REQ-DB-025): 100 projects × 10,000 records × 200 fields × 10
 ## 12. Open Items
 
 | Item | Owner |
-|---|---|
+|---|------|
 | `details` JSON shapes per audit event type | `Audit_Logging_Design.md` |
 | `anon_salt` configuration key | `System_Configuration_Design.md` |
 | exact validator grammar for `validation_type` values and the `validation_types` seed patterns | `Data_Validation_Design.md` §4/§4.2 |

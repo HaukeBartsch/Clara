@@ -14,7 +14,7 @@ Defines how the system is configured across environments. The design document `D
 ### 2.1 Configuration Mechanism
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-CFG-001 | Configuration MUST be supplied exclusively via environment variables, optionally loaded from a `.env` file. `.env` files MUST NOT be tracked in version control (`.gitignore` entry provided). |
 | REQ-CFG-002 | Process environment variables MUST take precedence over `.env` values. |
 | REQ-CFG-003 | Both components (Go API, PHP app) MUST read the same variable names from `System_Configuration_Design.md §3` so a single `.env` configures the whole system. |
@@ -25,7 +25,7 @@ Defines how the system is configured across environments. The design document `D
 ### 2.2 Environments
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-CFG-007 | `APP_ENV` MUST distinguish `development` from `production`. Development defaults: SQLite, permissive logging, debug error detail. Production defaults: MariaDB, no debug detail, `Secure` cookie flag. |
 | REQ-CFG-008 | `DB_CONNECTION` MUST select the database engine (`sqlite` or `mariadb`); all other `DB_*` variables apply to the selected engine. |
 | REQ-CFG-009 | A SQLite configuration MUST accept a file path (`DB_DATABASE`) that can point at a per-developer or per-test file. |
@@ -34,7 +34,7 @@ Defines how the system is configured across environments. The design document `D
 ### 2.3 Authentication Configuration
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-CFG-011 | OAuth2 provider settings MUST support the authorization-code flow: issuer/provider URL, client id, client secret, redirect URI, and the attribute(s) used to map the provider's user to the system user (email). Multiple providers MAY be configured, each presented to the user by display name (REQ-CFG-032). Providers and LDAP servers are **optional** — table-based (local) authentication is always available (GD-18); the startup rule for first installations is in `System_Configuration_Design.md` §4.1 (REQ-CFG-025). |
 | REQ-CFG-012 | LDAP settings MUST include, per server: URL, bind DN and bind password (or simple anonymous search), search base, and the attribute names for uid/email/display name. |
 | REQ-CFG-032 | **Authentication-source display names** (master spec "Authentication order"). Every authentication source MUST support one or more configurable display names presented on the login page — `OAUTH2_N_NAMES`, `LDAP_SERVER_N_NAMES`, `LOCAL_LOGIN_NAMES` (comma-separated lists; REQ-AUTH-063/064). Sources MAY share a name and one source MAY carry several; an entry empty after trimming MUST be rejected at startup. When no names are configured anywhere, all sources form one implicit default set and the login picker is skipped (REQ-AUTH-067). |
@@ -46,14 +46,14 @@ Defines how the system is configured across environments. The design document `D
 ### 2.4 Anonymization Configuration
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-CFG-015 | The anonymization salt MUST be configurable and MUST NOT have a default in production. |
 | REQ-CFG-016 | The date-shift range for anonymized exports (min/max days) MUST be configurable with sane defaults (see design document). |
 
 ### 2.5 Session and Runtime
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-CFG-017 | PHP session settings MUST be configurable: storage directory (MUST NOT be the application database), cookie name, session lifetime, secure flag. |
 | REQ-CFG-018 | The public base URL of the application MUST be configurable (used for OAuth2 redirect URIs and API documentation links). |
 | REQ-CFG-019 | Log level MUST be configurable per component (debug|info|warn|error). |
@@ -68,7 +68,7 @@ Defines how the system is configured across environments. The design document `D
 ### 2.6 Security
 
 | ID | Requirement |
-|---|---|
+|---|------|
 | REQ-CFG-021 | Secrets MUST be loaded only from the environment; they MUST NOT be written to logs (redacted in any startup config dump). |
 | REQ-CFG-022 | On startup, the API MUST log the effective non-secret configuration (env, db engine, endpoints) at `info` level for operational traceability. |
 | REQ-CFG-023 | The API MUST reject `/api/v1/*` requests that do not present a valid service token (see `Authentication_Authorization_Requirements.md`), regardless of any other configuration. |
@@ -76,7 +76,7 @@ Defines how the system is configured across environments. The design document `D
 ## 3. Assumptions
 
 | ID | Assumption |
-|---|---|
+|---|------|
 | ASM-CFG-1 | A single `.env` file per host/environment is the deployment norm; no configuration database or remote config service. |
 | ASM-CFG-2 | Restarting the process is an accepted operational procedure for configuration changes. |
 

@@ -305,7 +305,7 @@ Rules:
 ## 8. Resolved Deferred Items
 
 | Deferred | Resolution here |
-|---|---|
+|---|------|
 | session ownership and schema (GD-1) | PHP-native session, key table §3; the API is stateless |
 | logout ordering (REQ-AUTH-015 vs REQ-API-045) | the audit call precedes session destruction (§2.4) |
 | `X-Internal-User-Id` on `POST /api/v1/auth/login` (REQ-API-041) | the login endpoint is exempt — service token only; the externally authenticated identity arrives in the body (§2.3); the three Sequence H pre-auth endpoints share the exemption (§2.8, DEV-API-16) |

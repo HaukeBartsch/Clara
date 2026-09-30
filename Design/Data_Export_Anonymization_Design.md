@@ -11,7 +11,7 @@ Fixes the normative export pipeline and the anonymization semantics that the oth
 The surrounding machinery is fixed elsewhere and is not repeated here:
 
 | Concern | Fixed in |
-|---|---|
+|---|------|
 | transport, row shape, `filterLogic`, error format | `API_Endpoints_Design.md` §3.1/§3.6 |
 | `anon_offsets` table, offset derivation | `Database_Schema_Design.md` §8 (REQ-DB-023) |
 | `ANON_SALT`, shift range, startup and redaction rules | `System_Configuration_Design.md` §3.6/§4.1/§4.4 |
@@ -67,7 +67,7 @@ Streamed (never fully materialized; full flat export < 10 s on the reference har
 Given the data dictionary of `Database_Schema_Design.md` §5 (REQ-DB-013), the pipeline classifies every exportable field exactly once, in this priority order (D-1, D-3):
 
 | Category | Definition |
-|---|---|
+|---|------|
 | **direct identifier field** | the record identifier field (GD-8 — first field of the instrument at position 1) **or** a field whose user-set `direct_identifier` flag is set (REQ-DB-013, REQ-EXP-020; preset by the API for `email`, `MRN`, `international phone` and `national phone` validation types — DEV-EXP-5) |
 | **personal field** | `personal_information = 1` (REQ-DB-013) and not a direct identifier field (removal wins over hashing) |
 | **free text field** | `field_type = text` (REQ-DB-013) and neither of the above; its export approval is `export_approved` (DEV-DB-2) |
@@ -149,7 +149,7 @@ The provision (delete or anonymize) is **not** system state (GD-17, REQ-DB-006/0
 `POST /api/v1/projects/{id}/end-provision`
 
 | Aspect | Rule |
-|---|---|
+|---|------|
 | body | `{ \"provision\": \"delete\" \\| \"anonymize\" }`; any other value → 400 |
 | gating | `is_admin` — destroying or irrevocably anonymizing clinical data exceeds `project_admin` (\"modify project structure and metadata\", REQ-AUTH-018); 403 otherwise |
 | one-shot | a second execution for the same project → 409; the idempotency state is the `project_ended` audit event of §8 |
@@ -193,7 +193,7 @@ No new variables — the canonical inventory is `System_Configuration_Design.md`
 ### 10.1 Local design decisions
 
 | ID | Decision |
-|---|---|
+|---|------|
 | D-1 | field categories with the fail-safe property (§4.1): the record identifier (GD-8) and every `email`/`MRN` validation-type field is a direct identifier — removed at both non-full levels, flagged as personal or not |
 | D-2 | the fixed four-step pipeline (§4.2); \"removed\" = the column is absent from the output; personal fields are hashed, not removed |
 | D-3 | free text = `field_type = text`; gated by `export_approved` at `export_de_identified` (DEV-DB-2, plan \"free text … unless explicitly approved for export\") |
@@ -205,7 +205,7 @@ No new variables — the canonical inventory is `System_Configuration_Design.md`
 ### 10.2 Requirement traceability
 
 | Requirement / decision | Fixed here |
-|---|---|
+|---|------|
 | `Requirements/Data_Export_Anonymization_Requirements.md` (REQ-EXP-001…052) | §2–§9 |
 | REQ-API-013/016/017 (encodings, ignored parameters) | §3.1, §3.4 |
 | REQ-API-024/025 (filters, `filterLogic`) | §6 |
@@ -249,7 +249,7 @@ No new variables — the canonical inventory is `System_Configuration_Design.md`
 ## 11. Resolved Deferred Items
 
 | Deferred in | Resolution here |
-|---|---|
+|---|------|
 | what "de-identified" exactly means (REQ-API-026/075, REQ-AUTH-018) | the per-level pipeline: §4.2, D-1…D-5 |
 | "salted hash" for personal fields (plan, "Field-Level Anonymization") | exact algorithm: §5.1 (D-5) |
 | date shift "consistent for each patient" (plan; REQ-DB-023) | per-record persisted offset, reused on every export: §5.2 |
@@ -261,7 +261,7 @@ No new variables — the canonical inventory is `System_Configuration_Design.md`
 ## 12. Open Items
 
 | Item | Owner |
-|---|---|
+|---|------|
 | ~~register `POST /api/v1/projects/{id}/end-provision` in `API_Endpoints_Design.md` §4 and `openapi/openapi.json`~~ | **RESOLVED (2026-09-23)** — `API_Endpoints_Design.md` §4.20 (rules unchanged, §7.2); the path is in the scaffold's `api/openapi/openapi.json` |
 | ~~register the `project_ended` event type in the `Audit_Logging_Design.md` §3 event catalog~~ | **RESOLVED (2026-09-23)** — `Audit_Logging_Design.md` §3.3 (rules unchanged, §7.2/§8) |
 | ~~end-provision action card on the project screen for `is_admin`~~ | **RESOLVED (2026-09-23)** — `User_Interface_Design.md` §6.5 (rules unchanged, §7) |

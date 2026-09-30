@@ -149,7 +149,7 @@ Rejected transitions and rejected commits (409: disallowed transition, open stag
 One row per invocation of `content=record&action=export` — regardless of initiator (external caller or the PHP layer, REQ-AUD-013, ASM-API-3). Rejected invocations (invalid token, `export_none`, no visibility) write no row (REQ-AUD-004).
 
 | Column | Content |
-|---|---|
+|---|------|
 | `token` | the project token or link token presented (NOT NULL — the only actor a record pull has) |
 | `user_id` / `email` | resolved from the token (`null` for survey-link pulls, where the respondent has no account) |
 | `project_id` | the project of the pull |
@@ -265,7 +265,7 @@ Both endpoints are read-only; no endpoint exists that writes, updates, or delete
 ## 8. Resolved Deferred Items
 
 | Deferred in | Resolution here |
-|---|---|
+|---|------|
 | `details` JSON shapes per audit event type (`Database_Schema_Design.md` §12) | complete catalog with payload schemas, §3 |
 | ASM-AUD-1 (retention) | no expiry; indefinite retention on yearly objects; dropping years is an operational action (§6.3) |
 | ASM-AUD-2 (UI-mediated reads) | a record-view row is written when the PHP layer initiates `content=record&action=export`; record status and structure reads are not record views (§4) |
@@ -275,5 +275,5 @@ Both endpoints are read-only; no endpoint exists that writes, updates, or delete
 ## 9. Open Items
 
 | Item | Owner |
-|---|---|
+|---|------|
 | ~~`limit`/`cursor` encoding for `/api/v1/audit` and record history~~ | **RESOLVED** — the pagination convention of `API_Endpoints_Design.md` §1 (opaque `cursor` encoding the last-seen `(created_at, id)`, `limit` default 50 / max 200, `next_cursor` `null` when exhausted) binds for both endpoints (§7) |
