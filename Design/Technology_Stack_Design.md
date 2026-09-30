@@ -13,7 +13,7 @@ Fixes the concrete versions, the production dependency set, and the repository l
 | Component | Version | Notes |
 |---|---|---|
 | Go | 1.26.x (pinned in CI; `go.mod` declares `go 1.26`) | built with `CGO_ENABLED=0` → single static binary (REQ-TECH-013) |
-| PHP | 8.4 standard distribution | extensions: `pdo_sqlite`, `pdo_mysql`, `ldap`, `curl`, `openssl`, `mbstring`; Composer dependencies only from the critical-function allowlist (§3, GD-25) — otherwise the standard distribution (REQ-TECH-023/026) |
+| PHP | 8.3 or 8.4 standard distribution — either line is acceptable (owner decision 2026-09-30) | extensions: `pdo_sqlite`, `pdo_mysql`, `ldap`, `curl`, `openssl`, `mbstring`; Composer dependencies only from the critical-function allowlist (§3, GD-25) — otherwise the standard distribution (REQ-TECH-023/026). Because both lines must run, application code stays inside the feature set common to 8.3 and 8.4 (no 8.4-only syntax), mirroring the portability rule of REQ-TECH-007; CI and each deployment pin one exact version |
 | SQLite | ≥ 3.45 (OS/toolchain-provided) | development and tests (REQ-TECH-005) |
 | MariaDB | 11.x LTS (≥ 11.4) | production (REQ-TECH-005) |
 | Bootstrap | 5.3.x | vendored under `web/assets/vendor/bootstrap/` (CSS + bundle JS only); no CDN (ASM-TECH-2) |

@@ -23,7 +23,7 @@ Pinned versions and the production dependency allowlist are fixed in `Design/Tec
 
 - Go API built as a single static binary (`CGO_ENABLED=0`, pure-Go SQLite driver); standard library preferred over libraries.
 - SQLite for development and tests, MariaDB 11.x in production; SQL targets features common to both, with documented exceptions.
-- PHP 8.4 rendering layer; Composer dependencies only from the critical-function allowlist (`Design/Technology_Stack_Design.md` §3, REQ-TECH-026 — authentication, session handling, i18n), otherwise the standard distribution; nginx + PHP-FPM in production.
+- PHP 8.3 or 8.4 rendering layer (either is acceptable — keep code inside the feature set common to both); Composer dependencies only from the critical-function allowlist (`Design/Technology_Stack_Design.md` §3, REQ-TECH-026 — authentication, session handling, i18n), otherwise the standard distribution; nginx + PHP-FPM in production.
 - Frontend is vanilla ES2020 JavaScript with Bootstrap 5.3 — vendored locally, never loaded from a CDN at runtime (the application must work without internet access). Download library assets once into local directories.
 - No webpack or similar technology that requires a build step for the website frontend.
 - Configuration comes from environment variables; `.env.example` documents the full set.
