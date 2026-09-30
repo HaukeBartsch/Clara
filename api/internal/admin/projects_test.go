@@ -340,3 +340,110 @@ func TestProjectUpdateGuards(t *testing.T) {
 		t.Errorf("is_admin status = %d, want 200 (REQ-AUTH-023)", rec.Code)
 	}
 }
+
+// TestProjectDetailCarriesEffectivePermissions: the project detail read returns
+// the acting user's effective levels so the web layer can gate its rendering
+// (REQ-API-126) — full levels for is_admin and for a role-less member
+// (REQ-AUTH-023/022), otherwise the role's grants with no implicit access on an
+// ungranted arm (REQ-AUTH-019) — one entry per project arm in every case.
+func TestProjectDetailCarriesEffectivePermissions(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	projectID := e.mustProject("8DISC")
+	e.mustArm(projectID, 1)
+	e.mustArm(projectID, 2)
+
+	// check fetches the detail as actor and asserts its permissions block.
+	check := func(actor *db.User, projectAdmin bool, want map[int][2]string) {
+		t.Helper()
+		rec := e.do("GET", "/api/v1/projects/"+itoa(projectID), nil, actor)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("get as %s: %d %s", actor.Email, rec.Code, rec.Body.String())
+		}
+		var d projectDetail
+		e.decode(rec, &d)
+		p := d.Permissions
+		if p.ProjectAdmin != projectAdmin {
+			t.Errorf("%s: project_admin = %v, want %v", actor.Email, p.ProjectAdmin, projectAdmin)
+		}
+		if len(p.Arms) != len(want) {
+			t.Fatalf("%s: arms = %+v, want one entry per project arm", actor.Email, p.Arms)
+		}
+		for _, a := range p.Arms {
+			w, ok := want[a.ArmNum]
+			if !ok || a.DataAccessLevel != w[0] || a.ExportLevel != w[1] {
+				t.Errorf("%s: arm %d = %+v, want %v", actor.Email, a.ArmNum, a, w)
+			}
+		}
+	}
+	full := func() map[int][2]string {
+		return map[int][2]string{
+			1: {"edit_survey_responses", "export_full"},
+			2: {"edit_survey_responses", "export_full"},
+		}
+	}
+
+	// is_admin covers every arm (REQ-AUTH-023).
+	check(admin, true, full())
+
+	// A member on a role sees that role's grants; the arm the role does not
+	// grant reports the no-access default instead of being absent.
+	rec := e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/roles", map[string]any{
+		"name": "data-entry",
+		"arms": map[string]any{"1": map[string]string{"data": "view_edit", "export": "export_de_identified"}},
+	}, admin)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create role: %d %s", rec.Code, rec.Body.String())
+	}
+	entry := e.mustUser("entry@example.org")
+	rec = e.do("PUT", "/api/v1/projects/"+itoa(projectID)+"/users/"+itoa(entry.ID),
+		map[string]any{"role": "data-entry"}, admin)
+	if rec.Code != http.StatusCreated && rec.Code != http.StatusOK {
+		t.Fatalf("add member: %d %s", rec.Code, rec.Body.String())
+	}
+	check(entry, false, map[int][2]string{
+		1: {"view_edit", "export_de_identified"},
+		2: {"no_access", "export_none"},
+	})
+
+	// A role-less member holds full permissions including project_admin
+	// (REQ-AUTH-022).
+	open := e.mustUser("open@example.org")
+	mustMember(t, e, open.ID, projectID)
+	check(open, true, full())
+
+	// PUT answers with the same shape, permissions included (REQ-API-126).
+	rec = e.do("PUT", "/api/v1/projects/"+itoa(projectID), map[string]any{"pi_name": "New PI"}, open)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update: %d %s", rec.Code, rec.Body.String())
+	}
+	var updated projectDetail
+	e.decode(rec, &updated)
+	if !updated.Permissions.ProjectAdmin || len(updated.Permissions.Arms) != 2 {
+		t.Errorf("PUT permissions = %+v, want the GET shape (REQ-API-126)", updated.Permissions)
+	}
+
+	// The block is disclosed to nobody the read itself is denied for: a member
+	// whose role grants nothing keeps the uniform 403 of REQ-API-051/007 and
+	// learns nothing from it.
+	rec = e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/roles",
+		map[string]any{"name": "viewer-none"}, admin)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create empty role: %d %s", rec.Code, rec.Body.String())
+	}
+	none := e.mustUser("none@example.org")
+	rec = e.do("PUT", "/api/v1/projects/"+itoa(projectID)+"/users/"+itoa(none.ID),
+		map[string]any{"role": "viewer-none"}, admin)
+	if rec.Code != http.StatusCreated && rec.Code != http.StatusOK {
+		t.Fatalf("add member with empty role: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, actor := range []*db.User{none, e.mustUser("outsider@example.org")} {
+		rec = e.do("GET", "/api/v1/projects/"+itoa(projectID), nil, actor)
+		if rec.Code != http.StatusForbidden {
+			t.Errorf("%s: status = %d, want 403", actor.Email, rec.Code)
+		}
+		if contains(rec.Body.String(), "permissions") {
+			t.Errorf("%s: rejected read leaked permissions: %s", actor.Email, rec.Body.String())
+		}
+	}
+}

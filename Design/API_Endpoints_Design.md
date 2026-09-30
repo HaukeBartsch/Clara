@@ -408,17 +408,23 @@ Administrator (requires `is_admin`), REQ-API-116: `POST /api/v1/users/{id}/tfa/r
 
 The removed attributes — `end_provision`, the `option_*` flags, `agreed_to_end_user_contract`, `event_names` — are rejected as unknown attributes (400 `invalid_request`, REQ-API-052); if the owner wants them they are data in an ordinary instrument (e.g. `DataTransferProjects`, REQ-DB-032). A duplicate `project_name` → 409 `conflict`. Creation is single-arm (REQ-DB-011, DEV-API-4): the API creates **arm 1 only**, together with its first event **`baseline`** (`unique_event_name = baseline_arm_1`, timepoint `period = 0`) and one instrument **`instrument`** — every project holds at least one arm, event and instrument from creation on (§4.9/§4.10, REQ-API-050). Further events are added afterwards through `POST /api/v1/projects/{id}/events` (REQ-API-062; `event_names` is no longer part of creation, GD-17). 201 — the project object (`id` + the supplied fields + `creation_time`). Audit `project_created`.
 
-**`GET /api/v1/projects/{id}`** — data access ≥ `read_only` + project visibility. 200 — full metadata plus structure:
+**`GET /api/v1/projects/{id}`** — data access ≥ `read_only` + project visibility. 200 — full metadata plus structure plus the acting user's effective permissions (REQ-API-126):
 
 ```json
 {
   "id": 33, "project_name": "8DISC", "…": "…(all metadata fields)",
   "arms": [ { "arm_num": 1, "name": "", "events": [ { "id": 4, "event_name": "baseline", "unique_event_name": "baseline_arm_1", "period": 0, "safe_region_start": null, "safe_region_end": null, "position": 1 } ] } ],
-  "instruments": [ { "id": 7, "name": "intake", "position": 1, "field_count": 24 } ]
+  "instruments": [ { "id": 7, "name": "intake", "position": 1, "field_count": 24 } ],
+  "permissions": {
+    "project_admin": false,
+    "arms": [ { "arm_num": 1, "data_access_level": "view_edit", "export_level": "export_de_identified" } ]
+  }
 }
 ```
 
-**`PUT /api/v1/projects/{id}`** — `project_admin` (an `is_admin` user is covered by REQ-AUTH-023). Body: any subset of the `POST` metadata fields — omitted fields are unchanged (idempotent, REQ-API-042). A duplicate `project_name` → 409 `conflict`. 200 — the updated project object (same shape as `GET`). Metadata changes are audit-logged with old and new values (`project_updated`, `Audit_Logging_Design.md` §3.3; REQ-API-052, REQ-API-043).
+`permissions` is the effective evaluation of `Authentication_Authorization_Design.md` §4.1 for the acting user — the same result the boundary applies to every call — surfaced so the PHP layer can gate rendering with the control absent from the DOM (`User_Interface_Design.md` §3.1, REQ-UI-003). Rules: one `arms[]` entry per arm of the project in the arm order of the `arms` list above; `is_admin` reports `edit_survey_responses` / `export_full` on every arm and `project_admin: true` (REQ-AUTH-023); a role-less member likewise (REQ-AUTH-022); an arm the user's role does not grant reports `no_access` / `export_none` (REQ-AUTH-019), so no arm is ever absent from the list and the caller never infers a level from a missing entry. The vocabulary is the §4.7 one (`no_access | read_only | view_edit | delete | edit_survey_responses`, `export_none | export_de_identified | export_no_identifiers | export_full`). This read authorizes nothing — it discloses only the caller's own levels, under the same visibility gate as the rest of the response (REQ-API-007), and every endpoint re-checks at call time (REQ-AUTH-033).
+
+**`PUT /api/v1/projects/{id}`** — `project_admin` (an `is_admin` user is covered by REQ-AUTH-023). Body: any subset of the `POST` metadata fields — omitted fields are unchanged (idempotent, REQ-API-042). A duplicate `project_name` → 409 `conflict`. 200 — the updated project object (same shape as `GET`, `permissions` included — REQ-API-126). Metadata changes are audit-logged with old and new values (`project_updated`, `Audit_Logging_Design.md` §3.3; REQ-API-052, REQ-API-043).
 
 ### 4.6 Members and Tokens (REQ-API-053…055, 102)
 

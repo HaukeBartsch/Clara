@@ -13,7 +13,7 @@
 | browser (member) | PHP routes only (REQ-AUTH-010) | session cookie (§3) | the member's effective permissions |
 | PHP web application | `/api/v1/*` (internal path only) | `X-Internal-Service-Token` + `X-Internal-User-Id` (REQ-AUTH-011) | exactly the acting user's permissions — PHP adds none |
 | external data-API caller (Fiona/RIS) | `POST /api/` (public) | project token as `token` parameter (REQ-AUTH-031) | the token holder's per-arm levels (REQ-AUTH-033) |
-| survey respondent | PHP route `/survey/{link}` (public, no session — GD-9) | opaque link token | fill-only on exactly one (record, survey instrument) (REQ-AUTH-039) |
+| survey respondent | PHP route `/s/{link}` (public, no session — GD-9) | opaque link token | fill-only on exactly one (record, survey instrument) (REQ-AUTH-039) |
 | IdP / LDAP | outbound from PHP | OAuth2 client secret / LDAP bind DN | identity assertion (email) |
 | local (table-based) account | PHP login form → API | email + password (verified against `users.password_hash`), plus the configured second factor when enrolled (GD-21, §2.7) | the account's normal permissions (GD-18, REQ-AUTH-050) |
 | invited / resetting person (pre-authentication) | PHP set-password page via the emailed link (public route, no session — GD-22/GD-23) | single-use hashed token (`password_tokens`, REQ-DB-039) | exactly one thing: set the password of the one addressed account (§2.8) — nothing else is reachable |
