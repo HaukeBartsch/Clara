@@ -295,7 +295,7 @@ Every error is a JSON object with a consistent shape:
 `error` is a stable machine code (callers may branch on it); `message` is human-readable and MUST NOT leak internal details (REQ-API-006). A project or record the acting user is not entitled to is rejected with the uniform 403 `forbidden` — never disclosed as missing (REQ-API-007).
 
 | Status | `error` | When |
-|---|---|---|
+|---|------|------|
 | 400 | `invalid_request` | malformed JSON body; a missing or invalid attribute (e.g. non-survey instrument for a link, §4.17); a GD-8 identifier-invariant violation (§4.10, §4.11) |
 | 400 | `validation_error` | design-time rejection of a data-dictionary entry — ill-formed expression, unknown/inactive reference, cycle, malformed name (`Data_Validation_Design.md` §6.2, §7.2, §9); the reason is in `message` (REQ-VAL-029) |
 | 401 | `service_token_invalid` | missing/invalid `X-Internal-Service-Token` (audit `admin_rejected`) |
