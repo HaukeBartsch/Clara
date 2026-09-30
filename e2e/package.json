@@ -1,0 +1,12 @@
+{
+  "name": "clara-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Playwright browser tests for the CLARA web layer (REQ-TECH-028). Development and CI tooling only — nothing here is served.",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0"
+  }
+}
