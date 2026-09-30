@@ -19,7 +19,7 @@ The system is exactly these four components and no others. There is no scheduler
 | Component | Responsibility | Technology | Normative source |
 |---|---|---|---|
 | Go API (single process, static binary) | All data access, validation, authorization, and audit writes; both API surfaces (REDCap data API + administration API); serves the OpenAPI document | Go 1.26 | `Technology_Stack_Design.md` §3–§5 |
-| PHP web application | Page rendering, session ownership, the OAuth2/LDAP/local login flow; the **sole client** of the administration API | PHP 8.4, no DB driver | `Technology_Stack_Design.md` §4–§5 |
+| PHP web application | Page rendering, session ownership, the OAuth2/LDAP/local login flow; the **sole client** of the administration API | PHP 8.3 or 8.4 (either line), no DB driver | `Technology_Stack_Design.md` §4–§5 |
 | Database | Single store: structure, EAV record data, and the two audit tables; SQLite (development) / MariaDB (production) | — | `Database_Schema_Design.md` |
 | Reverse proxy | TLS termination; publicly routes `POST/GET /api/` and the PHP routes, and only those; strips the internal headers | nginx + PHP-FPM | `Technology_Stack_Design.md` §5 |
 

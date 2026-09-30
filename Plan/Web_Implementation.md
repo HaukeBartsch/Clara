@@ -6,7 +6,7 @@
 
 ## 1. Scope
 
-`web/` is the PHP 8.4 rendering layer: page rendering, PHP-native session ownership, the OAuth2/LDAP/local login flow, and a thin proxy to the Go administration API. It is the system's only browser-facing component besides the public survey route.
+`web/` is the PHP 8.3-or-8.4 rendering layer: page rendering, PHP-native session ownership, the OAuth2/LDAP/local login flow, and a thin proxy to the Go administration API. It is the system's only browser-facing component besides the public survey route.
 
 Out of scope here: Go API work beyond §3 below; the production nginx file (open item in `Technology_Stack_Design.md` §9, owned by operations); the quality of the `nb`/`nn` translation content (the mechanism is in scope, the translations are a language task).
 
