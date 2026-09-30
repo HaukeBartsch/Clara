@@ -58,7 +58,7 @@ Common conventions (REQ-UI-001…008), binding on every page:
 | `GET /projects/{id}/groups` | data access groups (§5.5) | read: data access ≥ `read_only`; create/delete: `project_admin` | `GET/POST …/data-access-groups`, `DELETE …/data-access-groups/{gid}` |
 | `GET /projects/{id}/records/{record}` | data entry / record view (§8) | data access ≥ `read_only` (per-action levels per §8) | `GET …/instruments/{iid}/fields`, `GET …/records/{record}/history`, token fetch + data-API import/delete (`§8.6`) |
 | `GET /projects/{id}/export` | export (streams the response) | a non-`export_none` level per arm (REQ-UI-020) | `GET …/export` (streamed, REQ-TECH-011) |
-| `GET /survey/{link}` | public survey page (§8.8) | none — no session, outside the login (GD-9, DEV-UI-1) | data API `content=metadata` + `content=record&action=import` with the link token (REQ-API-083) |
+| `GET /s/{link}` | public survey page (§8.8) | none — no session, outside the login (GD-9, DEV-UI-1) | data API `content=metadata` + `content=record&action=import` with the link token (REQ-API-083) |
 
 There are no other browser-reachable routes. State-changing browser requests are `POST`s to the same routes with a `?action=<name>` parameter (or a dedicated `POST` route where noted); the table lists the read route each page is bound to. The browser never sees `/api/v1/*` (REQ-UI-002).
 
@@ -134,7 +134,7 @@ These rules apply on every page of §2.1 and are the single implementation of th
 
 ### 3.1 Permission gating (REQ-UI-003, REQ-AUTH-027)
 
-- A single PHP helper resolves, per request, the acting user's effective permissions for the target project (via the API — the API re-checks on every call, REQ-AUTH-033) and the template renders conditionally. "Hidden" = **absent from the DOM** — no `display:none`, no disabled control.
+- A single PHP helper resolves, per request, the acting user's effective permissions for the target project (via the API — the API re-checks on every call, REQ-AUTH-033) and the template renders conditionally. The `permissions` object of `GET /api/v1/projects/{id}` (REQ-API-126) is that read: `project_admin` plus the data access and export level of every arm, so no page needs a second round trip to know what it may offer. "Hidden" = **absent from the DOM** — no `display:none`, no disabled control.
 - Consequence table (normative): a control whose permission is missing MUST NOT be emitted — not as a disabled button, not as a link to a 403 page. This holds for sidebar entries (§2.4), page action buttons, and per-row actions (e.g. the per-member token rotation, §5.3).
 
 ### 3.2 Escaping and free-text (REQ-UI-004, REQ-TECH-020)
@@ -531,9 +531,9 @@ Present per the member's levels (REQ-UI-003):
 - **Data access group** (record visibility, REQ-AUTH-045): show the record's current group; for `project_admin` — an assign/change control (group select incl. "none") → `PUT …/records/{record}/data-access-group` (REQ-API-091). Members who are not `project_admin` see the group read-only.
 - **Survey link** (survey-marked instruments, data access ≥ `view_edit` on the arm): **Copy link** → `GET …/instruments/{iid}/survey-link` — the stable URL in a read-only input + copy button (issued once per (record, instrument) until revoked, `Database_Schema_Design.md` §8); **Revoke link** → confirmation → `DELETE …/survey-link` (effective immediately, REQ-AUTH-040). Absent for non-survey instruments (REQ-AUTH-038).
 
-### 8.8 Public survey page (`GET /survey/{link}`, GD-9, REQ-UI-028)
+### 8.8 Public survey page (`GET /s/{link}`, GD-9, REQ-UI-028)
 
-A standalone PHP route — **no login, outside the session** (GD-1, REQ-API-084, DEV-UI-1), rendered without the sidebar (§2.4). The link is `WEB_PUBLIC_URL + /survey/<link token>`.
+A standalone PHP route — **no login, outside the session** (GD-1, REQ-API-084, DEV-UI-1), rendered without the sidebar (§2.4). The link is `WEB_PUBLIC_URL + /s/<link token>` — the path the API itself builds when it issues the link (`API_Endpoints_Design.md` §4.17), so the value handed to `Copy link` and the route that serves it cannot drift apart.
 
 - **Render**: PHP calls the **data API** `content=metadata` with the link token — the API accepts a link token only for the calls that render and fill its (record, instrument) (REQ-API-083, `API_Endpoints_Design.md` §3.10); the page shows **only** that instrument's fields for that record (values prefilled from the respondent's prior submission, if any).
 - **Submit**: PHP → data API `content=record&action=import` with the link token, applying the same **submission policy** as the data-entry form (GD-14, REQ-UI-031 — entered values plus explicitly cleared fields only) and sending the respondent's browser timezone as the collection zone (GD-16). Submissions pass the **same validation and audit rules as any import** (REQ-AUTH-041, REQ-VAL-001; audit `survey_submitted` — success and failure, `Audit_Logging_Design.md` §3.6).
