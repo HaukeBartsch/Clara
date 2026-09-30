@@ -127,4 +127,4 @@ Single-area open items (endpoint encoding, audit `details` shapes, configuration
 |---|---|
 | the per-project end-provision decision (delete vs. anonymize at the REK end date) — BR-009; spans export, storage, UI, and API | operations / project owner (rules fixed in `Data_Export_Anonymization_Design.md` §7) |
 | exact nginx configuration file for the deployment target (reverse-proxy component, §2.1) | operations (rules fixed in `Technology_Stack_Design.md` §5) |
-| additive scope candidates not in phase 1: 3-state record completion (binary today, REQ-API-074) and a most-recent-first record-history read (`API_Endpoints_Design.md` §4.16) | owner + requirements (tracked in `User_Interface_Design.md` §11) |
+| additive scope candidate not in phase 1: a most-recent-first record-history read (`API_Endpoints_Design.md` §4.16) — the 3-state completion of the master spec's "Instrument level completion info" is now in the baseline (REQ-API-074/110, REQ-DB-036), with surveys reporting `finished` automatically | owner + requirements (tracked in `User_Interface_Design.md` §11) |

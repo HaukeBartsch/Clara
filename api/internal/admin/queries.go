@@ -200,13 +200,14 @@ func (h *Handler) recordStatus(w http.ResponseWriter, r *http.Request) {
 					// finished wins over both, never the other way round, so
 					// the badge cannot claim less than the data shows and
 					// grey/amber can never contradict it (REQ-API-074). A
-					// survey instrument reports its derived state — it takes
-					// no assignment (GD-9).
+					// survey instrument reports finished automatically — its
+					// completion info is filled in without an assignment
+					// (GD-9; master spec "Instrument level completion info").
 					state := StateNoData
 					if complete[cellKey{re.RecordID, ev.UniqueEventName, in.Name}] {
 						state = StateSomeData
 					}
-					if !in.IsSurvey && finished[storedKey{re.RecordID, ev.ID, in.ID}] {
+					if in.IsSurvey || finished[storedKey{re.RecordID, ev.ID, in.ID}] {
 						state = StateFinished
 					}
 					instrs = append(instrs, recordStatusInstrument{

@@ -624,7 +624,7 @@ An instrument is active for data entry once it is mapped to at least one event (
                                    { "name": "labs",   "state": "no_data" } ] } ] } ]
 ```
 
-`state` is `no_data` | `some_data` | `finished`. Only `finished` is stored (REQ-DB-036); the other two are computed per row from whether any of that instrument's fields in that event holds a value, so the field never reports `no_data` for an instrument that has values or `some_data` for one the user marked finished. A survey-marked instrument always reports its derived state — it takes no completion assignment (GD-9).
+`state` is `no_data` | `some_data` | `finished`. Only `finished` is stored (REQ-DB-036); the other two are computed per row from whether any of that instrument's fields in that event holds a value, so the field never reports `no_data` for an instrument that has values or `some_data` for one the user marked finished. A survey-marked instrument always reports `finished` — its completion info is filled in automatically, with nothing stored and no assignment taken; the other two states never apply to it (GD-9; master spec "Instrument level completion info").
 
 The response MUST NOT contain field values (REQ-API-074). A record-status read is not a record view (`Audit_Logging_Design.md` §8, ASM-AUD-2).
 
@@ -634,7 +634,7 @@ The response MUST NOT contain field values (REQ-API-074). A record-status read i
 { "state": "finished" }
 ```
 
-`state` is `finished` (set) or `unfinished` (clear, returning the row to its derived `no_data`/`some_data`). The call writes **no field value** — it is a workflow annotation, not data entry, and MUST NOT be rejected by validation or by analysis-mode write rules that apply to values (GD-20 scopes mode rejection to imports of data; this endpoint changes none). Unknown record/event/instrument → 404 `not_found`; an (event, instrument) pair not mapped in the active design → 409 `conflict`; a survey-marked instrument → 409 `conflict` (REQ-DB-036). A record outside the caller's data-access-group scope → 403 `forbidden` (REQ-AUTH-045). 200 — `{ "state": "finished" }`, the resulting stored state. Audit `instrument_completed` / `instrument_uncompleted` (REQ-AUD-026, `Audit_Logging_Design.md` §3).
+`state` is `finished` (set) or `unfinished` (clear, returning the row to its derived `no_data`/`some_data`). The call writes **no field value** — it is a workflow annotation, not data entry, and MUST NOT be rejected by validation or by analysis-mode write rules that apply to values (GD-20 scopes mode rejection to imports of data; this endpoint changes none). Unknown record/event/instrument → 404 `not_found`; an (event, instrument) pair not mapped in the active design → 409 `conflict`; a survey-marked instrument → 409 `conflict` — it needs no assignment, its `finished` state is automatic (REQ-DB-036, GD-9). A record outside the caller's data-access-group scope → 403 `forbidden` (REQ-AUTH-045). 200 — `{ "state": "finished" }`, the resulting stored state. Audit `instrument_completed` / `instrument_uncompleted` (REQ-AUD-026, `Audit_Logging_Design.md` §3).
 
 ### 4.14 Export (UI) (REQ-API-075…076)
 

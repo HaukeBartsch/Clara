@@ -97,9 +97,16 @@ func TestRecordStatus(t *testing.T) {
 	v2 := e.mustEvent(projectID, armID, "Visit 2", "v2_arm_1")
 	intake := e.mustInstrument(projectID, "intake") // position 1
 	scores := e.mustInstrument(projectID, "scores") // position 2
+	feedback, err := e.Store.AddInstrument(ctx, &db.Instrument{
+		ProjectID: projectID, Name: "feedback", Position: 3, IsSurvey: true,
+	})
+	if err != nil {
+		t.Fatalf("AddInstrument(survey): %v", err)
+	}
 	e.mustMap(projectID, armID,
 		db.InstrumentEvent{InstrumentID: intake, EventID: v1},
 		db.InstrumentEvent{InstrumentID: scores, EventID: v1},
+		db.InstrumentEvent{InstrumentID: feedback, EventID: v1},
 		db.InstrumentEvent{InstrumentID: intake, EventID: v2},
 	)
 	e.mustRecord(projectID, "R1")
@@ -127,31 +134,41 @@ func TestRecordStatus(t *testing.T) {
 	if len(rows[0].Events) != 2 {
 		t.Fatalf("R1 events: %+v", rows[0].Events)
 	}
-	e1 := rows[0].Events[0] // v1_arm_1 — intake, scores in instrument order
-	if e1.UniqueEventName != "v1_arm_1" || len(e1.Instruments) != 2 ||
+	e1 := rows[0].Events[0] // v1_arm_1 — intake, scores, feedback in instrument order
+	if e1.UniqueEventName != "v1_arm_1" || len(e1.Instruments) != 3 ||
 		e1.Instruments[0].Name != "intake" || e1.Instruments[0].State != StateSomeData ||
-		e1.Instruments[1].Name != "scores" || e1.Instruments[1].State != StateNoData {
+		e1.Instruments[1].Name != "scores" || e1.Instruments[1].State != StateNoData ||
+		e1.Instruments[2].Name != "feedback" {
 		t.Fatalf("R1 v1 state: %+v", e1)
+	}
+	// The survey instrument reports finished automatically — nothing was
+	// assigned, and it has no values (GD-9, master spec "Instrument level
+	// completion info").
+	if e1.Instruments[2].State != StateFinished {
+		t.Fatalf("survey cell = %q, want the automatic %s", e1.Instruments[2].State, StateFinished)
 	}
 	e2 := rows[0].Events[1] // v2_arm_1 — intake only; empty value = no data
 	if e2.UniqueEventName != "v2_arm_1" || len(e2.Instruments) != 1 ||
 		e2.Instruments[0].State != StateNoData {
 		t.Fatalf("R1 v2 state: %+v", e2)
 	}
-	for _, ev := range rows[1].Events { // R2 has no values at all
-		for _, in := range ev.Instruments {
-			if in.State != StateNoData {
-				t.Fatalf("R2 unexpectedly holds data: %+v", ev)
-			}
-		}
-	}
-	// Nothing has been assigned in this fixture, so no cell may report the
-	// stored state (REQ-DB-036 — finished only ever comes from a user).
+	// Nothing has been assigned in this fixture, so no non-survey cell may
+	// report the stored state (REQ-DB-036 — finished comes from a user, or
+	// automatically for surveys, GD-9). R2 holds no values at all.
 	for _, row := range rows {
 		for _, ev := range row.Events {
 			for _, in := range ev.Instruments {
+				if in.Name == "feedback" { // the survey reports finished on its own
+					if in.State != StateFinished {
+						t.Fatalf("survey cell = %q, want the automatic %s", in.State, StateFinished)
+					}
+					continue
+				}
 				if in.State == StateFinished {
 					t.Fatalf("unassigned cell reports finished: %+v", row)
+				}
+				if row.RecordID == "R2" && in.State != StateNoData {
+					t.Fatalf("R2 unexpectedly holds data: %+v", ev)
 				}
 			}
 		}

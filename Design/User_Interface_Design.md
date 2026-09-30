@@ -352,7 +352,7 @@ Data: `GET …/record-status` (data access ≥ `read_only` + record visibility, 
 | some data | amber | at least one field has a value | derived (any field has a value = true) |
 | finished | green | data entry for this instrument is complete | **user-assigned** (§8.5) |
 
-> **Backend (Open Item 1, §11 — resolved).** The three states are in the baseline: `record-status` returns `no_data` / `some_data` / `finished` per (record, event, instrument) (REQ-API-074), where `finished` is read from `instrument_completion` (REQ-DB-036, `Database_Schema_Design.md` §6) and the other two are derived from whether any field holds a value — so grey/amber can never disagree with the stored data, and green only ever comes from the user's own assignment. Setting it is REQ-API-110 (§8.5); surveys take no assignment (GD-9).
+> **Backend (Open Item 1, §11 — resolved).** The three states are in the baseline: `record-status` returns `no_data` / `some_data` / `finished` per (record, event, instrument) (REQ-API-074), where `finished` is read from `instrument_completion` (REQ-DB-036, `Database_Schema_Design.md` §6) and the other two are derived from whether any field holds a value — so grey/amber can never disagree with the stored data, and green otherwise only ever comes from the user's own assignment. Setting it is REQ-API-110 (§8.5); a survey-marked instrument shows **green automatically** — `record-status` reports it as `finished` without any stored assignment (GD-9; master spec "Instrument level completion info").
 
 - **Navigation**: a record row (or a specific instrument cell) links to the data-entry / record view for that (record, event, instrument) — §8.
 - The response MUST NOT contain field values (REQ-API-074); the dashboard reveals only the completion state.
@@ -465,7 +465,7 @@ Presentation of the result: the computed **value**, and — **every evaluation p
 Marking an instrument as a survey is the `is_survey` attribute in §6.2 block C / §7.2 (`PUT …/instruments/{iid}`). Consequences surfaced in the UI:
 
 - Only survey-marked instruments can be filled via a public link (REQ-AUTH-038); the record view (§8.7) then offers the copy/revoke link actions for it.
-- The "finished" completion dropdown (§8.5) is **not** shown on survey instruments (master spec: "not for surveys").
+- On survey instruments the trailing completion field (§8.5) shows the completed state read-only — filled in automatically, no dropdown, no assignment (GD-9; master spec "Instrument level completion info").
 
 ## 8. Data Entry and Record View (`GET /projects/{id}/records/{record}`, REQ-UI-025…028)
 
@@ -496,7 +496,7 @@ The instrument's fields for the selected (record, event) render in position orde
 Both come from the **record history endpoint** `GET …/records/{record}/history?instrument=&event=` (data access ≥ `read_only`; chronological, paginated, `API_Endpoints_Design.md` §4.16):
 
 - **Prefill**: each field's **current value** is the most recent non-null value for that field across the (instrument, event)-filtered history (a `create`/`update` entry's `new`; a trailing `delete` → empty). The form opens with existing values filled into all fields (master spec: "existing values filled into all fields").
-- **Per-field history panel** (REQ-UI-026, REQ-API-081): for each field, a read-only list — **who** (user display name), **when** (UTC), and the **old → new** values; for deletions the deleted value. Values escaped per §3.2. The panel is read-only with respect to the audit trail (REQ-AUD-002) — no control writes to it.
+- **Per-field history button + table** (REQ-UI-026, REQ-API-081; master spec "Record history by field"): next to each field's description and value sits a small **history button**; clicking it opens a table of that field's previous values — **who** entered or changed each one (user account display name), **when** (UTC), and the **old → new** values; for deletions the deleted value. It fetches `GET …/records/{record}/history?instrument=&event=&field=` (the field filter of REQ-API-080) and pages with `limit`/`cursor`. The table is a read-only overlay (Bootstrap modal or popover, §3 per the destructive-action pattern's shell only): no control writes to it — the view stays read-only with respect to the audit trail (REQ-AUD-002). Values escaped per §3.2.
 - The UI pages through the filtered history with `limit`/`cursor` (§3.6) to derive the current values and the per-field lists. *Efficiency note (Open Item, §11): a most-recent-first read order would serve this better; the endpoint is chronological.*
 
 ### 8.4 Client-side validation and branching (advisory, REQ-VAL-002)
@@ -506,7 +506,7 @@ Both come from the **record history endpoint** `GET …/records/{record}/history
 
 ### 8.5 Completion state per instrument (master spec)
 
-At the **end of each data-collection instrument's form** (not for surveys — §7.5) a **dropdown** lets the user set that (record, event, instrument)'s completion state: *no data / some data / finished*. Selecting "finished" is the user's completion assignment that drives the green color-code in §6.3. The dropdown is present when the member has data access ≥ `view_edit` on the arm.
+At the **end of each instrument's form — always displayed as the last field** (master spec "Instrument level completion info") — a **dropdown** lets the user set that (record, event, instrument)'s completion state: *no data / some data / finished*. Selecting "finished" is the user's completion assignment that drives the green color-code in §6.3. The dropdown is present when the member has data access ≥ `view_edit` on the arm. On a **survey-marked instrument** the same trailing field instead shows the completed state **read-only** — filled in automatically (green, §6.3), no control and no assignment (§7.5, GD-9).
 
 The control maps onto one call — `PUT …/records/{record}/events/{event}/instruments/{iid}/completion` (REQ-API-110, `API_Endpoints_Design.md` §4.13): **finished** → `{ "state": "finished" }`; **no data** or **some data** → `{ "state": "unfinished" }`, after which the dashboard re-derives which of those two to show from the stored values (REQ-API-074). The two non-finished choices are therefore one action, not two — the UI never asserts a filled/empty state the data contradicts, and the dropdown's current selection for an unfinished instrument reflects the derived state rather than a stored one.
 

@@ -391,19 +391,31 @@ func TestPutCompletionInAnalysisMode(t *testing.T) {
 	}
 }
 
-// TestPutCompletionSurveyNeverStored guards the read side too: even a row that
-// should never exist cannot make a survey instrument report finished (GD-9).
-func TestPutCompletionSurveyNeverStored(t *testing.T) {
+// TestSurveyAutoFinished pins the master spec's "Instrument level completion
+// info": a survey instrument reports finished on record-status with nothing
+// assigned — its completion is filled in automatically (GD-9). A stray row
+// that should never exist changes nothing either way.
+func TestSurveyAutoFinished(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	admin := e.mustAdmin("admin@example.org")
 	f := newCompletionFixture(t, e)
 
+	// Nothing has been assigned anywhere: the survey already reports finished,
+	// while its non-survey neighbours keep their derived states.
+	if got := stateOf(t, e, admin, f, "v1_arm_1", "feedback"); got != StateFinished {
+		t.Errorf("survey state = %q, want the automatic %s", got, StateFinished)
+	}
+	if got := stateOf(t, e, admin, f, "v1_arm_1", "scores"); got != StateNoData {
+		t.Errorf("non-survey empty instrument state = %q, want the derived %s", got, StateNoData)
+	}
+
 	events, err := e.Store.ListEvents(ctx, f.projectID)
 	if err != nil || len(events) == 0 {
 		t.Fatalf("events: %v", err)
 	}
-	// Insert the row behind the endpoint's back to prove the read guards it.
+	// Insert the row behind the endpoint's back (the PUT rejects surveys):
+	// a stored row can neither add to nor change the automatic finished.
 	tx, err := e.Store.DB.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatalf("BeginTx: %v", err)
@@ -416,7 +428,7 @@ func TestPutCompletionSurveyNeverStored(t *testing.T) {
 		t.Fatalf("Commit: %v", err)
 	}
 
-	if got := stateOf(t, e, admin, f, "v1_arm_1", "feedback"); got != StateNoData {
-		t.Errorf("survey state = %q, want the derived %s", got, StateNoData)
+	if got := stateOf(t, e, admin, f, "v1_arm_1", "feedback"); got != StateFinished {
+		t.Errorf("survey state with stray row = %q, want the automatic %s", got, StateFinished)
 	}
 }

@@ -43,11 +43,11 @@ This document outlines the key views and layout for the clinical study managemen
 - Components:
     - Dynamic rendering of fields (Text, Dropdowns, Radio buttons, Matrix).
     - Real-time validation feedback (client-side JavaScript + HTML5; authoritative validation in the API).
-    - A completion control at the end of each data-collection instrument's form (not on surveys): set or clear this record/event/instrument's "finished" state, which drives the green marker on the status dashboard (REQ-UI-036).
+    - A completion control as the always-last field of each instrument's form: set or clear this record/event/instrument's "finished" state, which drives the green marker on the status dashboard (REQ-UI-036). On survey instruments the same trailing field shows the completed state read-only, filled in automatically (GD-9).
 
 ### 6. Record Status Dashboard
 - Purpose: Overview of data completion for a project.
-- Components: Lists all record_ids in a project with their instruments sorted by event and ordered based on the order of instruments in each arm. Each instrument is rendered with a small graphic in one of **three** states — grey (no field has a value), amber (some value present), green (the user marked the instrument finished at the end of its form) (REQ-UI-019/036, REQ-API-074/110). Grey and amber are derived from the stored values; only green is stored, so the indicator can never claim completion the data contradicts.
+- Components: Lists all record_ids in a project with their instruments sorted by event and ordered based on the order of instruments in each arm. Each instrument is rendered with a small graphic in one of **three** states — grey (no field has a value), amber (some value present), green (the user marked the instrument finished at the end of its form) (REQ-UI-019/036, REQ-API-074/110). Grey and amber are derived from the stored values; only green is stored (or automatic on survey instruments), so the indicator can never claim completion the data contradicts (REQ-API-074, GD-9).
 
 ## UI Framework
 - Framework: Bootstrap
