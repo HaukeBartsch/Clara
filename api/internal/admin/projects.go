@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"csms/api/internal/audit"
+	"csms/api/internal/authz"
 	"csms/api/internal/db"
 )
 
@@ -55,11 +56,13 @@ func newProjectObject(p *db.Project) projectObject {
 	}
 }
 
-// projectDetail is the GET/PUT /{id} shape — full metadata plus structure.
+// projectDetail is the GET/PUT /{id} shape — full metadata plus structure
+// plus the acting user's effective permissions (REQ-API-126).
 type projectDetail struct {
 	projectObject
 	Arms        []projectArmObject        `json:"arms"`
 	Instruments []projectInstrumentObject `json:"instruments"`
+	Permissions projectPermissions        `json:"permissions"`
 }
 
 // projectArmObject is one arm with its events in the canonical order of
@@ -79,14 +82,51 @@ type projectInstrumentObject struct {
 	FieldCount int    `json:"field_count"`
 }
 
+// projectPermissions is the effective-permissions block of §4.5
+// (REQ-API-126): the acting user's levels as authz.Effective computes them for
+// every call, surfaced so the web layer can gate rendering with forbidden
+// controls absent from the DOM (User_Interface_Design.md §3.1, REQ-UI-003).
+// It authorizes nothing — each endpoint re-checks at call time (REQ-AUTH-033).
+type projectPermissions struct {
+	ProjectAdmin bool                    `json:"project_admin"`
+	Arms         []projectArmPermissions `json:"arms"`
+}
+
+// projectArmPermissions is one arm's grant. Every arm of the project gets an
+// entry — an ungranted arm reports no_access/export_none (REQ-AUTH-019) rather
+// than being absent, so a caller never infers a level from a missing row.
+type projectArmPermissions struct {
+	ArmNum          int    `json:"arm_num"`
+	DataAccessLevel string `json:"data_access_level"`
+	ExportLevel     string `json:"export_level"`
+}
+
+// buildProjectPermissions maps the resolved levels onto the project's arms in
+// the arm order of the detail response (REQ-API-126).
+func buildProjectPermissions(arms []db.Arm, lv *authz.Levels) projectPermissions {
+	p := projectPermissions{ProjectAdmin: lv.ProjectAdmin, Arms: make([]projectArmPermissions, 0, len(arms))}
+	for _, a := range arms {
+		data, export := lv.DataFor(a.ArmNum), lv.ExportFor(a.ArmNum)
+		if data == "" { // arm created after the levels were resolved
+			data, export = "no_access", "export_none"
+		}
+		p.Arms = append(p.Arms, projectArmPermissions{
+			ArmNum: a.ArmNum, DataAccessLevel: data, ExportLevel: export,
+		})
+	}
+	return p
+}
+
 // buildProjectDetail assembles the full-metadata response: arms with their
-// canonically ordered events plus instruments with field counts.
-func (h *Handler) buildProjectDetail(ctx context.Context, p *db.Project) (projectDetail, error) {
+// canonically ordered events, instruments with field counts, and the acting
+// user's effective permissions (lv, resolved by the caller — REQ-API-126).
+func (h *Handler) buildProjectDetail(ctx context.Context, p *db.Project, lv *authz.Levels) (projectDetail, error) {
 	d := projectDetail{projectObject: newProjectObject(p)}
 	arms, eventsByArm, err := h.CanonicalEvents(ctx, p.ID)
 	if err != nil {
 		return d, err
 	}
+	d.Permissions = buildProjectPermissions(arms, lv)
 	d.Arms = make([]projectArmObject, 0, len(arms))
 	for _, a := range arms {
 		events := eventsByArm[a.ArmNum]
@@ -321,10 +361,11 @@ func toNullStr(s *string) sql.NullString {
 
 // --- GET /api/v1/projects/{id} (REQ-API-051) ---
 
-// getProject returns the full metadata plus structure. Requires data access
-// ≥ read_only (Levels.AnyData — one arm suffices, §4.5) and project
-// visibility; is_admin is covered by REQ-AUTH-023. A non-member gets the
-// uniform 403 that never discloses existence (REQ-API-007).
+// getProject returns the full metadata, the structure, and the acting user's
+// effective permissions (REQ-API-126). It requires data access ≥ read_only
+// (Levels.AnyData — one arm suffices, §4.5) and project visibility; is_admin
+// is covered by REQ-AUTH-023. A non-member gets the uniform 403 that never
+// discloses existence (REQ-API-007).
 func (h *Handler) getProject(w http.ResponseWriter, r *http.Request) {
 	u, ok := actor(r)
 	if !ok {
@@ -358,7 +399,7 @@ func (h *Handler) getProject(w http.ResponseWriter, r *http.Request) {
 		errForbidden(w)
 		return
 	}
-	detail, err := h.buildProjectDetail(ctx, p)
+	detail, err := h.buildProjectDetail(ctx, p, lv)
 	if err != nil {
 		errInternal(w)
 		return
@@ -503,7 +544,7 @@ func (h *Handler) updateProject(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	detail, err := h.buildProjectDetail(ctx, p)
+	detail, err := h.buildProjectDetail(ctx, p, lv)
 	if err != nil {
 		errInternal(w)
 		return
