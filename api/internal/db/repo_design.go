@@ -1113,7 +1113,7 @@ const dagMembershipColumns = `id, assignment_id, group_id, is_active`
 
 func scanDagMembership(row interface{ Scan(dest ...any) error }) (DagMembership, error) {
 	var (
-		dm      DagMembership
+		dm       DagMembership
 		isActive int
 	)
 	err := row.Scan(&dm.ID, &dm.AssignmentID, &dm.GroupID, &isActive)

@@ -206,8 +206,8 @@ func autoDisable(ctx context.Context, store *db.Store, aw *audit.Writer, cfg *co
 		Source:    audit.SourceSystem,
 		UserID:    user.ID,
 		Details: map[string]any{
-			"email":                user.Email,
-			"last_login_at":        last,
+			"email":                 user.Email,
+			"last_login_at":         last,
 			"inactivity_limit_days": cfg.AuthInactivityLimitDays,
 		},
 	}); err != nil {
