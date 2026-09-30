@@ -9,6 +9,7 @@ package admin
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -330,17 +331,29 @@ func (h *Handler) deleteStagedArm(
 	if armID >= 0 {
 		return false, nil
 	}
+	var matched *stagedDesign
 	return h.stagedObjectWrite(w, r, u,
-		func(d *stagedDesign) bool { _, ok := d.armByID(armID); return ok },
+		func(d *stagedDesign) bool {
+			if _, ok := d.armByID(armID); !ok {
+				return false
+			}
+			matched = d
+			return true
+		},
 		func(d *stagedDesign) *designError {
 			a, _ := d.armByID(armID)
+			if len(d.Arms) <= 1 {
+				// The last remaining arm returns as "arm_1" (REQ-API-128).
+				a.Name = sql.NullString{String: "arm_1", Valid: true}
+				return nil
+			}
 			if len(a.Events) > 0 {
 				return conflictf("arm still has events")
 			}
 			d.deleteArm(armID)
 			return nil
 		},
-		func() { w.WriteHeader(http.StatusNoContent) })
+		func() { finishArmDeleteOrRename(w, matched, armID) })
 }
 
 // stagedObjectWrite serves the two structure routes whose path carries only an

@@ -287,8 +287,9 @@ func (h *Handler) createProject(w http.ResponseWriter, r *http.Request) {
 	}
 	p.ID = id
 	// Creation is single-arm (REQ-DB-011): arm 1 only, unnamed. The arm opens
-	// with its first event "baseline" (timepoint day 0) — a project always
-	// holds at least one event (REQ-API-050).
+	// with its first event "baseline" (timepoint day 0) and the project opens
+	// with one instrument "instrument" — a project always holds at least one
+	// arm, event and instrument (REQ-API-050).
 	armID, err := h.Store.AddArm(ctx, &db.Arm{ProjectID: id, ArmNum: 1})
 	if err != nil {
 		errInternal(w)
@@ -298,6 +299,10 @@ func (h *Handler) createProject(w http.ResponseWriter, r *http.Request) {
 		ProjectID: id, ArmID: armID, EventName: "baseline", UniqueEventName: "baseline_arm_1",
 		Period: sql.NullInt64{Int64: 0, Valid: true},
 	}); err != nil {
+		errInternal(w)
+		return
+	}
+	if _, err := h.Store.AddInstrument(ctx, &db.Instrument{ProjectID: id, Name: "instrument"}); err != nil {
 		errInternal(w)
 		return
 	}

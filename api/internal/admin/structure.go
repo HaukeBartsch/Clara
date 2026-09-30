@@ -24,6 +24,7 @@ import (
 func (h *Handler) registerStructure(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/projects/{id}/arms", h.listArms)
 	mux.HandleFunc("POST /api/v1/projects/{id}/arms", h.createArm)
+	mux.HandleFunc("PUT /api/v1/projects/{id}/arms/order", h.orderArms)
 	mux.HandleFunc("DELETE /api/v1/arms/{id}", h.deleteArm)
 
 	mux.HandleFunc("GET /api/v1/projects/{id}/events", h.listEvents)
@@ -36,6 +37,7 @@ func (h *Handler) registerStructure(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/projects/{id}/instruments", h.createInstrument)
 	mux.HandleFunc("PUT /api/v1/projects/{id}/instruments/order", h.orderInstruments)
 	mux.HandleFunc("PUT /api/v1/projects/{id}/instruments/{iid}", h.updateInstrument)
+	mux.HandleFunc("DELETE /api/v1/projects/{id}/instruments/{iid}", h.deleteInstrumentHTTP)
 
 	mux.HandleFunc("GET /api/v1/validationTypes", h.validationTypes)
 
@@ -441,7 +443,10 @@ func (h *Handler) createArm(w http.ResponseWriter, r *http.Request) {
 }
 
 // deleteArm removes an empty arm (path verbatim per ASM-API-1). An arm that
-// still has events or data → 409 (DEV-API-6). project_admin.
+// still has events or data → 409 (DEV-API-6). The last remaining arm of a
+// project cannot go: the call renames it to "arm_1" instead and answers with
+// the renamed object (200, REQ-API-128) — its arm_num, id and events stay as
+// they are. project_admin.
 func (h *Handler) deleteArm(w http.ResponseWriter, r *http.Request) {
 	u, ok := actor(r)
 	if !ok {
@@ -484,6 +489,11 @@ func (h *Handler) deleteArm(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return conflictf("arm %d is not part of the staged design", armID)
 		}
+		if len(d.Arms) <= 1 {
+			// The last remaining arm returns as "arm_1" (REQ-API-128).
+			a.Name = sql.NullString{String: "arm_1", Valid: true}
+			return nil
+		}
 		if len(a.Events) > 0 {
 			return conflictf("arm still has events")
 		}
@@ -491,7 +501,8 @@ func (h *Handler) deleteArm(w http.ResponseWriter, r *http.Request) {
 		return nil
 	}
 	// Nothing to acknowledge here: an arm that holds events or recorded data
-	// cannot be deleted at all (DEV-API-6), so the change is never breaking.
+	// cannot be deleted at all (DEV-API-6), and the last-arm rename deletes
+	// nothing, so the change is never breaking.
 	target, staged, _, ok := h.structureWrite(w, r, arm.ProjectID, false, apply)
 	if !ok {
 		return
@@ -500,7 +511,16 @@ func (h *Handler) deleteArm(w http.ResponseWriter, r *http.Request) {
 		if !h.applyStagedChange(w, r, arm.ProjectID, staged, apply) {
 			return
 		}
-		w.WriteHeader(http.StatusNoContent)
+		finishArmDeleteOrRename(w, staged, armID)
+		return
+	}
+	arms, err := h.Store.ListArms(ctx, arm.ProjectID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	if len(arms) <= 1 {
+		h.renameLastArm(w, r, u, arm)
 		return
 	}
 	events, err := h.Store.ListEventsByArm(ctx, arm.ProjectID, arm.ID)
@@ -537,6 +557,63 @@ func (h *Handler) deleteArm(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		errInternal(w)
 		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// renameLastArm answers the deletion of a project's last remaining arm: the
+// arm keeps its id, arm_num and events and only takes the name "arm_1"
+// (REQ-API-128). Changing arm_num would rewrite every unique_event_name and
+// the stored values under them — the vision's rename is a label, not a
+// renumbering. 200 + object; audit `arm_updated` with last_arm_reset.
+func (h *Handler) renameLastArm(w http.ResponseWriter, r *http.Request, u *db.User, arm *db.Arm) {
+	ctx := r.Context()
+	if arm.Name.String != "arm_1" {
+		next := *arm
+		next.Name = sql.NullString{String: "arm_1", Valid: true}
+		if err := h.Store.UpdateArm(ctx, &next); err != nil {
+			errInternal(w)
+			return
+		}
+		if err := h.Audit.Insert(ctx, audit.Entry{
+			EventType: audit.ArmUpdated, Source: audit.SourceUI,
+			UserID: u.ID, Email: u.Email, ProjectID: arm.ProjectID,
+			Details: map[string]any{
+				"arm_num": arm.ArmNum, "last_arm_reset": true,
+				"changes": map[string]any{"name": map[string]any{
+					"old": arm.Name.String, "new": "arm_1",
+				}},
+			},
+		}); err != nil {
+			errInternal(w)
+			return
+		}
+	}
+	events, err := h.Store.ListEventsByArm(ctx, arm.ProjectID, arm.ID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	objs := make([]armEventObject, 0, len(events))
+	for _, e := range events {
+		objs = append(objs, armEventObject{
+			ID: e.ID, EventName: e.EventName, UniqueEventName: e.UniqueEventName,
+			Period: Int64Ptr(e.Period), SafeRegionStart: Int64Ptr(e.SafeRegionStart),
+			SafeRegionEnd: Int64Ptr(e.SafeRegionEnd), Position: e.Position,
+		})
+	}
+	writeJSON(w, http.StatusOK, armObject{ID: arm.ID, ArmNum: arm.ArmNum, Name: "arm_1", Events: objs})
+}
+
+// finishArmDeleteOrRename answers a staged DELETE /arms/{id}: the arm is gone
+// (204), or it was the last one of the design and came back renamed to
+// "arm_1" (200 + object).
+func finishArmDeleteOrRename(w http.ResponseWriter, d *stagedDesign, armID int64) {
+	for _, o := range d.armObjects() {
+		if o.ID == armID {
+			writeJSON(w, http.StatusOK, o)
+			return
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -942,10 +1019,13 @@ func (h *Handler) updateEvent(w http.ResponseWriter, r *http.Request) {
 }
 
 // deleteEventHTTP removes one event (§4.9). A project always keeps at least
-// one event — deleting the last remaining event is 409 (its rename and
-// reorder stay available). The event's instrument–event mapping pairs go with
-// it; an event that holds values makes them unreachable, which analysis mode
-// acknowledges (§4.21). project_admin; 204. Audit `event_deleted`.
+// one event: deleting the last remaining one instead returns it to the plain
+// baseline state — renamed to "baseline" (its stored values follow the new
+// unique name, ASM-API-4), offset day reset to 0 and any safe region cleared —
+// and answers with the renamed object (200, REQ-API-126). Otherwise the
+// event's instrument–event mapping pairs go with it; an event that holds
+// values makes them unreachable, which analysis mode acknowledges (§4.21).
+// project_admin; 204 on delete. Audit `event_updated` (reset) / `event_deleted`.
 func (h *Handler) deleteEventHTTP(w http.ResponseWriter, r *http.Request) {
 	u, ok := actor(r)
 	if !ok {
@@ -969,11 +1049,15 @@ func (h *Handler) deleteEventHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	applyDelete := func(d *stagedDesign) *designError {
-		if _, _, ok := d.event(eventID); !ok {
+		se, sa, ok := d.event(eventID)
+		if !ok {
 			return validationf("event %d is not part of the staged design", eventID)
 		}
 		if d.totalEvents() <= 1 {
-			return conflictf("a project must keep at least one event")
+			// The last remaining event returns to the plain baseline state
+			// instead of going (REQ-API-126).
+			resetStagedEventToBaseline(se, sa.ArmNum)
+			return nil
 		}
 		d.deleteEvent(eventID)
 		return nil
@@ -981,9 +1065,16 @@ func (h *Handler) deleteEventHTTP(w http.ResponseWriter, r *http.Request) {
 	if ev == nil {
 		// An event created while a staging set is open has no live row; the
 		// set holding it answers for it (same route as DELETE /arms/{id}).
+		var matched *stagedDesign
 		handled, err := h.stagedObjectWrite(w, r, u,
-			func(d *stagedDesign) bool { _, _, ok := d.event(eventID); return ok },
-			applyDelete, func() { w.WriteHeader(http.StatusNoContent) })
+			func(d *stagedDesign) bool {
+				if _, _, ok := d.event(eventID); !ok {
+					return false
+				}
+				matched = d
+				return true
+			},
+			applyDelete, func() { finishEventDeleteOrReset(w, matched, eventID) })
 		if err != nil {
 			errInternal(w)
 			return
@@ -1010,7 +1101,7 @@ func (h *Handler) deleteEventHTTP(w http.ResponseWriter, r *http.Request) {
 		if !h.applyStagedChange(w, r, ev.ProjectID, staged, applyDelete) {
 			return
 		}
-		w.WriteHeader(http.StatusNoContent)
+		finishEventDeleteOrReset(w, staged, eventID)
 		return
 	}
 	events, err := h.Store.ListEvents(ctx, ev.ProjectID)
@@ -1019,7 +1110,7 @@ func (h *Handler) deleteEventHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(events) <= 1 {
-		errConflict(w, "a project must keep at least one event")
+		h.resetLastEventToBaseline(w, r, u, ev, breakingAcknowledged)
 		return
 	}
 	tx, err := h.Store.DB.BeginTx(ctx, nil)
@@ -1058,6 +1149,120 @@ func (h *Handler) deleteEventHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// resetStagedEventToBaseline returns the last remaining event of a design
+// snapshot to the plain baseline state: label "baseline", offset day 0, no
+// safe region (REQ-API-126). The mapping pairs are untouched — the event
+// stays, only its name and timepoint change.
+func resetStagedEventToBaseline(se *stagedEvent, armNum int) {
+	se.EventName = "baseline"
+	se.UniqueEventName = uniqueEventName("baseline", armNum)
+	se.Period = sql.NullInt64{Int64: 0, Valid: true}
+	se.SafeRegionStart = sql.NullInt64{}
+	se.SafeRegionEnd = sql.NullInt64{}
+}
+
+// finishEventDeleteOrReset answers a staged DELETE /events/{id}: the event is
+// gone (204), or it was the last one of the design and came back as the plain
+// baseline event (200 + object).
+func finishEventDeleteOrReset(w http.ResponseWriter, d *stagedDesign, eventID int64) {
+	if se, sa, ok := d.event(eventID); ok {
+		writeJSON(w, http.StatusOK, stagedEventObject(*se, sa.ArmNum))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// resetLastEventToBaseline answers the deletion of a project's last remaining
+// event: it is renamed to "baseline" (stored values and dependency rows
+// follow the new unique name in the same transaction, ASM-API-4), its offset
+// day goes back to 0 and its safe region is cleared — the state a freshly
+// created project's baseline carries. 200 + object; audit `event_updated`
+// with last_event_reset (REQ-API-126).
+func (h *Handler) resetLastEventToBaseline(
+	w http.ResponseWriter, r *http.Request, u *db.User, ev *db.Event, breakingAcknowledged bool,
+) {
+	ctx := r.Context()
+	arm, err := h.Store.GetArm(ctx, ev.ArmID)
+	if err != nil || arm == nil {
+		errInternal(w)
+		return
+	}
+	next := *ev
+	next.EventName = "baseline"
+	next.UniqueEventName = uniqueEventName("baseline", arm.ArmNum)
+	next.Period = sql.NullInt64{Int64: 0, Valid: true}
+	next.SafeRegionStart = sql.NullInt64{}
+	next.SafeRegionEnd = sql.NullInt64{}
+
+	changes := map[string]any{}
+	if ev.EventName != "baseline" {
+		changes["label"] = map[string]any{"old": ev.EventName, "new": "baseline"}
+	}
+	if ev.Period.Int64 != 0 || !ev.Period.Valid {
+		changes["period_days"] = map[string]any{
+			"old": nullableIntJSON(ev.Period), "new": int64(0),
+		}
+	}
+	for _, attr := range []struct {
+		key string
+		old sql.NullInt64
+	}{{"safe_region_start", ev.SafeRegionStart}, {"safe_region_end", ev.SafeRegionEnd}} {
+		if attr.old.Valid {
+			changes[attr.key] = map[string]any{"old": attr.old.Int64, "new": nil}
+		}
+	}
+	if len(changes) > 0 {
+		tx, err := h.Store.DB.BeginTx(ctx, nil)
+		if err != nil {
+			errInternal(w)
+			return
+		}
+		defer tx.Rollback()
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE events SET event_name = ?, unique_event_name = ?,
+				period = ?, safe_region_start = ?, safe_region_end = ? WHERE id = ?`,
+			next.EventName, next.UniqueEventName, nullInt64Param(next.Period),
+			nullInt64Param(next.SafeRegionStart), nullInt64Param(next.SafeRegionEnd), ev.ID); err != nil {
+			errInternal(w)
+			return
+		}
+		if next.UniqueEventName != ev.UniqueEventName {
+			// Stored values and dependency rows follow the new unique name in
+			// the same transaction (ASM-API-4).
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE data SET unique_event_name = ? WHERE project_id = ? AND unique_event_name = ?`,
+				next.UniqueEventName, ev.ProjectID, ev.UniqueEventName); err != nil {
+				errInternal(w)
+				return
+			}
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE calculated_dependencies SET ref_unique_event_name = ?
+				 WHERE project_id = ? AND ref_unique_event_name = ?`,
+				next.UniqueEventName, ev.ProjectID, ev.UniqueEventName); err != nil {
+				errInternal(w)
+				return
+			}
+		}
+		if err := h.Audit.InsertTx(ctx, tx, audit.Entry{
+			EventType: audit.EventUpdated, Source: audit.SourceUI,
+			UserID: u.ID, Email: u.Email, ProjectID: ev.ProjectID,
+			Details: withBreakingAcknowledgement(map[string]any{
+				"event_id": ev.ID, "last_event_reset": true, "changes": changes,
+			}, breakingAcknowledged),
+		}); err != nil {
+			errInternal(w)
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			errInternal(w)
+			return
+		}
+	}
+	out := NewEventObject(next)
+	out.ArmNum = arm.ArmNum
+	writeJSON(w, http.StatusOK, out)
 }
 
 // nullInt64Param renders a sql.NullInt64 as an SQL parameter.
@@ -1674,6 +1879,346 @@ func (h *Handler) updateInstrument(w http.ResponseWriter, r *http.Request) {
 		ID: next.ID, Name: next.Name, Position: next.Position, FieldCount: counts[next.ID],
 		IsSurvey: next.IsSurvey, BranchingLogic: next.BranchingLogic.String,
 	})
+}
+
+// deleteInstrumentHTTP removes one instrument (§4.10). A project always keeps
+// at least one instrument: deleting the last one only deletes its fields (and
+// with them the values stored in those fields) and renames the instrument
+// shell back to "instrument" — its id, position, survey flag and branching
+// logic stay (200 + object, REQ-API-127). Deleting any other instrument takes
+// its fields, their stored values and its mapping pairs with it (204), which
+// analysis mode acknowledges when values go (§4.21). An expression that
+// survives the change may not name a doomed field (the single-field delete
+// enforces the same rule); references inside the deleted design go with it.
+// project_admin. Audit `instrument_deleted` / `instrument_updated`.
+func (h *Handler) deleteInstrumentHTTP(w http.ResponseWriter, r *http.Request) {
+	u, lv, projectID, ok := h.structureAccess(w, r)
+	if !ok || !h.requireProjectAdmin(w, r, lv) {
+		return
+	}
+	instID, ok := pathObjectID(r, "iid")
+	if !ok {
+		errBadRequest(w, "invalid instrument id")
+		return
+	}
+	ctx := r.Context()
+	var supplied map[string]json.RawMessage
+	if err := decodeBody(r, &supplied); err != nil {
+		errBadRequest(w, "malformed JSON body")
+		return
+	}
+
+	// While a set is open the instrument is the snapshot's — one created
+	// during staging has no live row (REQ-API-107).
+	staged, err := h.stagedRead(ctx, projectID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	if staged != nil {
+		if _, found := h.stagedInstrumentOr404(w, staged, instID); !found {
+			return
+		}
+	}
+
+	apply := func(d *stagedDesign) *designError {
+		si, found := d.instrument(instID)
+		if !found {
+			return validationf("instrument %d is not part of the staged design", instID)
+		}
+		doomed := make([]string, 0, len(si.Fields))
+		for _, sf := range si.Fields {
+			doomed = append(doomed, sf.FieldName)
+		}
+		if len(d.Instruments) <= 1 {
+			// Last instrument: only its fields go; the shell returns as
+			// "instrument" (REQ-API-127).
+			ids := make([]int64, len(si.Fields))
+			for i, sf := range si.Fields {
+				ids[i] = sf.ID
+			}
+			for _, id := range ids {
+				d.deleteField(id)
+			}
+			d.renameInstrument(instID, "instrument")
+		} else {
+			d.deleteInstrument(instID)
+		}
+		for _, name := range doomed {
+			referenced, err := designReferencesField(d, name)
+			if err != nil {
+				return &designError{status: http.StatusInternalServerError, msg: "internal"}
+			}
+			if referenced {
+				return conflictf("field %s is referenced by an active expression; update the expression first", name)
+			}
+		}
+		return nil
+	}
+	target, set, breakingAcknowledged, ok := h.structureWrite(w, r, projectID, acknowledgeFrom(supplied), apply)
+	if !ok {
+		return
+	}
+	if target == writeStaged {
+		if !h.applyStagedChange(w, r, projectID, set, apply) {
+			return
+		}
+		if obj, found := set.instrumentObjectFor(instID); found {
+			writeJSON(w, http.StatusOK, obj) // the last instrument came back as "instrument"
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	inst, err := h.Store.GetInstrument(ctx, instID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	if inst == nil || inst.ProjectID != projectID {
+		errNotFound(w)
+		return
+	}
+	instruments, err := h.Store.ListInstruments(ctx, projectID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	last := len(instruments) <= 1
+	fields, err := h.Store.ListFieldsByInstrument(ctx, projectID, instID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	for _, f := range fields {
+		referenced, err := h.fieldReferencedOutsideInstrument(ctx, projectID, instID, f.FieldName, last)
+		if err != nil {
+			errInternal(w)
+			return
+		}
+		if referenced {
+			errConflict(w, "field "+f.FieldName+" is referenced by an active expression; update the expression first")
+			return
+		}
+	}
+	tx, err := h.Store.DB.BeginTx(ctx, nil)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	defer tx.Rollback()
+	var valuesRemoved int64
+	for _, f := range fields {
+		var removed int64
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM data WHERE project_id = ? AND field_name = ?`,
+			projectID, f.FieldName).Scan(&removed); err != nil {
+			errInternal(w)
+			return
+		}
+		valuesRemoved += removed
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM data WHERE project_id = ? AND field_name = ?`,
+			projectID, f.FieldName); err != nil {
+			errInternal(w)
+			return
+		}
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM calculated_dependencies WHERE project_id = ? AND calculated_field_id = ?`,
+			projectID, f.ID); err != nil {
+			errInternal(w)
+			return
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM fields WHERE id = ?`, f.ID); err != nil {
+			errInternal(w)
+			return
+		}
+	}
+	details := map[string]any{
+		"instrument_id": instID, "name": inst.Name,
+		"fields_removed": len(fields), "values_removed": valuesRemoved,
+	}
+	if last {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE instruments SET name = ? WHERE id = ?`, "instrument", instID); err != nil {
+			errInternal(w)
+			return
+		}
+		details["last_instrument_reset"] = true
+		details["changes"] = map[string]any{"name": map[string]any{
+			"old": inst.Name, "new": "instrument",
+		}}
+		if err := h.Audit.InsertTx(ctx, tx, audit.Entry{
+			EventType: audit.InstrumentUpdated, Source: audit.SourceUI,
+			UserID: u.ID, Email: u.Email, ProjectID: projectID,
+			Details: withBreakingAcknowledgement(details, breakingAcknowledged),
+		}); err != nil {
+			errInternal(w)
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			errInternal(w)
+			return
+		}
+		writeJSON(w, http.StatusOK, instrumentObject{
+			ID: inst.ID, Name: "instrument", Position: inst.Position, FieldCount: 0,
+			IsSurvey: inst.IsSurvey, BranchingLogic: inst.BranchingLogic.String,
+		})
+		return
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM instrument_events WHERE instrument_id = ?`, instID); err != nil {
+		errInternal(w)
+		return
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM instruments WHERE id = ?`, instID); err != nil {
+		errInternal(w)
+		return
+	}
+	if err := h.Audit.InsertTx(ctx, tx, audit.Entry{
+		EventType: audit.InstrumentDeleted, Source: audit.SourceUI,
+		UserID: u.ID, Email: u.Email, ProjectID: projectID,
+		Details: withBreakingAcknowledgement(details, breakingAcknowledged),
+	}); err != nil {
+		errInternal(w)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		errInternal(w)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// fieldReferencedOutsideInstrument reports whether an expression that survives
+// the deletion of instID names fieldName. Fields of instID never survive; the
+// instrument's own branching logic survives only in the last-instrument reset
+// (keepBranching), where it is the one expression a doomed field must not be
+// named by. This mirrors what commit checks against the post-change design.
+func (h *Handler) fieldReferencedOutsideInstrument(
+	ctx context.Context, projectID, instID int64, fieldName string, keepBranching bool,
+) (bool, error) {
+	instruments, err := h.Store.ListInstruments(ctx, projectID)
+	if err != nil {
+		return false, err
+	}
+	for _, i := range instruments {
+		if i.ID == instID && !keepBranching {
+			continue
+		}
+		if i.BranchingLogic.Valid && exprNamesField(i.BranchingLogic.String, fieldName) {
+			return true, nil
+		}
+	}
+	fields, err := h.Store.ListFields(ctx, projectID)
+	if err != nil {
+		return false, err
+	}
+	for _, f := range fields {
+		if f.InstrumentID == instID {
+			continue
+		}
+		if f.Calculation.Valid && exprNamesField(f.Calculation.String, fieldName) {
+			return true, nil
+		}
+		if f.BranchingLogic.Valid && exprNamesField(f.BranchingLogic.String, fieldName) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// orderArms writes the full project arm order (REQ-API-129). Reordering moves
+// positions only — every arm keeps its id and arm_num, so unique event names
+// and stored values are untouched. project_admin.
+func (h *Handler) orderArms(w http.ResponseWriter, r *http.Request) {
+	u, lv, projectID, ok := h.structureAccess(w, r)
+	if !ok || !h.requireProjectAdmin(w, r, lv) {
+		return
+	}
+	ctx := r.Context()
+	var supplied map[string]json.RawMessage
+	if err := decodeBody(r, &supplied); err != nil {
+		errBadRequest(w, "malformed JSON body")
+		return
+	}
+	if !RejectUnknownAttrs(w, supplied, "order", "acknowledge_breaking") {
+		return
+	}
+	var body struct {
+		Order []int64 `json:"order"`
+	}
+	raw, _ := json.Marshal(supplied)
+	if err := json.Unmarshal(raw, &body); err != nil {
+		errBadRequest(w, "malformed JSON body")
+		return
+	}
+	apply := func(d *stagedDesign) *designError {
+		if !d.orderArms(body.Order) {
+			return validationf("order must list every arm of the project exactly once")
+		}
+		return nil
+	}
+	target, staged, breakingAcknowledged, ok := h.structureWrite(w, r, projectID, acknowledgeFrom(supplied), apply)
+	if !ok {
+		return
+	}
+	if target == writeStaged {
+		if !h.applyStagedChange(w, r, projectID, staged, apply) {
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		return
+	}
+	arms, err := h.Store.ListArms(ctx, projectID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	member := map[int64]db.Arm{}
+	for _, a := range arms {
+		member[a.ID] = a
+	}
+	seen := map[int64]bool{}
+	for _, id := range body.Order {
+		if _, ok := member[id]; !ok || seen[id] {
+			errBadRequest(w, "order must list every arm of the project exactly once")
+			return
+		}
+		seen[id] = true
+	}
+	if len(body.Order) != len(arms) {
+		errBadRequest(w, "order must list every arm of the project exactly once")
+		return
+	}
+	labels := make([]string, 0, len(body.Order))
+	tx, err := h.Store.DB.BeginTx(ctx, nil)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	defer tx.Rollback()
+	for i, id := range body.Order {
+		if _, err := tx.ExecContext(ctx, `UPDATE arms SET position = ? WHERE id = ?`, i+1, id); err != nil {
+			errInternal(w)
+			return
+		}
+		labels = append(labels, armLabel(member[id].ArmNum))
+	}
+	if err := h.Audit.InsertTx(ctx, tx, audit.Entry{
+		EventType: audit.ArmReordered, Source: audit.SourceUI,
+		UserID: u.ID, Email: u.Email, ProjectID: projectID,
+		Details: withBreakingAcknowledgement(map[string]any{"order": labels}, breakingAcknowledged),
+	}); err != nil {
+		errInternal(w)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		errInternal(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func boolToIntJSON(b bool) int {

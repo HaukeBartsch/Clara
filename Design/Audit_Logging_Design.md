@@ -73,13 +73,16 @@ Rules: `old` is `null` for `create`; for `delete`, `new` is `null` and the `old`
 | `project_created` | `POST /api/v1/projects` (REQ-API-050) | `{"project_name":"…"}` |
 | `project_updated` | `PUT /api/v1/projects/{id}` (REQ-API-052) | `{"changes":{"pi_name":{"old":"…","new":"…"},"…":"…"}}` |
 | `arm_created` | REQ-API-059 | `{"arm_num":2,"name":"…"}` |
+| `arm_updated` | REQ-API-128 | `{"arm_num":1,"last_arm_reset":true,"changes":{"name":{"old":"…","new":"arm_1"}}}` (deleting the last remaining arm renames it) |
 | `arm_deleted` | REQ-API-060 | `{"arm_num":2,"name":"…"}` |
+| `arm_reordered` | `PUT …/arms/order` (REQ-API-129) | `{"order":["arm_2","arm_1"]}` |
 | `event_created` | REQ-API-062 | `{"event_name":"…","unique_event_name":"…","arm_num":1}` |
-| `event_updated` | REQ-API-063 | `{"event_id":7,"changes":{"label":{"old":"…","new":"…"},"period_days":{"old":0,"new":14}}}` |
-| `event_deleted` | REQ-API-125 | `{"event_id":9,"unique_event_name":"follow_up_arm_1"}` |
+| `event_updated` | REQ-API-063 | `{"event_id":7,"changes":{"label":{"old":"…","new":"…"},"period_days":{"old":0,"new":14}}}`; with `"last_event_reset":true` when deleting the last remaining event reset it to `baseline` (REQ-API-126) |
+| `event_deleted` | REQ-API-126 | `{"event_id":9,"unique_event_name":"follow_up_arm_1"}` |
 | `event_reordered` | `PUT …/events/order` (REQ-API-103) | `{"arm_num":1,"order":[9,4,7]}` |
 | `instrument_created` | REQ-API-065 | `{"name":"intake","position":1}` |
-| `instrument_updated` | REQ-API-101 | `{"name":"…","changes":{"is_survey":{"old":0,"new":1}}}` |
+| `instrument_updated` | REQ-API-101 | `{"name":"…","changes":{"is_survey":{"old":0,"new":1}}}`; with `"last_instrument_reset":true,"fields_removed":N,"values_removed":M` when deleting the last instrument deleted only its fields and renamed it to `instrument` (REQ-API-127) |
+| `instrument_deleted` | REQ-API-127 | `{"instrument_id":5,"name":"…","fields_removed":3,"values_removed":42}` |
 | `instrument_reordered` | REQ-API-066 | `{"order":["intake","follow_up"]}` |
 | `field_created` | REQ-API-068 | `{"instrument":"intake","field":"age","type":"text"}` |
 | `field_updated` | REQ-API-069 | `{"instrument":"…","field":"…","changes":{"validation_max":{"old":null,"new":"120"}}}` |

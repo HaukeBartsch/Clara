@@ -776,8 +776,10 @@ func (d *stagedDesign) renameInstrument(instID int64, to string) {
 	}
 }
 
-// deleteInstrument drops an instrument and its fields (the structure endpoints
-// have no instrument delete today; commit classification still covers it).
+// deleteInstrument drops an instrument and its fields together with the
+// mapping pairs that named it. The last instrument of a project is never
+// dropped through here — its endpoint deletes only the fields and renames the
+// shell to "instrument" (REQ-API-127).
 func (d *stagedDesign) deleteInstrument(instID int64) {
 	for k := range d.Instruments {
 		if d.Instruments[k].ID != instID {
@@ -902,7 +904,8 @@ func (d *stagedDesign) putArm(a db.Arm) *stagedArm {
 }
 
 // deleteArm removes an arm and its events. Callers reject a non-empty arm
-// first (DEV-API-6).
+// first (DEV-API-6), and never the last remaining one — that endpoint renames
+// it to "arm_1" instead (REQ-API-128).
 func (d *stagedDesign) deleteArm(armID int64) {
 	for k := range d.Arms {
 		if d.Arms[k].ID != armID {
@@ -913,6 +916,31 @@ func (d *stagedDesign) deleteArm(armID int64) {
 		delete(d.Mapping, armNum)
 		return
 	}
+}
+
+// orderArms writes the full project arm order; a partial or foreign list is
+// refused as the live endpoint refuses it. Reordering only moves positions —
+// every arm keeps its id and arm_num (REQ-API-129).
+func (d *stagedDesign) orderArms(orderedIDs []int64) bool {
+	if len(orderedIDs) != len(d.Arms) {
+		return false
+	}
+	byID := map[int64]stagedArm{}
+	for _, a := range d.Arms {
+		byID[a.ID] = a
+	}
+	next := make([]stagedArm, 0, len(orderedIDs))
+	for i, id := range orderedIDs {
+		a, ok := byID[id]
+		if !ok {
+			return false
+		}
+		a.Position = i + 1
+		delete(byID, id)
+		next = append(next, a)
+	}
+	d.Arms = next
+	return true
 }
 
 // putEvent inserts or replaces one event of an arm.

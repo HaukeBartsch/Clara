@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"testing"
 
@@ -84,7 +85,8 @@ func TestDeleteArm(t *testing.T) {
 	projectID := e.mustProject("Arm Study")
 	e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/arms", map[string]any{}, admin)
 
-	// An arm with an event cannot be deleted (DEV-API-6).
+	// An arm with an event cannot be deleted (DEV-API-6) — as long as it is
+	// not the last one, which TestLastArmRename covers.
 	rec := e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/events", map[string]any{
 		"arm_num": 1, "event_name": "visit",
 	}, admin)
@@ -94,15 +96,15 @@ func TestDeleteArm(t *testing.T) {
 	if err != nil || armRow == nil {
 		t.Fatalf("load arm: %v", err)
 	}
+	rec = e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/arms", map[string]any{"name": "B"}, admin)
+	var arm2 armObject
+	e.decode(rec, &arm2)
 	rec = e.do("DELETE", "/api/v1/arms/"+itoa(armRow.ID), nil, admin)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("delete busy arm: %d, want 409", rec.Code)
 	}
 
 	// The second (empty) arm deletes cleanly with an audit entry.
-	rec = e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/arms", map[string]any{"name": "B"}, admin)
-	var arm2 armObject
-	e.decode(rec, &arm2)
 	rec = e.do("DELETE", "/api/v1/arms/"+itoa(arm2.ID), nil, admin)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("delete empty arm: %d %s", rec.Code, rec.Body.String())
@@ -192,8 +194,9 @@ func TestBranchingBareFieldReference(t *testing.T) {
 }
 
 // TestDeleteEvent: DELETE /api/v1/events/{id} removes one event with its
-// mapping pairs (204 + audit); the last remaining event of the project cannot
-// be deleted (409 — rename and reorder stay available, REQ-API-125).
+// mapping pairs (204 + audit). The last remaining event of the project cannot
+// go — the call instead resets it to the plain baseline state (renamed,
+// offset day 0, safe region cleared) and answers with the object (REQ-API-126).
 func TestDeleteEvent(t *testing.T) {
 	e := newEnv(t)
 	admin := e.mustAdmin("admin@example.org")
@@ -210,10 +213,19 @@ func TestDeleteEvent(t *testing.T) {
 		t.Fatalf("AddEvent: %v", err)
 	}
 
-	// The last remaining event cannot be deleted.
+	// The last remaining event resets to baseline instead of going (200 +
+	// object). It already is the plain baseline, so nothing changes but the
+	// answer shape.
 	rec := e.do("DELETE", "/api/v1/events/"+itoa(baseID), nil, admin)
-	if rec.Code != http.StatusConflict || !contains(rec.Body.String(), "at least one event") {
-		t.Fatalf("delete last event: %d %s, want 409", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reset last event: %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	var resetEv EventObject
+	e.decode(rec, &resetEv)
+	if resetEv.ID != baseID || resetEv.EventName != "baseline" ||
+		resetEv.UniqueEventName != "baseline_arm_1" ||
+		resetEv.Period == nil || *resetEv.Period != 0 {
+		t.Fatalf("reset last event object = %+v", resetEv)
 	}
 
 	// With a second event the deletion goes through and takes the event's
@@ -265,6 +277,270 @@ func TestDeleteEvent(t *testing.T) {
 	rec = e.do("DELETE", "/api/v1/events/999999", nil, admin)
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("unknown event: %d, want 404", rec.Code)
+	}
+}
+
+// TestLastEventResetMigratesData: deleting the last remaining event renames
+// it to "baseline", resets the offset day to 0 and clears the safe region;
+// stored values follow the new unique name (REQ-API-126, ASM-API-4).
+func TestLastEventResetMigratesData(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	ctx := context.Background()
+	projectID := e.mustProject("Reset Study")
+	armID, err := e.Store.AddArm(ctx, &db.Arm{ProjectID: projectID, ArmNum: 1})
+	if err != nil {
+		t.Fatalf("AddArm: %v", err)
+	}
+	evID, err := e.Store.AddEvent(ctx, &db.Event{
+		ProjectID: projectID, ArmID: armID, EventName: "visit", UniqueEventName: "visit_arm_1",
+		Period:          sql.NullInt64{Int64: 5, Valid: true},
+		SafeRegionStart: sql.NullInt64{Int64: 1, Valid: true},
+		SafeRegionEnd:   sql.NullInt64{Int64: 10, Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("AddEvent: %v", err)
+	}
+	if _, err := e.Store.DB.Exec(
+		`INSERT INTO data (project_id, record_id, unique_event_name,
+			repeating_instrument, repeating_instance_number, field_name, value)
+		 VALUES (?, 'R001', 'visit_arm_1', '', 1, 'age', '42')`, projectID); err != nil {
+		t.Fatalf("seed data: %v", err)
+	}
+
+	rec := e.do("DELETE", "/api/v1/events/"+itoa(evID), nil, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reset last event: %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	var out EventObject
+	e.decode(rec, &out)
+	if out.ID != evID || out.EventName != "baseline" || out.UniqueEventName != "baseline_arm_1" ||
+		out.Period == nil || *out.Period != 0 ||
+		out.SafeRegionStart != nil || out.SafeRegionEnd != nil {
+		t.Fatalf("reset object = %+v, want plain baseline (period 0, no safe region)", out)
+	}
+	var n int
+	if err := e.Store.DB.QueryRow(
+		`SELECT COUNT(*) FROM data WHERE project_id = ? AND unique_event_name = 'baseline_arm_1'`,
+		projectID).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("data followed the rename: %d rows (%v)", n, err)
+	}
+	var saw bool
+	rows, err := e.Store.DB.Query(
+		`SELECT details FROM audit_events WHERE event_type = 'event_updated'`)
+	if err != nil {
+		t.Fatalf("audit: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err == nil && contains(d, `"last_event_reset"`) {
+			saw = true
+		}
+	}
+	if !saw {
+		t.Errorf("audit missing event_updated with last_event_reset")
+	}
+}
+
+// TestDeleteInstrument: DELETE /api/v1/projects/{id}/instruments/{iid}
+// removes a non-last instrument with its fields, values and mapping pairs
+// (204 + `instrument_deleted`); the last instrument of the project only loses
+// its fields and is renamed to "instrument" (200 + object, REQ-API-127). An
+// expression that survives the change may not name a doomed field.
+func TestDeleteInstrument(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	ctx := context.Background()
+	projectID := e.mustProject("Instrument Study")
+	armID := e.mustArm(projectID, 1)
+	baseID := e.mustEvent(projectID, armID, "baseline", "baseline_arm_1")
+
+	aID, err := e.Store.AddInstrument(ctx, &db.Instrument{ProjectID: projectID, Name: "intake"})
+	if err != nil {
+		t.Fatalf("AddInstrument: %v", err)
+	}
+	bID, err := e.Store.AddInstrument(ctx, &db.Instrument{ProjectID: projectID, Name: "later"})
+	if err != nil {
+		t.Fatalf("AddInstrument: %v", err)
+	}
+	addField := func(instrID int64, name string) {
+		t.Helper()
+		if _, err := e.Store.AddField(ctx, &db.Field{
+			ProjectID: projectID, InstrumentID: instrID, FieldName: name, FieldType: "text",
+		}); err != nil {
+			t.Fatalf("AddField %s: %v", name, err)
+		}
+	}
+	addField(aID, "age")
+	addField(bID, "note")
+	if _, err := e.Store.DB.Exec(
+		`INSERT INTO data (project_id, record_id, unique_event_name,
+			repeating_instrument, repeating_instance_number, field_name, value)
+		 VALUES (?, 'R001', 'baseline_arm_1', '', 1, 'note', 'x')`, projectID); err != nil {
+		t.Fatalf("seed data: %v", err)
+	}
+	if err := e.Store.SetInstrumentEventsForArm(ctx, projectID, armID, []db.InstrumentEvent{
+		{InstrumentID: aID, EventID: baseID},
+		{InstrumentID: bID, EventID: baseID},
+	}); err != nil {
+		t.Fatalf("SetInstrumentEventsForArm: %v", err)
+	}
+
+	// An expression in the surviving instrument naming a doomed field blocks
+	// the delete (same rule as the single-field delete).
+	refID, err := e.Store.AddField(ctx, &db.Field{
+		ProjectID: projectID, InstrumentID: aID, FieldName: "flag", FieldType: "text",
+		BranchingLogic: sql.NullString{String: `[note] = "x"`, Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("AddField flag: %v", err)
+	}
+	rec := e.do("DELETE", "/api/v1/projects/"+itoa(projectID)+"/instruments/"+itoa(bID), nil, admin)
+	if rec.Code != http.StatusConflict || !contains(rec.Body.String(), "referenced by an active expression") {
+		t.Fatalf("delete referenced instrument: %d %s, want 409", rec.Code, rec.Body.String())
+	}
+	if _, err := e.Store.DB.Exec(`DELETE FROM fields WHERE id = ?`, refID); err != nil {
+		t.Fatalf("remove ref field: %v", err)
+	}
+
+	// The non-last instrument goes with its fields, values and mapping pairs.
+	rec = e.do("DELETE", "/api/v1/projects/"+itoa(projectID)+"/instruments/"+itoa(bID), nil, admin)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete instrument: %d %s", rec.Code, rec.Body.String())
+	}
+	instruments, err := e.Store.ListInstruments(ctx, projectID)
+	if err != nil || len(instruments) != 1 || instruments[0].ID != aID {
+		t.Fatalf("instruments after delete = %+v (%v)", instruments, err)
+	}
+	fields, err := e.Store.ListFieldsByInstrument(ctx, projectID, bID)
+	if err != nil || len(fields) != 0 {
+		t.Fatalf("fields of deleted instrument = %+v (%v)", fields, err)
+	}
+	var n int
+	if err := e.Store.DB.QueryRow(
+		`SELECT COUNT(*) FROM data WHERE project_id = ? AND field_name = 'note'`, projectID).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("values of deleted instrument: %d rows (%v)", n, err)
+	}
+	pairs, err := e.Store.ListInstrumentEvents(ctx, projectID)
+	if err != nil || len(pairs) != 1 || pairs[0].InstrumentID != aID {
+		t.Fatalf("mapping pairs after delete = %+v (%v)", pairs, err)
+	}
+	if !hasType(e.auditTypes(), "instrument_deleted") {
+		t.Errorf("audit types = %v, want instrument_deleted", e.auditTypes())
+	}
+
+	// The last instrument only loses its fields and comes back as
+	// "instrument" — id, position and mapping pair stay.
+	rec = e.do("DELETE", "/api/v1/projects/"+itoa(projectID)+"/instruments/"+itoa(aID), nil, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reset last instrument: %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	var obj instrumentObject
+	e.decode(rec, &obj)
+	if obj.ID != aID || obj.Name != "instrument" || obj.FieldCount != 0 {
+		t.Fatalf("reset object = %+v, want id %d named \"instrument\" with no fields", obj, aID)
+	}
+	fields, err = e.Store.ListFieldsByInstrument(ctx, projectID, aID)
+	if err != nil || len(fields) != 0 {
+		t.Fatalf("fields after reset = %+v (%v)", fields, err)
+	}
+	pairs, err = e.Store.ListInstrumentEvents(ctx, projectID)
+	if err != nil || len(pairs) != 1 || pairs[0].InstrumentID != aID {
+		t.Fatalf("mapping pairs after reset = %+v (%v), want the pair kept", pairs, err)
+	}
+	var saw bool
+	rows, err := e.Store.DB.Query(
+		`SELECT details FROM audit_events WHERE event_type = 'instrument_updated'`)
+	if err != nil {
+		t.Fatalf("audit: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err == nil && contains(d, `"last_instrument_reset"`) {
+			saw = true
+		}
+	}
+	if !saw {
+		t.Errorf("audit missing instrument_updated with last_instrument_reset")
+	}
+
+	// project_admin only; an unknown id is 404.
+	regular := e.mustUser("user@example.org")
+	rec = e.do("DELETE", "/api/v1/projects/"+itoa(projectID)+"/instruments/"+itoa(aID), nil, regular)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("non-admin delete: %d, want 403", rec.Code)
+	}
+	rec = e.do("DELETE", "/api/v1/projects/"+itoa(projectID)+"/instruments/999999", nil, admin)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("unknown instrument: %d, want 404", rec.Code)
+	}
+}
+
+// TestLastArmRename: deleting the last remaining arm renames it to "arm_1"
+// and answers with the object — id, arm_num and events stay (REQ-API-128).
+func TestLastArmRename(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	projectID := e.mustProject("Arm Study")
+
+	rec := e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/arms", map[string]any{"name": "Only"}, admin)
+	var arm armObject
+	e.decode(rec, &arm)
+	rec = e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/events", map[string]any{
+		"arm_num": 1, "event_name": "visit",
+	}, admin)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create event: %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = e.do("DELETE", "/api/v1/arms/"+itoa(arm.ID), nil, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete last arm: %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	var renamed armObject
+	e.decode(rec, &renamed)
+	if renamed.ID != arm.ID || renamed.ArmNum != 1 || renamed.Name != "arm_1" || len(renamed.Events) != 1 {
+		t.Fatalf("renamed arm object = %+v, want id %d arm_1 with its event", renamed, arm.ID)
+	}
+	if !hasType(e.auditTypes(), "arm_updated") {
+		t.Errorf("audit types = %v, want arm_updated", e.auditTypes())
+	}
+}
+
+// TestOrderArms: PUT /api/v1/projects/{id}/arms/order writes the full order;
+// ids and arm numbers never change (REQ-API-129).
+func TestOrderArms(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	projectID := e.mustProject("Arm Order Study")
+	var a1, a2 armObject
+	rec := e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/arms", map[string]any{"name": "A"}, admin)
+	e.decode(rec, &a1)
+	rec = e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/arms", map[string]any{"name": "B"}, admin)
+	e.decode(rec, &a2)
+
+	rec = e.do("PUT", "/api/v1/projects/"+itoa(projectID)+"/arms/order", map[string]any{
+		"order": []int64{a1.ID},
+	}, admin)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("partial order: %d, want 400", rec.Code)
+	}
+	rec = e.do("PUT", "/api/v1/projects/"+itoa(projectID)+"/arms/order", map[string]any{
+		"order": []int64{a2.ID, a1.ID},
+	}, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reorder arms: %d %s", rec.Code, rec.Body.String())
+	}
+	rec = e.do("GET", "/api/v1/projects/"+itoa(projectID)+"/arms", nil, admin)
+	var arms []armObject
+	e.decode(rec, &arms)
+	if len(arms) != 2 || arms[0].ID != a2.ID || arms[1].ID != a1.ID {
+		t.Fatalf("arms after reorder = %+v", arms)
+	}
+	if !hasType(e.auditTypes(), "arm_reordered") {
+		t.Errorf("audit types = %v, want arm_reordered", e.auditTypes())
 	}
 }
 

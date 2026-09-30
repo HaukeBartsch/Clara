@@ -30,7 +30,8 @@ func contains(haystack, needle string) bool {
 
 // TestProjectsCreateSingleArmAndAudit: creation is 201 with the project
 // object, creates arm 1 only (REQ-DB-011) together with its first event
-// "baseline" (REQ-API-050), and audits project_created.
+// "baseline" and one instrument "instrument" (REQ-API-050), and audits
+// project_created.
 func TestProjectsCreateSingleArmAndAudit(t *testing.T) {
 	e := newEnv(t)
 	admin := e.mustAdmin("admin@example.org")
@@ -68,6 +69,12 @@ func TestProjectsCreateSingleArmAndAudit(t *testing.T) {
 		events[0].UniqueEventName != "baseline_arm_1" ||
 		!events[0].Period.Valid || events[0].Period.Int64 != 0 {
 		t.Errorf("events after creation = %+v, want the single baseline event (period 0)", events)
+	}
+	// The project also opens with one instrument "instrument" — every project
+	// holds at least one instrument from creation on.
+	instruments, err := e.Store.ListInstruments(context.Background(), p.ID)
+	if err != nil || len(instruments) != 1 || instruments[0].Name != "instrument" {
+		t.Errorf("instruments after creation = %+v (%v), want the single \"instrument\"", instruments, err)
 	}
 	if !hasType(e.auditTypes(), "project_created") {
 		t.Errorf("audit types = %v, want project_created", e.auditTypes())

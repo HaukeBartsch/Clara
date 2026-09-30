@@ -750,37 +750,40 @@ func (a *applyState) holdsData(q ctxRow, column string, names []string) (bool, e
 	return true, nil
 }
 
-// designReferencesField reports whether any calculated or branching expression
-// of the staged design names this field — the same check the live delete makes,
-// evaluated against the design that is about to become active.
-func designReferencesField(d *stagedDesign, fieldName string) (bool, error) {
-	namesRef := func(expr string) bool {
-		if refs, err := validate.ParseCalcExpression(expr); err == nil {
-			for _, r := range refs {
-				if r.Field == fieldName {
-					return true
-				}
-			}
-			return false
-		}
-		if refs, err := validate.ParseBranchingRefs(expr); err == nil {
-			for _, r := range refs {
-				if r.Field == fieldName {
-					return true
-				}
+// exprNamesField reports whether one stored expression (calculated field or
+// branching logic) references the given field.
+func exprNamesField(expr, fieldName string) bool {
+	if refs, err := validate.ParseCalcExpression(expr); err == nil {
+		for _, r := range refs {
+			if r.Field == fieldName {
+				return true
 			}
 		}
 		return false
 	}
+	if refs, err := validate.ParseBranchingRefs(expr); err == nil {
+		for _, r := range refs {
+			if r.Field == fieldName {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// designReferencesField reports whether any calculated or branching expression
+// of the staged design names this field — the same check the live delete makes,
+// evaluated against the design that is about to become active.
+func designReferencesField(d *stagedDesign, fieldName string) (bool, error) {
 	for _, si := range d.Instruments {
-		if si.BranchingLogic.Valid && namesRef(si.BranchingLogic.String) {
+		if si.BranchingLogic.Valid && exprNamesField(si.BranchingLogic.String, fieldName) {
 			return true, nil
 		}
 		for _, sf := range si.Fields {
-			if sf.Calculation.Valid && namesRef(sf.Calculation.String) {
+			if sf.Calculation.Valid && exprNamesField(sf.Calculation.String, fieldName) {
 				return true, nil
 			}
-			if sf.BranchingLogic.Valid && namesRef(sf.BranchingLogic.String) {
+			if sf.BranchingLogic.Valid && exprNamesField(sf.BranchingLogic.String, fieldName) {
 				return true, nil
 			}
 		}
