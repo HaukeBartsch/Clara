@@ -6,6 +6,8 @@ import { defineConfig, devices } from "@playwright/test"
 // without a build step or CDN, so one engine keeps the harness honest and cheap.
 export default defineConfig({
   testDir: "./tests",
+  // macOS writes AppleDouble ._ companion files on non-HFS volumes (exFAT/FAT); they are not tests.
+  testIgnore: /(^|\/)\._/,
   fullyParallel: true,
   reporter: [["list"], ["html", { open: "never" }]],
   use: {
