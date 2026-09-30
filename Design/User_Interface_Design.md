@@ -1,7 +1,7 @@
 # User Interface — Design
 
-**Project:** Clinical Study Management System (REDCap API Replacement)
-**Implements:** `Requirements/User_Interface_Requirements.md`
+**Project:** Clinical Study Management System (REDCap API Replacement)\
+**Implements:** `Requirements/User_Interface_Requirements.md`\
 **Date:** 2026-09-22
 
 ## 1. Purpose and Conventions
@@ -570,7 +570,7 @@ A standalone PHP route — **no login, outside the session** (GD-1, REQ-API-084,
 Items 2, 4–8 were owner-level baseline changes; the owner decisions of 2026-09-22 (master spec "Details") have now been taken into the requirements baseline, and each resolution is recorded in the Status column with the baseline references that now bind. Item 1 was an additive backend dependency and has since been specified into the baseline (REQ-API-110, REQ-DB-036, REQ-AUD-026, REQ-UI-036). Only item 3 remains open.
 
 | # | Item (master spec source) | Status |
-|---|---|---|
+|---|------|------|
 | 1 | 3-state completion: no data / some data / **finished**, user-assigned per non-survey instrument (§6.3, §8.5) | **RESOLVED** — `instrument_completion` stores the finished assignment per (record, event, instrument) (REQ-DB-036, DEV-DB-10, `Database_Schema_Design.md` §6); `PUT …/records/{record}/events/{event}/instruments/{iid}/completion` sets or clears it (REQ-API-110, `API_Endpoints_Design.md` §4.13); `record-status` returns `no_data`/`some_data`/`finished` (REQ-API-074, DEV-API-11); audit `instrument_completed`/`instrument_uncompleted` (REQ-AUD-026). Grey/amber stay derived so the badge cannot contradict the stored values (DEV-UI-8); the §6.3/§8.5 contracts bind |
 | 2 | "allow changing of event order" (§6.2 B) | **RESOLVED (GD-15)** — `PUT …/projects/{id}/events/order` (REQ-API-103); `period` nullable; canonical per-arm order (REQ-DB-011, `API_Endpoints_Design.md` §4.9); the §6.2 B contract binds |
 | 3 | record-history read order (§8.3) | **OPEN** — a most-recent-first (or tail) read mode would serve the form's current-value derivation; the endpoint is chronological (`API_Endpoints_Design.md` §4.16 — efficiency note, not a blocker) |
