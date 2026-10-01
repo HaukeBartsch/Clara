@@ -166,6 +166,7 @@ All require data access ≥ `read_only` except `generateNextRecordName` (≥ `vi
 - Sensitivity per the token holder's export level for the arm(s) of the exported data (REQ-API-026): `export_full` → full dataset; `export_no_identifiers` → all identifier fields removed; `export_de_identified` → de-identified per `Data_Export_Anonymization_Requirements.md` (date shift per `Database_Schema_Design.md` §8, salt/range per `System_Configuration_Design.md` §3.6); `export_none` → 403 `Permission denied`.
 - `rawOrLabel=label` → choice labels for dropdown/radio fields (stored values remain codes, REQ-VAL-022); `rawOrLabelHeaders` controls field names the same way (REQ-API-027).
 - Rows carry the record identifier's value under its field name (GD-8), `redcap_event_name` per row (flat, projects with events), and empty strings for missing values (REQ-API-028).
+- Each instrument's field block ends with an `<instrument>_complete` column carrying that instrument's three-state completion for the row's position — `0` not complete, `1` in progress, `2` complete (REQ-API-134). The state is the record-status derivation of §4.13 (REQ-API-074): stored `finished` → `2`, else any value of that instrument at that position → `1`, else `0`; a survey-marked instrument always exports `2` (GD-9); a `finished` assignment on an unmapped (event, instrument) pair stays invisible until the pair is mapped back. The column belongs to its instrument — it survives `forms[]`/`fields[]` exactly when the instrument contributes at least one value column — keeps its raw name under `rawOrLabelHeaders` (it names no field), and appears in JSON as an ordinary key. Import does not accept it: a `<instrument>_complete` key remains an unknown field (§3.7).
 - CSV is streamed (REQ-TECH-011): quoted per standard CSV rules, honors `csvDelimiter`, formula-triggering leading characters neutralized per `Data_Validation_Design.md` §5.3 (REQ-API-029).
 - Every invocation writes a record-view audit row (`audit_record_views`, `Audit_Logging_Design.md` §4) and an `export` event (`Audit_Logging_Design.md` §3.5) (REQ-API-030, REQ-AUD-011).
 
@@ -182,12 +183,13 @@ All require data access ≥ `read_only` except `generateNextRecordName` (≥ `vi
     "redcap_repeat_instance": "",
     "age": "42",
     "status": "2",
-    "notes": ""
+    "notes": "",
+    "intake_complete": "1"
   }
 ]
 ```
 
-`wide` (DEV-API-1, simplified for caller compatibility): one row per record; a field present in exactly one event keeps its bare name; a field present in several events is emitted once per event as `<field>_<unique_event_name>`. Missing values are empty strings. `flat` is what all known callers use; `wide` exists so requests that omit `type` (REDCap default) keep working.
+`wide` (DEV-API-1, simplified for caller compatibility): one row per record; a field present in exactly one event keeps its bare name; a field present in several events is emitted once per event as `<field>_<unique_event_name>`. An instrument's `<instrument>_complete` follows the same rule — suffixed once per event when the instrument is active in several (REQ-API-134). Missing values are empty strings. `flat` is what all known callers use; `wide` exists so requests that omit `type` (REDCap default) keep working.
 
 #### 3.6.3 `filterLogic` (REQ-API-025)
 

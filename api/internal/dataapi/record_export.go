@@ -199,6 +199,58 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		cols = append(cols, column{f: f, cat: cat, dateBrg: isDateBearing(f.Field)})
 	}
 
+	// Completion columns (REQ-API-134): every instrument that contributes at
+	// least one surviving value column gets an `<instrument>_complete` slot
+	// after its field block. d.fields — and with it cols — are grouped by
+	// instrument in position order, so first appearance is the right place;
+	// dictInstrument carries the survey flag (GD-9: always finished).
+	instrByID := make(map[int64]dictInstrument, len(d.instruments))
+	for _, instr := range d.instruments {
+		instrByID[instr.ID] = instr
+	}
+	hasBlock := map[int64]bool{}
+	for _, c := range cols {
+		hasBlock[c.f.InstrumentID] = true
+	}
+	var completeInstrs []dictInstrument
+	for _, instr := range d.instruments {
+		if hasBlock[instr.ID] {
+			completeInstrs = append(completeInstrs, instr)
+		}
+	}
+	instrValueFields := d.valueFieldsByInstrument()
+
+	// Stored finished assignments (§4.13, REQ-DB-036): the sparse set joined
+	// in memory per (record, event, instrument), as on the dashboard — only
+	// mapped pairs are visible (§ mapping_updated rule).
+	finished := map[string]bool{} // record|event|instrumentID
+	evNameOf := map[int64]string{}
+	for _, e := range d.events {
+		evNameOf[e.EventID] = e.UniqueEventName
+	}
+	if d.hasEvents {
+		comps, err := h.Store.ListInstrumentCompletions(ctx, s.ProjectID)
+		if err != nil {
+			s.fail(w, http.StatusInternalServerError, "Internal error")
+			return
+		}
+		for _, c := range comps {
+			name, known := evNameOf[c.EventID]
+			if !known {
+				continue // event unknown to the dictionary (deleted mid-read)
+			}
+			finished[completionKey(c.RecordID, name, c.InstrumentID)] = true
+		}
+	}
+	mapped := func(instrID int64, event string) bool {
+		for _, n := range d.instrEvents[instrID] {
+			if n == event {
+				return true
+			}
+		}
+		return false
+	}
+
 	// Records: visible under the data-access-group rule, intersected with
 	// records[] (filters combine — REQ-API-024).
 	ids, err := h.Store.ListRecordIDs(ctx, s.ProjectID, s.GroupID)

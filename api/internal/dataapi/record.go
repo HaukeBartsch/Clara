@@ -44,6 +44,15 @@ type recField struct {
 	Instrument string
 }
 
+// dictInstrument is the export view of one instrument: the `<instrument>_complete`
+// column needs its name, its position-order place and its survey flag (GD-9 —
+// a survey-marked instrument always exports finished).
+type dictInstrument struct {
+	ID       int64
+	Name     string
+	IsSurvey bool
+}
+
 // projectDict is the export/import view of one project's structure, in
 // canonical order (instruments by position, fields by instrument then
 // position — ListFields' own order). loadDict builds it at most once per
@@ -51,11 +60,31 @@ type recField struct {
 type projectDict struct {
 	fields      []recField
 	byName      map[string]recField
-	events      []eventRow // canonical per-arm order (GD-15)
+	instruments []dictInstrument // position order (drives the _complete columns)
+	events      []eventRow       // canonical per-arm order (GD-15)
 	eventArm    map[string]int
 	hasEvents   bool
 	identifier  string             // GD-8: first field of the first instrument
 	instrEvents map[int64][]string // instrument id -> mapped unique event names
+}
+
+// valueFieldsByInstrument maps each instrument id to the names of its
+// value-carrying fields — the derived "has data" test of REQ-API-134 runs
+// against every stored value, independent of which columns an export keeps.
+func (d *projectDict) valueFieldsByInstrument() map[int64]map[string]bool {
+	out := make(map[int64]map[string]bool, len(d.instruments))
+	for _, f := range d.fields {
+		if f.FieldType == "description" || f.FieldType == "header" {
+			continue
+		}
+		set := out[f.InstrumentID]
+		if set == nil {
+			set = map[string]bool{}
+			out[f.InstrumentID] = set
+		}
+		set[f.FieldName] = true
+	}
+	return out
 }
 
 // eventsForInstrument returns the candidate events the instrument is mapped
@@ -106,6 +135,7 @@ func (h *Handler) buildDict(ctx context.Context, projectID int64) (*projectDict,
 	formOf := map[int64]string{}
 	for _, i := range instruments {
 		formOf[i.ID] = i.Name
+		d.instruments = append(d.instruments, dictInstrument{ID: i.ID, Name: i.Name, IsSurvey: i.IsSurvey})
 	}
 	for _, f := range fields {
 		rf := recField{Field: f, Instrument: formOf[f.InstrumentID]}
