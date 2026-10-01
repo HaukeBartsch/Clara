@@ -112,6 +112,7 @@ final class LoginController extends Controller
         }
 
         return $this->renderEnroll([
+            'method' => 'totp',
             'secret' => (string) ($enrollment['secret'] ?? ''),
             'otpauth_uri' => (string) ($enrollment['otpauth_uri'] ?? ''),
         ]);

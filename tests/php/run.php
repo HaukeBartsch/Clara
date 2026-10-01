@@ -23,9 +23,12 @@ foreach ($GLOBALS['cases'] as $case) {
 }
 
 $failed = 0;
-foreach ($suites as $suite => $cases) {
+// The loop variable must not be called $cases: in the global scope that is the
+// registry itself, and overwriting it makes the summary below report the size of
+// the last suite instead of the number of tests run.
+foreach ($suites as $suite => $suiteCases) {
     echo "\n{$suite}\n";
-    foreach ($cases as $case) {
+    foreach ($suiteCases as $case) {
         if ($case['error'] === null) {
             echo "  ✓ {$case['name']}\n";
             continue;

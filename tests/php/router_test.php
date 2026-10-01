@@ -262,17 +262,19 @@ describe('login — the local credential path (Sequences F + C)', function (): v
         assert_not_contains('password combination', $response->body());
     });
 
-    it('says two-factor is not supported rather than reporting a bad password', function (): void {
+    it('opens the two-factor panel rather than reporting a bad password', function (): void {
         $_SESSION = ['csrf_token' => str_repeat('c', 64)];
         api_route('/auth/verify-password', ['status' => 'ok']);
-        api_route('/auth/login', ['error' => 'mfa_required', 'message' => 'second factor required', 'status' => 401], 401);
+        api_route('/auth/login', ['error' => 'mfa_required', 'method' => 'totp', 'message' => 'second factor required', 'status' => 401], 401);
 
         $response = router_for(http_request(
             'POST', '/login', browser_headers(),
             ['csrf_token' => str_repeat('c', 64), 'email' => 'a@example.org', 'password' => 'pw'], ['action' => 'credentials']
         ))->dispatch();
 
-        assert_contains('two-factor', $response->body());
+        // A flow state is not a failure: the page asks for a code, and says
+        // nothing about the credential that was in fact accepted (§2.2).
+        assert_contains('Confirm it is you', $response->body());
         assert_not_contains('not recognised', $response->body());
     });
 });
