@@ -344,6 +344,8 @@ An optional `attempts` carries the per-source outcomes of a failed named-source 
 
 The map is source-id → outcome (e.g. `bad_password`, `unreachable`) and MUST never contain credentials (REQ-AUTH-036). With attempts present, a credential rejection settles as `bad_credentials` — or `provider_unavailable` when every attempt was `unreachable`; account-state rejections keep their specific reason.
 
+Such a call **reports a failure and authenticates nothing** (REQ-API-135, DEV-API-21): no user object, no bootstrap promotion, no `auth_source`/`last_login_at` write, and it never reaches the two-factor gate — for `source: "ldap"` the API trusts the PHP layer's word, so falling through would turn a race that bound nobody into a session. The `password` attribute is ignored on it. A successful login carries no `attempts`.
+
 **`POST /api/v1/auth/verify-password`** — `{ "email": "…", "password": "***" }`: the side-effect-free verify step of the named-source credential race (`Authentication_Authorization_Design.md` §2.9, REQ-API-123). Runs the login endpoint's hash check and account-active rule only and answers `ok` / `bad_password` / `account_disabled` / `account_expired` — no `last_login_at`/`auth_source` write, no audit event, no user object; login finalizes exactly once through `POST /api/v1/auth/login`. Pre-authentication: service token only, no `X-Internal-User-Id` (DEV-API-17); password never logged (REQ-AUTH-036).
 
 For an account a second factor still guards, the `ok` answer additionally carries the handle the challenge's second login call presents in place of the password (REQ-API-131, DEV-API-19):
