@@ -341,7 +341,8 @@ func TestRecordExportCompleteColumns(t *testing.T) {
 		"events": {"baseline_arm_1"}, "forms": {"demo"},
 	})
 	mustStatus(t, code, 200, body)
-	header := strings.Split(strings.SplitN(strings.TrimRight(body, "\r\n"), "\n", 2)[0], ",")
+	firstLine := strings.TrimSuffix(strings.SplitN(strings.TrimRight(body, "\r\n"), "\n", 2)[0], "\r")
+	header := strings.Split(firstLine, ",")
 	if header[len(header)-1] != "demo_complete" {
 		t.Errorf("forms[]=demo header ends %q, want demo_complete", header[len(header)-1])
 	}
