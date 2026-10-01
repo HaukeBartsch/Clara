@@ -311,7 +311,7 @@ func TestRecordExportCompleteColumns(t *testing.T) {
 	}
 
 	// Stored finished → 2; clearing returns the derived 1.
-	setCompletion("8DISC001", evBase.EventID, demoID, true)
+	setCompletion("8DISC001", evBase.ID, demoID, true)
 	rows = f.exportJSON(t, "tok-admin", url.Values{"records": {"8DISC001"}})
 	if rows[0]["demo_complete"] != "2" {
 		t.Errorf("finished demo_complete = %q, want 2", rows[0]["demo_complete"])
@@ -319,20 +319,20 @@ func TestRecordExportCompleteColumns(t *testing.T) {
 	if rows[1]["demo_complete"] != "1" { // the other event keeps its own state
 		t.Errorf("followup demo_complete = %q, want 1", rows[1]["demo_complete"])
 	}
-	setCompletion("8DISC001", evBase.EventID, demoID, false)
+	setCompletion("8DISC001", evBase.ID, demoID, false)
 	rows = f.exportJSON(t, "tok-admin", url.Values{"records": {"8DISC001"}})
 	if rows[0]["demo_complete"] != "1" {
 		t.Errorf("cleared demo_complete = %q, want 1", rows[0]["demo_complete"])
 	}
 
 	// A finished assignment on an unmapped pair stays invisible.
-	setCompletion("8DISC001", evFol.EventID, calcID, true) // calc is mapped to baseline only
+	setCompletion("8DISC001", evFol.ID, calcID, true) // calc is mapped to baseline only
 	rows = f.exportJSON(t, "tok-admin", url.Values{"records": {"8DISC001"}})
 	if rows[1]["calc_complete"] != "0" {
 		t.Errorf("unmapped finished calc_complete = %q, want 0 (invisible until mapped back)",
 			rows[1]["calc_complete"])
 	}
-	setCompletion("8DISC001", evFol.EventID, calcID, false)
+	setCompletion("8DISC001", evFol.ID, calcID, false)
 
 	// forms[] keeps whole instrument blocks — each keeps its completion;
 	// fields[] returns exactly the requested fields and carries none.
