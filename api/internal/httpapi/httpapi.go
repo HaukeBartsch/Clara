@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"csms/api/internal/admin"
@@ -35,9 +36,61 @@ func NewMux(store *db.Store, cfg *config.Config, aw *audit.Writer) http.Handler 
 
 	adminAPI := admin.New(store, cfg, aw)
 	mux.Handle("/api/v1/", rateLimit(store, cfg, data.Limiter,
-		AdminBoundary(adminAPI.Handler, store, cfg, aw)))
+		structureInvalidation(store, AdminBoundary(adminAPI.Handler, store, cfg, aw))))
 
 	return mux
+}
+
+// structurePaths are the administration prefixes whose writes can change a
+// project's structure (arms, events, instruments, fields, and the
+// instrument-event mapping): the designer flows in admin/structure.go and
+// admin/staged_apply.go write those tables with raw SQL inside their own
+// transactions, where the db.Store bump hooks do not reach. A successful
+// (status < 400) non-GET under one of these prefixes therefore bumps the
+// store's structure generation and invalidates the data API's dictionary
+// cache (db.Store.StructureGeneration). Writes that merely live under the
+// prefix without touching structure only cost one dictionary reload.
+var structurePaths = []string{"/api/v1/projects", "/api/v1/arms/", "/api/v1/events/"}
+
+func structureInvalidation(store *db.Store, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet || !isStructurePath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		rw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rw, r)
+		if rw.status < 400 {
+			store.BumpStructureCache()
+		}
+	})
+}
+
+func isStructurePath(p string) bool {
+	for _, pre := range structurePaths {
+		if strings.HasPrefix(p, pre) {
+			return true
+		}
+	}
+	return false
+}
+
+// statusWriter records the response code so the invalidation bump can check
+// it; Flush and the optional interfaces pass through for streamed answers.
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusWriter) WriteHeader(code int) {
+	w.status = code
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *statusWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 // rateLimit enforces the per-source-IP budget on the administration surface

@@ -444,17 +444,21 @@ func (h *Handler) recomputeCalculated(ctx context.Context, tx *sql.Tx, projectID
 }
 
 // validationRegistry builds the §4.2 registry from the seeded and custom
-// validation_types rows.
+// validation_types rows, reusing it while the store's structure generation
+// is unchanged (dictcache.go).
 func (h *Handler) validationRegistry(ctx context.Context) (*validate.Registry, error) {
-	rows, err := h.Store.ListValidationTypes(ctx)
-	if err != nil {
-		return nil, err
-	}
-	entries := make([]validate.RegistryEntry, 0, len(rows))
-	for _, vt := range rows {
-		entries = append(entries, validate.RegistryEntry{Name: vt.Name, Regex: vt.Regex, Builtin: vt.Builtin})
-	}
-	return validate.NewRegistry(entries)
+	gen := h.Store.StructureGeneration()
+	return h.regs.get(gen, func() (*validate.Registry, error) {
+		rows, err := h.Store.ListValidationTypes(ctx)
+		if err != nil {
+			return nil, err
+		}
+		entries := make([]validate.RegistryEntry, 0, len(rows))
+		for _, vt := range rows {
+			entries = append(entries, validate.RegistryEntry{Name: vt.Name, Regex: vt.Regex, Builtin: vt.Builtin})
+		}
+		return validate.NewRegistry(entries)
+	})
 }
 
 // AuditTx writes one audit entry inside tx through the handler's writer; a

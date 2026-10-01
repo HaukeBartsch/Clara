@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -26,7 +27,29 @@ type Store struct {
 	DB      *sql.DB
 	Dialect Dialect
 	Cfg     *config.Config
+
+	// structGen invalidates cached views of project structure (arms, events,
+	// instruments, fields, instrument-event mapping); see StructureGeneration.
+	structGen atomic.Uint64
 }
+
+// StructureGeneration returns the process-local structure generation: a
+// counter advanced by BumpStructureCache on every write that can change any
+// project's structure. Callers caching structure across requests tag each
+// cached value with the generation observed BEFORE building it — a later
+// mismatch proves a write happened at or after the read started, so the
+// entry is dropped and rebuilt. The counter is in-memory: it is correct for
+// this API process only (the deployment runs one instance behind nginx,
+// Technology_Stack_Design.md §5); direct database edits bypass it like they
+// bypass every other in-process state.
+func (s *Store) StructureGeneration() uint64 { return s.structGen.Load() }
+
+// BumpStructureCache advances the structure generation after a successful
+// structure write. The db layer's own write methods call it; the
+// administration API's raw-SQL design transactions are covered by the
+// structureInvalidation middleware in httpapi. Extra bumps are harmless —
+// they only cost one dictionary reload per cached project.
+func (s *Store) BumpStructureCache() { s.structGen.Add(1) }
 
 // Open connects to the configured database (REQ-DB-002), sets sane pool
 // limits, and verifies connectivity (REQ-TECH-014: fail fast on an
@@ -41,7 +64,12 @@ func Open(cfg *config.Config) (*Store, error) {
 	case "sqlite":
 		driver = "sqlite"
 		d = DialectSQLite
-		dsn = cfg.DBDatabase
+		// busy_timeout on every pooled connection: SQLite serializes its
+		// writers, and without a timeout a write that meets a concurrent
+		// reader fails immediately with SQLITE_BUSY (observed as transient
+		// 500s under load). The driver applies _pragma parameters per
+		// connection it opens.
+		dsn = cfg.DBDatabase + "?_pragma=busy_timeout(5000)"
 	case "mariadb":
 		driver = "mysql"
 		d = DialectMariaDB

@@ -61,6 +61,7 @@ func (s *Store) AddArm(ctx context.Context, a *Arm) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	s.BumpStructureCache()
 	return res.LastInsertId()
 }
 
@@ -113,12 +114,20 @@ func (s *Store) UpdateArm(ctx context.Context, a *Arm) error {
 	_, err := s.DB.ExecContext(ctx,
 		`UPDATE arms SET name = ?, position = ? WHERE id = ?`,
 		nullStr(a.Name), a.Position, a.ID)
-	return err
+	if err != nil {
+		return err
+	}
+	s.BumpStructureCache()
+	return nil
 }
 
 func (s *Store) DeleteArm(ctx context.Context, id int64) error {
 	_, err := s.DB.ExecContext(ctx, `DELETE FROM arms WHERE id = ?`, id)
-	return err
+	if err != nil {
+		return err
+	}
+	s.BumpStructureCache()
+	return nil
 }
 
 // --- events (REQ-DB-011, GD-15) ---
@@ -181,6 +190,7 @@ func (s *Store) AddEvent(ctx context.Context, e *Event) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	s.BumpStructureCache()
 	return res.LastInsertId()
 }
 
@@ -262,18 +272,30 @@ func (s *Store) UpdateEvent(ctx context.Context, e *Event) error {
 		 WHERE id = ?`,
 		e.EventName, e.UniqueEventName,
 		nullInt64(e.Period), nullInt64(e.SafeRegionStart), nullInt64(e.SafeRegionEnd), e.Position, e.ID)
-	return err
+	if err != nil {
+		return err
+	}
+	s.BumpStructureCache()
+	return nil
 }
 
 // SetEventPosition reorders a single event within its arm (REQ-API-103).
 func (s *Store) SetEventPosition(ctx context.Context, id int64, position int) error {
 	_, err := s.DB.ExecContext(ctx, `UPDATE events SET position = ? WHERE id = ?`, position, id)
-	return err
+	if err != nil {
+		return err
+	}
+	s.BumpStructureCache()
+	return nil
 }
 
 func (s *Store) DeleteEvent(ctx context.Context, id int64) error {
 	_, err := s.DB.ExecContext(ctx, `DELETE FROM events WHERE id = ?`, id)
-	return err
+	if err != nil {
+		return err
+	}
+	s.BumpStructureCache()
+	return nil
 }
 
 // --- instruments (REQ-DB-011) ---
@@ -312,6 +334,7 @@ func (s *Store) AddInstrument(ctx context.Context, i *Instrument) (int64, error)
 	if err != nil {
 		return 0, err
 	}
+	s.BumpStructureCache()
 	return res.LastInsertId()
 }
 
@@ -369,18 +392,30 @@ func (s *Store) UpdateInstrument(ctx context.Context, i *Instrument) error {
 		`UPDATE instruments SET name = ?, position = ?, is_survey = ?, branching_logic = ?
 		 WHERE id = ?`,
 		i.Name, i.Position, boolToInt(i.IsSurvey), nullStr(i.BranchingLogic), i.ID)
-	return err
+	if err != nil {
+		return err
+	}
+	s.BumpStructureCache()
+	return nil
 }
 
 // SetInstrumentPosition reorders a single instrument (REQ-API-066).
 func (s *Store) SetInstrumentPosition(ctx context.Context, id int64, position int) error {
 	_, err := s.DB.ExecContext(ctx, `UPDATE instruments SET position = ? WHERE id = ?`, position, id)
-	return err
+	if err != nil {
+		return err
+	}
+	s.BumpStructureCache()
+	return nil
 }
 
 func (s *Store) DeleteInstrument(ctx context.Context, id int64) error {
 	_, err := s.DB.ExecContext(ctx, `DELETE FROM instruments WHERE id = ?`, id)
-	return err
+	if err != nil {
+		return err
+	}
+	s.BumpStructureCache()
+	return nil
 }
 
 // --- instrument_events (REQ-DB-012, REQ-API-072/073) ---
@@ -434,7 +469,11 @@ func (s *Store) SetInstrumentEventsForArm(ctx context.Context, projectID, armID 
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.BumpStructureCache()
+	return nil
 }
 
 // --- fields (REQ-DB-013/014) ---
@@ -541,6 +580,7 @@ func (s *Store) AddField(ctx context.Context, f *Field) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	s.BumpStructureCache()
 	return res.LastInsertId()
 }
 

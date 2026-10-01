@@ -44,9 +44,10 @@ type recField struct {
 	Instrument string
 }
 
-// projectDict is the export/import view of one project's structure, loaded
-// once per call in canonical order (instruments by position, fields by
-// instrument then position — ListFields' own order).
+// projectDict is the export/import view of one project's structure, in
+// canonical order (instruments by position, fields by instrument then
+// position — ListFields' own order). loadDict builds it at most once per
+// structure generation and shares it read-only across calls.
 type projectDict struct {
 	fields      []recField
 	byName      map[string]recField
@@ -73,7 +74,26 @@ func (d *projectDict) eventsForInstrument(instrumentID int64, candidates []event
 	return out
 }
 
+// loadDict returns the project's structure view, reusing the cached
+// dictionary while the store's structure generation is unchanged (see
+// dictcache.go). The returned value is shared across requests and must not
+// be mutated.
 func (h *Handler) loadDict(ctx context.Context, projectID int64) (*projectDict, error) {
+	gen := h.Store.StructureGeneration()
+	if d, ok := h.dicts.get(projectID, gen); ok {
+		return d, nil
+	}
+	d, err := h.buildDict(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	h.dicts.put(projectID, gen, d)
+	return d, nil
+}
+
+// buildDict reads the dictionary from the store; it is tagged into the
+// cache by loadDict with the generation read before this call started.
+func (h *Handler) buildDict(ctx context.Context, projectID int64) (*projectDict, error) {
 	d := &projectDict{byName: map[string]recField{}, eventArm: map[string]int{}}
 	fields, err := h.Store.ListFields(ctx, projectID)
 	if err != nil {

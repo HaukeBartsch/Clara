@@ -21,6 +21,11 @@ type Handler struct {
 	Cfg     *config.Config
 	Limiter *RateLimiter  // nil = rate limiting off (default, REQ-CFG-020)
 	Audit   *audit.Writer // nil = audit writes skipped (unit tests)
+
+	// Structure caches shared across calls; see dictcache.go. Both are used
+	// under their internal locks, so the zero values work in place.
+	dicts dictCache
+	regs  registryCache
 }
 
 // ServeHTTP dispatches one data-API call (API_Endpoints_Design.md §3).
