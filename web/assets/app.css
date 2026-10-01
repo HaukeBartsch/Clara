@@ -1,0 +1,145 @@
+/* The only hand-written stylesheet of the application (Plan/Web_Implementation.md
+ * §4). Everything else is Bootstrap — or a theme that fully replaces it — so this
+ * file holds two things and nothing more: the font definitions, and the shell
+ * layout that Bootstrap has no opinion about.
+ *
+ * It also carries a constraint from the Content-Security-Policy header
+ * (REQ-TECH-020): style-src is 'self' with no 'unsafe-inline', so any styling that
+ * is not a Bootstrap class belongs here rather than in a `style=` attribute.
+ */
+
+/* Geist, served locally (AGENTS.md "the web interface font is Geist"). The
+ * variable weight axis covers 100-900, so two files cover the family. */
+@font-face {
+  font-family: "Geist";
+  src: url("/assets/vendor/fonts/geist/Geist-VariableFont_wght.ttf") format("truetype-variations"),
+       url("/assets/vendor/fonts/geist/Geist-VariableFont_wght.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Geist";
+  src: url("/assets/vendor/fonts/geist/Geist-Italic-VariableFont_wght.ttf") format("truetype-variations"),
+       url("/assets/vendor/fonts/geist/Geist-Italic-VariableFont_wght.ttf") format("truetype");
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+
+/* One body font for every theme. Bootswatch themes arrive with their own
+ * Google Fonts @import, which is stripped when they are vendored (REQ-TECH-027);
+ * overriding the Bootstrap variable here means markup and typography stay
+ * identical under the standard stylesheet and each installed theme. */
+:root {
+  --bs-body-font-family: "Geist", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --clara-sidebar-width: 17rem;
+}
+
+/* --- shell: brand bar, sidebar + content panel, footer (User_Interface_Design.md §2.4) --- */
+
+.clara-shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.clara-body {
+  display: flex;
+  align-items: stretch;
+  flex: 1 1 auto;
+  /* No horizontal scroll on phones (REQ-UI-008): the panel shrinks, the sidebar
+   * has already collapsed to the offcanvas by then. */
+  min-width: 0;
+}
+
+.clara-sidebar {
+  flex: 0 0 var(--clara-sidebar-width);
+  width: var(--clara-sidebar-width);
+  border-right: 1px solid var(--bs-border-color);
+}
+
+/* Below the lg breakpoint Bootstrap turns .offcanvas-lg into an overlay and
+ * ignores these, so the same markup serves both layouts. */
+@media (min-width: 992px) {
+  .clara-sidebar {
+    display: block;
+  }
+}
+
+.clara-content {
+  flex: 1 1 auto;
+  /* A long table inside the panel must not widen the page. */
+  min-width: 0;
+  padding: 1.25rem 1.5rem 2rem;
+}
+
+.clara-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+/* Sidebar navigation: denser than Bootstrap's default list-group, and the active
+ * item is marked rather than accented twice. */
+.clara-nav .nav-link {
+  color: var(--bs-body-color);
+  border-radius: var(--bs-border-radius);
+  padding: 0.375rem 0.625rem;
+}
+
+.clara-nav .nav-link:hover {
+  background-color: var(--bs-tertiary-bg);
+}
+
+.clara-nav .nav-link.active {
+  background-color: var(--bs-primary-bg-subtle);
+  color: var(--bs-primary-text-emphasis);
+  font-weight: 600;
+}
+
+.clara-nav-heading {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--bs-secondary-color);
+  padding: 0.75rem 0.625rem 0.25rem;
+}
+
+/* --- data regions (REQ-UI-032) --- */
+
+/* A region that is loading, has failed, or holds nothing keeps its height so the
+ * page does not jump when the client fills it. */
+.clara-region-empty {
+  color: var(--bs-secondary-color);
+}
+
+/* --- project rows on the dashboard (User_Interface_Design.md §4) --- */
+
+.clara-project-row td {
+  vertical-align: middle;
+}
+
+.clara-stat {
+  color: var(--bs-secondary-color);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* --- the centred panel for login and the public password pages (DEV-UI-1) --- */
+
+.clara-standalone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 1.5rem;
+}
+
+.clara-standalone-card {
+  width: 100%;
+  max-width: 26rem;
+}

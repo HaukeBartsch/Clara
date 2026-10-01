@@ -1,0 +1,278 @@
+<?php
+// Router dispatch, including both shapes of one route (REQ-UI-044): the guard runs
+// before either shape, a data request answers with the API's failure envelope
+// rather than HTML, and a route that declares no region refuses JSON with 406.
+
+declare(strict_types=1);
+
+use Clara\ApiClient;
+use Clara\Auth;
+use Clara\Config;
+use Clara\I18n;
+use Clara\Logger;
+use Clara\Request;
+use Clara\Response;
+use Clara\Router;
+use Clara\Session;
+use Clara\View;
+
+/**
+ * The object graph the front controller builds, with the fake transport in place
+ * of curl. Every authenticated render also spends one call on the i18n bundle, so
+ * queue that response before whatever the page itself reads.
+ */
+function router_for(Request $request, ?Config $config = null): Router
+{
+    $config ??= test_config();
+    $logger = new Logger('error', true);
+    $api = new ApiClient($config, $logger, $request, new FakeTransport());
+    $i18n = new I18n($api, $logger, true);
+
+    return new Router($config, $request, $api, $i18n, new View($config, $i18n, $request), new Auth($api, $logger, $config), $logger);
+}
+
+function http_request(string $method, string $path, array $headers = [], array $post = [], array $query = []): Request
+{
+    return new Request($method, $path, $headers, $query, $post);
+}
+
+function browser_headers(): array
+{
+    // What a browser actually sends — the wildcard must not read as JSON.
+    return ['accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'];
+}
+
+function json_headers(): array
+{
+    return ['accept' => 'application/json'];
+}
+
+describe('router — guard and dispatch', function (): void {
+    it('sends an anonymous visitor to the login page', function (): void {
+        $response = router_for(http_request('GET', '/', browser_headers()))->dispatch();
+
+        assert_same(302, $response->status());
+        assert_same('/login', $response->headers()['Location']);
+    });
+
+    it('does not remember the dashboard as a destination', function (): void {
+        // '/' is where an anonymous visitor ends up anyway, so no next= is added.
+        $request = new Request('GET', '/', browser_headers(), ['next' => '/projects/4'], []);
+        $response = router_for($request)->dispatch();
+
+        assert_same('/login', $response->headers()['Location']);
+    });
+
+    it('renders the dashboard for a signed-in user and declares its data region', function (): void {
+        sign_in();
+        queue_shell();
+        api_route('/api/v1/projects', [['id' => 1, 'project_name' => '8DISC', 'organization' => 'NAT EU',
+            'record_count' => 42, 'instrument_count' => 5, 'field_count' => 128]]);
+
+        $response = router_for(http_request('GET', '/', browser_headers()))->dispatch();
+
+        assert_same(200, $response->status());
+        assert_contains('data-region="projects"', $response->body());
+        assert_contains('clara-sidebar', $response->body());
+    });
+
+    it('serves the same route as JSON when Accept asks for it (REQ-UI-044)', function (): void {
+        sign_in();
+        queue_shell();
+        api_route('/api/v1/projects', [['id' => 1, 'project_name' => '8DISC', 'organization' => 'NAT EU',
+            'record_count' => 42, 'instrument_count' => 5, 'field_count' => 128]]);
+
+        $response = router_for(http_request('GET', '/', json_headers()))->dispatch();
+
+        assert_same(200, $response->status());
+        assert_contains('application/json', $response->headers()['Content-Type']);
+        $payload = json_decode($response->body(), true);
+        assert_same(1, count($payload));
+        assert_same('8DISC', $payload[0]['project_name']);
+    });
+
+    it('discloses no more in the data region than the page shows', function (): void {
+        sign_in();
+        queue_shell();
+        // The API row carries fields the dashboard does not render.
+        api_route('/api/v1/projects', [['id' => 1, 'project_name' => '8DISC', 'organization' => 'NAT EU',
+            'record_count' => 42, 'instrument_count' => 5, 'field_count' => 128, 'pi_email' => 'pi@example.org']]);
+
+        $response = router_for(http_request('GET', '/', json_headers()))->dispatch();
+
+        assert_not_contains('pi@example.org', $response->body());
+        assert_not_contains('pi_email', $response->body());
+    });
+
+    it('answers an unauthenticated data request with the failure envelope, not HTML', function (): void {
+        $response = router_for(http_request('GET', '/', json_headers()))->dispatch();
+
+        assert_same(403, $response->status());
+        $payload = json_decode($response->body(), true);
+        assert_same('forbidden', $payload['error']);
+        assert_not_contains('<!doctype html>', $response->body());
+    });
+
+    it('refuses JSON for a route that declares no data region', function (): void {
+        queue_shell();
+
+        $response = router_for(http_request('GET', '/login', json_headers()))->dispatch();
+
+        assert_same(406, $response->status());
+    });
+
+    it('answers an unknown route with 404', function (): void {
+        $response = router_for(http_request('GET', '/nope', browser_headers()))->dispatch();
+
+        assert_same(404, $response->status());
+    });
+
+    it('sends a signed-in user to the no-access page instead of an empty dashboard (REQ-UI-006)', function (): void {
+        sign_in();
+        queue_shell();
+        api_route('/api/v1/projects', []);
+
+        $response = router_for(http_request('GET', '/', browser_headers()))->dispatch();
+
+        assert_same(200, $response->status());
+        assert_contains('No projects yet', $response->body());
+    });
+
+    it('makes one API call for the dashboard read — no fan-out per row (§7 rule 13)', function (): void {
+        sign_in();
+        queue_shell();
+        api_route('/api/v1/projects', [
+            ['id' => 1, 'project_name' => 'A', 'organization' => '', 'record_count' => 1, 'instrument_count' => 1, 'field_count' => 1],
+            ['id' => 2, 'project_name' => 'B', 'organization' => '', 'record_count' => 2, 'instrument_count' => 2, 'field_count' => 2],
+        ]);
+
+        router_for(http_request('GET', '/', browser_headers()))->dispatch();
+
+        assert_same(1, api_calls_to('/api/v1/projects'), 'two rows must not cost two reads');
+    });
+});
+
+describe('router — CSRF (REQ-UI-005)', function (): void {
+    it('rejects a mutation without a token and keeps the session', function (): void {
+        sign_in();
+        queue_shell();
+
+        $response = router_for(http_request('POST', '/logout', browser_headers()))->dispatch();
+
+        // Back to the page, still signed in, and no logout call was made.
+        assert_same(302, $response->status());
+        assert_true(Session::isAuthenticated(), 'the session must survive a CSRF rejection');
+        assert_same(0, count(array_filter($GLOBALS['api_calls'], static fn (array $c): bool => str_contains($c['url'], '/auth/logout'))));
+    });
+
+    it('rejects a wrong token', function (): void {
+        sign_in();
+        queue_shell();
+
+        router_for(http_request('POST', '/logout', browser_headers(), ['csrf_token' => str_repeat('b', 64)]))->dispatch();
+
+        assert_true(Session::isAuthenticated(), 'a wrong token must not end the session');
+    });
+
+    it('accepts the token from a form field', function (): void {
+        sign_in();
+        queue_shell();
+        api_route('/auth/logout', '');
+
+        $response = router_for(http_request('POST', '/logout', browser_headers(), ['csrf_token' => str_repeat('a', 64)]))->dispatch();
+
+        assert_same(302, $response->status());
+        assert_same('/login', $response->headers()['Location']);
+    });
+});
+
+describe('login — the local credential path (Sequences F + C)', function (): void {
+    it('establishes a session and lands on the dashboard', function (): void {
+        $_SESSION = ['csrf_token' => str_repeat('c', 64)];
+        api_route('/auth/verify-password', ['status' => 'ok']);
+        api_route('/auth/login', ['id' => 7, 'email' => 'admin@example.org', 'display_name' => 'Administrator',
+            'is_admin' => true, 'auth_source' => 'local', 'ui_language' => 'en', 'ui_theme' => null]);
+
+        $response = router_for(http_request(
+            'POST',
+            '/login',
+            browser_headers(),
+            ['csrf_token' => str_repeat('c', 64), 'email' => 'admin@example.org', 'password' => 'correct horse'],
+            ['action' => 'credentials']
+        ))->dispatch();
+
+        assert_same(302, $response->status());
+        assert_same('/', $response->headers()['Location']);
+        assert_true(Session::isAuthenticated(), 'the login must establish a session');
+        assert_same(7, Session::userId());
+        assert_true(Session::isAdmin(), 'the admin flag comes from the API response');
+    });
+
+    it('honours a same-site next= after login', function (): void {
+        $_SESSION = ['csrf_token' => str_repeat('c', 64)];
+        api_route('/auth/verify-password', ['status' => 'ok']);
+        api_route('/auth/login', ['id' => 7, 'email' => 'a@example.org', 'display_name' => 'A', 'is_admin' => false]);
+
+        $response = router_for(http_request(
+            'POST', '/login', browser_headers(),
+            ['csrf_token' => str_repeat('c', 64), 'email' => 'a@example.org', 'password' => 'pw'],
+            ['action' => 'credentials', 'next' => '/projects/4']
+        ))->dispatch();
+
+        assert_same('/projects/4', $response->headers()['Location']);
+    });
+
+    it('refuses a scheme-relative next= (REQ-TECH-024)', function (): void {
+        $_SESSION = ['csrf_token' => str_repeat('c', 64)];
+        api_route('/auth/verify-password', ['status' => 'ok']);
+        api_route('/auth/login', ['id' => 7, 'email' => 'a@example.org', 'display_name' => 'A', 'is_admin' => false]);
+
+        $response = router_for(http_request(
+            'POST', '/login', browser_headers(),
+            ['csrf_token' => str_repeat('c', 64), 'email' => 'a@example.org', 'password' => 'pw'],
+            ['action' => 'credentials', 'next' => '//evil.example.org/phishing']
+        ))->dispatch();
+
+        assert_same('/', $response->headers()['Location']);
+    });
+
+    it('shows one translated line for a wrong password and no session', function (): void {
+        $_SESSION = ['csrf_token' => str_repeat('c', 64)];
+        api_route('/auth/verify-password', ['error' => 'bad_password', 'message' => 'invalid email or password', 'status' => 401], 401);
+
+        $response = router_for(http_request(
+            'POST', '/login', browser_headers(),
+            ['csrf_token' => str_repeat('c', 64), 'email' => 'a@example.org', 'password' => 'wrong'], ['action' => 'credentials']
+        ))->dispatch();
+
+        assert_true(!Session::isAuthenticated(), 'a rejected credential must not sign anyone in');
+        assert_contains('not recognised', $response->body());
+    });
+
+    it('names the account state when the account is disabled, not a password failure', function (): void {
+        $_SESSION = ['csrf_token' => str_repeat('c', 64)];
+        api_route('/auth/verify-password', ['error' => 'account_disabled', 'message' => 'this account is disabled', 'status' => 403], 403);
+
+        $response = router_for(http_request(
+            'POST', '/login', browser_headers(),
+            ['csrf_token' => str_repeat('c', 64), 'email' => 'a@example.org', 'password' => 'pw'], ['action' => 'credentials']
+        ))->dispatch();
+
+        assert_contains('disabled', $response->body());
+        assert_not_contains('password combination', $response->body());
+    });
+
+    it('says two-factor is not supported rather than reporting a bad password', function (): void {
+        $_SESSION = ['csrf_token' => str_repeat('c', 64)];
+        api_route('/auth/verify-password', ['status' => 'ok']);
+        api_route('/auth/login', ['error' => 'mfa_required', 'message' => 'second factor required', 'status' => 401], 401);
+
+        $response = router_for(http_request(
+            'POST', '/login', browser_headers(),
+            ['csrf_token' => str_repeat('c', 64), 'email' => 'a@example.org', 'password' => 'pw'], ['action' => 'credentials']
+        ))->dispatch();
+
+        assert_contains('two-factor', $response->body());
+        assert_not_contains('not recognised', $response->body());
+    });
+});
