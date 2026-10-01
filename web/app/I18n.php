@@ -154,7 +154,13 @@ final class I18n
             $out[$key] = $this->t($key);
         }
 
-        return (string) json_encode($out, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE);
+        // JSON_HEX_TAG is what makes the breakout impossible (`<` and `>` never
+        // reach the document); slashes stay unescaped so the text reads as the
+        // author wrote it, which also keeps the encoded block diffable.
+        return (string) json_encode(
+            $out,
+            JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+        );
     }
 
     /**

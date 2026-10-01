@@ -21,6 +21,9 @@ namespace Clara;
 
 final class Session
 {
+    /** How long a first-factor success stays pending (§2.7: TTL 5 minutes). */
+    public const PENDING_SECOND_FACTOR_SECONDS = 300;
+
     private function __construct() {}
 
     /**
@@ -73,25 +76,92 @@ final class Session
 
     /**
      * A `tfa_pending` session is pre-authentication: not a session, and every
-     * page guard rejects it (Authentication_Authorization_Design.md §2.7). This
-     * pass has no second-factor flow yet, but the gate exists so that M1 cannot
-     * land a hole by forgetting it.
+     * page guard rejects it (Authentication_Authorization_Design.md §2.7). What
+     * *is* reachable while it stands is the second-factor panel and the
+     * enrollment wizard — both owned by the `/login` route, which reads the
+     * state through pendingSecondFactor() instead of treating it as signed in.
      */
     public static function hasPendingSecondFactor(): bool
     {
-        if (!isset($_SESSION['tfa_pending']) || !is_array($_SESSION['tfa_pending'])) {
-            return false;
-        }
-        $verifiedAt = (int) ($_SESSION['tfa_pending']['verified_at'] ?? 0);
+        return self::pendingSecondFactor() !== [];
+    }
 
-        // TTL 5 minutes; an expired pending state is dropped, not honoured.
-        if ($verifiedAt + 300 < time()) {
+    /**
+     * The pending first-factor state, or [] when none stands or its five minutes
+     * have passed (an expired one is dropped rather than honoured, §2.7).
+     *
+     * @return array{email: string, source: string, provider: string, source_name: string,
+     *               first_factor: string, user_id: int, method: string}
+     */
+    public static function pendingSecondFactor(): array
+    {
+        $pending = $_SESSION['tfa_pending'] ?? null;
+        if (!is_array($pending) || !isset($pending['verified_at'])) {
+            return [];
+        }
+
+        // TTL 5 minutes, the lifetime §3 fixes for this state.
+        if ((int) $pending['verified_at'] + self::PENDING_SECOND_FACTOR_SECONDS < time()) {
             unset($_SESSION['tfa_pending']);
 
-            return false;
+            return [];
         }
 
-        return true;
+        return [
+            'email' => (string) ($pending['email'] ?? ''),
+            'source' => (string) ($pending['source'] ?? ''),
+            'provider' => (string) ($pending['provider'] ?? ''),
+            'source_name' => (string) ($pending['source_name'] ?? ''),
+            // The first-factor handle of REQ-API-131 — a 5-minute signature, not
+            // a password; nothing here ever holds one (REQ-AUTH-036).
+            'first_factor' => (string) ($pending['first_factor'] ?? ''),
+            'user_id' => (int) ($pending['user_id'] ?? 0),
+            'method' => (string) ($pending['method'] ?? ''),
+        ];
+    }
+
+    /**
+     * Records the first-factor success behind a second factor (§2.7). The id is
+     * rotated first: an attacker who planted this cookie before the attempt must
+     * not end up holding the session the challenge completes into.
+     *
+     * @param array{email?: string, source?: string, provider?: string,
+     *              source_name?: string, first_factor?: string, user_id?: int, method?: string} $pending
+     */
+    public static function beginSecondFactor(array $pending): void
+    {
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_regenerate_id(true);
+        }
+
+        $_SESSION['tfa_pending'] = array_merge([
+            'email' => '',
+            'source' => '',
+            'provider' => '',
+            'source_name' => '',
+            'first_factor' => '',
+            'user_id' => 0,
+            'method' => '',
+        ], $pending, ['verified_at' => time()]);
+
+        // Anything from an earlier attempt is gone: a stale flash or a half-finished
+        // wizard would otherwise reappear inside someone else's challenge.
+        unset($_SESSION['_flash']);
+    }
+
+    /** Replaces part of the pending state (e.g. the method after a resend). */
+    public static function updatePendingSecondFactor(array $fields): void
+    {
+        if (!isset($_SESSION['tfa_pending']) || !is_array($_SESSION['tfa_pending'])) {
+            return;
+        }
+        $_SESSION['tfa_pending'] = array_merge($_SESSION['tfa_pending'], $fields);
+    }
+
+    /** Aborts the challenge: no pending state survives a step back (§2.7). */
+    public static function clearPendingSecondFactor(): void
+    {
+        unset($_SESSION['tfa_pending']);
     }
 
     /**

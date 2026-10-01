@@ -20,9 +20,9 @@ Binding limits, restated because they constrain every file written: no SQL and n
 - **i18n is half-wired.** Languages `en`/`nb`/`nn` are seeded and `GET /api/v1/i18n/bundle` serves a language's overrides, but no strings exist: the English catalog is the web layer's to author (`REQ-DB-031`, `API_Endpoints_Design.md` §4.19 — "English is the source of truth and lives in the PHP layer").
 - **FIONA contributes an interfacing style, not markup.** The reference app has no sidebar anywhere, exactly one `<table>` (`User/projects.php:119`, hand-styled), mixed Bootstrap 2.3.1/4.4.1 on the same pages, and three jQuery versions. Adopt from it: per-page access-control include, fetch-and-populate of rendering targets, audit-on-failure, deny-by-default accessors, write-temp-then-rename. Do not port its HTML, and do not repeat its defects (client-side md5 as the wire encoding, no CSRF token, `innerHTML` with server data, GET mutations, session-fixation-prone login without `session_regenerate_id`).
 
-## 3. Prerequisites — four decisions, all closed
+## 3. Prerequisites — five decisions, all closed
 
-These shape or block the work downstream. All four are closed (P0-a and P0-b on 2026-09-30, P0-c and P0-d the same day) — **nothing blocks M0**.
+These shape or block the work downstream. All five are closed (P0-a and P0-b on 2026-09-30, P0-c and P0-d the same day, P0-e on 2026-10-01) — **nothing blocks M0**.
 
 ### P0-a · The API exposed no effective-permissions read — **closed 2026-09-30**
 
@@ -66,6 +66,14 @@ The API issues survey URLs as `WEB_PUBLIC_URL + "/s/" + token` (`api/internal/ad
 **Resolved: several scripts as needed — one shared runtime plus one module per view / logical section / application.** `web/assets/app.js` is the shared runtime (fetch helper carrying `Accept` + `X-CSRF-Token`, data-region binders, the `data-i18n` string block, Tabulator defaults); `web/assets/js/<section>.js` carries one surface each — `record.js`, `record-status.js`, `setup.js`, `design.js`, `members.js`, `admin-users.js`, `survey.js`, … — and a page emits `<script type="module">` tags only for what it uses. The branching evaluator is one module imported by both the record form and the survey page, which is the case a single entry point could not express as clearly. Specified as **REQ-UI-045** (rationale DEV-UI-12); `Design/User_Interface_Design.md` §1/§3.7/§8.4 and `Technology_Stack_Design.md` §4 amended to match.
 
 The limits that keep this inside the existing stack facts, and that review should enforce: `<script type="module">` with **relative** specifiers (no import map, no bundler — `REQ-TECH-001`/`REQ-UI-001`), same-origin only (`ASM-TECH-2`, CSP `script-src 'self'`), UI strings still injected server-side (`REQ-UI-008`), and vendored libraries untouched under `assets/vendor/`.
+
+### P0-e · A two-factor challenge could not complete a local login — **closed 2026-10-01**
+
+`POST /api/v1/auth/login` verifies the bcrypt hash on **every** local call (Sequence C step 0, `REQ-AUTH-050`) and the API keeps no challenge state (GD-1), so the code submission §2.7 describes had to carry a first-factor proof — while `User_Interface_Design.md` §2.2 gives that panel one code field, and `REQ-AUTH-036` forbids persisting a password anywhere a session file could hold it.
+
+**Resolved as a signed first-factor handle** (`REQ-API-131`, rationale DEV-API-19): `POST /api/v1/auth/verify-password` — which has just verified that hash and does nothing else — returns a 5-minute HMAC statement to that effect, and login accepts it in place of `password`. It is issued only for an account a second factor still guards, so it can never finish a login on its own; it is bound to one user id, carries no session reference, stays inside the internal boundary, and never reaches a log or audit row. Rejected alternatives: re-asking for the password on the panel (contradicts §2.2 and charges the user for a property of the API), and a browser-held credential re-submitted by script (a 2FA login would need JavaScript, and a reload loses it). Implemented in `api/internal/admin/firstfactor.go` over the same service secret, covered by `TestFirstFactorCompletesAChallengedLogin`, `TestFirstFactorCannotReplaceAPasswordForAnUnguardedAccount` and `TestFirstFactorSignatureAndExpiryAreEnforced`.
+
+What PHP does with it: store the handle in `tfa_pending` (§3) beside the email, present one code field, re-invoke login with `{email, source, first_factor, mfa_code}`, and treat 401 `first_factor_expired` as "start over" rather than as a failure line — it is not counted toward the lockout (`REQ-AUTH-035`).
 
 ## 4. Target tree
 
@@ -156,7 +164,7 @@ These are the ones most likely to be got wrong, gathered from the code-level fac
 3. **Negative provisional ids.** While a staging set is open, objects created in it carry negative ids and structure reads return the staged snapshot (`admin.go:156-165`) — forms and links must tolerate them.
 4. **Project creation already seeds arm 1 and a `baseline` event** (`projects.go`, HEAD). Do not create them from the UI; offer the link into setup instead (§5.2).
 5. **Roles are create-only** — there is no role update or delete endpoint, and no user delete (disable only). The UI must not offer either.
-6. **Login's 2FA responses are non-standard 401s** (`mfa_required` with `method`, `tfa_enrollment_required` with `user_id`) — branch on `error`, not on status alone; the enrollment wizard runs pre-session using that id as `X-Internal-User-Id`.
+6. **Login's 2FA responses are non-standard 401s** (`mfa_required` with `method`, `tfa_enrollment_required` with `user_id`) — branch on `error`, not on status alone; the enrollment wizard runs pre-session using that id as `X-Internal-User-Id`. A local challenge resumes with the P0-e handle and never with the password, and 401 `first_factor_expired` clears the pending state back to the credential form rather than showing a failure line.
 7. **Token cache discipline (§8.6).** Fetch the member's project token via `GET …/users/{uid}/token`, cache per (user, project) in the session, and on data-API **401 `Invalid token`** discard + refetch + retry exactly once; a 403 is a permission result and is never retried.
 8. **Submission policy (GD-14).** Send only fields carrying a value plus fields whose stored value the user removed (tracked client-side against the §8.3 prefill). An empty value that reaches the API clears the row (`REQ-VAL-024`).
 9. **Time handling.** Display system timestamps as returned (UTC `YYYY-MM-DD HH:MM:SS`); display clinical dates exactly as stored, offset included; send the browser zone as `tz` on import (`GD-16`). No locale reformatting anywhere.

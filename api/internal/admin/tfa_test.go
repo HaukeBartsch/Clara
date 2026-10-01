@@ -47,6 +47,22 @@ func enrollTOTPComplete(t *testing.T, e *env, u *db.User) (string, []string) {
 	return enr.Secret, conf.RecoveryCodes
 }
 
+// nextStepCode returns a valid code for the TOTP step after the current one —
+// what a user's app shows a moment after any code already spent. Derived from
+// the step number rather than a wall-clock offset: "now + 31 s" is one step
+// ahead only when the run happens to start early in a step, and two ahead at
+// the end of one, which lands outside the ±1 verification window (REQ-AUTH-058)
+// and made this test fail whenever it ran in the closing second of a step.
+func nextStepCode(t *testing.T, secret string) string {
+	t.Helper()
+	next := (time.Now().Unix()/int64(totp.Period) + 1) * int64(totp.Period)
+	code, err := totp.Code(secret, time.Unix(next, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return code
+}
+
 func loginBody(email, password, mfa string) map[string]any {
 	b := map[string]any{"email": email, "source": "local", "password": password}
 	if mfa != "" {
@@ -118,10 +134,7 @@ func TestTFAChallengeFlowEnrollAndLogin(t *testing.T) {
 
 	// Right code (next step — the confirm already spent the current one):
 	// 200 with tfa_method and an mfa detail on login_success.
-	code, err := totp.Code(secret, time.Now().Add(31*time.Second))
-	if err != nil {
-		t.Fatal(err)
-	}
+	code := nextStepCode(t, secret)
 	rec = e.do("POST", "/api/v1/auth/login", loginBody("user@example.org", "hunter2", code), nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code login: %d %s", rec.Code, rec.Body.String())

@@ -28,8 +28,27 @@ final class ApiClient
         private readonly Config $config,
         private readonly Logger $logger,
         private readonly Request $request,
-        private readonly Transport $transport = new CurlTransport()
+        private readonly Transport $transport = new CurlTransport(),
+        /**
+         * Names the acting user for a call made *before* a session stands — the
+         * two-factor enrollment wizard, which the API lets PHP drive for an
+         * identity whose first factor it just verified
+         * (Authentication_Authorization_Design.md §2.7, REQ-API-115). Set only
+         * through asUser(); null means "the session's user, if any".
+         */
+        private readonly ?int $actorOverride = null
     ) {}
+
+    /**
+     * The same client speaking for one pre-authentication identity. Returns a
+     * client rather than mutating this one: the override must not be able to
+     * outlive the wizard call it belongs to, and an authenticated request must
+     * never find itself speaking as somebody else.
+     */
+    public function asUser(int $userId): self
+    {
+        return new self($this->config, $this->logger, $this->request, $this->transport, $userId);
+    }
 
     /**
      * @param array<string, scalar|null> $query
@@ -88,9 +107,12 @@ final class ApiClient
 
         // The acting user, when one is authenticated. Pre-authentication calls
         // (login, verify-password, the password-reset trio) are the API's own
-        // exception set and carry no user header (DEV-API-16).
-        if (Session::isAuthenticated()) {
-            $headers[] = 'X-Internal-User-Id: ' . Session::userId();
+        // exception set and carry no user header (DEV-API-16). A wizard call
+        // made inside a tfa_pending state names the identity whose first factor
+        // PHP has verified — that is the override, not a session (§2.7).
+        $actor = $this->actorOverride ?? (Session::isAuthenticated() ? Session::userId() : null);
+        if ($actor !== null) {
+            $headers[] = 'X-Internal-User-Id: ' . $actor;
         }
 
         $response = $this->transport->request($method, $url, $headers, $body === null ? null : (string) json_encode($body));

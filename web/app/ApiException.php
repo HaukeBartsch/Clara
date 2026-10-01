@@ -18,11 +18,17 @@ final class ApiException extends \RuntimeException
     /**
      * @param string $errorCode the stable §4.2 code (`bad_password`, `forbidden`)
      * @param int    $status    the HTTP status the API answered with
+     * @param array<string, mixed> $context
+     *        the remaining fields of the response body. A few codes carry what
+     *        the caller needs to act on rather than only text: `mfa_required`
+     *        names the method, `tfa_enrollment_required` carries the pending
+     *        identity's id so the wizard can run pre-session (§2.7).
      */
     public function __construct(
         private readonly string $errorCode,
         string $message,
-        private readonly int $status
+        private readonly int $status,
+        private readonly array $context = []
     ) {
         // \Exception::$code is an int and unusable for a string code, so the
         // code lives beside it and is read through code().
@@ -41,12 +47,31 @@ final class ApiException extends \RuntimeException
         return $this->status;
     }
 
+    /** One context field as a string, or '' when the response did not carry it. */
+    public function contextString(string $key): string
+    {
+        $value = $this->context[$key] ?? null;
+
+        return is_scalar($value) ? (string) $value : '';
+    }
+
+    /** One context field as an integer, or 0 when it was absent or not one. */
+    public function contextInt(string $key): int
+    {
+        $value = $this->context[$key] ?? null;
+
+        return is_numeric($value) ? (int) $value : 0;
+    }
+
     /** Builds from a decoded error body, tolerating a missing field. */
     public static function fromBody(array $body, int $status): self
     {
         $code = isset($body['error']) && is_string($body['error']) ? $body['error'] : 'internal';
         $message = isset($body['message']) && is_string($body['message']) ? $body['message'] : '';
 
-        return new self($code, $message, $status);
+        // Everything the envelope does not define itself travels with it.
+        $context = array_diff_key($body, array_flip(['error', 'message', 'status']));
+
+        return new self($code, $message, $status, $context);
     }
 }

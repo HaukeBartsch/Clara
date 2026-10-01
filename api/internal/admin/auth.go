@@ -34,14 +34,19 @@ func (h *Handler) registerAuth(mux *http.ServeMux) {
 // of a failed named-source credential race so the single finalizing call
 // yields exactly one login_failure with the losing attempts' detail
 // (Audit_Logging_Design.md §3.1, DEV-AUD-5); it never contains credentials.
+// first_factor replaces password on the second call of a two-factor challenge:
+// the signed proof verify-password issued for an account a second factor still
+// guards, so the challenge completes without the password being typed twice or
+// stored anywhere (REQ-API-131, firstfactor.go).
 type loginRequest struct {
-	Email      string            `json:"email"`
-	Source     string            `json:"source"`
-	Provider   string            `json:"provider"`
-	Password   string            `json:"password"`
-	MFACode    string            `json:"mfa_code"`
-	SourceName string            `json:"source_name"`
-	Attempts   map[string]string `json:"attempts"`
+	Email       string            `json:"email"`
+	Source      string            `json:"source"`
+	Provider    string            `json:"provider"`
+	Password    string            `json:"password"`
+	MFACode     string            `json:"mfa_code"`
+	SourceName  string            `json:"source_name"`
+	Attempts    map[string]string `json:"attempts"`
+	FirstFactor string            `json:"first_factor"`
 }
 
 // login implements POST /api/v1/auth/login with the processing order of
@@ -81,15 +86,33 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 
 	// Step 0 (GD-18, REQ-AUTH-050): local hash check. A missing hash and a
 	// mismatch are indistinguishable to the caller; bcrypt comparison is
-	// constant-time per hash.
+	// constant-time per hash. A first_factor handle from verify-password stands
+	// in for the password only where a second factor still guards the account,
+	// so it can never complete a login by itself (REQ-API-131).
 	if body.Source == "local" {
 		if u == nil {
 			h.loginFailure(ctx, &body, "account_not_found")
 			APIError(w, http.StatusUnauthorized, "account_not_found", "no account for this email")
 			return
 		}
-		if !u.PasswordHash.Valid ||
-			bcrypt.CompareHashAndPassword([]byte(u.PasswordHash.String), []byte(body.Password)) != nil {
+		switch {
+		case body.FirstFactor != "":
+			guarded, err := h.secondFactorGuards(ctx, u)
+			if err != nil {
+				errInternal(w)
+				return
+			}
+			if !guarded || !h.acceptFirstFactor(body.FirstFactor, u, time.Now()) {
+				// Unknown format, wrong signature, wrong account, expired, or
+				// presented where no second factor guards the account: one
+				// answer for all of them — sign in again.
+				h.loginFailure(ctx, &body, "first_factor_expired")
+				APIError(w, http.StatusUnauthorized, "first_factor_expired",
+					"the first-factor proof is no longer valid — sign in again")
+				return
+			}
+		case !u.PasswordHash.Valid ||
+			bcrypt.CompareHashAndPassword([]byte(u.PasswordHash.String), []byte(body.Password)) != nil:
 			h.loginFailure(ctx, &body, "bad_credentials")
 			APIError(w, http.StatusUnauthorized, "bad_password", "invalid email or password")
 			return
@@ -192,7 +215,9 @@ func (h *Handler) isBootstrapEmail(email string) bool {
 // An unknown account and a wrong password are not distinguished (§2.6).
 // The brute-force check (Sequence E) runs in PHP before dispatch; the API's
 // shared IP limiter already covers this path. The password is never logged
-// (REQ-AUTH-036).
+// (REQ-AUTH-036). For an account a second factor still guards the ok answer also
+// carries a first-factor handle — the proof the challenge's second login call
+// presents in place of the password, so no layer has to hold one (REQ-API-131).
 func (h *Handler) verifyPassword(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Email    string `json:"email"`
@@ -232,7 +257,25 @@ func (h *Handler) verifyPassword(w http.ResponseWriter, r *http.Request) {
 		APIError(w, http.StatusForbidden, "account_disabled", "this account is disabled")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+
+	resp := map[string]any{"status": "ok"}
+
+	// An account a second factor still guards gets back the proof that lets the
+	// challenge's second call carry no password (REQ-API-131). None is issued
+	// otherwise: there is no challenge to complete, and login would refuse it —
+	// an unguarded account authenticates with its password alone.
+	guarded, err := h.secondFactorGuards(ctx, u)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	if guarded {
+		if handle := h.issueFirstFactor(u, time.Now()); handle != "" {
+			resp["first_factor"] = handle
+			resp["expires_in"] = int(firstFactorTTL.Seconds())
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // loginFailure writes the login_failure entry (§3.1): source, email and a
@@ -244,7 +287,10 @@ func (h *Handler) verifyPassword(w http.ResponseWriter, r *http.Request) {
 // when no source could be reached (Audit_Logging_Design.md §3.1, DEV-AUD-5).
 // Account-state rejections keep their specific reason (REQ-AUTH-065).
 func (h *Handler) loginFailure(ctx context.Context, body *loginRequest, reason string) {
-	if reason != "rate_limited" { // the lockout rejection must not extend itself
+	// The lockout rejection must not extend itself, and neither does a stale
+	// first-factor handle: taking a minute over a code is not a credential
+	// attempt, and it must not spend the address's lockout budget (REQ-AUTH-035).
+	if reason != "rate_limited" && reason != "first_factor_expired" {
 		h.lockouts.failure(body.Email, time.Now())
 	}
 	if len(body.Attempts) > 0 {

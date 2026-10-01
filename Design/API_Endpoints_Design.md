@@ -325,6 +325,12 @@ Every error is a JSON object with a consistent shape:
 { "email": "user@example.org", "source": "local", "password": "***", "mfa_code": "492817" }
 ```
 
+```json
+{ "email": "user@example.org", "source": "local", "first_factor": "eyJ2IjoiZmYxIiw…", "mfa_code": "492817" }
+```
+
+On the second call of a two-factor challenge the handle from `POST /api/v1/auth/verify-password` below stands in for `password` (REQ-API-131, DEV-API-19): the user enters one code, and nothing between the two calls has to hold their password. A handle is accepted only where a second factor still guards the account, so it cannot complete a login by itself; a forged, misdirected or expired one answers 401 `first_factor_expired` and does not count toward the lockout (REQ-AUTH-035).
+
 An optional `source_name` carries the authentication-source name the user selected on the login page (REQ-AUTH-067); it is recorded in the `login_success` / `login_failure` audit details and never affects identity resolution or authorization.
 
 An optional `attempts` carries the per-source outcomes of a failed named-source credential race (`Authentication_Authorization_Design.md` §2.9) so the single finalizing call yields exactly one `login_failure` with the losing attempts' detail (`Audit_Logging_Design.md` §3.1, DEV-AUD-5):
@@ -338,7 +344,15 @@ The map is source-id → outcome (e.g. `bad_password`, `unreachable`) and MUST n
 
 **`POST /api/v1/auth/verify-password`** — `{ "email": "…", "password": "***" }`: the side-effect-free verify step of the named-source credential race (`Authentication_Authorization_Design.md` §2.9, REQ-API-123). Runs the login endpoint's hash check and account-active rule only and answers `ok` / `bad_password` / `account_disabled` / `account_expired` — no `last_login_at`/`auth_source` write, no audit event, no user object; login finalizes exactly once through `POST /api/v1/auth/login`. Pre-authentication: service token only, no `X-Internal-User-Id` (DEV-API-17); password never logged (REQ-AUTH-036).
 
-Processing (in order, `Authentication_Authorization_Design.md` §2.3): for `source: "local"` — the row exists (401 `account_not_found`) and the bcrypt hash matches in constant time (else 401 `bad_password`; the password is never logged, REQ-AUTH-036); the account is active per the rule of `Authentication_Authorization_Design.md` §4.4 — `enabled`, not expired (403 `account_expired`), not inactive (auto-disable + 403 `account_disabled`, REQ-AUTH-053); **two-factor gate** (`source: "local"`/`"ldap"` only, GD-21, §2.7): method not `off` and no `mfa_code` → 401 `{"error":"mfa_required","method":"totp|email"}`; invalid/expired/replayed `mfa_code` → audit `login_failure` (`bad_mfa_code`) + 401 `bad_mfa_code`; `AUTH_REQUIRE_2FA` on with method `off` → 401 `{"error":"tfa_enrollment_required","user_id":<id>}` — the pending identity's id lets PHP drive the enrollment wizard (§4.4 TFA endpoints, presented as `X-Internal-User-Id`) before a session exists (`Authentication_Authorization_Design.md` §2.7); bootstrap-admin promotion (REQ-AUTH-007): if the email equals `ADMIN_BOOTSTRAP_EMAIL`, ensure the row exists, is enabled, and has `is_admin = 1` (idempotent); set the row's `auth_source` and `last_login_at` (REQ-AUTH-005, REQ-AUTH-053); audit `login_success` with the source (and the factor used when the gate applied, REQ-AUD-028). The API MUST NOT create or store a session (GD-1).
+For an account a second factor still guards, the `ok` answer additionally carries the handle the challenge's second login call presents in place of the password (REQ-API-131, DEV-API-19):
+
+```json
+{ "status": "ok", "first_factor": "eyJ2IjoiZmYxIiw…", "expires_in": 300 }
+```
+
+The handle is `base64url(JSON claims) + "." + base64url(HMAC-SHA256)` over the claims — version, user id, expiry — signed with a key derived from `INTERNAL_SERVICE_TOKEN` for this one purpose (`hmac(service_token, "clara/first-factor/v1")`). It is stateless by construction, so §2.7's "the API keeps no challenge state" still holds; it is bound to one user id, lives 5 minutes (the `tfa_pending` lifetime), and is issued only where gate 1.5 would still close behind it — an account with `method: "off"` and no mandate gets `{"status":"ok"}` and nothing else. It never appears in a log line or an audit detail.
+
+Processing (in order, `Authentication_Authorization_Design.md` §2.3): for `source: "local"` — the row exists (401 `account_not_found`) and the bcrypt hash matches in constant time (else 401 `bad_password`; the password is never logged, REQ-AUTH-036), or an unexpired handle from `verify-password` stands in for the hash check where a second factor still guards the account (else 401 `first_factor_expired`, REQ-API-131); the account is active per the rule of `Authentication_Authorization_Design.md` §4.4 — `enabled`, not expired (403 `account_expired`), not inactive (auto-disable + 403 `account_disabled`, REQ-AUTH-053); **two-factor gate** (`source: "local"`/`"ldap"` only, GD-21, §2.7): method not `off` and no `mfa_code` → 401 `{"error":"mfa_required","method":"totp|email"}`; invalid/expired/replayed `mfa_code` → audit `login_failure` (`bad_mfa_code`) + 401 `bad_mfa_code`; `AUTH_REQUIRE_2FA` on with method `off` → 401 `{"error":"tfa_enrollment_required","user_id":<id>}` — the pending identity's id lets PHP drive the enrollment wizard (§4.4 TFA endpoints, presented as `X-Internal-User-Id`) before a session exists (`Authentication_Authorization_Design.md` §2.7); bootstrap-admin promotion (REQ-AUTH-007): if the email equals `ADMIN_BOOTSTRAP_EMAIL`, ensure the row exists, is enabled, and has `is_admin = 1` (idempotent); set the row's `auth_source` and `last_login_at` (REQ-AUTH-005, REQ-AUTH-053); audit `login_success` with the source (and the factor used when the gate applied, REQ-AUD-028). The API MUST NOT create or store a session (GD-1).
 
 200 — the user object (used by all §4.4 user endpoints):
 
