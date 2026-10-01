@@ -185,7 +185,6 @@ final class LoginController extends Controller
 
         return $this->renderEnroll([
             'method' => 'done',
-            'factor' => $method,
             'recovery_codes' => $activated['recovery_codes'] ?? [],
         ]);
     }
@@ -247,7 +246,6 @@ final class LoginController extends Controller
             'step' => (string) ($enrollment['method'] ?? 'choose'),
             'secret' => (string) ($enrollment['secret'] ?? ''),
             'otpauthUri' => (string) ($enrollment['otpauth_uri'] ?? ''),
-            'factor' => (string) ($enrollment['factor'] ?? ''),
             'recoveryCodes' => is_array($codes) ? array_values(array_map('strval', $codes)) : [],
             'error' => $error,
             'next' => $this->safeNext(),
