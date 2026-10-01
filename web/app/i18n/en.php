@@ -54,9 +54,40 @@ return [
     'login.failure.mfa_code' => 'That code is wrong or has expired.',
     'login.failure.provider_unavailable' => 'The sign-in service could not be reached. Please try again shortly.',
     'login.failure.state_mismatch' => 'The sign-in attempt was interrupted. Please try again.',
-    // The second factor exists in the API but this build has no challenge panel yet
-    // (M1's remainder); saying so beats reporting a wrong password.
-    'login.mfa_unsupported' => 'This account uses two-factor authentication, which this version of the interface cannot complete yet. An administrator can reset it for you.',
+    // The proof behind a challenge lapsed (REQ-API-131): not a wrong code, and
+    // the only honest instruction is to start again.
+    'login.failure.expired_session' => 'That sign-in attempt has expired. Please sign in again.',
+
+    // --- two-factor challenge at login (§2.2, REQ-UI-038) ---
+    'login.mfa.title' => 'Second factor',
+    'login.mfa.heading' => 'Confirm it is you',
+    'login.mfa.code' => 'Code',
+    'login.mfa.submit' => 'Sign in',
+    'login.mfa.help_totp' => 'Enter the code from your authenticator app.',
+    'login.mfa.help_email' => 'We sent a code to {email}.',
+    'login.mfa.help_recovery' => 'Enter one of your recovery codes. Each works once.',
+    'login.mfa.use_recovery_code' => 'Use a recovery code instead',
+    'login.mfa.use_app_code' => 'Use the code from your app',
+    'login.mfa.resend' => 'Send another code',
+    'login.mfa.sent' => 'A new code is on its way to your e-mail address.',
+    'login.mfa.abort' => 'Sign in as somebody else',
+
+    // --- two-factor enrollment wizard (§2.7, REQ-UI-039) ---
+    'login.enroll.title' => 'Set up two-factor sign-in',
+    'login.enroll.heading' => 'Set up your second factor',
+    'login.enroll.help' => 'This installation requires a second factor before you can sign in. Choose one — you will finish with a code from it.',
+    'login.enroll.totp' => 'Use an authenticator app',
+    'login.enroll.email' => 'Use a code by e-mail',
+    'login.enroll.totp_step1' => 'Add the key below to your authenticator app.',
+    'login.enroll.totp_step2' => 'Enter the six-digit code it shows to finish.',
+    'login.enroll.manual_key' => 'Manual-entry key',
+    'login.enroll.setup_link' => 'Or open this setup link in your app:',
+    'login.enroll.code' => 'Code',
+    'login.enroll.confirm' => 'Confirm and enable',
+    'login.enroll.email_help' => 'Enter the code we sent to {email}. It is valid for a few minutes and works once.',
+    'login.enroll.done_help' => 'Two-factor sign-in is on. One more step: enter a current code to finish signing in.',
+    'login.enroll.recovery_warning' => 'These recovery codes are shown once and cannot be shown again. Save them somewhere you can reach without your phone.',
+    'login.enroll.saved' => 'I have saved my recovery codes',
 
     // --- dashboard (User_Interface_Design.md §4) ---
     'dashboard.title' => 'Your projects',

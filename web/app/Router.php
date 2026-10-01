@@ -36,6 +36,26 @@ final class Router
             'handler' => 'index', 'guard' => 'public'],
         ['method' => 'POST', 'pattern' => '/login', 'controller' => Controllers\LoginController::class,
             'handler' => 'credentials', 'guard' => 'public', 'action' => 'credentials'],
+        // The two-factor panel and the enrollment wizard live on the same route
+        // (§2.1: "login incl. source-name picker and the two-factor step"), so
+        // the pre-auth `tfa_pending` state reaches exactly these handlers and
+        // nothing else — every other route's guard rejects it (§2.7).
+        ['method' => 'POST', 'pattern' => '/login', 'controller' => Controllers\LoginController::class,
+            'handler' => 'twoFactor', 'guard' => 'public', 'action' => 'mfa'],
+        ['method' => 'POST', 'pattern' => '/login', 'controller' => Controllers\LoginController::class,
+            'handler' => 'resendCode', 'guard' => 'public', 'action' => 'mfa_resend'],
+        ['method' => 'POST', 'pattern' => '/login', 'controller' => Controllers\LoginController::class,
+            'handler' => 'enrollTotp', 'guard' => 'public', 'action' => 'enroll_totp'],
+        ['method' => 'POST', 'pattern' => '/login', 'controller' => Controllers\LoginController::class,
+            'handler' => 'confirmTotp', 'guard' => 'public', 'action' => 'enroll_totp_confirm'],
+        ['method' => 'POST', 'pattern' => '/login', 'controller' => Controllers\LoginController::class,
+            'handler' => 'enrollEmail', 'guard' => 'public', 'action' => 'enroll_email'],
+        ['method' => 'POST', 'pattern' => '/login', 'controller' => Controllers\LoginController::class,
+            'handler' => 'confirmEmail', 'guard' => 'public', 'action' => 'enroll_email_confirm'],
+        ['method' => 'POST', 'pattern' => '/login', 'controller' => Controllers\LoginController::class,
+            'handler' => 'enrollmentDone', 'guard' => 'public', 'action' => 'enroll_done'],
+        ['method' => 'POST', 'pattern' => '/login', 'controller' => Controllers\LoginController::class,
+            'handler' => 'abort', 'guard' => 'public', 'action' => 'abort'],
 
         ['method' => 'GET', 'pattern' => '/', 'controller' => Controllers\DashboardController::class,
             'handler' => 'index', 'guard' => 'login', 'region' => 'projects'],
