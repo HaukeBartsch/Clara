@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 
 	"csms/api/internal/audit"
@@ -199,23 +200,22 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		cols = append(cols, column{f: f, cat: cat, dateBrg: isDateBearing(f.Field)})
 	}
 
-	// Completion columns (REQ-API-134): every instrument that contributes at
-	// least one surviving value column gets an `<instrument>_complete` slot
-	// after its field block. d.fields — and with it cols — are grouped by
-	// instrument in position order, so first appearance is the right place;
-	// dictInstrument carries the survey flag (GD-9: always finished).
-	instrByID := make(map[int64]dictInstrument, len(d.instruments))
-	for _, instr := range d.instruments {
-		instrByID[instr.ID] = instr
-	}
+	// Completion columns (REQ-API-134): whole-instrument exports — full or
+	// forms[]-filtered — end every instrument's block with an
+	// `<instrument>_complete` slot; a fields[]-filtered export returns exactly
+	// the requested fields and carries none. d.fields — and with it cols — are
+	// grouped by instrument in position order, so first appearance is the
+	// right place; dictInstrument carries the survey flag (GD-9: always
+	// finished).
+	withComplete := wantFields == nil
+	blockInstrs := make([]dictInstrument, 0, len(d.instruments))
 	hasBlock := map[int64]bool{}
 	for _, c := range cols {
 		hasBlock[c.f.InstrumentID] = true
 	}
-	var completeInstrs []dictInstrument
 	for _, instr := range d.instruments {
 		if hasBlock[instr.ID] {
-			completeInstrs = append(completeInstrs, instr)
+			blockInstrs = append(blockInstrs, instr)
 		}
 	}
 	instrValueFields := d.valueFieldsByInstrument()
@@ -228,7 +228,7 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 	for _, e := range d.events {
 		evNameOf[e.EventID] = e.UniqueEventName
 	}
-	if d.hasEvents {
+	if withComplete && d.hasEvents {
 		comps, err := h.Store.ListInstrumentCompletions(ctx, s.ProjectID)
 		if err != nil {
 			s.fail(w, http.StatusInternalServerError, "Internal error")
@@ -308,6 +308,17 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 	type wideSlot struct {
 		col   int
 		event string // "" = bare name (single-event field)
+		comp  *dictInstrument // set = an <instrument>_complete slot, col unused
+	}
+	// cols grouped by instrument, in position order — one pass, and the
+	// group walk below emits each instrument's block plus its completion
+	// column (REQ-API-134).
+	colsOf := map[int64][]int{}
+	for i, c := range cols {
+		if i == identifierCol {
+			continue
+		}
+		colsOf[c.f.InstrumentID] = append(colsOf[c.f.InstrumentID], i)
 	}
 	var slots []wideSlot
 	if !wide {
@@ -317,34 +328,58 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		if d.hasEvents {
 			header = append(header, "redcap_event_name", "redcap_repeat_instrument", "redcap_repeat_instance")
 		}
-		for i, c := range cols {
-			if i == identifierCol {
-				continue
+		for _, instr := range blockInstrs {
+			instr := instr
+			for _, i := range colsOf[instr.ID] {
+				header = append(header, headerOf(cols[i]))
+				slots = append(slots, wideSlot{col: i})
 			}
-			header = append(header, headerOf(c))
-			slots = append(slots, wideSlot{col: i})
+			if withComplete {
+				header = append(header, instr.Name+"_complete")
+				slots = append(slots, wideSlot{comp: &instr})
+			}
 		}
 	} else {
 		// Wide (§3.6.2): a field present in exactly one candidate event
 		// keeps its bare name; a field present in several repeats as
 		// <field>_<unique_event_name>. "Present" is the instrument-event
-		// mapping restricted to the candidate events.
-		for i, c := range cols {
-			fieldEvents := d.eventsForInstrument(c.f.InstrumentID, events)
+		// mapping restricted to the candidate events. The completion column
+		// follows the same rule (REQ-API-134).
+		for _, instr := range blockInstrs {
+			instr := instr
+			fieldEvents := d.eventsForInstrument(instr.ID, events)
+			for _, i := range colsOf[instr.ID] {
+				if len(fieldEvents) > 1 {
+					for _, e := range fieldEvents {
+						header = append(header, headerOf(cols[i])+"_"+e.UniqueEventName)
+						slots = append(slots, wideSlot{col: i, event: e.UniqueEventName})
+					}
+				} else {
+					// Single-event field: bare name, looked up in that event;
+					// an event-less project keeps the "" (scan) lookup.
+					ev := ""
+					if len(fieldEvents) == 1 {
+						ev = fieldEvents[0].UniqueEventName
+					}
+					header = append(header, headerOf(cols[i]))
+					slots = append(slots, wideSlot{col: i, event: ev})
+				}
+			}
+			if !withComplete {
+				continue
+			}
 			if len(fieldEvents) > 1 {
 				for _, e := range fieldEvents {
-					header = append(header, headerOf(c)+"_"+e.UniqueEventName)
-					slots = append(slots, wideSlot{col: i, event: e.UniqueEventName})
+					header = append(header, instr.Name+"_complete_"+e.UniqueEventName)
+					slots = append(slots, wideSlot{comp: &instr, event: e.UniqueEventName})
 				}
 			} else {
-				// Single-event field: bare name, looked up in that event;
-				// an event-less project keeps the "" (scan) lookup.
 				ev := ""
 				if len(fieldEvents) == 1 {
 					ev = fieldEvents[0].UniqueEventName
 				}
-				header = append(header, headerOf(c))
-				slots = append(slots, wideSlot{col: i, event: ev})
+				header = append(header, instr.Name+"_complete")
+				slots = append(slots, wideSlot{comp: &instr, event: ev})
 			}
 		}
 	}
@@ -464,6 +499,50 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 			return v
 		}
 
+		// <instrument>_complete (REQ-API-134): the dashboard's three-state
+		// derivation rendered as 0/1/2. An exact event stays exact; a bare
+		// slot scans the record's events, mirroring cell above.
+		completeCell := func(instr dictInstrument, event, id string) string {
+			if instr.IsSurvey {
+				return "2" // GD-9: completion info is filled in automatically
+			}
+			fieldsOf := instrValueFields[instr.ID]
+			hasValue := func(ev string) bool {
+				for name := range fieldsOf {
+					if rv[ev][name] != "" {
+						return true
+					}
+				}
+				return false
+			}
+			isFinished := func(ev string) bool {
+				return finished[completionKey(id, ev, instr.ID)] && mapped(instr.ID, ev)
+			}
+			if event != "" {
+				if isFinished(event) {
+					return "2"
+				}
+				if hasValue(event) {
+					return "1"
+				}
+				return "0"
+			}
+			for ev := range rv {
+				if isFinished(ev) {
+					return "2"
+				}
+			}
+			if hasValue("") {
+				return "1"
+			}
+			for ev := range rv {
+				if hasValue(ev) {
+					return "1"
+				}
+			}
+			return "0"
+		}
+
 		if !wide {
 			// flat: one row per (record, event) that holds data (§3.6.2).
 			type rowSpec struct{ event string }
@@ -486,11 +565,18 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 					cells = append(cells, rs.event, "", "")
 				}
 				for _, sl := range slots {
+					if sl.comp != nil {
+						cells = append(cells, completeCell(*sl.comp, rs.event, id))
+						continue
+					}
 					cells = append(cells, cell(cols[sl.col], rs.event))
 				}
 				writeRow(cells)
 				returned = append(returned, id)
 				for _, sl := range slots {
+					if sl.comp != nil {
+						continue // the record-view list stays value-driven
+					}
 					if cellsValueHasData(cell(cols[sl.col], rs.event)) {
 						instruments[cols[sl.col].f.Instrument] = true
 					}
@@ -499,11 +585,18 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		} else if len(dvs) > 0 {
 			cells := make([]string, 0, len(header))
 			for _, sl := range slots {
+				if sl.comp != nil {
+					cells = append(cells, completeCell(*sl.comp, sl.event, id))
+					continue
+				}
 				cells = append(cells, cell(cols[sl.col], sl.event))
 			}
 			writeRow(cells)
 			returned = append(returned, id)
 			for _, sl := range slots {
+				if sl.comp != nil {
+					continue
+				}
 				instruments[cols[sl.col].f.Instrument] = true
 			}
 		}
@@ -573,6 +666,12 @@ func nonNil(vals []string) []string {
 // cellsValueHasData reports whether an emitted cell carried a value — the
 // record-view row lists instruments actually present in the returned rows.
 func cellsValueHasData(v string) bool { return v != "" }
+
+// completionKey indexes the stored finished assignments by
+// (record, event, instrument) — the join key of the REQ-API-134 derivation.
+func completionKey(recordID, event string, instrumentID int64) string {
+	return recordID + "\x00" + event + "\x00" + strconv.FormatInt(instrumentID, 10)
+}
 
 func toSet(vals []string) map[string]bool {
 	if len(vals) == 0 {

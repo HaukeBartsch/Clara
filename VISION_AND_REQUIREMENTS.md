@@ -568,3 +568,133 @@ For Requirements/, Plan/, and Design/ documents provide a classification of rele
 ## Performance metrics as part of api
 
 The api should measure performance metrics like response times and memory amounts for database operations and api internal data processing. The information should be sufficient to later evaluate extensions to the infrastructure that runs the api and to the database system that the api talks to.
+
+
+# Security relevant findings
+
+### F1 — Local-password brute force bypasses lockout and audit (High)
+
+- **Where:** `web/app/Auth.php:95`, `api/internal/admin/auth.go:196`.
+- **What:** The web login calls `POST /api/v1/auth/verify-password` first and calls `login` only on success. `verifyPassword` neither checks `h.lockouts.locked` nor records a failure, and writes no audit entry. Its comment says the brute-force check runs in PHP, but PHP has none. `tests/php/router_test.php:241` codifies the behaviour.
+- **Impact:** Unlimited online guessing of any local account, including the bootstrap admin. No `login_failure` audit trail. The IP rate limiter is off by default (`rate_limit_enabled` opt-in).
+- **Fix:** In `verifyPassword`, reject when the address is locked and call `h.lockouts.failure` on a bad password. Alternatively, have PHP finalize every failed race with a `login` call carrying `attempts`, as the design describes. Turn the IP rate limiter on by default for `/api/v1/auth/*`. Add a regression test.
+
+### F2 — Audit endpoint leaks live tokens and PHI to any member (High, Req-change)
+
+- **Where:** `api/internal/admin/queries.go:271` (`listAudit`), `auditViewEntry.Token`; REQ-API-078, REQ-AUD-018.
+- **What:** A non-admin only needs membership of the project. A member with `no_access` can call `GET /api/v1/audit?type=views&project=N` and receive the plaintext data-API token of every member who exported records. `type=events` returns `details` with old/new values of every changed record, ignoring the caller's arm levels and DAG.
+- **Impact:** Privilege escalation, because a stolen token carries its owner's export and delete rights. It also discloses PHI the caller is not allowed to see.
+- **Fix:** Restrict audit reads to `is_admin` or `project_admin`. Store a token fingerprint (for example the first 8 hex digits of SHA-256) instead of the token. Filter or redact `details` by the caller's arm and DAG visibility.
+
+### F3 — Survey link writes any field of its record (High)
+
+- **Where:** `api/internal/dataapi/record_import.go:205`.
+- **What:** The link check pins `record_id` and `form_name`. However, the field loop accepts every dictionary field present in the row, not only fields of `form_name`.
+- **Impact:** An anonymous respondent can overwrite clinician-entered data, identifiers or other instruments of their record. The overwrite is audited but not prevented.
+- **Fix:** Reject or ignore fields whose `Instrument != formName`, except the record identifier. Apply the same rule to project tokens, so `form_name` means what it says.
+
+### F4 — DAG bypass on import (High)
+
+- **Where:** `api/internal/dataapi/record_import.go:260`.
+- **What:** Export and delete restrict to the caller's active group. Import loads the existing record and writes to it without comparing `entity.DagGroupID` to the caller's group.
+- **Impact:** A site-A user can overwrite site-B records. The `added`/`updated` result also confirms that a record ID exists in another group.
+- **Fix:** When the caller has an active group and the entity exists with a different group, return the same row-level failure as a validation error. Extend `TestRecordDAGScope` to cover import.
+
+### F5 — Unbounded recursion in the expression parser (High)
+
+- **Where:** `api/internal/validate/expr.go:532` and `:893` (recursive descent), called from `record_export.go:219`.
+- **What:** Each `(` recurses through four functions with no depth limit. The data-API body may be 32 MiB. A Go stack overflow is a fatal runtime error that `recover` cannot catch, so the whole process exits.
+- **Impact:** Any token holder with an export level can repeatedly crash the API for all users. Admin-entered branching and calculation expressions share the parser.
+- **Fix:** Cap expression length (for example 4 KiB) and nesting depth (for example 64) in `tokenize` and the parsers. Parse `filterLogic` once per request instead of once per record.
+
+### F6 — `filterLogic` re-identification in de-identified exports (Medium, Req-change)
+
+- **Where:** `api/internal/dataapi/record_export.go:219`.
+- **What:** Identifier and free-text columns are dropped below `export_full`. The filter, however, evaluates against all stored values.
+- **Impact:** A `export_de_identified` user can probe with `[name] = 'Jane Doe'` or `[dob] = '1980-01-01'` and learn which record belongs to whom. This defeats GD-2's de-identification promise.
+- **Fix:** Reject filters that reference fields outside the column set permitted at the applied export level.
+
+### F7 — Plaintext data-API tokens at rest (Medium, Req-change)
+
+- **Where:** `user_projects.token` (`api/internal/db/repo_identity.go:353`), `audit_events.token`, `audit_record_views.token`.
+- **What:** Tokens are random (122 bits) but stored and logged verbatim. REQ-API-102 requires re-fetching the token, which forces plaintext storage.
+- **Impact:** Read access to the database, a backup, or the audit tables yields working API credentials for every member.
+- **Fix:** Store `SHA-256(token)` and look it up by hash. Show the token once at issue or rotation, and drop the re-fetch endpoint. For PHP's own UI data entry, use the admin API with `X-Internal-User-Id` rather than a member token. Audit a fingerprint only.
+
+### F8 — Service token as master key; shared listener (Medium)
+
+- **Where:** `api/internal/httpapi/httpapi.go:34-37`, `admin/auth.go:97-117`, `config/config.go:235`.
+- **What:**
+  - Whoever holds `INTERNAL_SERVICE_TOKEN` can act as any user through `X-Internal-User-Id`.
+  - With the token, `source: oauth2` logs in as any existing user with no credential and no 2FA.
+  - `/api/v1/` is served on the same listener as the public `/api/`. Isolation depends entirely on an nginx config that is not in the repo.
+  - There is no minimum token length.
+  - `APP_ENV` defaults to `development`, where `dev-internal-token` is accepted.
+- **Impact:** One proxy misconfiguration, or a forgotten `APP_ENV=production`, exposes the full admin API to the internet with a publicly known token.
+- **Fix:**
+  - Serve the admin API on a separate listener (a Unix socket or a loopback-only port).
+  - Require at least 32 random bytes for the token, and default `APP_ENV` to production.
+  - Ship and test a reference nginx config that strips the `X-Internal-*` headers.
+  - Consider a short-lived signed assertion from PHP (HMAC over user ID, timestamp and method/path) instead of a static bearer.
+
+### F9 — Spoofable client IP (Medium)
+
+- **Where:** `web/app/Request.php:139`.
+- **What:** `clientIp()` returns the browser's `X-Real-IP` header when present, and forwards it to the API. The API trusts it because PHP is a trusted proxy. Safety depends on nginx overwriting `HTTP_X_REAL_IP` with a `fastcgi_param`.
+- **Impact:** Attackers rotate fake IPs per request to defeat the rate limiter, and forge the IP in `password_reset_requested` audit entries.
+- **Fix:** In PHP, use `REMOTE_ADDR` unless it is inside a configured trusted-proxy list, mirroring `SourceIP` in Go.
+
+### F10 — Bootstrap admin auto-promotion via external IdPs (Medium, Req-change)
+
+- **Where:** `api/internal/admin/auth.go:106`; REQ-AUTH-007, GD-4.
+- **What:** Every OAuth2 or LDAP login whose email equals `ADMIN_BOOTSTRAP_EMAIL` creates or re-enables the account and sets `is_admin = 1`. That includes an account another admin deliberately disabled.
+- **Impact:** Whoever controls that address at any configured IdP becomes an admin. Examples are a Google provider that accepts unverified or personal addresses, or an LDAP `mail` attribute a user can edit. Disabling the bootstrap admin also cannot stick.
+- **Fix:**
+  - Promote only on the local source, or only while no other admin exists.
+  - Never re-enable a disabled account.
+  - Require `email_verified = true` from OIDC providers.
+
+### F11 — Survey links do not expire (Medium, Req-change)
+
+- **Where:** `api/internal/dataapi/auth.go:234`.
+- **What:** Only `revoked` is checked. A link stays valid for re-submission indefinitely.
+- **Impact:** A forwarded or leaked link lets anyone rewrite a completed response at any time.
+- **Fix:** Add `expires_at` and an optional lock once the instrument is marked complete.
+
+### F12 — No password policy (Medium, Req-change)
+
+- **Where:** `api/internal/admin/passwords.go:106`, `changeMyPassword`, `bootstrapAdmin`.
+- **What:** Any non-empty password is accepted. bcrypt rejects passwords over 72 bytes, which surfaces as a 500.
+- **Fix:** Enforce a minimum length of 12 and a maximum of 72 bytes with a clear 400. Optionally check a local breached-password list. Apply the same rule to `ADMIN_BOOTSTRAP_PASSWORD` at startup.
+
+### F13 — Account enumeration (Low)
+
+`admin/auth.go:88` answers `account_not_found` for an unknown email and `bad_password` for a wrong password. It also skips bcrypt for unknown users, so response timing differs. Password-reset requests send mail synchronously only for real accounts. **Fix:** Return one code. Run a dummy bcrypt comparison for unknown users. Send reset mail asynchronously.
+
+### F14 — Open redirect (Low)
+
+`LoginController.php:90` accepts `next=/\evil.example`, which browsers normalize to `//evil.example`. **Fix:** Reject backslashes and control characters. Better, require `parse_url` to yield only a path.
+
+### F15 — Unbounded limiter maps and targeted lockout (Low)
+
+The `authLockout`, `addressLimiter` and `sendLimiter` maps (`lockout.go:35`, `passwords.go`, `tfa.go`) are never swept. Random email addresses grow memory without bound. Anyone can also lock out a known user, including the admin, for 15 minutes at a time. **Fix:** Sweep these maps as `RateLimiter` already does. Key the lockout on (email, IP) as well as email, or add a CAPTCHA-free backoff.
+
+### F16 — Missing server timeouts (Low)
+
+`cmd/server/main.go:86` sets only `ReadHeaderTimeout`. Slow request bodies, up to the 32 MiB cap, can hold connections open indefinitely. **Fix:** Set `ReadTimeout`, `WriteTimeout` (generous for exports), `IdleTimeout` and `MaxHeaderBytes`.
+
+### F17 — Session lifecycle (Low)
+
+PHP sessions have an absolute lifetime only, with no idle timeout. A password change or reset does not end other sessions (DEV-AUTH-13). `SESSION_COOKIE_SECURE` defaults to `0`, and `SESSION_DIR` points at `/tmp`. **Fix:** Add an idle timeout of about 30 minutes. Store a per-user session epoch that the API bumps on password change. Refuse non-secure cookies when `APP_ENV=production`. Use a private 0700 session directory.
+
+### F18 — 2FA race conditions (Low)
+
+Recovery-code use (`tfa.go:388`) and the TOTP last-step update are read-modify-write without a conditional `UPDATE`. Two parallel requests can redeem the same code. TOTP secrets are stored unencrypted. **Fix:** Use `UPDATE … WHERE last_step < ?` and compare-and-swap on the recovery JSON. Optionally encrypt secrets with a key from the environment.
+
+### F19 — Token in the query string (Low, Req-change)
+
+`params.go:91` accepts `token` from the URL (REDCap compatibility), so tokens end up in proxy and access logs. **Fix:** Accept the token from the POST body only. If GET compatibility is required, scrub `token=` from the nginx log format.
+
+### F20 — Fail-open role default (Info, Req-change)
+
+A member with no role holds `edit_survey_responses`, `export_full` and `project_admin` (REQ-AUTH-022, `dataapi/auth.go:198`). Forgetting to assign a role therefore grants everything. **Fix:** Consider requiring an explicit role, or defaulting to no access, and show a warning in the UI for role-less members.

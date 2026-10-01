@@ -234,7 +234,7 @@ func TestRecordExportCSVHeaderAndLabels(t *testing.T) {
 	mustStatus(t, code, 200, body)
 	lines := strings.Split(strings.TrimRight(body, "\r\n"), "\n")
 	wantHeader := "record_id,redcap_event_name,redcap_repeat_instrument,redcap_repeat_instance," +
-		"age,status,notes,contact_email,visit_date,secret,total"
+		"age,status,notes,contact_email,visit_date,secret,demo_complete,total,calc_complete"
 	if lines[0] != wantHeader {
 		t.Errorf("header =\n%q\nwant\n%q", lines[0], wantHeader)
 	}
@@ -243,6 +243,157 @@ func TestRecordExportCSVHeaderAndLabels(t *testing.T) {
 	}
 	if !strings.Contains(lines[1], ",Done,") {
 		t.Errorf("rawOrLabel=label must map status 2 to Done: %q", lines[1])
+	}
+}
+
+// TestRecordExportCompleteColumns covers REQ-API-134: the <instrument>_complete
+// column of whole-instrument exports — the 0/1/2 derivation, finished
+// assignments (incl. their invisibility while unmapped), the survey flag, the
+// fields[]/forms[] filter interaction and the wide suffix.
+func TestRecordExportCompleteColumns(t *testing.T) {
+	f := newRecordFixture(t)
+	ctx := context.Background()
+
+	var demoID, calcID int64
+	instrs, err := f.s.ListInstruments(ctx, f.pid)
+	if err != nil {
+		t.Fatalf("ListInstruments: %v", err)
+	}
+	for _, i := range instrs {
+		switch i.Name {
+		case "demo":
+			demoID = i.ID
+		case "calc":
+			calcID = i.ID
+		}
+	}
+	evBase, err := f.s.GetEventByUniqueName(ctx, f.pid, "baseline_arm_1")
+	if err != nil {
+		t.Fatalf("GetEventByUniqueName: %v", err)
+	}
+	evFol, err := f.s.GetEventByUniqueName(ctx, f.pid, "followup_arm_1")
+	if err != nil {
+		t.Fatalf("GetEventByUniqueName: %v", err)
+	}
+
+	setCompletion := func(record string, eventID, instrID int64, on bool) {
+		t.Helper()
+		tx, err := f.s.DB.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatalf("BeginTx: %v", err)
+		}
+		defer tx.Rollback()
+		if on {
+			if _, err := f.s.SetInstrumentCompletionTx(ctx, tx, f.pid, record, eventID, instrID, 0); err != nil {
+				t.Fatalf("SetInstrumentCompletionTx: %v", err)
+			}
+		} else if _, err := f.s.ClearInstrumentCompletionTx(ctx, tx, f.pid, record, eventID, instrID); err != nil {
+			t.Fatalf("ClearInstrumentCompletionTx: %v", err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("Commit: %v", err)
+		}
+	}
+
+	// Derived states: demo holds values at both events → 1; calc holds none
+	// (the calculated total is not seeded) → 0.
+	rows := f.exportJSON(t, "tok-admin", url.Values{"records": {"8DISC001"}})
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want baseline + followup: %v", len(rows), rows)
+	}
+	if rows[0]["demo_complete"] != "1" || rows[1]["demo_complete"] != "1" {
+		t.Errorf("demo_complete = %q / %q, want 1 and 1 (values present)",
+			rows[0]["demo_complete"], rows[1]["demo_complete"])
+	}
+	if rows[0]["calc_complete"] != "0" || rows[1]["calc_complete"] != "0" {
+		t.Errorf("calc_complete = %q / %q, want 0 and 0 (no values)",
+			rows[0]["calc_complete"], rows[1]["calc_complete"])
+	}
+
+	// Stored finished → 2; clearing returns the derived 1.
+	setCompletion("8DISC001", evBase.EventID, demoID, true)
+	rows = f.exportJSON(t, "tok-admin", url.Values{"records": {"8DISC001"}})
+	if rows[0]["demo_complete"] != "2" {
+		t.Errorf("finished demo_complete = %q, want 2", rows[0]["demo_complete"])
+	}
+	if rows[1]["demo_complete"] != "1" { // the other event keeps its own state
+		t.Errorf("followup demo_complete = %q, want 1", rows[1]["demo_complete"])
+	}
+	setCompletion("8DISC001", evBase.EventID, demoID, false)
+	rows = f.exportJSON(t, "tok-admin", url.Values{"records": {"8DISC001"}})
+	if rows[0]["demo_complete"] != "1" {
+		t.Errorf("cleared demo_complete = %q, want 1", rows[0]["demo_complete"])
+	}
+
+	// A finished assignment on an unmapped pair stays invisible.
+	setCompletion("8DISC001", evFol.EventID, calcID, true) // calc is mapped to baseline only
+	rows = f.exportJSON(t, "tok-admin", url.Values{"records": {"8DISC001"}})
+	if rows[1]["calc_complete"] != "0" {
+		t.Errorf("unmapped finished calc_complete = %q, want 0 (invisible until mapped back)",
+			rows[1]["calc_complete"])
+	}
+	setCompletion("8DISC001", evFol.EventID, calcID, false)
+
+	// forms[] keeps whole instrument blocks — each keeps its completion;
+	// fields[] returns exactly the requested fields and carries none.
+	code, body := f.call(t, url.Values{
+		"token": {"tok-admin"}, "content": {"record"}, "records": {"8DISC001"},
+		"events": {"baseline_arm_1"}, "forms": {"demo"},
+	})
+	mustStatus(t, code, 200, body)
+	header := strings.Split(strings.SplitN(strings.TrimRight(body, "\r\n"), "\n", 2)[0], ",")
+	if header[len(header)-1] != "demo_complete" {
+		t.Errorf("forms[]=demo header ends %q, want demo_complete", header[len(header)-1])
+	}
+	for _, h := range header {
+		if h == "calc_complete" || h == "total" {
+			t.Errorf("forms[]=demo leaked calc column %q", h)
+		}
+	}
+	rows = f.exportJSON(t, "tok-admin", url.Values{
+		"records": {"8DISC001"}, "fields": {"age"},
+	})
+	if _, ok := rows[0]["demo_complete"]; ok {
+		t.Errorf("fields[]-filtered export must omit completion: %v", rows[0])
+	}
+	if _, ok := rows[0]["calc_complete"]; ok {
+		t.Errorf("fields[]-filtered export must omit completion: %v", rows[0])
+	}
+
+	// Wide: demo is active in both events → suffixed once per event; calc in
+	// one → bare name.
+	code, body = f.call(t, url.Values{
+		"token": {"tok-admin"}, "content": {"record"}, "returnFormat": {"json"},
+		"type": {"wide"}, "records": {"8DISC001"},
+	})
+	mustStatus(t, code, 200, body)
+	var wide []map[string]string
+	if err := decodeInto(body, &wide); err != nil {
+		t.Fatalf("bad wide json: %v / %s", err, body)
+	}
+	if len(wide) != 1 {
+		t.Fatalf("wide rows = %d, want 1", len(wide))
+	}
+	if wide[0]["demo_complete_baseline_arm_1"] != "1" || wide[0]["demo_complete_followup_arm_1"] != "1" {
+		t.Errorf("wide demo completion = %q / %q, want 1 and 1",
+			wide[0]["demo_complete_baseline_arm_1"], wide[0]["demo_complete_followup_arm_1"])
+	}
+	if _, ok := wide[0]["demo_complete"]; ok {
+		t.Errorf("multi-event instrument must not emit a bare demo_complete: %v", wide[0])
+	}
+	if wide[0]["calc_complete"] != "0" {
+		t.Errorf("wide calc_complete = %q, want 0", wide[0]["calc_complete"])
+	}
+
+	// A survey-marked instrument always exports 2 (GD-9).
+	if err := f.s.UpdateInstrument(ctx, &db.Instrument{
+		ID: demoID, ProjectID: f.pid, Name: "demo", Position: 1, IsSurvey: true,
+	}); err != nil {
+		t.Fatalf("UpdateInstrument: %v", err)
+	}
+	rows = f.exportJSON(t, "tok-admin", url.Values{"records": {"8DISC002"}})
+	if rows[0]["demo_complete"] != "2" {
+		t.Errorf("survey demo_complete = %q, want 2 (GD-9)", rows[0]["demo_complete"])
 	}
 }
 

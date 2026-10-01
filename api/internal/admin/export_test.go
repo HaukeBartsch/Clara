@@ -191,9 +191,13 @@ func TestExportAdminFullCSVAndAudit(t *testing.T) {
 	}
 	rows := csvRows(t, rec.Body.String())
 	wantHeader := []string{"record_id", "redcap_event_name", "redcap_repeat_instrument",
-		"redcap_repeat_instance", "age", "status", "notes", "contact_email", "secret", "visit_date"}
+		"redcap_repeat_instance", "age", "status", "notes", "contact_email", "secret", "visit_date",
+		"demo_complete"} // REQ-API-134: whole-instrument export ends the block with completion
 	if len(rows) != 3 || strings.Join(rows[0], ",") != strings.Join(wantHeader, ",") {
 		t.Fatalf("CSV = %v, want header %v and two data rows", rows, wantHeader)
+	}
+	if rows[1][10] != "1" { // values present, no finished assignment (REQ-API-074 derivation)
+		t.Errorf("demo_complete = %q, want 1", rows[1][10])
 	}
 	if rows[1][0] != "REC-001" || rows[1][1] != "baseline_arm_1" {
 		t.Errorf("row 1 = %v, want REC-001 at baseline_arm_1", rows[1])
