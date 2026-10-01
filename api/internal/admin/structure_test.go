@@ -199,7 +199,7 @@ func TestBranchingBareFieldReference(t *testing.T) {
 // TestDeleteEvent: DELETE /api/v1/events/{id} removes one event with its
 // mapping pairs (204 + audit). The last remaining event of the project cannot
 // go — the call instead resets it to the plain baseline state (renamed,
-// offset day 0, safe region cleared) and answers with the object (REQ-API-126).
+// offset day 0, safe region cleared) and answers with the object (REQ-API-133).
 func TestDeleteEvent(t *testing.T) {
 	e := newEnv(t)
 	admin := e.mustAdmin("admin@example.org")
@@ -285,7 +285,7 @@ func TestDeleteEvent(t *testing.T) {
 
 // TestLastEventResetMigratesData: deleting the last remaining event renames
 // it to "baseline", resets the offset day to 0 and clears the safe region;
-// stored values follow the new unique name (REQ-API-126, ASM-API-4).
+// stored values follow the new unique name (REQ-API-133, ASM-API-4).
 func TestLastEventResetMigratesData(t *testing.T) {
 	e := newEnv(t)
 	admin := e.mustAdmin("admin@example.org")

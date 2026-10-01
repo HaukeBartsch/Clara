@@ -1046,7 +1046,7 @@ func (h *Handler) updateEvent(w http.ResponseWriter, r *http.Request) {
 // one event: deleting the last remaining one instead returns it to the plain
 // baseline state — renamed to "baseline" (its stored values follow the new
 // unique name, ASM-API-4), offset day reset to 0 and any safe region cleared —
-// and answers with the renamed object (200, REQ-API-126). Otherwise the
+// and answers with the renamed object (200, REQ-API-133). Otherwise the
 // event's instrument–event mapping pairs go with it; an event that holds
 // values makes them unreachable, which analysis mode acknowledges (§4.21).
 // project_admin; 204 on delete. Audit `event_updated` (reset) / `event_deleted`.
@@ -1079,7 +1079,7 @@ func (h *Handler) deleteEventHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if d.totalEvents() <= 1 {
 			// The last remaining event returns to the plain baseline state
-			// instead of going (REQ-API-126).
+			// instead of going (REQ-API-133).
 			resetStagedEventToBaseline(se, sa.ArmNum)
 			return nil
 		}
@@ -1177,7 +1177,7 @@ func (h *Handler) deleteEventHTTP(w http.ResponseWriter, r *http.Request) {
 
 // resetStagedEventToBaseline returns the last remaining event of a design
 // snapshot to the plain baseline state: label "baseline", offset day 0, no
-// safe region (REQ-API-126). The mapping pairs are untouched — the event
+// safe region (REQ-API-133). The mapping pairs are untouched — the event
 // stays, only its name and timepoint change.
 func resetStagedEventToBaseline(se *stagedEvent, armNum int) {
 	se.EventName = "baseline"
@@ -1203,7 +1203,7 @@ func finishEventDeleteOrReset(w http.ResponseWriter, d *stagedDesign, eventID in
 // follow the new unique name in the same transaction, ASM-API-4), its offset
 // day goes back to 0 and its safe region is cleared — the state a freshly
 // created project's baseline carries. 200 + object; audit `event_updated`
-// with last_event_reset (REQ-API-126).
+// with last_event_reset (REQ-API-133).
 func (h *Handler) resetLastEventToBaseline(
 	w http.ResponseWriter, r *http.Request, u *db.User, ev *db.Event, breakingAcknowledged bool,
 ) {
