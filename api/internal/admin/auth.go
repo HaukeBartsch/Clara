@@ -11,6 +11,7 @@ import (
 
 	"csms/api/internal/audit"
 	"csms/api/internal/authz"
+	"csms/api/internal/db"
 )
 
 // registerAuth mounts the session endpoints of §4.3: login, the
@@ -81,6 +82,19 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	u, err := h.Store.GetUserByEmail(ctx, body.Email)
 	if err != nil {
 		errInternal(w)
+		return
+	}
+
+	// A call carrying attempts is the record of a *failed* named-source
+	// credential race (Authentication_Authorization_Design.md §2.9): it exists to
+	// write the submission's one login_failure and must never authenticate
+	// (REQ-API-135). Falling through would be worst exactly where attempts
+	// matter — for source "ldap" the API trusts PHP's word, so a race that
+	// reached no directory and bound nobody would stamp last_login_at and return
+	// a user object on an unverified first factor, or open a two-factor
+	// challenge nobody earned at step 1.5.
+	if len(body.Attempts) > 0 {
+		h.failedRace(ctx, w, &body, u)
 		return
 	}
 
@@ -296,15 +310,10 @@ func (h *Handler) loginFailure(ctx context.Context, body *loginRequest, reason s
 	if len(body.Attempts) > 0 {
 		switch reason {
 		case "bad_password", "account_not_found":
-			allUnreachable := true
-			for _, outcome := range body.Attempts {
-				if outcome != "unreachable" {
-					allUnreachable = false
-					break
-				}
-			}
+			// A failed race is one credential failure, not one per losing
+			// attempt — or an outage, when no source could be reached at all.
 			reason = "bad_credentials"
-			if allUnreachable {
+			if allAttemptsUnreachable(body.Attempts) {
 				reason = "provider_unavailable"
 			}
 		}
@@ -321,6 +330,68 @@ func (h *Handler) loginFailure(ctx context.Context, body *loginRequest, reason s
 		Email:   body.Email,
 		Details: details,
 	})
+}
+
+// failedRace records the single login_failure of a named-source credential race
+// whose attempts all settled as failed, and answers the rejection the login page
+// shows (REQ-API-135, Authentication_Authorization_Design.md §2.9 "All failed").
+// It authenticates nothing by construction: no hash check, no reading of the
+// password attribute, no last_login_at or auth_source write, no bootstrap
+// promotion, and no arrival at the two-factor gate — a first factor nobody
+// verified must not open a challenge (REQ-AUTH-055).
+//
+// Two things still distinguish themselves from the generic credential line. An
+// account that is disabled or expired says so, because there the account rather
+// than the password is the problem (§2.6 step 4). And an attempt set in which
+// every source was unreachable answers provider_unavailable, so the page reports
+// an outage instead of implying the user mistyped something (§2.9 step 5).
+func (h *Handler) failedRace(ctx context.Context, w http.ResponseWriter, body *loginRequest, u *db.User) {
+	if u != nil {
+		state, err := authz.CheckActive(ctx, h.Store, h.Audit, h.Cfg, u, time.Now().UTC())
+		switch {
+		case err != nil:
+			errInternal(w)
+			return
+		case state == authz.AccountExpired:
+			h.loginFailure(ctx, body, "account_expired")
+			APIError(w, http.StatusForbidden, "account_expired", "this account has expired")
+			return
+		case state == authz.AccountDisabled:
+			h.loginFailure(ctx, body, "account_disabled")
+			APIError(w, http.StatusForbidden, "account_disabled", "this account is disabled")
+			return
+		}
+	}
+
+	if allAttemptsUnreachable(body.Attempts) {
+		// The audit reason comes from the attempts map (DEV-AUD-5); the response
+		// code is the one the web layer maps to "the authentication service is
+		// unavailable".
+		h.loginFailure(ctx, body, "bad_password")
+		APIError(w, http.StatusUnauthorized, "provider_unavailable",
+			"the authentication service could not be reached")
+		return
+	}
+
+	h.loginFailure(ctx, body, "bad_password")
+	APIError(w, http.StatusUnauthorized, "bad_password", "invalid email or password")
+}
+
+// allAttemptsUnreachable reports whether every attempt of a race settled as
+// unreachable — nothing could be contacted, which is an outage rather than a
+// wrong password (Audit_Logging_Design.md §3.1). An empty map answers false: that
+// is a plain credential rejection, not a race that failed to run.
+func allAttemptsUnreachable(attempts map[string]string) bool {
+	if len(attempts) == 0 {
+		return false
+	}
+	for _, outcome := range attempts {
+		if outcome != "unreachable" {
+			return false
+		}
+	}
+
+	return true
 }
 
 // logout implements POST /api/v1/auth/logout (REQ-AUTH-008/015): it records
