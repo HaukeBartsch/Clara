@@ -120,7 +120,7 @@ final class LoginController extends Controller
     /** POST /login?action=enroll_totp_confirm — activate it; recovery codes show once. */
     public function confirmTotp(): Response
     {
-        return $this->confirmEnrollment('totp', '/api/v1/users/me/tfa/totp/confirm');
+        return $this->confirmFactor('totp');
     }
 
     /** POST /login?action=enroll_email — ask for the emailed confirmation code. */
@@ -138,7 +138,7 @@ final class LoginController extends Controller
     /** POST /login?action=enroll_email_confirm — activate the email factor. */
     public function confirmEmail(): Response
     {
-        return $this->confirmEnrollment('email', '/api/v1/users/me/tfa/email/confirm');
+        return $this->confirmFactor('email');
     }
 
     /** POST /login?action=enroll_done — past the recovery codes, back to the code. */
@@ -161,17 +161,45 @@ final class LoginController extends Controller
         return $this->renderCredentials();
     }
 
+    /**
+     * Activates the factor the wizard was on, then shows its recovery codes —
+     * exactly once, from this response only (REQ-AUTH-056): nothing here is
+     * stored, so reloading cannot bring the codes back and the user has to be
+     * told that in the same breath.
+     */
+    private function confirmFactor(string $method): Response
+    {
+        $code = trim($this->request->field('code'));
+        if ($code === '') {
+            return $this->renderEnroll(['method' => $method], $this->i18n->t('login.failure.mfa_code'));
+        }
+
+        try {
+            $activated = $method === 'totp'
+                ? $this->auth->confirmTotp($code)
+                : $this->auth->confirmEmailFactor($code);
+        } catch (ApiException $e) {
+            return $this->afterAttempt($e, Session::pendingSecondFactor()['email'] ?? '');
+        }
+
+        return $this->renderEnroll([
+            'method' => 'done',
+            'factor' => $method,
+            'recovery_codes' => $activated['recovery_codes'] ?? [],
+        ]);
+    }
+
     // --- panels ---------------------------------------------------------------
 
     /**
      * Renders the panel the session's state calls for: credentials, the code
      * challenge, or the enrollment wizard (§2.2).
      */
-    private function renderPanel(string $error = ''): Response
+    private function renderPanel(string $error = '', string $email = ''): Response
     {
         $pending = Session::pendingSecondFactor();
         if ($pending === []) {
-            return $this->renderCredentials(Session::pendingSecondFactor()['email'] ?? '', $error);
+            return $this->renderCredentials($email, $error);
         }
 
         if ($pending['method'] === '') {
@@ -190,6 +218,11 @@ final class LoginController extends Controller
             'pageTitle' => $this->i18n->t('login.mfa.title'),
             'email' => $pending['email'],
             'method' => $pending['method'],
+            // ?recovery=1 switches the field's help and hints to a recovery code
+            // (REQ-UI-038's alternate entry). It is a rendering hint only: the API
+            // accepts either kind in the same call, and nothing about what is
+            // authorized changes.
+            'recovery' => $this->request->query('recovery') === '1',
             'error' => $error,
             'next' => $this->safeNext(),
         ], ['titleKey' => 'login.mfa.title']);
@@ -197,20 +230,24 @@ final class LoginController extends Controller
 
     /**
      * The enrollment wizard. `$enrollment` carries what the API returned for this
-     * step — a secret, or nothing — and is never stored: a secret shown once is
-     * rendered from the response that produced it and appears on no later page
-     * (REQ-AUTH-056).
+     * one step — a secret, recovery codes, or nothing — and none of it is stored:
+     * what is shown once is rendered from the response that produced it and
+     * appears on no later page (REQ-AUTH-056).
      *
      * @param array<string, mixed> $enrollment
      */
     private function renderEnroll(array $enrollment = [], string $error = ''): Response
     {
+        $codes = $enrollment['recovery_codes'] ?? [];
+
         return $this->standalone('login_enroll', [
             'pageTitle' => $this->i18n->t('login.enroll.title'),
             'email' => Session::pendingSecondFactor()['email'] ?? '',
-            'enrollment' => $enrollment,
-            'method' => (string) ($enrollment['method'] ?? 'choose'),
-            'recoveryCodes' => $enrollment['recovery_codes'] ?? [],
+            'step' => (string) ($enrollment['method'] ?? 'choose'),
+            'secret' => (string) ($enrollment['secret'] ?? ''),
+            'otpauthUri' => (string) ($enrollment['otpauth_uri'] ?? ''),
+            'factor' => (string) ($enrollment['factor'] ?? ''),
+            'recoveryCodes' => is_array($codes) ? array_values(array_map('strval', $codes)) : [],
             'error' => $error,
             'next' => $this->safeNext(),
         ], ['titleKey' => 'login.enroll.title']);

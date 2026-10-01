@@ -35,6 +35,9 @@ final class Messages
             'account_disabled' => $i18n->t('login.failure.disabled'),
             'account_expired' => $i18n->t('login.failure.expired'),
             'bad_mfa_code' => $i18n->t('login.failure.mfa_code'),
+            // The proof behind a challenge lapsed or was invalidated: start over,
+            // and do not imply the user did anything wrong (REQ-API-131).
+            'first_factor_expired' => $i18n->t('login.failure.expired_session'),
             'provider_unavailable' => $i18n->t('login.failure.provider_unavailable'),
             'state_mismatch' => $i18n->t('login.failure.state_mismatch'),
             'rate_limited' => self::rateLimited($i18n, $e),
