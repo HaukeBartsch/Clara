@@ -551,6 +551,25 @@ func scanField(row interface{ Scan(dest ...any) error }) (Field, error) {
 	return f, nil
 }
 
+// fieldInsertSQL and fieldInsertArgs are the single INSERT statement and its
+// argument order, shared by AddField and InsertFieldTx.
+const fieldInsertSQL = `INSERT INTO fields (project_id, instrument_id, field_name, field_label,
+	field_type, section_header, choices, field_note,
+	validation_type, validation_format, validation_min, validation_max,
+	required, branching_logic, calculation, matrix_group,
+	personal_information, direct_identifier, export_approved, position)
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+func fieldInsertArgs(f *Field) []any {
+	return []any{
+		f.ProjectID, f.InstrumentID, f.FieldName, nullStr(f.FieldLabel),
+		f.FieldType, nullStr(f.SectionHeader), nullStr(f.Choices), nullStr(f.FieldNote),
+		nullStr(f.ValidationType), nullStr(f.ValidationFormat), nullStr(f.ValidationMin), nullStr(f.ValidationMax),
+		boolToInt(f.Required), nullStr(f.BranchingLogic), nullStr(f.Calculation), nullStr(f.MatrixGroup),
+		boolToInt(f.PersonalInformation), boolToInt(f.DirectIdentifier), boolToInt(f.ExportApproved), f.Position,
+	}
+}
+
 // AddField inserts a field; position defaults to the end of its instrument's
 // field list. The direct_identifier flag presets to true for identifier-shaped
 // validation types — email, MRN, international/national phone (REQ-EXP-020);
@@ -565,23 +584,51 @@ func (s *Store) AddField(ctx context.Context, f *Field) (int64, error) {
 	if !f.DirectIdentifier && validate.PresetDirectIdentifier(f.ValidationType.String) {
 		f.DirectIdentifier = true
 	}
-	res, err := s.DB.ExecContext(ctx,
-		`INSERT INTO fields (project_id, instrument_id, field_name, field_label,
-			field_type, section_header, choices, field_note,
-			validation_type, validation_format, validation_min, validation_max,
-			required, branching_logic, calculation, matrix_group,
-			personal_information, direct_identifier, export_approved, position)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		f.ProjectID, f.InstrumentID, f.FieldName, nullStr(f.FieldLabel),
-		f.FieldType, nullStr(f.SectionHeader), nullStr(f.Choices), nullStr(f.FieldNote),
-		nullStr(f.ValidationType), nullStr(f.ValidationFormat), nullStr(f.ValidationMin), nullStr(f.ValidationMax),
-		boolToInt(f.Required), nullStr(f.BranchingLogic), nullStr(f.Calculation), nullStr(f.MatrixGroup),
-		boolToInt(f.PersonalInformation), boolToInt(f.DirectIdentifier), boolToInt(f.ExportApproved), f.Position)
+	res, err := s.DB.ExecContext(ctx, fieldInsertSQL, fieldInsertArgs(f)...)
 	if err != nil {
 		return 0, err
 	}
 	s.BumpStructureCache()
 	return res.LastInsertId()
+}
+
+// InsertFieldTx inserts one field inside the caller's transaction — the bulk
+// twin of AddField used by the batch endpoint (REQ-API-132). The position must
+// be set by the caller; the direct_identifier preset applies as in AddField.
+// Bumping the structure generation is the caller's concern once the
+// transaction commits (the httpapi structureInvalidation middleware covers
+// the administration route this serves).
+func InsertFieldTx(ctx context.Context, tx *sql.Tx, f *Field) (int64, error) {
+	if !f.DirectIdentifier && validate.PresetDirectIdentifier(f.ValidationType.String) {
+		f.DirectIdentifier = true
+	}
+	res, err := tx.ExecContext(ctx, fieldInsertSQL, fieldInsertArgs(f)...)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// ListFieldNames returns the project's field_name → id index — the cheap
+// stand-in for the full dictionary when a design check only needs name
+// uniqueness (the bulk/fast validation path of REQ-API-068/132).
+func (s *Store) ListFieldNames(ctx context.Context, projectID int64) (map[string]int64, error) {
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT field_name, id FROM fields WHERE project_id = ?`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var name string
+		var id int64
+		if err := rows.Scan(&name, &id); err != nil {
+			return nil, err
+		}
+		out[name] = id
+	}
+	return out, rows.Err()
 }
 
 // ListValidationTypes returns the validation-type registry (REQ-DB-033);

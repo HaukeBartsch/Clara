@@ -574,7 +574,7 @@ The record-identifier invariant MUST hold after reordering (GD-8: the first fiel
 
 **`DELETE /api/v1/projects/{id}/instruments/{iid}`** — `project_admin`. Removes the instrument together with its fields, their stored values (same transaction, like REQ-API-070) and its mapping pairs; losing recorded values makes the change breaking in analysis mode (§4.21). An expression that survives the change naming a doomed field → 409 `conflict` — references inside the deleted design go with it, which is what commit checks against the post-change design too. 204. Audit `instrument_deleted` with the removed field and value counts (REQ-API-127). **A project always keeps at least one instrument**: deleting the last remaining one only deletes its fields and renames the shell to `instrument` — id, position, survey flag and branching logic stay — answering 200 with the object and auditing `instrument_updated` with `last_instrument_reset` (VISION "Arms, events and instruments": "only the fields in that instrument should be deleted. The instrument should be renamed to 'instrument'").
 
-### 4.11 Fields (designer) (REQ-API-067…071, REQ-API-096)
+### 4.11 Fields (designer) (REQ-API-067…071, REQ-API-096, REQ-API-132)
 
 **`GET /api/v1/projects/{id}/instruments/{iid}/fields`** — data access ≥ `read_only`. 200 — the instrument's fields in position order, with all data-dictionary attributes (REQ-DB-013):
 
@@ -587,6 +587,14 @@ The record-identifier invariant MUST hold after reordering (GD-8: the first fiel
 ```
 
 **`POST /api/v1/projects/{id}/instruments/{iid}/fields`** — `project_admin`. Body: the field object minus `id`/`position` (appended at the end of the list). The field name is lower-case alphanumeric + underscore, unique within the project (REQ-DB-013; a duplicate → 409 `conflict`); names longer than 26 characters are accepted — the warning after 26 is a UI concern (master spec). `validation_type` must be empty, one of the built-in structured types, or an existing `validation_types` name (`Data_Validation_Design.md` §4.2; anything else → 400 `validation_error`, REQ-VAL-010/042); `direct_identifier` is accepted for any field and defaults to `1` when the validation type is `email`, `MRN`, `international phone` or `national phone` (REQ-EXP-020). `calculation` is only allowed with `field_type = calculated`; the expression and the branching logic are validated at design time → 400 `validation_error` (REQ-VAL-029, REQ-VAL-033/034; `Data_Validation_Design.md` §6.2, §7.2). 201 — the field object. Audit `field_created`.
+
+**`POST /api/v1/projects/{id}/instruments/{iid}/fields/bulk`** — `project_admin` (REQ-API-132). Body: `{ "fields": [ … ] }` — a non-empty array of field objects exactly as accepted by the single-field POST above; unknown attributes anywhere, an empty or missing array, or an entry without `field_name`/`field_type` → 400 `invalid_request`. All entries are validated against one shared dictionary view by the same §9 rules, so a name used twice inside the batch collides on its second occurrence like two consecutive single-field calls (→ 409), and a calculated entry may reference an earlier entry of the same call. The batch is **all-or-nothing**: any rejected entry creates nothing — the live path writes fields, calculation dependencies and audit entries in one transaction; in production mode the entries apply to the open staging set as one change (§4.21). Positions follow request order at the end of the instrument's list. `acknowledge_breaking` (analysis mode) is read from the top level of the body. 201 — the array of created field objects, in request order. Audit `field_created` per field, in the same transaction.
+
+```json
+{ "fields": [ { "field_name": "a", "field_type": "text" },
+              { "field_name": "total", "field_type": "calculated",
+                "calculation": "[baseline_arm_1][a] * 2" } ] }
+```
 
 **`PUT /api/v1/projects/{id}/instruments/{iid}/fields/{fid}`** — `project_admin`; idempotent. Body: any subset of the attributes — including a `field_name` rename (the stored values are renamed in the same transaction, REQ-VAL-014, `Data_Validation_Design.md` §9), the `calculation` expression of a calculated field (REQ-VAL-033/034), the `branching_logic` expression (REQ-VAL-029), and the `direct_identifier` flag; an assigned `validation_type` is checked against the registry as at creation (§4.2, REQ-VAL-010/042). A change to a calculated field's expression triggers recomputation of all project records in the same transaction (REQ-VAL-037, `Data_Validation_Design.md` §6.3). 200 — the field object. Audit `field_updated` with old and new values.
 

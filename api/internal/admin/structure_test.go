@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"csms/api/internal/audit"
 	"csms/api/internal/db"
 )
 
@@ -941,6 +942,138 @@ func TestFieldValidationRules(t *testing.T) {
 	rec = e.do("POST", base, map[string]any{"field_name": "age", "field_type": "text"}, admin)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("dup field: %d, want 409", rec.Code)
+	}
+}
+
+// --- bulk fields (§4.11, REQ-API-132) ---
+
+func TestCreateFieldsBulk(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	projectID := e.mustProject("Bulk Study")
+	instID := e.mustInstrument(projectID, "intake")
+	base := "/api/v1/projects/" + itoa(projectID) + "/instruments/" + itoa(instID) + "/fields"
+
+	count := func() int {
+		fs, err := e.Store.ListFieldsByInstrument(context.Background(), projectID, instID)
+		if err != nil {
+			t.Fatalf("list fields: %v", err)
+		}
+		return len(fs)
+	}
+
+	rec := e.do("POST", base+"/bulk", map[string]any{"fields": []map[string]any{
+		{"field_name": "a", "field_type": "text"},
+		{"field_name": "b", "field_type": "text", "required": true},
+		{"field_name": "c", "field_type": "dropdown", "choices": "1$yes##2$no"},
+	}}, admin)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("bulk create: %d %s", rec.Code, rec.Body.String())
+	}
+	var objs []fieldObject
+	e.decode(rec, &objs)
+	if len(objs) != 3 || objs[0].FieldName != "a" || objs[2].Position != 3 {
+		t.Fatalf("bulk objects = %+v", objs)
+	}
+	fields, err := e.Store.ListFieldsByInstrument(context.Background(), projectID, instID)
+	if err != nil || len(fields) != 3 || fields[0].FieldName != "a" || fields[2].Position != 3 {
+		t.Fatalf("stored fields = %+v (%v)", fields, err)
+	}
+
+	// Every created field is audit-logged like the single-field endpoint.
+	created := 0
+	for _, ty := range e.auditTypes() {
+		if ty == audit.FieldCreated {
+			created++
+		}
+	}
+	if created != 3 {
+		t.Fatalf("field_created entries = %d, want 3 (%v)", created, e.auditTypes())
+	}
+
+	// One invalid entry rejects the whole batch — nothing is created.
+	rec = e.do("POST", base+"/bulk", map[string]any{"fields": []map[string]any{
+		{"field_name": "d", "field_type": "text"},
+		{"field_name": "Bad E", "field_type": "text"},
+	}}, admin)
+	if rec.Code != http.StatusBadRequest || count() != 3 {
+		t.Fatalf("invalid entry: %d, count %d — want 400 and no fields", rec.Code, count())
+	}
+
+	// A name used twice inside the batch → 409, nothing created.
+	rec = e.do("POST", base+"/bulk", map[string]any{"fields": []map[string]any{
+		{"field_name": "f1", "field_type": "text"},
+		{"field_name": "f1", "field_type": "text"},
+	}}, admin)
+	if rec.Code != http.StatusConflict || count() != 3 {
+		t.Fatalf("in-batch dup: %d, count %d — want 409 and no fields", rec.Code, count())
+	}
+
+	// A name already in the project → 409.
+	rec = e.do("POST", base+"/bulk", map[string]any{"fields": []map[string]any{
+		{"field_name": "a", "field_type": "text"},
+	}}, admin)
+	if rec.Code != http.StatusConflict || count() != 3 {
+		t.Fatalf("existing dup: %d, count %d — want 409", rec.Code, count())
+	}
+
+	// Body shape: empty or missing array and unknown attributes → 400.
+	for name, body := range map[string]any{
+		"empty array":   map[string]any{"fields": []map[string]any{}},
+		"missing array": map[string]any{},
+		"unknown attr":  map[string]any{"fields": []map[string]any{{"field_name": "x", "field_type": "text"}}, "bogus": 1},
+		"unknown in el": map[string]any{"fields": []map[string]any{{"field_name": "x", "field_type": "text", "bogus": 1}}},
+		"missing name":  map[string]any{"fields": []map[string]any{{"field_type": "text"}}},
+	} {
+		rec = e.do("POST", base+"/bulk", body, admin)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("bulk %s: %d, want 400 (%s)", name, rec.Code, rec.Body.String())
+		}
+	}
+	if count() != 3 {
+		t.Fatalf("fields after rejected bodies = %d, want 3", count())
+	}
+}
+
+// A batch shares one dictionary view: a calculated entry may reference an
+// earlier entry of the same call, and a bad reference rejects the whole batch.
+func TestCreateFieldsBulkCalc(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	projectID := e.mustProject("Bulk Calc Study")
+	armID := e.mustArm(projectID, 1)
+	eventID := e.mustEvent(projectID, armID, "baseline", "baseline_arm_1")
+	instID := e.mustInstrument(projectID, "labs")
+	if err := e.Store.SetInstrumentEventsForArm(context.Background(), projectID, armID,
+		[]db.InstrumentEvent{{InstrumentID: instID, EventID: eventID}}); err != nil {
+		t.Fatalf("map: %v", err)
+	}
+	base := "/api/v1/projects/" + itoa(projectID) + "/instruments/" + itoa(instID) + "/fields"
+
+	rec := e.do("POST", base+"/bulk", map[string]any{"fields": []map[string]any{
+		{"field_name": "a", "field_type": "text"},
+		{"field_name": "total", "field_type": "calculated", "calculation": "[baseline_arm_1][a] * 2"},
+	}}, admin)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("bulk with calc: %d %s", rec.Code, rec.Body.String())
+	}
+	var deps int
+	if err := e.Store.DB.QueryRow(
+		`SELECT COUNT(*) FROM calculated_dependencies WHERE project_id = ?`, projectID).Scan(&deps); err != nil || deps != 1 {
+		t.Fatalf("calc dependencies = %d (%v), want 1", deps, err)
+	}
+
+	// A bad reference rejects the whole batch — "x" is not created either.
+	rec = e.do("POST", base+"/bulk", map[string]any{"fields": []map[string]any{
+		{"field_name": "x", "field_type": "text"},
+		{"field_name": "bad", "field_type": "calculated", "calculation": "[baseline_arm_1][nope]"},
+	}}, admin)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad calc reference: %d, want 400 (%s)", rec.Code, rec.Body.String())
+	}
+	fields, err := e.Store.ListFieldsByInstrument(context.Background(), projectID, instID)
+	if err != nil || len(fields) != 2 {
+		t.Fatalf("fields after rejected batch = %+v (%v), want the two from before", fields, err)
 	}
 }
 

@@ -44,6 +44,7 @@ func (h *Handler) registerStructure(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/projects/{id}/instruments/{iid}/fields/order", h.orderFields)
 	mux.HandleFunc("GET /api/v1/projects/{id}/instruments/{iid}/fields", h.listFields)
 	mux.HandleFunc("POST /api/v1/projects/{id}/instruments/{iid}/fields", h.createField)
+	mux.HandleFunc("POST /api/v1/projects/{id}/instruments/{iid}/fields/bulk", h.createFieldsBulk)
 	mux.HandleFunc("PUT /api/v1/projects/{id}/instruments/{iid}/fields/order", h.orderFields)
 	mux.HandleFunc("PUT /api/v1/projects/{id}/instruments/{iid}/fields/{fid}", h.updateField)
 	mux.HandleFunc("DELETE /api/v1/projects/{id}/instruments/{iid}/fields/{fid}", h.deleteField)
@@ -173,6 +174,29 @@ func (h *Handler) loadDesign(ctx context.Context, projectID int64) (*designCtx, 
 			}
 			d.activeAt[name][p.InstrumentID] = true
 		}
+	}
+	return d, nil
+}
+
+// designForFields loads the dictionary view validateFieldDesign checks the
+// proposed fields against. Only an expression — a calculation or branching
+// logic — makes a field consult more than name uniqueness (REQ-VAL-029/033),
+// and uniqueness alone is answered by the cheap name→id index. Loading the
+// full snapshot per request made bulk designers quadratic: a project built one
+// field at a time re-read every earlier field on every call (§4.11).
+func (h *Handler) designForFields(ctx context.Context, projectID int64, fs []*db.Field) (*designCtx, error) {
+	for _, f := range fs {
+		if f.Calculation.String != "" || f.BranchingLogic.String != "" {
+			return h.loadDesign(ctx, projectID)
+		}
+	}
+	names, err := h.Store.ListFieldNames(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	d := &designCtx{fields: make(map[string]db.Field, len(names))}
+	for name, id := range names {
+		d.fields[name] = db.Field{ID: id, FieldName: name}
 	}
 	return d, nil
 }
@@ -2691,13 +2715,15 @@ func (h *Handler) createField(w http.ResponseWriter, r *http.Request) {
 		errNotFound(w)
 		return
 	}
-	design, err := h.loadDesign(ctx, projectID)
+	f := &db.Field{ProjectID: projectID, InstrumentID: instID, FieldName: *in.FieldName, FieldType: *in.FieldType}
+	in.apply(f)
+	// The dictionary view is loaded after the proposal so an expression-free
+	// field can take the cheap uniqueness path (designForFields).
+	design, err := h.designForFields(ctx, projectID, []*db.Field{f})
 	if err != nil {
 		errInternal(w)
 		return
 	}
-	f := &db.Field{ProjectID: projectID, InstrumentID: instID, FieldName: *in.FieldName, FieldType: *in.FieldType}
-	in.apply(f)
 	refs, derr := h.validateFieldDesign(ctx, f, 0, design)
 	if derr != nil {
 		writeDesignError(w, derr)
@@ -2736,6 +2762,222 @@ func (h *Handler) createField(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, newFieldObject(*f))
+}
+
+// decodeFieldInputs decodes the §4.11 bulk body { "fields": [ … ] } — every
+// entry exactly as POST .../fields accepts it (REQ-API-132). acknowledge_breaking
+// is read from the top level only; per-entry validation errors are answered
+// with 400 and reject the whole call.
+func (h *Handler) decodeFieldInputs(w http.ResponseWriter, r *http.Request) ([]fieldInput, bool, bool) {
+	var supplied map[string]json.RawMessage
+	if err := decodeBody(r, &supplied); err != nil {
+		errBadRequest(w, "malformed JSON body")
+		return nil, false, false
+	}
+	if !RejectUnknownAttrs(w, supplied, "fields", "acknowledge_breaking") {
+		return nil, false, false
+	}
+	var rawFields []map[string]json.RawMessage
+	if err := json.Unmarshal(supplied["fields"], &rawFields); err != nil || len(rawFields) == 0 {
+		errBadRequest(w, `fields must be a non-empty array of field objects`)
+		return nil, false, false
+	}
+	inputs := make([]fieldInput, 0, len(rawFields))
+	for _, raw := range rawFields {
+		if !RejectUnknownAttrs(w, raw, fieldInputAttrs...) {
+			return nil, false, false
+		}
+		b, err := json.Marshal(raw)
+		if err != nil {
+			errBadRequest(w, "malformed JSON body")
+			return nil, false, false
+		}
+		var in fieldInput
+		if err := json.Unmarshal(b, &in); err != nil {
+			errBadRequest(w, "malformed JSON body")
+			return nil, false, false
+		}
+		if in.FieldName == nil || in.FieldType == nil {
+			errBadRequest(w, "field_name and field_type are required")
+			return nil, false, false
+		}
+		inputs = append(inputs, in)
+	}
+	return inputs, acknowledgeFrom(supplied), true
+}
+
+// createFieldsBulk appends a batch of fields to an instrument in one request
+// (REQ-API-132). Every entry is validated by the same §4.11 rules as a single
+// creation — against one shared dictionary view, so a name used twice inside
+// the batch collides on its second occurrence like two consecutive calls — and
+// the batch is all-or-nothing: the live path writes fields, calculation
+// dependencies and audit entries in one transaction. Positions follow request
+// order at the end of the instrument's list. project_admin.
+func (h *Handler) createFieldsBulk(w http.ResponseWriter, r *http.Request) {
+	u, lv, projectID, ok := h.structureAccess(w, r)
+	if !ok || !h.requireProjectAdmin(w, r, lv) {
+		return
+	}
+	instID, ok := pathObjectID(r, "iid")
+	if !ok {
+		errBadRequest(w, "invalid instrument id")
+		return
+	}
+	ctx := r.Context()
+	inputs, ack, ok := h.decodeFieldInputs(w, r)
+	if !ok {
+		return
+	}
+
+	// Staged mode resolves the instrument from the open set, as createField does
+	// (REQ-API-107).
+	staged, err := h.stagedRead(ctx, projectID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	if staged != nil {
+		if _, found := h.stagedInstrumentOr404(w, staged, instID); !found {
+			return
+		}
+	}
+
+	var created []stagedField
+	apply := func(d *stagedDesign) *designError {
+		created = nil
+		seen := map[string]bool{}
+		dc := d.designContext(projectID)
+		for i := range inputs {
+			f := &db.Field{ProjectID: projectID, InstrumentID: instID,
+				FieldName: *inputs[i].FieldName, FieldType: *inputs[i].FieldType}
+			inputs[i].apply(f)
+			if !f.DirectIdentifier && validate.PresetDirectIdentifier(f.ValidationType.String) {
+				f.DirectIdentifier = true
+			}
+			// In-batch uniqueness: the design overlay carries a new field under
+			// id 0, which validateFieldDesign's self-exclusion would read as its
+			// own row — the batch keeps its own name set instead.
+			if seen[f.FieldName] {
+				return conflictf("field_name %q already exists in this project", f.FieldName)
+			}
+			if _, derr := h.validateFieldDesign(ctx, f, 0, dc); derr != nil {
+				return derr
+			}
+			seen[f.FieldName] = true
+			sf, placed := d.putField(instID, *f)
+			if !placed {
+				return validationf("instrument %d is not part of the staged design", instID)
+			}
+			created = append(created, *sf)
+		}
+		return nil
+	}
+	target, set, breakingAcknowledged, ok := h.structureWrite(w, r, projectID, ack, apply)
+	if !ok {
+		return
+	}
+	if target == writeStaged {
+		if !h.applyStagedChange(w, r, projectID, set, apply) {
+			return
+		}
+		objs := make([]fieldObject, 0, len(created))
+		for _, sf := range created {
+			objs = append(objs, newFieldObject(sf.field(projectID)))
+		}
+		writeJSON(w, http.StatusCreated, objs)
+		return
+	}
+
+	inst, err := h.Store.GetInstrument(ctx, instID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	if inst == nil || inst.ProjectID != projectID {
+		errNotFound(w)
+		return
+	}
+	// Validate the whole batch against one dictionary view before writing:
+	// validateFieldDesign overlays each accepted name, so later entries see
+	// earlier ones (in-batch uniqueness and forward references to fields in
+	// the same call behave like consecutive single-field requests).
+	proposed := make([]*db.Field, 0, len(inputs))
+	for i := range inputs {
+		f := &db.Field{ProjectID: projectID, InstrumentID: instID,
+			FieldName: *inputs[i].FieldName, FieldType: *inputs[i].FieldType}
+		inputs[i].apply(f)
+		proposed = append(proposed, f)
+	}
+	design, err := h.designForFields(ctx, projectID, proposed)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	refsByField := make([][]validate.Ref, 0, len(inputs))
+	seen := map[string]bool{}
+	for _, f := range proposed {
+		if seen[f.FieldName] {
+			writeDesignError(w, conflictf("field_name %q already exists in this project", f.FieldName))
+			return
+		}
+		refs, derr := h.validateFieldDesign(ctx, f, 0, design)
+		if derr != nil {
+			writeDesignError(w, derr)
+			return
+		}
+		seen[f.FieldName] = true
+		refsByField = append(refsByField, refs)
+	}
+
+	tx, err := h.Store.DB.BeginTx(ctx, nil)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	defer tx.Rollback()
+	var pos int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(position), 0) + 1 FROM fields
+		 WHERE project_id = ? AND instrument_id = ?`, projectID, instID).Scan(&pos); err != nil {
+		errInternal(w)
+		return
+	}
+	for i, f := range proposed {
+		f.Position = pos
+		pos++
+		id, err := db.InsertFieldTx(ctx, tx, f)
+		if err != nil {
+			errInternal(w)
+			return
+		}
+		f.ID = id
+		if len(refsByField[i]) > 0 {
+			if err := putCalcDepsTx(ctx, tx, projectID, id, refsByField[i]); err != nil {
+				errInternal(w)
+				return
+			}
+		}
+		if err := h.Audit.InsertTx(ctx, tx, audit.Entry{
+			EventType: audit.FieldCreated, Source: audit.SourceUI,
+			UserID: u.ID, Email: u.Email, ProjectID: projectID,
+			Details: withBreakingAcknowledgement(map[string]any{
+				"instrument": inst.Name, "field": f.FieldName, "type": f.FieldType,
+			}, breakingAcknowledged),
+		}); err != nil {
+			errInternal(w)
+			return
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		errInternal(w)
+		return
+	}
+	h.Store.BumpStructureCache()
+	objs := make([]fieldObject, 0, len(proposed))
+	for _, f := range proposed {
+		objs = append(objs, newFieldObject(*f))
+	}
+	writeJSON(w, http.StatusCreated, objs)
 }
 
 // putCalcDepsTx (re)populates calculated_dependencies for one field (§6.2).

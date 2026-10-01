@@ -573,3 +573,7 @@ Test: Is it true that an instrument can have 0 fields? If its just created, no f
 ## Performance metrics as part of api
 
 The api should measure performance metrics like response times and memory amounts for database operations and api internal data processing. The information should be sufficient to later evaluate extensions to the infrastructure that runs the api and to the database system that the api talks to.
+
+## Improve import speed
+
+Setup of 20 large projects can take about 13 min. Most of that time seems to be caused by data import with a large number of API calls. Suggest how to adjust the api to allow for a more efficient (batch?) upload of record values.
