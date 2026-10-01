@@ -542,4 +542,34 @@ A new project should display only two fields in its first "instrument". The reco
 ## Web interface generals
 
 The assets/table_based_authentication... is an example for a partial admin screeen (user accounts) only. Other pages/partial screens/applications are expected to have their relevant code in their own js/all.js.
-Build a new AC.php for web/ fixing issues and extending it to support table-based, LDAP(s) and OAuth flows.
+
+Later: Build a new AC.php for web/ fixing issues and extending it to support table-based, LDAP(s) and OAuth flows.
+
+## Translations workflow
+
+In the translation workflow the admin users request (export) from the admin web interface a table with user interface translations (csv, 1 column for english and 1 column for the target translation language). They upload a filled in table (csv) with all or some of the target language translations. The upload should trigger LANGUAGE_CACHE to invalidate. A user can select his standard language on first login (store as part of the user info) or change the standard language later on the users profile page (list users email as well).
+
+## Technical debt
+
+Keep a list of technical debt. Include things like node, nvm, composer, php and all imported external libraries. Include expected range of version numbers (if known) the solution is likely to work with (like would php7 still work or are we using features that only exist in php8?). The overview should be sufficient to evaluate the technical debt of Clara separated into development environment (building Clara), api/ and web/. Add this list to the existing documentation (maybe in docs/index.md?).
+
+
+## Later: alternative admin WebLLM interface
+
+For admin users add a webllm based interface that can access the api (read only mode, or read and write) through an mcp server. The webllm application should preload a model for tool use and stream responses to the user (see for example https://github.com/OpenLinkSoftware/WebLLM-Tools-Sample). Use cases are:
+- request information about projects
+- statistics about stored data in a project (marginal statistics, t-tests and linear mixed effects models)
+- answer questions about data stored in different projects - like distribution of "sex at birth" variables by project
+
+## Better documentation
+
+For Requirements/, Plan/, and Design/ documents provide a classification of relevance for all codes into: "security", "performance", "workflow", "scalability", "resilience". Keep that information as a grouped summary table (Requirements/*.md, relevance, code list) as part of docs/index.md.
+
+
+Test: Is it true that instrument names in a project are unique?
+
+Test: Is it true that an instrument can have 0 fields? If its just created, no fields added, can it be imported and exported without issues?
+
+## Performance metrics as part of api
+
+The api should measure performance metrics like response times and memory amounts for database operations and api internal data processing. The information should be sufficient to later evaluate extensions to the infrastructure that runs the api and to the database system that the api talks to.
