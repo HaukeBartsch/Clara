@@ -143,7 +143,7 @@ final class Auth
         }
 
         $user = $this->finalize($pending, $this->challengeBody($pending, $code));
-        Session::promoteSecondFactor($user);
+        Session::promoteSecondFactor($user, $pending['source_name']);
 
         return $user;
     }
@@ -187,7 +187,7 @@ final class Auth
         }
 
         // No gate left to pass: complete the login this resumed.
-        Session::promoteSecondFactor($user);
+        Session::promoteSecondFactor($user, $pending['source_name']);
 
         return false;
     }
@@ -270,6 +270,11 @@ final class Auth
      */
     private function finalize(array $pending, array $body): array
     {
+        // Read before the attempt: a resumed challenge must keep the window it
+        // started with, so five minutes means five minutes from the first factor
+        // and not five minutes since the last wrong code (§2.7).
+        $alreadyPending = Session::pendingSecondFactor();
+
         try {
             return $this->api->post('/api/v1/auth/login', $body);
         } catch (ApiException $e) {
@@ -277,10 +282,14 @@ final class Auth
                 throw $e;
             }
 
-            Session::beginSecondFactor(array_merge($pending, [
+            $record = array_merge($pending, [
                 'method' => $e->contextString('method'),
                 'user_id' => $e->contextInt('user_id'),
-            ]));
+            ]);
+            if ($alreadyPending !== []) {
+                $record['verified_at'] = $alreadyPending['verified_at'];
+            }
+            Session::beginSecondFactor($record);
 
             throw $e;
         }

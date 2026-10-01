@@ -91,7 +91,7 @@ final class Session
      * have passed (an expired one is dropped rather than honoured, §2.7).
      *
      * @return array{email: string, source: string, provider: string, source_name: string,
-     *               first_factor: string, user_id: int, method: string}
+     *               first_factor: string, user_id: int, method: string, verified_at: int}
      */
     public static function pendingSecondFactor(): array
     {
@@ -117,20 +117,27 @@ final class Session
             'first_factor' => (string) ($pending['first_factor'] ?? ''),
             'user_id' => (int) ($pending['user_id'] ?? 0),
             'method' => (string) ($pending['method'] ?? ''),
+            'verified_at' => (int) $pending['verified_at'],
         ];
     }
 
     /**
-     * Records the first-factor success behind a second factor (§2.7). The id is
-     * rotated first: an attacker who planted this cookie before the attempt must
-     * not end up holding the session the challenge completes into.
+     * Records the first-factor success behind a second factor (§2.7). Entering
+     * the state rotates the id — an attacker who planted this cookie before the
+     * attempt must not end up holding the session the challenge completes into.
+     * A resumed challenge does not rotate again: it is the same pending identity
+     * re-asking, and its original `verified_at` is passed through so the five
+     * minutes count from the first factor rather than from the last wrong code.
      *
      * @param array{email?: string, source?: string, provider?: string,
-     *              source_name?: string, first_factor?: string, user_id?: int, method?: string} $pending
+     *              source_name?: string, first_factor?: string, user_id?: int,
+     *              method?: string, verified_at?: int} $pending
      */
     public static function beginSecondFactor(array $pending): void
     {
-        if (session_status() === PHP_SESSION_ACTIVE) {
+        $alreadyPending = isset($_SESSION['tfa_pending']) && is_array($_SESSION['tfa_pending']);
+
+        if (!$alreadyPending && session_status() === PHP_SESSION_ACTIVE) {
             session_regenerate_id(true);
         }
 
@@ -142,7 +149,8 @@ final class Session
             'first_factor' => '',
             'user_id' => 0,
             'method' => '',
-        ], $pending, ['verified_at' => time()]);
+            'verified_at' => time(),
+        ], $pending);
 
         // Anything from an earlier attempt is gone: a stale flash or a half-finished
         // wizard would otherwise reappear inside someone else's challenge.
@@ -211,11 +219,19 @@ final class Session
         $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
     }
 
-    /** Promotes a verified second factor to a full session (§2.7). */
-    public static function promoteSecondFactor(array $user): void
+    /**
+     * Promotes a verified second factor to a full session (§2.7). The source name
+     * the user selected on the login page carries over from the pending state —
+     * it is recorded in the login audit and nothing else (REQ-AUTH-067).
+     *
+     * @param array<string, mixed> $user the user object the API returned
+     */
+    public static function promoteSecondFactor(array $user, string $authSourceName = ''): void
     {
         unset($_SESSION['tfa_pending']);
-        self::establish($user, (string) ($_SESSION['auth_source_name'] ?? ''));
+        self::establish($user, $authSourceName !== ''
+            ? $authSourceName
+            : (string) ($_SESSION['auth_source_name'] ?? ''));
     }
 
     /** Destroys the session and its cookie (Sequence D step 4). */
