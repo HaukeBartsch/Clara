@@ -95,6 +95,15 @@ final class View
         return Session::isAdmin();
     }
 
+    /**
+     * Whether the account has a local password to change — the gate on the Password entry
+     * in the sidebar's Account section (§2.4 item 4, GD-23).
+     */
+    public function hasLocalCredential(): bool
+    {
+        return Session::hasLocalCredential();
+    }
+
     public function displayName(): string
     {
         return Session::displayName();

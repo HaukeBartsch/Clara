@@ -431,6 +431,7 @@ The removed attributes — `end_provision`, the `option_*` flags, `agreed_to_end
 ```json
 {
   "id": 33, "project_name": "8DISC", "…": "…(all metadata fields)",
+  "record_count": 42,
   "arms": [ { "arm_num": 1, "name": "", "events": [ { "id": 4, "event_name": "baseline", "unique_event_name": "baseline_arm_1", "period": 0, "safe_region_start": null, "safe_region_end": null, "position": 1 } ] } ],
   "instruments": [ { "id": 7, "name": "intake", "position": 1, "field_count": 24 } ],
   "permissions": {
@@ -439,6 +440,8 @@ The removed attributes — `end_provision`, the `option_*` flags, `agreed_to_end
   }
 }
 ```
+
+`record_count` is the project's record total — the summary the project home shows alongside its structure counts (REQ-UI-017). It is the same number the `GET /api/v1/projects` rows carry, so one detail read answers a project page without the web layer listing every visible project to find one heading (`Plan/Web_Implementation.md` §7 rule 13); instrument and field counts come from `instruments[]` and its `field_count`s.
 
 `permissions` is the effective evaluation of `Authentication_Authorization_Design.md` §4.1 for the acting user — the same result the boundary applies to every call — surfaced so the PHP layer can gate rendering with the control absent from the DOM (`User_Interface_Design.md` §3.1, REQ-UI-003). Rules: one `arms[]` entry per arm of the project in the arm order of the `arms` list above; `is_admin` reports `edit_survey_responses` / `export_full` on every arm and `project_admin: true` (REQ-AUTH-023); a role-less member likewise (REQ-AUTH-022); an arm the user's role does not grant reports `no_access` / `export_none` (REQ-AUTH-019), so no arm is ever absent from the list and the caller never infers a level from a missing entry. The vocabulary is the §4.7 one (`no_access | read_only | view_edit | delete | edit_survey_responses`, `export_none | export_de_identified | export_no_identifiers | export_full`). This read authorizes nothing — it discloses only the caller's own levels, under the same visibility gate as the rest of the response (REQ-API-007), and every endpoint re-checks at call time (REQ-AUTH-033).
 

@@ -12,9 +12,6 @@
  * radios is the same action for a browser without JavaScript (assets/js/login.js submits
  * it on selection), because nothing here may depend on script running (§2.4).
  *
- * The "Forgot password?" link arrives with the /password-reset route in M2 — until then it
- * is absent rather than a link to a page that does not answer.
- *
  * The password travels browser → PHP over TLS only, is never stored or logged, and is
  * never re-rendered into the page (REQ-AUTH-036).
  */
@@ -95,6 +92,14 @@ use Clara\View;
         </div>
 
         <button class="btn btn-primary w-100" type="submit"><?= View::e($view->t('login.submit')) ?></button>
+
+        <!-- "Forgot password?" sits with the form it applies to (§2.2). It is meaningful
+             only for a local account, and that is not something this page can know about an
+             address it has not seen — which is exactly why /password-reset answers the same
+             way whatever it was asked (REQ-AUTH-062). -->
+        <p class="text-center mt-2 mb-0">
+            <a class="small" href="/password-reset"><?= View::e($view->t('login.forgot')) ?></a>
+        </p>
     </form>
 <?php elseif (empty($providers)): ?>
     <!-- Nothing configured can verify a password. Saying so beats a form whose answer is

@@ -53,7 +53,20 @@ $pageTitle = $pageTitle ?? ($titleKey !== '' ? $view->t($titleKey) : '');
             ☰
         </button>
         <a class="navbar-brand clara-brand mb-0" href="/"><?= View::e($view->t('app.name')) ?></a>
-        <span class="d-none d-sm-inline text-body-secondary small"><?= View::e($view->t('app.tagline')) ?></span>
+        <?php if (($brandProject ?? '') !== ''): ?>
+            <!-- Inside a project the brand bar names it, and the name goes back to that
+                 project's home (§2.4) — the same plain navigation as every other sidebar
+                 item, not a client-side view switch (REQ-UI-001). -->
+            <span class="text-body-secondary small px-1" aria-hidden="true">/</span>
+            <?php if (($brandProjectUrl ?? '') !== ''): ?>
+                <a class="text-body-emphasis text-decoration-none small"
+                   href="<?= View::e($brandProjectUrl) ?>"><?= View::e($brandProject) ?></a>
+            <?php else: ?>
+                <span class="text-body-secondary small"><?= View::e($brandProject) ?></span>
+            <?php endif; ?>
+        <?php else: ?>
+            <span class="d-none d-sm-inline text-body-secondary small"><?= View::e($view->t('app.tagline')) ?></span>
+        <?php endif; ?>
     </div>
 </header>
 

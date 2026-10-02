@@ -201,6 +201,13 @@ func TestProjectGetDetail(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("AddField: %v", err)
 	}
+	// Two records: the detail carries the project's record count so a project
+	// page needs one read for its summary (REQ-UI-017).
+	for _, recordID := range []string{"r1", "r2"} {
+		if err := e.Store.CreateRecordEntity(ctx, &db.RecordEntity{ProjectID: pid, RecordID: recordID}); err != nil {
+			t.Fatalf("CreateRecordEntity(%s): %v", recordID, err)
+		}
+	}
 
 	rec := e.do("GET", "/api/v1/projects/"+itoa(pid), nil, member)
 	if rec.Code != http.StatusOK {
@@ -220,6 +227,9 @@ func TestProjectGetDetail(t *testing.T) {
 	if len(d.Instruments) != 1 || d.Instruments[0].Name != "intake" ||
 		d.Instruments[0].FieldCount != 1 {
 		t.Errorf("instruments = %+v", d.Instruments)
+	}
+	if d.RecordCount != 2 {
+		t.Errorf("record_count = %d, want 2 (REQ-UI-017)", d.RecordCount)
 	}
 }
 

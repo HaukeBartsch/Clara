@@ -73,14 +73,20 @@ final class Messages
         }
 
         $reason = $e->getMessage();
-        $showReason = in_array($e->code(), ['validation_error', 'conflict'], true);
+        // `no_local_credential` is a 409 that says which authentication path the account
+        // actually uses — an actionable reason of exactly the kind §3.4 shows (§2.6).
+        $showReason = in_array($e->code(), ['validation_error', 'conflict', 'no_local_credential'], true);
 
         $lead = match ($e->code()) {
             'invalid_request' => $i18n->t('error.invalid_request'),
             'validation_error' => '',
             'forbidden' => $i18n->t('error.forbidden'),
             'conflict' => '',
+            'no_local_credential' => '',
             'not_found' => $i18n->t('error.not_found'),
+            // A wrong current password on the self-service change form (§2.6): the one
+            // line, no hint about what else the account might be.
+            'bad_password' => $i18n->t('error.bad_password'),
             'rate_limited' => self::rateLimited($i18n, $e),
             default => $i18n->t('error.generic'),
         };

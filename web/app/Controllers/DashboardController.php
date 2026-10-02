@@ -55,36 +55,4 @@ final class DashboardController extends Controller
     {
         return Response::json($this->visibleProjects());
     }
-
-    /**
-     * The visible projects with the quick statistics exactly as returned
-     * (record_count, instrument_count, field_count). One call per render — the
-     * rows are not enriched per row (Plan/Web_Implementation.md §7 rule 13).
-     *
-     * @return list<array<string, mixed>>
-     */
-    private function visibleProjects(): array
-    {
-        $projects = $this->api->get('/api/v1/projects');
-        if (!is_array($projects)) {
-            return [];
-        }
-
-        $out = [];
-        foreach ($projects as $project) {
-            if (!is_array($project) || !isset($project['id'])) {
-                continue;
-            }
-            $out[] = [
-                'id' => (int) $project['id'],
-                'project_name' => (string) ($project['project_name'] ?? ''),
-                'organization' => (string) ($project['organization'] ?? ''),
-                'record_count' => (int) ($project['record_count'] ?? 0),
-                'instrument_count' => (int) ($project['instrument_count'] ?? 0),
-                'field_count' => (int) ($project['field_count'] ?? 0),
-            ];
-        }
-
-        return $out;
-    }
 }

@@ -57,9 +57,13 @@ func newProjectObject(p *db.Project) projectObject {
 }
 
 // projectDetail is the GET/PUT /{id} shape — full metadata plus structure
-// plus the acting user's effective permissions (REQ-API-126).
+// plus the acting user's effective permissions (REQ-API-126), plus the record
+// count the project home summary shows (REQ-UI-017): the web layer must not
+// read every visible project's summary to fill one heading, so the count that
+// the dashboard listing already computes per project rides along here.
 type projectDetail struct {
 	projectObject
+	RecordCount int                       `json:"record_count"`
 	Arms        []projectArmObject        `json:"arms"`
 	Instruments []projectInstrumentObject `json:"instruments"`
 	Permissions projectPermissions        `json:"permissions"`
@@ -122,6 +126,11 @@ func buildProjectPermissions(arms []db.Arm, lv *authz.Levels) projectPermissions
 // user's effective permissions (lv, resolved by the caller — REQ-API-126).
 func (h *Handler) buildProjectDetail(ctx context.Context, p *db.Project, lv *authz.Levels) (projectDetail, error) {
 	d := projectDetail{projectObject: newProjectObject(p)}
+	records, err := h.Store.CountRecordEntities(ctx, p.ID)
+	if err != nil {
+		return d, err
+	}
+	d.RecordCount = records
 	arms, eventsByArm, err := h.CanonicalEvents(ctx, p.ID)
 	if err != nil {
 		return d, err
