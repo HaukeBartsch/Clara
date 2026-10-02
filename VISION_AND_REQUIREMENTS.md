@@ -579,12 +579,15 @@ The bootstrap user with "is_admin" should be used during setup of the system onl
 
 # Security relevant findings
 
+Fixed findings carry a **Status** line with the date and how the fix landed; the original finding text is kept unchanged as the record of what was wrong.
+
 ### F1 — Local-password brute force bypasses lockout and audit (High)
 
 - **Where:** `web/app/Auth.php:95`, `api/internal/admin/auth.go:196`.
 - **What:** The web login calls `POST /api/v1/auth/verify-password` first and calls `login` only on success. `verifyPassword` neither checks `h.lockouts.locked` nor records a failure, and writes no audit entry. Its comment says the brute-force check runs in PHP, but PHP has none. `tests/php/router_test.php:241` codifies the behaviour.
 - **Impact:** Unlimited online guessing of any local account, including the bootstrap admin. No `login_failure` audit trail. The IP rate limiter is off by default (`rate_limit_enabled` opt-in).
 - **Fix:** In `verifyPassword`, reject when the address is locked and call `h.lockouts.failure` on a bad password. Alternatively, have PHP finalize every failed race with a `login` call carrying `attempts`, as the design describes. Turn the IP rate limiter on by default for `/api/v1/auth/*`. Add a regression test.
+- **Status:** Fixed 2026-10-02 (server-side option). `verifyPassword` rejects a locked address with `429 rate_limited`, counts every bad password toward the Sequence E window, and writes a `login_failure` audit entry; the IP rate limiter stays on for `/api/v1/auth/*` even when `rate_limit_enabled` is off. Regression tests `TestVerifyPasswordLockoutAndAudit` and `TestRateLimitAlwaysOnForAuthPaths`; `Design/Authentication_Authorization_Design.md` §2.3/§2.6/§2.9 updated to match.
 
 ### F2 — Audit endpoint leaks live tokens and PHI to any member (High, Req-change)
 
@@ -599,6 +602,7 @@ The bootstrap user with "is_admin" should be used during setup of the system onl
 - **What:** The link check pins `record_id` and `form_name`. However, the field loop accepts every dictionary field present in the row, not only fields of `form_name`.
 - **Impact:** An anonymous respondent can overwrite clinician-entered data, identifiers or other instruments of their record. The overwrite is audited but not prevented.
 - **Fix:** Reject or ignore fields whose `Instrument != formName`, except the record identifier. Apply the same rule to project tokens, so `form_name` means what it says.
+- **Status:** Fixed 2026-10-02. The import field loop rejects any field whose instrument is not the request's `form_name` (the record identifier stays exempt), for survey links and project tokens alike — a row can now only write its own instrument. Regression tests `TestRecordImportRejectsForeignInstrumentFields` and `TestSurveyLinkCannotWriteForeignInstrumentFields`.
 
 ### F4 — DAG bypass on import (High)
 
@@ -606,6 +610,7 @@ The bootstrap user with "is_admin" should be used during setup of the system onl
 - **What:** Export and delete restrict to the caller's active group. Import loads the existing record and writes to it without comparing `entity.DagGroupID` to the caller's group.
 - **Impact:** A site-A user can overwrite site-B records. The `added`/`updated` result also confirms that a record ID exists in another group.
 - **Fix:** When the caller has an active group and the entity exists with a different group, return the same row-level failure as a validation error. Extend `TestRecordDAGScope` to cover import.
+- **Status:** Fixed 2026-10-02. Import compares the caller's active DAG to `entity.DagGroupID`; an existing record in another group (or in no group) fails the row with `PERMISSION_DENIED`, matching export and delete visibility, while new records still join the caller's group (REQ-API-093). `TestRecordDAGScope` now covers import.
 
 ### F5 — Unbounded recursion in the expression parser (High)
 
@@ -613,6 +618,7 @@ The bootstrap user with "is_admin" should be used during setup of the system onl
 - **What:** Each `(` recurses through four functions with no depth limit. The data-API body may be 32 MiB. A Go stack overflow is a fatal runtime error that `recover` cannot catch, so the whole process exits.
 - **Impact:** Any token holder with an export level can repeatedly crash the API for all users. Admin-entered branching and calculation expressions share the parser.
 - **Fix:** Cap expression length (for example 4 KiB) and nesting depth (for example 64) in `tokenize` and the parsers. Parse `filterLogic` once per request instead of once per record.
+- **Status:** Fixed 2026-10-02. `tokenize` rejects expressions longer than 4 KiB; a shared nesting guard caps parentheses, groups and unary operators at 64 levels across all three parsers (calculation, branching, logic). Export compiles `filterLogic` once per request via the new `validate.CompileLogic`. Regression tests `TestExpressionDepthLimit`, `TestExpressionLengthLimit`, `TestCompileLogic`.
 
 ### F6 — `filterLogic` re-identification in de-identified exports (Medium, Req-change)
 
@@ -673,6 +679,7 @@ The bootstrap user with "is_admin" should be used during setup of the system onl
 - **Where:** `api/internal/admin/passwords.go:106`, `changeMyPassword`, `bootstrapAdmin`.
 - **What:** Any non-empty password is accepted. bcrypt rejects passwords over 72 bytes, which surfaces as a 500.
 - **Fix:** Enforce a minimum length of 12 and a maximum of 72 bytes with a clear 400. Optionally check a local breached-password list. Apply the same rule to `ADMIN_BOOTSTRAP_PASSWORD` at startup.
+- **Status:** Fixed 2026-10-02 (breached-password list not implemented). Minimum 12 characters / maximum 72 bytes with a clear 400, enforced on setup completion (after token validation), self-service change (after the current-password check), user create/update, and `ADMIN_BOOTSTRAP_PASSWORD` at startup — no policy-free path remains. Regression tests `TestPasswordPolicyOnSetupCompletion`, `TestPasswordPolicyOnSelfServiceChange`, `TestValidatePasswordPolicy`.
 
 ### F13 — Account enumeration (Low)
 
@@ -688,7 +695,7 @@ The `authLockout`, `addressLimiter` and `sendLimiter` maps (`lockout.go:35`, `pa
 
 ### F16 — Missing server timeouts (Low)
 
-`cmd/server/main.go:86` sets only `ReadHeaderTimeout`. Slow request bodies, up to the 32 MiB cap, can hold connections open indefinitely. **Fix:** Set `ReadTimeout`, `WriteTimeout` (generous for exports), `IdleTimeout` and `MaxHeaderBytes`.
+`cmd/server/main.go:86` sets only `ReadHeaderTimeout`. Slow request bodies, up to the 32 MiB cap, can hold connections open indefinitely. **Fix:** Set `ReadTimeout`, `WriteTimeout` (generous for exports), `IdleTimeout` and `MaxHeaderBytes`. **Status:** Fixed 2026-10-02 — `ReadTimeout` 5 min (a full import on a slow uplink), `WriteTimeout` 10 min (large exports), `IdleTimeout` 2 min, `MaxHeaderBytes` 1 MiB.
 
 ### F17 — Session lifecycle (Low)
 
