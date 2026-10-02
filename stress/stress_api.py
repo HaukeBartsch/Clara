@@ -11,15 +11,21 @@ Phases (timed individually):
              1..200 events, 1..100 instruments and up to 10,000 fields spread
              over the instruments, created in one bulk call per instrument
              (POST .../fields/bulk, REQ-API-132), plus an
-             all-instruments-to-all-events mapping. One full-permission
-             project API token per project comes from
-             PUT /api/v1/projects/{id}/users/{uid} (role-less member).
+             all-instruments-to-all-events mapping. The data dictionary is
+             mixed: plain text, validated text (integer, floating point,
+             date, datetime) and choice fields (dropdown, radio with numeric
+             codes). One full-permission project API token per project comes
+             from PUT /api/v1/projects/{id}/users/{uid} (role-less member).
 2. import  — generate random record rows for every project, shuffle them into
              one globally random order and bulk-import them through the data
              API (POST /api/ content=record action=import) as batches of
-             data[i][…] rows.
-3. export  — export every project as CSV through the data API
-             (content=record returnFormat=csv), streamed to disk.
+             data[i][…] rows. Values are generated per field type so every
+             row passes validation (choice codes, integer/float grammar,
+             canonical dates).
+3. export  — export every project twice as CSV through the data API
+             (content=record returnFormat=csv): once raw (choice codes) and
+             once with rawOrLabel=label (choice labels), both streamed to
+             disk as <project>.raw.csv / <project>.label.csv.
 
 The report names each phase's wall time, the CSV size on disk in megabytes and
 the throughput; it is printed and written to <out>/report.txt.
@@ -41,6 +47,7 @@ Usage (see run_stress.sh for a launcher that starts a throwaway server):
 """
 
 import argparse
+import datetime
 import http.client
 import json
 import os
@@ -127,10 +134,62 @@ class API:
 LETTERS = string.ascii_lowercase
 ALNUM = string.ascii_lowercase + string.digits
 
+# Weighted mix of dictionary field kinds (sums to 100). Plain text keeps the
+# bulk of a realistic dictionary; the validated and choice kinds exercise the
+# validation pipeline on import and label rendering on export.
+FIELD_MIX = [
+    ("text", 30),
+    ("integer", 15),
+    ("floating point", 10),
+    ("date", 10),
+    ("datetime", 5),
+    ("dropdown", 15),
+    ("radio", 15),
+]
+MIX_KINDS = [k for k, _ in FIELD_MIX]
+MIX_WEIGHTS = [w for _, w in FIELD_MIX]
 
-def random_value(rnd):
-    """One random field value: 5..20 alphanumeric characters starting with a
-    letter, so no cell can trip the CSV formula guard."""
+# Canonical storage grammars the import pipeline accepts (record.go):
+# date Y-m-d, datetime "Y-m-d H:i"; integer/floating point per validate.go.
+EPOCH = datetime.date(2018, 1, 1)
+DATE_SPAN = 3200  # days from EPOCH — stays well inside the calendar
+
+
+def make_field_spec(rnd, name):
+    """One bulk-creatable field dictionary entry of a random kind. Only keys
+    the §4.11 field body accepts are emitted (unknown attributes are rejected
+    by the API)."""
+    kind = rnd.choices(MIX_KINDS, weights=MIX_WEIGHTS)[0]
+    spec = {"field_name": name}
+    if kind in ("dropdown", "radio"):
+        codes = list(range(1, rnd.randint(3, 9)))  # 2..8 numeric codes
+        spec["field_type"] = kind
+        spec["choices"] = "##".join(f"{c}$Option {c}" for c in codes)
+    elif kind == "text":
+        spec["field_type"] = "text"
+    else:  # validated text
+        spec["field_type"] = "text"
+        spec["validation_type"] = kind
+    return spec
+
+
+def random_value(rnd, spec):
+    """One valid value for the field described by spec — choice code, number
+    or canonical date per the field's dictionary entry. Plain text stays
+    5..20 alphanumeric characters starting with a letter, so no cell can trip
+    the CSV formula guard."""
+    kind = spec.get("validation_type") or ""
+    if spec["field_type"] in ("dropdown", "radio"):
+        return rnd.choice(spec["choices"].split("##")).split("$")[0]
+    if kind == "integer":
+        return str(rnd.randint(-1_000_000, 1_000_000))
+    if kind == "floating point":
+        return f"{rnd.uniform(-100000, 100000):.4f}"
+    if kind == "date":
+        return (EPOCH + datetime.timedelta(days=rnd.randrange(DATE_SPAN))).isoformat()
+    if kind == "datetime":
+        d = EPOCH + datetime.timedelta(days=rnd.randrange(DATE_SPAN))
+        return f"{d.isoformat()} {rnd.randrange(24):02d}:{rnd.randrange(60):02d}"
     return rnd.choice(LETTERS) + "".join(rnd.choice(ALNUM) for _ in range(rnd.randrange(4, 20)))
 
 
@@ -139,6 +198,7 @@ def setup_projects(api, cfg, rnd):
     the token, unique event names and field names per instrument."""
     projects = []
     totals = {"events": 0, "instruments": 0, "fields": 0}
+    mix = {}  # created-field kinds → count, for the report
     start = time.perf_counter()
     for i in range(cfg.projects):
         name = f"stress_p{i:03d}"
@@ -185,12 +245,17 @@ def setup_projects(api, cfg, rnd):
 
         fields_by_instr = {}
         for j, instr in enumerate(instruments):
-            names = []
+            specs = []
             if j == 0:
-                names.append("record_id")
-            names += [f"{instr}_f{k:05d}" for k in range(len(names), counts[j])]
-            create_fields_bulk(api, created["id"], instr_ids[j], names)
-            fields_by_instr[instr] = names
+                # The record identifier stays a plain text field.
+                specs.append({"field_name": "record_id", "field_type": "text"})
+            specs += [make_field_spec(rnd, f"{instr}_f{k:05d}")
+                      for k in range(len(specs), counts[j])]
+            create_fields_bulk(api, created["id"], instr_ids[j], specs)
+            fields_by_instr[instr] = specs
+            for spec in specs:
+                kind = spec.get("validation_type") or spec["field_type"]
+                mix[kind] = mix.get(kind, 0) + 1
 
         # Mapping: every instrument active in every event of arm 1.
         api.admin("PUT", f"/api/v1/projects/{created['id']}/instrument-event-mapping",
@@ -205,15 +270,14 @@ def setup_projects(api, cfg, rnd):
         if (i + 1) % 20 == 0 or i + 1 == cfg.projects:
             print(f"setup: {i + 1}/{cfg.projects} projects "
                   f"({time.perf_counter() - start:.0f}s elapsed)", flush=True)
-    return projects, totals, time.perf_counter() - start
+    return projects, totals, mix, time.perf_counter() - start
 
 
-def create_fields_bulk(api, project_id, instrument_id, field_names):
-    """All of an instrument's plain text fields in one bulk call (REQ-API-132)
-    — unvalidated, so the import pipeline accepts any generated value. The
-    batch is all-or-nothing server-side; a single request replaces up to
+def create_fields_bulk(api, project_id, instrument_id, field_specs):
+    """All of an instrument's mixed-kind fields in one bulk call (REQ-API-132).
+    The batch is all-or-nothing server-side; a single request replaces up to
     thousands of single-field POSTs."""
-    body = {"fields": [{"field_name": n, "field_type": "text"} for n in field_names]}
+    body = {"fields": field_specs}
     api.admin("POST",
               f"/api/v1/projects/{project_id}/instruments/{instrument_id}/fields/bulk",
               body, want=(201,))
@@ -252,10 +316,10 @@ def import_rows(api, specs, cfg, rnd):
             form[f"{base}[record_id]"] = record
             form[f"{base}[form_name]"] = instr
             form[f"{base}[event_name]"] = event
-            for f in p["fields_by_instr"][instr]:
-                if f == "record_id":
+            for spec in p["fields_by_instr"][instr]:
+                if spec["field_name"] == "record_id":
                     continue  # the identifier value travels above
-                form[f"{base}[{f}]"] = random_value(rnd)
+                form[f"{base}[{spec['field_name']}]"] = random_value(rnd, spec)
                 values += 1
         results = json.loads(api.data_api(form))
         for r in results:
@@ -279,17 +343,17 @@ def import_rows(api, specs, cfg, rnd):
 
 
 def export_projects(api, projects, out_dir):
-    """Stream every project's CSV export to <out_dir>/<project>.csv."""
+    """Stream every project's CSV export twice to <out_dir>: raw (choice codes
+    as stored) and label (rawOrLabel=label renders choice labels). Returns
+    per-project rows plus the byte totals of both variants."""
     os.makedirs(out_dir, exist_ok=True)
-    per_project = []
-    total_bytes = 0
-    total_rows = 0
-    start = time.perf_counter()
-    for i, p in enumerate(projects):
-        path = os.path.join(out_dir, f"{p['name']}.csv")
-        resp, conn = api.data_api({"token": p["token"], "content": "record",
-                                   "action": "export", "returnFormat": "csv"},
-                                  want=(200,), stream=True)
+
+    def stream_one(p, suffix, extra_form):
+        path = os.path.join(out_dir, f"{p['name']}{suffix}.csv")
+        form = {"token": p["token"], "content": "record",
+                "action": "export", "returnFormat": "csv"}
+        form.update(extra_form)
+        resp, conn = api.data_api(form, want=(200,), stream=True)
         n_bytes = 0
         n_lines = 0
         try:
@@ -303,14 +367,24 @@ def export_projects(api, projects, out_dir):
                     n_lines += chunk.count(b"\n")
         finally:
             conn.close()
-        data_rows = max(n_lines - 1, 0)  # minus the header line
-        total_bytes += n_bytes
+        return n_bytes, max(n_lines - 1, 0)  # rows = lines minus the header
+
+    per_project = []
+    raw_bytes = 0
+    label_bytes = 0
+    total_rows = 0
+    start = time.perf_counter()
+    for i, p in enumerate(projects):
+        n_raw, data_rows = stream_one(p, ".raw", {})
+        n_label, _ = stream_one(p, ".label", {"rawOrLabel": "label"})
+        raw_bytes += n_raw
+        label_bytes += n_label
         total_rows += data_rows
-        per_project.append((p["name"], data_rows, n_bytes))
+        per_project.append((p["name"], data_rows, n_raw, n_label))
         if (i + 1) % 20 == 0 or i + 1 == len(projects):
             print(f"export: {i + 1}/{len(projects)} projects "
-                  f"({mb(n_bytes):.1f} MB last)", flush=True)
-    return per_project, total_bytes, total_rows, time.perf_counter() - start
+                  f"({mb(n_raw + n_label):.1f} MB last)", flush=True)
+    return per_project, raw_bytes, label_bytes, total_rows, time.perf_counter() - start
 
 
 def mb(n):
@@ -349,11 +423,13 @@ def main():
     print(f"logged in as user {api.user_id} at {cfg.base_url} "
           f"(seed {cfg.seed}, {cfg.projects} projects)", flush=True)
 
-    projects, totals, setup_s = setup_projects(api, cfg, rnd)
+    projects, totals, mix, setup_s = setup_projects(api, cfg, rnd)
     specs = generate_rows(projects, cfg, rnd)
     values, import_s = import_rows(api, specs, cfg, rnd)
-    per_project, csv_bytes, csv_rows, export_s = export_projects(api, projects, cfg.out)
+    per_project, raw_bytes, label_bytes, csv_rows, export_s = \
+        export_projects(api, projects, cfg.out)
 
+    mix_line = ", ".join(f"{kind}: {n}" for kind, n in sorted(mix.items()))
     report = f"""CLARA API stress report (external client)
 base url:             {cfg.base_url}
 seed:                 {cfg.seed}
@@ -361,6 +437,7 @@ projects:             {len(projects)}
 events total:         {totals['events']}
 instruments total:    {totals['instruments']}
 fields total:         {totals['fields']}
+field mix:            {mix_line}
 imported rows:        {len(specs)} (values: {values})
 
 setup time:           {setup_s:.1f}s  ({cfg.projects / max(setup_s, 1e-9) * 60:.1f} projects/min)
@@ -368,15 +445,17 @@ import time:          {import_s:.1f}s  ({len(specs) / max(import_s, 1e-9):.0f} r
 {values / max(import_s, 1e-9):.0f} values/s)
 export time:          {export_s:.1f}s  ({cfg.projects / max(export_s, 1e-9) * 60:.1f} projects/min)
 
-CSV on disk:          {mb(csv_bytes):.2f} MB in {len(projects)} files ({csv_rows} data rows)
+CSV on disk (raw):    {mb(raw_bytes):.2f} MB in {len(projects)} files
+CSV on disk (label):  {mb(label_bytes):.2f} MB in {len(projects)} files \
+({csv_rows} data rows each)
 csv directory:        {os.path.abspath(cfg.out)}
 """
     print("\n" + report, flush=True)
     with open(os.path.join(cfg.out, "report.txt"), "w") as f:
         f.write(report)
-        f.write("\nper-project exports (name, data rows, bytes):\n")
-        for name, rows, n in per_project:
-            f.write(f"{name},{rows},{n}\n")
+        f.write("\nper-project exports (name, data rows, raw bytes, label bytes):\n")
+        for name, rows, n_raw, n_label in per_project:
+            f.write(f"{name},{rows},{n_raw},{n_label}\n")
 
 
 if __name__ == "__main__":
