@@ -257,7 +257,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_record ON audit_events (project_id, 
 
 Reads go through the two endpoints only (REQ-AUD-019; full contracts in `API_Endpoints_Design.md`):
 
-- `GET /api/v1/audit` — both tables selected by `type=events|views`, reverse-chronological, `limit`/`cursor` pagination, filters: `project` (mandatory for non-admins, optional for `is_admin`), `user`, `event_type`, `from`, `to` (UTC). A non-admin sees only entries of projects they are a member of (REQ-API-078, ASM-API-2).
+- `GET /api/v1/audit` — `is_admin` only; a non-admin gets the uniform 403 (REQ-API-078, finding F2). Both tables selected by `type=events|views`, reverse-chronological, `limit`/`cursor` pagination, filters: `project`, `user`, `event_type`, `from`, `to` (UTC).
 - `GET /api/v1/projects/{id}/records/{record}/history` — chronological, per record; filters `instrument`, `event`, `field`; `limit`/`cursor`. Served by `idx_audit_events_record` (§6.4); the `field` filter matches `details.fields[].field` within the record-scoped page (REQ-API-080). History is transparent across the yearly rollover because queries always use the stable name (REQ-AUD-006).
 
 Both endpoints are read-only; no endpoint exists that writes, updates, or deletes audit data (REQ-DB-024, REQ-API-077).

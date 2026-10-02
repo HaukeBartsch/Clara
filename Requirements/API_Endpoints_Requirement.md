@@ -226,7 +226,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 | ID | Requirement |
 |---|------|
 | REQ-API-077 | `GET /api/v1/audit` MUST return audit entries (`audit_events` and `audit_record_views`, selected by a `type` parameter) in reverse chronological order with pagination (limit/cursor). It MUST be read-only: no endpoint MUST exist that writes, updates, or deletes audit data (REQ-DB-024). |
-| REQ-API-078 | Audit log access MUST be restricted to authorized users (plan): a non-admin acting user MUST see only entries for projects they are a member of; an `is_admin` user MAY query all projects. A project filter parameter MUST be supported (REQ-API-007, ASM-API-2). |
+| REQ-API-078 | Audit log access MUST be restricted to `is_admin` acting users (finding F2): only an `is_admin` user MAY read `GET /api/v1/audit`, across all projects; any other acting user MUST receive the uniform 403 that never discloses existence (REQ-API-007). A project filter parameter MUST be supported (ASM-API-2). |
 
 ### 4.15 Record history
 
@@ -311,7 +311,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 | `PUT .../records/{record}/data-access-group` | `project_admin` |
 | `GET /i18n/languages`, `PUT /users/me/ui-language` | any authenticated user |
 | `GET/PUT /i18n/strings` | `is_admin` |
-| `GET /api/v1/audit` | `is_admin`, or member of the queried project (REQ-API-078) |
+| `GET /api/v1/audit` | `is_admin` only (REQ-API-078) |
 | `GET .../mode` | data access ≥ `read_only` |
 | `PUT .../mode` (§4.19) | `is_admin` — a project's own `project_admin` is rejected (403) |
 | staging start/commit/discard (§4.19) | `project_admin` |
@@ -331,7 +331,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 | ID | Assumption |
 |---|------|
 | ASM-API-1 | The administration API paths follow `Plan/API_Endpoints.md` verbatim (including `DELETE /api/v1/arms/{id}` and `PUT /api/v1/events/{id}` without a project path segment); the normative request/response schemas and remaining status codes are defined in `Design/API_Endpoints_Design.md`. |
-| ASM-API-2 | \"authorized users only\" for `GET /api/v1/audit` (plan) is interpreted as `is_admin` (all projects) or a member of the queried project (REQ-API-078). |
+| ASM-API-2 | \"authorized users only\" for `GET /api/v1/audit` (plan) is interpreted as `is_admin` only (REQ-API-078). Tightened 2026-10-02 from the original reading that also allowed a member of the queried project: view entries carry the live data-API token and event details carry record values, neither visible to a plain member (finding F2). |
 | ASM-API-3 | Data entry through the UI is performed as `content=record&action=import` against the data API (REQ-API-031), initiated by the PHP layer with the user's project token; the administration surface has no separate import endpoint (master spec: the UI accesses the backend exclusively through the API). |
 | ASM-API-4 | Arm removal and label changes of events that already hold data are phase-1 edge cases (single-arm start, REQ-DB-011); the cascade/rename semantics are defined in the design document. |
 | ASM-API-5 | Fiona/RIS is not bound to a dedicated account: it presents whatever user token it has been given — including tokens of `is_admin` users, which then carry full record visibility (REQ-AUTH-045). Record visibility is therefore per token bearer, not per caller system. |

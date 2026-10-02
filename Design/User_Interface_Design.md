@@ -45,7 +45,7 @@ Common conventions (REQ-UI-001…008), binding on every page:
 | `GET\|POST /set-password?token=…` | set password via invite/reset token (§2.6) | public — valid token, no session | `POST /api/v1/auth/invite/complete`, `POST /api/v1/auth/password-reset/complete` (GD-22/GD-23, Sequence H) |
 | `GET /admin/users` | user accounts (§5.1) | `is_admin` | `GET/POST /api/v1/users`, `PUT /api/v1/users/{id}` |
 | `GET /admin/projects` | project create/edit (§5.2) | `is_admin` | `POST /api/v1/projects`, `GET/PUT /api/v1/projects/{id}` |
-| `GET /admin/audit` | audit view (§5.6) | `is_admin` or member of a project (REQ-API-078) | `GET /api/v1/audit` |
+| `GET /admin/audit` | audit view (§5.6) | `is_admin` (REQ-API-078) | `GET /api/v1/audit` |
 | `GET /admin/i18n` | translation management (§5.7) | `is_admin` | `GET /api/v1/i18n/strings?language=`, `PUT /api/v1/i18n/strings` |
 | `GET /admin/settings` | system settings (§5.8) | `is_admin` | `GET/PUT /api/v1/settings` |
 | `GET /projects/{id}` | project workspace (§6.1) | project visibility (REQ-API-007) | `GET /api/v1/projects/{id}` |

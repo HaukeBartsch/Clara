@@ -705,12 +705,12 @@ Every call is audit-logged as an `export` event with `surface: "ui"`, the projec
 
 ### 4.15 Audit log (REQ-API-077…078)
 
-**`GET /api/v1/audit`** — `is_admin` (all projects) or a member of the queried project (REQ-API-078, ASM-API-2). Query parameters:
+**`GET /api/v1/audit`** — `is_admin` only; any other acting user gets the uniform 403 (REQ-API-078, ASM-API-2, finding F2). Query parameters:
 
 | Parameter | Meaning |
 |---|------|
 | `type` | `events` (default) or `views` — selects `audit_events` or `audit_record_views` |
-| `project` | project id filter — **required** for a non-admin |
+| `project` | project id filter (optional) |
 | `user` / `event_type` | filter by user id / event code |
 | `from` / `to` | UTC date range (inclusive) |
 | `limit` / `cursor` | pagination per §1 |

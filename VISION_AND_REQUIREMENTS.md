@@ -617,6 +617,7 @@ Fixed findings carry a **Status** line with the date and how the fix landed; the
 - **What:** A non-admin only needs membership of the project. A member with `no_access` can call `GET /api/v1/audit?type=views&project=N` and receive the plaintext data-API token of every member who exported records. `type=events` returns `details` with old/new values of every changed record, ignoring the caller's arm levels and DAG.
 - **Impact:** Privilege escalation, because a stolen token carries its owner's export and delete rights. It also discloses PHI the caller is not allowed to see.
 - **Fix:** Restrict audit reads to `is_admin` or `project_admin`. Store a token fingerprint (for example the first 8 hex digits of SHA-256) instead of the token. Filter or redact `details` by the caller's arm and DAG visibility.
+- **Status:** Fixed 2026-10-02 via the access-restriction option, tightened to `is_admin` only (`project_admin` also rejected). `listAudit` now runs through `requireAdmin`; REQ-API-078, ASM-API-2, REQ-AUD-019 and the Design documents (API_Endpoints §4.15, Audit_Logging §7, User_Interface route table) updated to match; regression in `TestListAudit` (member and outsider both get 403). The token-fingerprint and `details`-redaction sub-fixes were not implemented — with reads reserved to `is_admin`, they remain defense-in-depth against an administrator's own view only.
 
 ### F3 — Survey link writes any field of its record (High)
 

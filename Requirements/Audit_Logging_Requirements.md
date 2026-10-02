@@ -60,7 +60,7 @@ Defines the requirements for the system's audit trail: the two append-only audit
 
 | ID | Requirement |
 |---|------|
-| REQ-AUD-019 | The audit trail MUST be readable only through `GET /api/v1/audit` (REQ-API-077) and the record history endpoint (REQ-API-079); both MUST be read-only and paginated; a non-admin acting user MUST see only entries for projects they are a member of, and an `is_admin` user MAY query all projects (REQ-API-078). |
+| REQ-AUD-019 | The audit trail MUST be readable only through `GET /api/v1/audit` (REQ-API-077) and the record history endpoint (REQ-API-079); both MUST be read-only and paginated; `GET /api/v1/audit` MUST be reserved to `is_admin` acting users, who MAY query all projects — a non-admin MUST receive a uniform 403 (REQ-API-078, finding F2). The record history endpoint keeps its project-visibility gate (REQ-API-079). |
 | REQ-AUD-020 | The audit tables MUST be indexed to support the read access patterns: time range, project, user, event type, and record (REQ-API-077 pagination, REQ-API-079 record history, at the reference scale of REQ-DB-025; DEV-AUD-2). |
 
 ## 7. Assumptions
