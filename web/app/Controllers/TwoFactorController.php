@@ -137,8 +137,9 @@ final class TwoFactorController extends Controller
         $codes = $activated['recovery_codes'] ?? [];
 
         return $this->render(null, [
+            // The method the API confirmed needs no passing on: the status read this render
+            // makes already reports it, and the codes are the only thing this step adds.
             'step' => 'done',
-            'method' => (string) ($activated['method'] ?? $method),
             'recoveryCodes' => is_array($codes) ? array_values(array_map('strval', $codes)) : [],
         ]);
     }

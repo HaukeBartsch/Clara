@@ -18,7 +18,6 @@ declare(strict_types=1);
 namespace Clara\Controllers;
 
 use Clara\ApiException;
-use Clara\Permissions;
 use Clara\Response;
 
 final class ProjectController extends Controller
@@ -27,7 +26,6 @@ final class ProjectController extends Controller
     public function index(): Response
     {
         $detail = $this->projectDetail();
-        $permissions = Permissions::fromProjectDetail($detail);
 
         /*
          * Action cards (§6.1): one per workspace surface, present only when the acting
@@ -35,7 +33,9 @@ final class ProjectController extends Controller
          * card that opens a 404 is a disabled control by another name (§3.1, REQ-UI-003).
          * Members and Roles arrive with M3, Setup and Design with M4, Record status and
          * Export with M5; each adds one row here and one in the sidebar's project-context
-         * section, gated by the same $permissions object this page already holds.
+         * section. The levels they test on came with this same read —
+         * `Permissions::fromProjectDetail($detail)` → `projectAdmin`, `anyArmReachesData()`,
+         * `canExportAny()` — so no card needs an API call of its own (§7 rule 15).
          */
         $cards = [];
 
