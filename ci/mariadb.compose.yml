@@ -1,0 +1,33 @@
+# Local MariaDB for development and tests (REQ-TECH-005: production engine is MariaDB 11.x LTS).
+# Development-only credentials — never reused anywhere else.
+#
+#   docker compose -f ci/mariadb.compose.yml up -d --wait
+#   docker compose -f ci/mariadb.compose.yml down -v      # throw the data away
+#
+# The root account is what the Go tests use (CLARA_TEST_DB=mariadb): every test fixture creates
+# and drops its own database. The `clara` database/user is for running the API by hand.
+name: clara-dev
+services:
+  mariadb:
+    image: mariadb:11.4
+    environment:
+      MARIADB_ROOT_PASSWORD: clara-dev-root
+      MARIADB_DATABASE: clara
+      MARIADB_USER: clara
+      MARIADB_PASSWORD: clara-dev-pw
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+00:00
+      - --max-connections=500
+    ports:
+      - "127.0.0.1:${CLARA_MARIADB_PORT:-3306}:3306"
+    volumes:
+      - clara-mariadb:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 2s
+      timeout: 5s
+      retries: 60
+volumes:
+  clara-mariadb:
