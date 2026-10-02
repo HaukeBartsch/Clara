@@ -250,8 +250,84 @@ func TestAuthBootstrapPromotion(t *testing.T) {
 	}
 }
 
-// TestAuthLoginInvalidRequest: malformed JSON and an unknown source are 400
-// invalid_request (§4.2).
+// TestAuthBootstrapDisabledStaysDisabled (security finding F10): a disabled
+// bootstrap account is never re-enabled or promoted by an external-IdP login —
+// the deliberate disable sticks.
+func TestAuthBootstrapDisabledStaysDisabled(t *testing.T) {
+	e := newEnv(t)
+	e.Cfg.AdminBootstrapEmail = "root@example.org"
+	u := &db.User{Email: "root@example.org", DisplayName: "Root", Enabled: false}
+	if _, err := e.Store.CreateUser(context.Background(), u); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	rec := e.do("POST", "/api/v1/auth/login", map[string]any{
+		"email": "root@example.org", "source": "oauth2",
+	}, nil)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 account_disabled", rec.Code)
+	}
+	stored, err := e.Store.GetUserByEmail(context.Background(), "root@example.org")
+	if err != nil || stored == nil {
+		t.Fatalf("GetUserByEmail: %v", err)
+	}
+	if stored.Enabled || stored.IsAdmin {
+		t.Errorf("stored row = %+v, want still disabled and not admin", stored)
+	}
+}
+
+// TestAuthBootstrapNoRePromotion (security finding F10): an enabled bootstrap
+// account that was demoted stays non-admin on external-IdP logins while
+// another enabled administrator exists; a local login promotes it, and with no
+// other enabled admin even an oauth2 login recovers administration.
+func TestAuthBootstrapNoRePromotion(t *testing.T) {
+	e := newEnv(t)
+	e.Cfg.AdminBootstrapEmail = "root@example.org"
+	e.mustAdmin("other@example.org") // administration exists independently
+	mustLocalUser(t, e, "root@example.org", "correct horse battery staple")
+
+	rec := e.do("POST", "/api/v1/auth/login", map[string]any{
+		"email": "root@example.org", "source": "oauth2",
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("oauth2 login: %d %s", rec.Code, rec.Body.String())
+	}
+	var obj UserObject
+	e.decode(rec, &obj)
+	if obj.IsAdmin {
+		t.Fatalf("oauth2 login re-promoted a demoted account: %+v", obj)
+	}
+
+	rec = e.do("POST", "/api/v1/auth/login", map[string]any{
+		"email": "root@example.org", "source": "local",
+		"password": "correct horse battery staple",
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("local login: %d %s", rec.Code, rec.Body.String())
+	}
+	e.decode(rec, &obj)
+	if !obj.IsAdmin {
+		t.Errorf("local login = %+v, want promoted", obj)
+	}
+
+	// No other enabled administrator: the external-IdP login promotes again.
+	recovery := newEnv(t)
+	recovery.Cfg.AdminBootstrapEmail = "root@example.org"
+	if _, err := recovery.Store.CreateUser(context.Background(),
+		&db.User{Email: "root@example.org", DisplayName: "Root", Enabled: true}); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	rec = recovery.do("POST", "/api/v1/auth/login", map[string]any{
+		"email": "root@example.org", "source": "oauth2",
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("recovery login: %d %s", rec.Code, rec.Body.String())
+	}
+	e.decode(rec, &obj)
+	if !obj.IsAdmin {
+		t.Errorf("login with no other enabled admin = %+v, want promoted", obj)
+	}
+}
 func TestAuthLoginInvalidRequest(t *testing.T) {
 	e := newEnv(t)
 

@@ -193,9 +193,11 @@ func derefInt(p *int) int {
 	return *p
 }
 
-// updateUser applies any subset of {enabled, valid_days, password}
-// (REQ-API-048). enabled is authoritative and idempotent; re-enabling resets
-// the inactivity clock; an empty password clears the stored hash. The audit
+// updateUser applies any subset of {enabled, is_admin, valid_days, password}
+// (REQ-API-048, REQ-API-136). enabled and is_admin are authoritative and
+// idempotent; re-enabling resets the inactivity clock; an empty password
+// clears the stored hash. No change that would leave zero enabled
+// administrators is applied — such a call is 409 (REQ-AUTH-068). The audit
 // entry records the changed attributes, never the password itself.
 func (h *Handler) updateUser(w http.ResponseWriter, r *http.Request) {
 	actorUser, ok := requireAdmin(w, r)
@@ -222,7 +224,7 @@ func (h *Handler) updateUser(w http.ResponseWriter, r *http.Request) {
 		errBadRequest(w, "malformed JSON body")
 		return
 	}
-	if !RejectUnknownAttrs(w, supplied, "enabled", "valid_days", "password") {
+	if !RejectUnknownAttrs(w, supplied, "enabled", "is_admin", "valid_days", "password") {
 		return
 	}
 
@@ -230,6 +232,7 @@ func (h *Handler) updateUser(w http.ResponseWriter, r *http.Request) {
 	next := *target
 	changes := map[string]any{"email": target.Email}
 	writesEnabled := false
+	writesIsAdmin := false
 	writesValidUntil := false
 	var writesPassword sql.NullString
 	writePw := false
@@ -248,6 +251,18 @@ func (h *Handler) updateUser(w http.ResponseWriter, r *http.Request) {
 				// Re-enabling resets the inactivity clock (REQ-AUTH-053).
 				next.LastLoginAt = sql.NullString{}
 			}
+		}
+	}
+	if raw, present := supplied["is_admin"]; present {
+		var v bool
+		if err := json.Unmarshal(raw, &v); err != nil {
+			errBadRequest(w, "is_admin must be a boolean")
+			return
+		}
+		if v != target.IsAdmin {
+			changes["is_admin"] = map[string]any{"old": boolToIntJSON(target.IsAdmin), "new": boolToIntJSON(v)}
+			next.IsAdmin = v
+			writesIsAdmin = true
 		}
 	}
 	if raw, present := supplied["valid_days"]; present {
@@ -295,6 +310,13 @@ func (h *Handler) updateUser(w http.ResponseWriter, r *http.Request) {
 		changes["password_changed"] = true // never the value (REQ-AUTH-036)
 	}
 
+	// Last-admin invariant (REQ-AUTH-068, REQ-API-136): when this call would
+	// turn an enabled administrator into something that is not one — revoke,
+	// disable, or both — the UPDATE itself carries the EXISTS guard, so it is
+	// evaluated under the write lock and no concurrent call can race the pair
+	// count-then-write down to zero administrators.
+	demote := target.Enabled && target.IsAdmin && !(next.Enabled && next.IsAdmin)
+
 	if len(changes) > 1 { // more than just "email"
 		tx, err := h.Store.DB.BeginTx(ctx, nil)
 		if err != nil {
@@ -302,16 +324,33 @@ func (h *Handler) updateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer tx.Rollback()
-		if writesEnabled || writesValidUntil {
+		if writesEnabled || writesIsAdmin || writesValidUntil {
 			lastLogin := any(nil)
 			if next.LastLoginAt.Valid {
 				lastLogin = next.LastLoginAt.String
 			}
-			if _, err := tx.ExecContext(ctx,
-				`UPDATE users SET enabled = ?, valid_until = ?, last_login_at = ? WHERE id = ?`,
-				boolToIntParam(next.Enabled), nullStr(next.ValidUntil), lastLogin, target.ID); err != nil {
+			stmt := `UPDATE users SET enabled = ?, is_admin = ?, valid_until = ?, last_login_at = ? WHERE id = ?`
+			if demote {
+				stmt += ` AND EXISTS (SELECT 1 FROM users AS u2
+					WHERE u2.is_admin = 1 AND u2.enabled = 1 AND u2.id <> users.id)`
+			}
+			res, err := tx.ExecContext(ctx, stmt,
+				boolToIntParam(next.Enabled), boolToIntParam(next.IsAdmin),
+				nullStr(next.ValidUntil), lastLogin, target.ID)
+			if err != nil {
 				errInternal(w)
 				return
+			}
+			if demote {
+				n, err := res.RowsAffected()
+				if err != nil {
+					errInternal(w)
+					return
+				}
+				if n == 0 {
+					errConflict(w, "at least one enabled administrator must remain")
+					return
+				}
 			}
 		}
 		if writePw {

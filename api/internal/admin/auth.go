@@ -137,11 +137,19 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 2 (REQ-AUTH-007, GD-4): bootstrap promotion — idempotent ensure
-	// that the row exists, is enabled, and has is_admin = 1. Runs before the
-	// active check so a promoted account passes it.
+	// Step 2 (REQ-AUTH-007, DEV-AUTH-15): bootstrap promotion, narrowed — a
+	// login creates the row only in the first-installation case, never
+	// re-enables a disabled account, and promotes an existing enabled row only
+	// for a local login or while no other enabled administrator exists. The
+	// startup ensure (cmd/server) stays the operator's setup action.
 	if h.isBootstrapEmail(body.Email) {
-		if _, err := h.Store.UpsertBootstrap(ctx, body.Email, "Administrator", ""); err != nil {
+		enabledAdmins, err := h.Store.CountEnabledAdmins(ctx)
+		if err != nil {
+			errInternal(w)
+			return
+		}
+		promote := body.Source == "local" || enabledAdmins == 0
+		if _, err := h.Store.EnsureBootstrapForLogin(ctx, body.Email, "Administrator", promote); err != nil {
 			errInternal(w)
 			return
 		}

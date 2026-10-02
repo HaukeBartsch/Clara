@@ -83,6 +83,54 @@ func (s *Store) UpsertBootstrap(ctx context.Context, email, displayName, passwor
 	return &u, nil
 }
 
+// CountEnabledAdmins counts the accounts that are both enabled and
+// administrators (REQ-AUTH-068).
+func (s *Store) CountEnabledAdmins(ctx context.Context) (int, error) {
+	var n int
+	if err := s.DB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM users WHERE enabled = 1 AND is_admin = 1`).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// EnsureBootstrapForLogin applies the narrowed login-time bootstrap rule
+// (REQ-AUTH-007, DEV-AUTH-15 — security finding F10): an email match creates
+// the row when absent (the first-installation setup case, an enabled
+// administrator with no local password); it never re-enables a disabled
+// account, and it sets is_admin = 1 on an existing enabled row only when
+// promoteAdmin — the caller passes true for a local login or when no other
+// enabled administrator exists. The startup provisioning stays in
+// UpsertBootstrap (the operator's setup action). Returns the current row.
+func (s *Store) EnsureBootstrapForLogin(ctx context.Context, email, displayName string, promoteAdmin bool) (*User, error) {
+	u, err := scanUser(s.DB.QueryRowContext(ctx,
+		`SELECT `+userColumns+` FROM users WHERE email = ?`, email))
+	if err == sql.ErrNoRows {
+		nu := User{Email: email, DisplayName: displayName, Enabled: true, IsAdmin: true,
+			AuthSource: "local", UILanguage: "en"}
+		id, err := s.CreateUser(ctx, &nu)
+		if err != nil {
+			return nil, err
+		}
+		nu.ID = id
+		return &nu, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	// A disabled account stays disabled — a deliberate disable must stick even
+	// against the bootstrap address (REQ-AUTH-007). Promotion of an existing
+	// enabled row follows promoteAdmin only.
+	if u.Enabled && !u.IsAdmin && promoteAdmin {
+		if _, err := s.DB.ExecContext(ctx,
+			`UPDATE users SET is_admin = 1 WHERE id = ?`, u.ID); err != nil {
+			return nil, err
+		}
+		u.IsAdmin = true
+	}
+	return &u, nil
+}
+
 func (s *Store) GetUser(ctx context.Context, id int64) (*User, error) {
 	row := s.DB.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE id = ?`, id)
 	u, err := scanUser(row)

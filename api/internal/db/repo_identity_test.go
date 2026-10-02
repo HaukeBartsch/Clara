@@ -258,6 +258,99 @@ func TestUpsertBootstrap(t *testing.T) {
 	}
 }
 
+func TestCountEnabledAdmins(t *testing.T) {
+	s := migrateTestStore(t)
+	ctx := context.Background()
+
+	n, err := s.CountEnabledAdmins(ctx)
+	if err != nil {
+		t.Fatalf("CountEnabledAdmins: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("count = %d, want 0 on an empty store", n)
+	}
+	if _, err := s.CreateUser(ctx, &User{Email: "a1@example.org", Enabled: true, IsAdmin: true}); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if _, err := s.CreateUser(ctx, &User{Email: "a2@example.org", Enabled: false, IsAdmin: true}); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if _, err := s.CreateUser(ctx, &User{Email: "u1@example.org", Enabled: true}); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	n, err = s.CountEnabledAdmins(ctx)
+	if err != nil {
+		t.Fatalf("CountEnabledAdmins: %v", err)
+	}
+	if n != 1 { // a2 is admin but disabled
+		t.Errorf("count = %d, want 1 (disabled admins and non-admins excluded)", n)
+	}
+}
+
+func TestEnsureBootstrapForLogin(t *testing.T) {
+	s := migrateTestStore(t)
+	ctx := context.Background()
+
+	// Absent row: the first-installation setup case — created enabled admin
+	// with a NULL password hash (never an empty-string one).
+	created, err := s.EnsureBootstrapForLogin(ctx, "boot@example.org", "Administrator", false)
+	if err != nil {
+		t.Fatalf("EnsureBootstrapForLogin (create): %v", err)
+	}
+	if created.ID <= 0 || !created.Enabled || !created.IsAdmin {
+		t.Fatalf("created = %+v, want id>0 enabled admin", created)
+	}
+	if created.PasswordHash.Valid {
+		t.Errorf("created PasswordHash = %+v, want NULL", created.PasswordHash)
+	}
+
+	// A disabled account is never re-enabled and never promoted (F10): the
+	// row comes back untouched.
+	u := &User{Email: "dis@example.org", DisplayName: "Old Admin", Enabled: false}
+	disID, err := s.CreateUser(ctx, u)
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	got, err := s.EnsureBootstrapForLogin(ctx, "dis@example.org", "Administrator", true)
+	if err != nil {
+		t.Fatalf("EnsureBootstrapForLogin (disabled): %v", err)
+	}
+	if got.ID != disID || got.Enabled || got.IsAdmin {
+		t.Errorf("disabled row = %+v, want untouched disabled non-admin", got)
+	}
+
+	// Enabled non-admin row: promoteAdmin=false leaves it alone…
+	n := &User{Email: "promote@example.org", DisplayName: "Demoted", Enabled: true}
+	nID, err := s.CreateUser(ctx, n)
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	got, err = s.EnsureBootstrapForLogin(ctx, "promote@example.org", "Administrator", false)
+	if err != nil {
+		t.Fatalf("EnsureBootstrapForLogin (no promote): %v", err)
+	}
+	if got.ID != nID || got.IsAdmin {
+		t.Errorf("row = %+v, want still non-admin with promoteAdmin=false", got)
+	}
+	// …and promoteAdmin=true promotes it, keeping enabled.
+	got, err = s.EnsureBootstrapForLogin(ctx, "promote@example.org", "Administrator", true)
+	if err != nil {
+		t.Fatalf("EnsureBootstrapForLogin (promote): %v", err)
+	}
+	if got.ID != nID || !got.Enabled || !got.IsAdmin {
+		t.Errorf("row = %+v, want enabled admin after promote", got)
+	}
+
+	// An already-enabled admin row is returned unchanged either way.
+	got, err = s.EnsureBootstrapForLogin(ctx, "promote@example.org", "Administrator", false)
+	if err != nil {
+		t.Fatalf("EnsureBootstrapForLogin (idempotent): %v", err)
+	}
+	if got.ID != nID || !got.Enabled || !got.IsAdmin {
+		t.Errorf("row = %+v, want unchanged enabled admin", got)
+	}
+}
+
 func TestRoles(t *testing.T) {
 	s := migrateTestStore(t)
 	ctx := context.Background()
