@@ -576,6 +576,7 @@ Currently the stress test only creates fields with free-text. Also, alot of the 
 ## Add an is_admin "system administrator" flag to user
 
 The bootstrap user with "is_admin" should be used during setup of the system only. The bootstrap user should at any point be able to make another user account "is_admin" with all system permissions ("system administrator"). An api endpoint should allow is_admin users to assign "is_admin" to other existing users (is admin group). The administration user interface should display current system administrators add/remove this permission. At least one is_admin user should always exist (including the bootstrapped account).
+Prevent all is_admin users from loosing access. 
 
 # Security relevant findings
 
@@ -666,6 +667,7 @@ Fixed findings carry a **Status** line with the date and how the fix landed; the
   - Promote only on the local source, or only while no other admin exists.
   - Never re-enable a disabled account.
   - Require `email_verified = true` from OIDC providers.
+- **Status:** Fixed 2026-10-02 for the first two bullets. Login-time promotion now creates the row only when absent, never re-enables a disabled account, and promotes an existing enabled row only on a `local` login or while no other enabled administrator exists (`Store.EnsureBootstrapForLogin`; REQ-AUTH-007 revised, DEV-AUTH-15). Administration after setup is assigned through `PUT /api/v1/users/{id}` with `is_admin` (REQ-API-136), and at least one enabled administrator always exists (REQ-AUTH-068). Regression tests `TestAuthBootstrapDisabledStaysDisabled`, `TestAuthBootstrapNoRePromotion`, `TestUpdateUserAdminFlag`, `TestLastAdminRevocationRace`. The third bullet (`email_verified = true` from OIDC providers) is not implemented — OIDC assertions are handled in the PHP layer, where it remains open work.
 
 ### F11 — Survey links do not expire (Medium, Req-change)
 
