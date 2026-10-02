@@ -18,14 +18,13 @@ function projectRow(project) {
     name.appendChild(el("div", { class: "text-body-secondary small" }, project.organization))
   }
 
-  return el(
-    "tr",
-    { class: "clara-project-row" },
+  // el() takes its children as one array; extra arguments would be dropped.
+  return el("tr", { class: "clara-project-row" }, [
     name,
     td(String(project.record_count), "clara-stat"),
     td(String(project.instrument_count), "clara-stat"),
     td(String(project.field_count), "clara-stat")
-  )
+  ])
 }
 
 /** A failure row carrying the one action that can recover: fetch it again. */
