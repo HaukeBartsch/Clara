@@ -44,7 +44,6 @@ return [
     'login.heading' => 'Sign in to CLARA',
     'login.source' => 'Where are you signing in from?',
     'login.source_help' => 'Choose your institution, then enter your credentials.',
-    'login.source.continue' => 'Continue',
     // One button per OAuth2 provider under the selected name (§2.2, REQ-AUTH-066). The
     // provider is named by its issuer host: no variable carries a display name for a
     // provider itself, only the source names it may answer to.

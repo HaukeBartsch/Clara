@@ -8,9 +8,10 @@
  * The source picker appears only when more than one distinct name is configured
  * (REQ-UI-042); with one name, or none named anywhere, that name applies implicitly and
  * the picker is skipped (REQ-AUTH-067). Choosing a name is a POST of its own: it changes
- * what this page offers, and no credential is in flight to protect. The button below the
- * radios is the same action for a browser without JavaScript (assets/js/login.js submits
- * it on selection), because nothing here may depend on script running (§2.4).
+ * what this page offers, and no credential is in flight to protect. No name is preselected
+ * and nothing renders below the picker until one is chosen; choosing submits at once
+ * (assets/js/login.js) — the picker has no button, so the page requires JavaScript
+ * (owner decision 2026-10-03, DEV-UI-13).
  *
  * The password travels browser → PHP over TLS only, is never stored or logged, and is
  * never re-rendered into the page (REQ-AUTH-036).
@@ -35,17 +36,15 @@ use Clara\View;
             <?php
             // One tile per name, side by side (wrapping on narrow screens). Each tile is still
             // a real radio: the input is stretched invisibly over the tile inside its label,
-            // so keyboard, screen reader and the no-script submit behave exactly as a plain
-            // radio group would. The highlight is pure CSS (app.css, "source tiles").
+            // so keyboard and screen reader behave as with a plain radio group. Once a name is
+            // chosen the container carries clara-sources-chosen and the other tiles grey out
+            // (app.css, "source tiles").
             ?>
-            <div class="clara-sources">
+            <div class="clara-sources<?= !empty($chosen) ? ' clara-sources-chosen' : '' ?>">
                 <?php foreach ($sources as $index => $source): ?>
                     <?php
-                    // The stored selection wins; with none yet, the first name is what the
-                    // form would submit anyway, so it is what shows as chosen.
-                    $checked = ($selected ?? '') !== ''
-                        ? $selected === $source['name']
-                        : $index === 0;
+                    // Only a name the user actually chose shows as chosen — never a default.
+                    $checked = ($selected ?? '') !== '' && $selected === $source['name'];
                     ?>
                     <label class="clara-source" for="source-<?= $index ?>">
                         <input class="clara-source-input" type="radio" name="source" id="source-<?= $index ?>"
@@ -61,10 +60,6 @@ use Clara\View;
                 <?php endforeach; ?>
             </div>
         </fieldset>
-
-        <button class="btn btn-outline-secondary btn-sm" type="submit">
-            <?= View::e($view->t('login.source.continue')) ?>
-        </button>
     </form>
 <?php endif; ?>
 
@@ -113,7 +108,7 @@ use Clara\View;
             <a class="small" href="/password-reset"><?= View::e($view->t('login.forgot')) ?></a>
         </p>
     </form>
-<?php elseif (empty($providers)): ?>
+<?php elseif (empty($providers) && !empty($chosen)): ?>
     <!-- Nothing configured can verify a password. Saying so beats a form whose answer is
          always "not recognised" (§2.2). -->
     <p class="text-body-secondary mb-0"><?= View::e($view->t('login.no_credentials')) ?></p>

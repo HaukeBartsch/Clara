@@ -41,7 +41,7 @@ final class LoginController extends Controller
         // that provider's flow — there is nothing here left to ask first (§2.2,
         // REQ-AUTH-066). Mid-challenge or mid-enrollment, the panel wins: the user is
         // partway through something else.
-        if (!Session::hasPendingSecondFactor()) {
+        if (!Session::hasPendingSecondFactor() && !$this->awaitingChoice()) {
             $name = $this->selectedName();
             $providers = $this->auth->oauthProvidersFor($name);
 
@@ -73,6 +73,11 @@ final class LoginController extends Controller
      */
     public function authorize(): Response
     {
+        // No name chosen yet: no provider is on offer (§2.2) — show the picker.
+        if ($this->awaitingChoice()) {
+            return $this->renderCredentials();
+        }
+
         $providers = $this->auth->oauthProvidersFor($this->selectedName());
         $wanted = (int) $this->request->field('provider');
 
@@ -129,6 +134,11 @@ final class LoginController extends Controller
         $email = trim($this->request->field('email'));
         $password = $this->request->field('password');
         $sourceName = $this->selectedName();
+
+        // No name chosen yet: there is no credential race to run (§2.2) — show the picker.
+        if ($this->awaitingChoice()) {
+            return $this->renderCredentials($email);
+        }
 
         if ($email === '' || $password === '') {
             return $this->renderCredentials($email, $this->i18n->t('login.failure.credentials'));
@@ -342,6 +352,9 @@ final class LoginController extends Controller
     {
         $names = $this->auth->sourceNames();
         $selected = $this->selectedName();
+        // Until a name is chosen the page offers the picker and nothing else (§2.2):
+        // no form, no provider button, no "nothing to verify" line.
+        $chosen = !$this->awaitingChoice();
 
         // A rejected credential re-renders the page with one translated line
         // (§3.3): the status stays 200 so the form is usable, and the reason is
@@ -352,11 +365,12 @@ final class LoginController extends Controller
             'error' => $error,
             // The picker appears only when there is a real choice to make.
             'sources' => count($names) > 1 ? $names : [],
-            'selected' => $selected,
+            'selected' => $chosen ? $selected : '',
+            'chosen' => $chosen,
             // What the selected name can verify: the credential form when a local source
             // or a directory stands behind it (REQ-AUTH-065), and one button per provider
             // whose login needs a browser round trip (REQ-AUTH-066).
-            'offersForm' => $this->auth->offersCredentialForm($selected),
+            'offersForm' => $chosen && $this->auth->offersCredentialForm($selected),
             // Named on its button by the issuer's host: no variable carries a display
             // name for a provider itself — the names in configuration are the source
             // names it may answer to, which several sources can share (§2.9).
@@ -365,13 +379,13 @@ final class LoginController extends Controller
                     'index' => (int) $provider['index'],
                     'label' => (string) (parse_url((string) $provider['issuer'], PHP_URL_HOST) ?: $provider['issuer']),
                 ],
-                $this->auth->oauthProvidersFor($selected)
+                $chosen ? $this->auth->oauthProvidersFor($selected) : []
             ),
             'next' => $this->safeNext(),
         ], [
             'titleKey' => 'login.title',
-            // Changing the selection re-renders the page for it (§2.2) — a submit on
-            // change, which is all this section's module does (REQ-UI-045).
+            // Choosing a name submits it at once (§2.2) — the picker has no button of its
+            // own, so this module is required, not an enhancement (DEV-UI-13, REQ-UI-045).
             'scripts' => ['/assets/js/login.js'],
         ]);
     }
@@ -389,6 +403,22 @@ final class LoginController extends Controller
         }
 
         return $posted !== '' ? $posted : Session::selectedSourceName();
+    }
+
+    /**
+     * True while the picker is on screen and no configured name has been chosen yet — the
+     * page then waits for the choice (§2.2, DEV-UI-13). With a single name there is no
+     * picker and the name applies implicitly (REQ-AUTH-067). A remembered name that is no
+     * longer configured counts as no choice.
+     */
+    private function awaitingChoice(): bool
+    {
+        $names = array_column($this->auth->sourceNames(), 'name');
+        if (count($names) <= 1) {
+            return false;
+        }
+
+        return !in_array($this->selectedName(), $names, true);
     }
 
     /**

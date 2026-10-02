@@ -4,9 +4,9 @@
 // surface (REQ-UI-045), and no UI string in it: every label comes from the injected
 // data-i18n block (REQ-UI-008).
 //
-// The form keeps its submit button. This is a convenience, not a requirement for working:
-// a login page that needed JavaScript to choose an institution would leave a user with a
-// broken script permanently locked out.
+// The picker has no submit button: choosing a name submits it at once, so this module is
+// required for signing in (owner decision 2026-10-03, DEV-UI-13). Nothing below the picker
+// renders until a name has been chosen.
 
 import { ready } from "../app.js"
 
@@ -21,6 +21,10 @@ ready(() => {
     // does not wait for that.
     const password = document.getElementById("login-password")
     if (password) password.value = ""
+
+    // Show the choice straight away (the others grey out) while the page reloads for it.
+    const tiles = form.querySelector(".clara-sources")
+    if (tiles) tiles.classList.add("clara-sources-chosen")
 
     form.submit()
   })

@@ -180,14 +180,14 @@
   padding: 0.625rem;
   border: 2px solid var(--bs-border-color);
   border-radius: var(--bs-border-radius-lg);
-  background-color: var(--bs-tertiary-bg);
-  color: var(--bs-secondary-color);
-  opacity: 0.55;
+  background-color: var(--bs-body-bg);
+  color: var(--bs-body-color);
   transition: opacity 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .clara-source-icon {
   flex: 0 0 auto;
+  color: var(--bs-secondary-color);
 }
 
 .clara-source-name {
@@ -200,10 +200,21 @@
 }
 
 .clara-source-input:hover + .clara-source-tile {
+  border-color: var(--bs-primary-border-subtle);
+}
+
+/* Once a name is chosen (server-rendered, or set by login.js on click), the others grey out. */
+.clara-sources-chosen .clara-source-input:not(:checked) + .clara-source-tile {
+  background-color: var(--bs-tertiary-bg);
+  color: var(--bs-secondary-color);
+  opacity: 0.55;
+}
+
+.clara-sources-chosen .clara-source-input:not(:checked):hover + .clara-source-tile {
   opacity: 0.8;
 }
 
-/* The chosen name: blue frame, full colour; the others stay greyed out. */
+/* The chosen name: blue frame, full colour. */
 .clara-source-input:checked + .clara-source-tile {
   border-color: var(--bs-primary);
   box-shadow: 0 0 0 0.2rem rgba(var(--bs-primary-rgb), 0.25);

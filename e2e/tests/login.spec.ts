@@ -48,7 +48,8 @@ test.describe("login through a named source (§2.9)", () => {
     await page.goto("/login")
     await chooseSource(page, "Hospital 1")
 
-    await page.fill("#login-email", "researcher@example.org")
+    // A fresh address per run: repeated failures lock an address out (REQ-AUTH-035).
+    await page.fill("#login-email", `researcher-${Date.now()}@example.org`)
     await page.fill("#login-password", "not the answer")
     await credentialForm(page).locator('button[type="submit"]').click()
 
@@ -66,7 +67,9 @@ test.describe("login through a named source (§2.9)", () => {
     await page.goto("/login")
     await chooseSource(page, "Hospital 2")
 
-    await page.fill("#login-email", "researcher@example.org")
+    // A fresh address per run: repeated failures lock an address out (REQ-AUTH-035).
+    const email = `researcher-${Date.now()}@example.org`
+    await page.fill("#login-email", email)
     await page.fill("#login-password", "not the answer")
     await credentialForm(page).locator('button[type="submit"]').click()
 
@@ -75,14 +78,16 @@ test.describe("login through a named source (§2.9)", () => {
     await expect(sourceRadio(page, "Hospital 2")).toBeChecked()
     // REQ-AUTH-036: the page re-renders after a rejected attempt; the password does not come back.
     await expect(page.locator("#login-password")).toHaveValue("")
-    await expect(page.locator("#login-email")).toHaveValue("researcher@example.org")
+    await expect(page.locator("#login-email")).toHaveValue(email)
   })
 
   test("answers the local name with the credential line instead", async ({ page }) => {
     await page.goto("/login")
     await chooseSource(page, "Local")
 
-    await page.fill("#login-email", "nobody@example.org")
+    // A fresh address per run: the API locks an address out after repeated failures (REQ-AUTH-035),
+    // which a long-lived stack would otherwise reach and answer with "too many attempts".
+    await page.fill("#login-email", `nobody-${Date.now()}@example.org`)
     await page.fill("#login-password", "not the answer")
     await credentialForm(page).locator('button[type="submit"]').click()
 
@@ -91,18 +96,19 @@ test.describe("login through a named source (§2.9)", () => {
     await expect(alertLine(page)).toContainText("not recognised")
   })
 
-  test("the picker works with script disabled", async ({ browser }) => {
-    // §2.4: nothing on the login page may depend on JavaScript running — assets/js/login.js only makes
-    // the selection submit itself, and the button underneath it is the same action. A context with the
-    // engine off is the only way to show that the fallback is the real one.
-    const context = await browser.newContext({ javaScriptEnabled: false })
-    const page = await context.newPage()
-
+  test("preselects nothing and waits for a choice; choosing applies at once", async ({ page }) => {
+    // DEV-UI-13: the login page requires JavaScript — the picker has no button, no name is
+    // preselected, and nothing renders below it until a name is chosen.
     await page.goto("/login")
-    await sourceRadio(page, "Hospital 1").click()
-    await page.locator("form[data-clara-source-picker] button[type=submit]").click()
 
-    await expect(credentialForm(page)).toBeVisible()
-    await context.close()
+    await expect(page.locator("form[data-clara-source-picker] input[type=radio]:checked")).toHaveCount(0)
+    await expect(page.locator("form[data-clara-source-picker] button")).toHaveCount(0)
+    await expect(page.locator('form[action="/login?action=oauth"]')).toHaveCount(0)
+    await expect(page.locator(".clara-sources")).not.toHaveClass(/clara-sources-chosen/)
+
+    await chooseSource(page, "Hospital 2")
+    await expect(sourceRadio(page, "Hospital 2")).toBeChecked()
+    await expect(page.locator("form[data-clara-source-picker] input[type=radio]:checked")).toHaveCount(1)
+    await expect(page.locator(".clara-sources")).toHaveClass(/clara-sources-chosen/)
   })
 })
