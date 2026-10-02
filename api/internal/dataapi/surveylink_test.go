@@ -11,10 +11,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/url"
-	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"csms/api/internal/db"
 )
@@ -56,7 +54,7 @@ type surveyAudit struct {
 // call wrote none.
 func lastSurveyEntry(t *testing.T, f *recordFixture) *surveyAudit {
 	t.Helper()
-	table := "audit_events_" + strconv.Itoa(time.Now().UTC().Year())
+	table := "audit_events" // stable name: SQLite view / MariaDB partitioned table
 	var (
 		e       surveyAudit
 		details string

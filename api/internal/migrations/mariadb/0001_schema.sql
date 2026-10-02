@@ -147,8 +147,8 @@ CREATE TABLE IF NOT EXISTS calculated_dependencies (
     ref_unique_event_name VARCHAR(255) NOT NULL,
     ref_field_name        VARCHAR(255) NOT NULL,
     PRIMARY KEY (project_id, calculated_field_id, ref_unique_event_name, ref_field_name),
-    CONSTRAINT fk_calcdep_project REFERENCES projects(id) ON DELETE CASCADE,
-    CONSTRAINT fk_calcdep_field  REFERENCES fields(id)    ON DELETE CASCADE
+    CONSTRAINT fk_calcdep_project FOREIGN KEY (project_id)          REFERENCES projects(id) ON DELETE CASCADE,
+    CONSTRAINT fk_calcdep_field   FOREIGN KEY (calculated_field_id) REFERENCES fields(id)   ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS data (
@@ -232,9 +232,9 @@ CREATE TABLE IF NOT EXISTS languages (
 CREATE TABLE IF NOT EXISTS i18n_strings (
     id          INTEGER PRIMARY KEY AUTO_INCREMENT,
     language_id INTEGER NOT NULL,
-    key         VARCHAR(255) NOT NULL,
+    `key`       VARCHAR(255) NOT NULL,   -- reserved word in MariaDB: always quoted
     text        LONGTEXT NOT NULL,
-    UNIQUE (language_id, key),
+    UNIQUE (language_id, `key`),
     CONSTRAINT fk_i18n_language FOREIGN KEY (language_id) REFERENCES languages(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
@@ -242,7 +242,7 @@ CREATE TABLE IF NOT EXISTS i18n_strings (
 -- holds INSERT, SELECT only (REQ-DB-024); per-year PARTITION BY RANGE is a
 -- scale optimization applied by the rollover check.
 CREATE TABLE IF NOT EXISTS audit_events (
-    id            INTEGER PRIMARY KEY AUTO_INCREMENT,
+    id            INTEGER AUTO_INCREMENT,
     event_type    VARCHAR(64)  NOT NULL,
     source        VARCHAR(8)   NOT NULL,
     user_id       INTEGER,
@@ -254,7 +254,10 @@ CREATE TABLE IF NOT EXISTS audit_events (
     target_record VARCHAR(255),
     details       TEXT,
     created_at    DATETIME NOT NULL,
-    CONSTRAINT fk_audit_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+    -- Composite key and no foreign key: the rollover check partitions this table
+    -- BY RANGE (YEAR(created_at)), which requires the partition column in every
+    -- unique key and forbids FKs (Audit_Logging_Design.md §6.1, error 1503).
+    PRIMARY KEY (id, created_at)
 ) ENGINE=InnoDB;
 CREATE INDEX idx_audit_events_project ON audit_events (project_id, created_at);
 CREATE INDEX idx_audit_events_user    ON audit_events (user_id, created_at);
@@ -262,7 +265,7 @@ CREATE INDEX idx_audit_events_type    ON audit_events (project_id, event_type, c
 CREATE INDEX idx_audit_events_record  ON audit_events (project_id, target_record, created_at);
 
 CREATE TABLE IF NOT EXISTS audit_record_views (
-    id          INTEGER PRIMARY KEY AUTO_INCREMENT,
+    id          INTEGER AUTO_INCREMENT,
     user_id     INTEGER,
     email       VARCHAR(254),
     token       CHAR(36) NOT NULL,
@@ -270,6 +273,6 @@ CREATE TABLE IF NOT EXISTS audit_record_views (
     record_ids  TEXT NOT NULL,
     instruments TEXT,
     created_at  DATETIME NOT NULL,
-    CONSTRAINT fk_views_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+    PRIMARY KEY (id, created_at)   -- see audit_events above
 ) ENGINE=InnoDB;
 CREATE INDEX idx_audit_views_project ON audit_record_views (project_id, created_at);

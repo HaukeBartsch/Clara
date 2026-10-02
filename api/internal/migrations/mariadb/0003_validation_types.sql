@@ -8,8 +8,10 @@ CREATE TABLE IF NOT EXISTS validation_types (
     builtin   INTEGER NOT NULL DEFAULT 0 -- seeded entry; not removable while referenced
 ) ENGINE=InnoDB;
 
+-- MariaDB treats \ in string literals as an escape: regex backslashes are
+-- doubled here so the stored pattern matches the SQLite seed byte for byte.
 INSERT INTO validation_types (name, regex, builtin)
-SELECT 'email', '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$', 1
+SELECT 'email', '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$', 1
 WHERE NOT EXISTS (SELECT 1 FROM validation_types WHERE name = 'email');
 
 INSERT INTO validation_types (name, regex, builtin)
@@ -17,7 +19,7 @@ SELECT 'MRN', '^[0-9]{11}$', 1
 WHERE NOT EXISTS (SELECT 1 FROM validation_types WHERE name = 'MRN');
 
 INSERT INTO validation_types (name, regex, builtin)
-SELECT 'international phone', '^\+[1-9][0-9 ]{7,14}$', 1
+SELECT 'international phone', '^\\+[1-9][0-9 ]{7,14}$', 1
 WHERE NOT EXISTS (SELECT 1 FROM validation_types WHERE name = 'international phone');
 
 INSERT INTO validation_types (name, regex, builtin)

@@ -71,10 +71,13 @@ func Open(cfg *config.Config) (*Store, error) {
 		// connection it opens.
 		dsn = cfg.DBDatabase + "?_pragma=busy_timeout(5000)"
 	case "mariadb":
+		// No parseTime: DATE/DATETIME then scan as text in the same canonical
+		// layout SQLite returns ("2006-01-02 15:04:05", REQ-DB-005), instead of
+		// time.Time rendered as RFC 3339 wherever a column lands in a string.
 		driver = "mysql"
 		d = DialectMariaDB
 		dsn = fmt.Sprintf(
-			"%s:%s@tcp(%s:%s)/%s?parseTime=true&loc=UTC&charset=utf8mb4&collation=utf8mb4_unicode_ci&multiStatements=true",
+			"%s:%s@tcp(%s:%s)/%s?loc=UTC&charset=utf8mb4&collation=utf8mb4_unicode_ci&multiStatements=true",
 			cfg.DBUsername, cfg.DBPassword, cfg.DBHost, cfg.DBPort, cfg.DBDatabase,
 		)
 	default:

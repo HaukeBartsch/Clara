@@ -42,7 +42,7 @@ func (s *Store) SetI18nStringsTx(ctx context.Context, tx *sql.Tx, languageID int
 	for _, e := range entries {
 		var current string
 		err := tx.QueryRowContext(ctx,
-			`SELECT text FROM i18n_strings WHERE language_id = ? AND key = ?`,
+			"SELECT text FROM i18n_strings WHERE language_id = ? AND `key` = ?",
 			languageID, e.Key).Scan(&current)
 		switch {
 		case err == sql.ErrNoRows:
@@ -56,7 +56,7 @@ func (s *Store) SetI18nStringsTx(ctx context.Context, tx *sql.Tx, languageID int
 				continue // nothing to remove — the key was never translated
 			}
 			if _, err := tx.ExecContext(ctx,
-				`DELETE FROM i18n_strings WHERE language_id = ? AND key = ?`,
+				"DELETE FROM i18n_strings WHERE language_id = ? AND `key` = ?",
 				languageID, e.Key); err != nil {
 				return nil, err
 			}
@@ -68,15 +68,15 @@ func (s *Store) SetI18nStringsTx(ctx context.Context, tx *sql.Tx, languageID int
 		}
 		if s.Dialect == DialectMariaDB {
 			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO i18n_strings (language_id, key, text) VALUES (?, ?, ?)
-				 ON DUPLICATE KEY UPDATE text = VALUES(text)`,
+				"INSERT INTO i18n_strings (language_id, `key`, text) VALUES (?, ?, ?)"+
+					" ON DUPLICATE KEY UPDATE text = VALUES(text)",
 				languageID, e.Key, e.Text); err != nil {
 				return nil, err
 			}
 		} else {
 			if _, err := tx.ExecContext(ctx,
-				`INSERT INTO i18n_strings (language_id, key, text) VALUES (?, ?, ?)
-				 ON CONFLICT (language_id, key) DO UPDATE SET text = excluded.text`,
+				"INSERT INTO i18n_strings (language_id, `key`, text) VALUES (?, ?, ?)"+
+					" ON CONFLICT (language_id, `key`) DO UPDATE SET text = excluded.text",
 				languageID, e.Key, e.Text); err != nil {
 				return nil, err
 			}
@@ -90,9 +90,9 @@ func (s *Store) SetI18nStringsTx(ctx context.Context, tx *sql.Tx, languageID int
 // — the shape §4.19's listing and missing-key computation reads.
 func (s *Store) ListI18nStringsByCode(ctx context.Context, code string) (map[string]string, error) {
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT i.key, i.text FROM i18n_strings i
-		 JOIN languages l ON l.id = i.language_id
-		 WHERE l.code = ? ORDER BY i.key`, code)
+		"SELECT i.`key`, i.text FROM i18n_strings i"+
+			" JOIN languages l ON l.id = i.language_id"+
+			" WHERE l.code = ? ORDER BY i.`key`", code)
 	if err != nil {
 		return nil, err
 	}

@@ -62,7 +62,7 @@ func TestSetSystemSettingUpserts(t *testing.T) {
 	// One row per key — the update must not have inserted a duplicate.
 	var n int
 	if err := s.DB.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM system_settings WHERE key = 'rate_limit_rpm'`).Scan(&n); err != nil {
+		"SELECT COUNT(*) FROM system_settings WHERE `key` = 'rate_limit_rpm'").Scan(&n); err != nil {
 		t.Fatalf("count rate_limit_rpm: %v", err)
 	}
 	if n != 1 {

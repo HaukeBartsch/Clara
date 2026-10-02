@@ -1405,7 +1405,7 @@ func (s *Store) DeleteLanguage(ctx context.Context, id int64) error {
 // CreateI18nString inserts an i18n string (REQ-DB-031, GD-12).
 func (s *Store) CreateI18nString(ctx context.Context, i18n *I18nString) (int64, error) {
 	res, err := s.DB.ExecContext(ctx,
-		`INSERT INTO i18n_strings (language_id, key, text) VALUES (?, ?, ?)`,
+		"INSERT INTO i18n_strings (language_id, `key`, text) VALUES (?, ?, ?)",
 		i18n.LanguageID, i18n.Key, i18n.Text)
 	if err != nil {
 		return 0, err
@@ -1422,7 +1422,7 @@ func (s *Store) CreateI18nString(ctx context.Context, i18n *I18nString) (int64, 
 func (s *Store) GetI18nString(ctx context.Context, languageID int64, key string) (*I18nString, error) {
 	var i18n I18nString
 	err := s.DB.QueryRowContext(ctx,
-		`SELECT id, language_id, key, text FROM i18n_strings WHERE language_id = ? AND key = ?`,
+		"SELECT id, language_id, `key`, text FROM i18n_strings WHERE language_id = ? AND `key` = ?",
 		languageID, key).Scan(&i18n.ID, &i18n.LanguageID, &i18n.Key, &i18n.Text)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -1436,7 +1436,7 @@ func (s *Store) GetI18nString(ctx context.Context, languageID int64, key string)
 // ListI18nStrings returns all strings for a language (REQ-DB-031).
 func (s *Store) ListI18nStrings(ctx context.Context, languageID int64) ([]I18nString, error) {
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT id, language_id, key, text FROM i18n_strings WHERE language_id = ? ORDER BY key`, languageID)
+		"SELECT id, language_id, `key`, text FROM i18n_strings WHERE language_id = ? ORDER BY `key`", languageID)
 	if err != nil {
 		return nil, err
 	}

@@ -10,10 +10,10 @@
 -- self-service reset request (no acting user).
 
 CREATE TABLE IF NOT EXISTS password_tokens (
-    user_id      BIGINT NOT NULL,
+    user_id      INTEGER NOT NULL,                   -- same type as users.id (FK)
     token_hash   CHAR(64) NOT NULL,
     purpose      VARCHAR(6) NOT NULL,                -- invite | reset
-    created_by   BIGINT,
+    created_by   INTEGER,
     created_at   DATETIME NOT NULL,
     expires_at   DATETIME NOT NULL,                  -- now + AUTH_PASSWORD_TOKEN_TTL_DAYS
     consumed_at  DATETIME,                           -- UTC on first successful completion

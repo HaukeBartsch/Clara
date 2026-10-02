@@ -10,6 +10,7 @@ import (
 	"csms/api/internal/audit"
 	"csms/api/internal/config"
 	"csms/api/internal/db"
+	"csms/api/internal/testdb"
 )
 
 func openStore(t *testing.T) (*db.Store, *config.Config) {
@@ -19,6 +20,7 @@ func openStore(t *testing.T) (*db.Store, *config.Config) {
 		DBConnection: "sqlite",
 		DBDatabase:   filepath.Join(t.TempDir(), "authz-test.sqlite"),
 	}
+	testdb.Use(t, cfg)
 	s, err := db.Open(cfg)
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
@@ -212,6 +214,11 @@ func TestCheckActiveInactivityAutoDisable(t *testing.T) {
 	cfg.AuthInactivityLimitDays = 180
 	ctx := context.Background()
 	aw := audit.NewWriter(s.DB, string(s.Dialect))
+	// As at server startup: makes the stable name audit_events cover the
+	// current year on SQLite and partitions the table on MariaDB.
+	if err := aw.EnsureYear(ctx); err != nil {
+		t.Fatalf("EnsureYear: %v", err)
+	}
 
 	u := mkUser(t, s, "ghost@example.org", false)
 	stale := time.Now().UTC().Add(-200 * 24 * time.Hour).Format("2006-01-02 15:04:05")
@@ -237,10 +244,9 @@ func TestCheckActiveInactivityAutoDisable(t *testing.T) {
 			fresh.Enabled, fresh.LastLoginAt)
 	}
 
-	year := time.Now().UTC().Year()
 	var n int
 	err = s.DB.QueryRow(
-		`SELECT count(*) FROM audit_events_`+itoa(year)+
+		`SELECT count(*) FROM audit_events`+
 			` WHERE event_type='account_auto_disabled' AND user_id=?`, u.ID).Scan(&n)
 	if err != nil {
 		t.Fatalf("audit lookup: %v", err)

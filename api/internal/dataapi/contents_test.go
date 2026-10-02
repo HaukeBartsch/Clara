@@ -14,6 +14,7 @@ import (
 
 	"csms/api/internal/config"
 	"csms/api/internal/db"
+	"csms/api/internal/testdb"
 )
 
 // nextRecordName is pure logic (REQ-DB-007, REQ-API-023), so it is tested
@@ -79,6 +80,7 @@ func testHandler(t *testing.T) (h *Handler, full, readonly string) {
 		DBDatabase:   filepath.Join(dir, "test.sqlite"),
 		AnonSalt:     "test-salt",
 	}
+	testdb.Use(t, cfg)
 	s, err := db.Open(cfg)
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)

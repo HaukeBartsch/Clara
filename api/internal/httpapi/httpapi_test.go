@@ -16,6 +16,7 @@ import (
 	"csms/api/internal/config"
 	"csms/api/internal/dataapi"
 	"csms/api/internal/db"
+	"csms/api/internal/testdb"
 )
 
 // This package is the security-critical glue between nginx/PHP and the two API
@@ -50,6 +51,7 @@ func newEnv(t *testing.T) *env {
 		InternalServiceToken: "test-token",
 		WebPublicURL:         "https://csms.example.org",
 	}
+	testdb.Use(t, cfg)
 	store, err := db.Open(cfg)
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)

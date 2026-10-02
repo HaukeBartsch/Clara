@@ -12,6 +12,7 @@ import (
 
 	"csms/api/internal/config"
 	"csms/api/internal/db"
+	"csms/api/internal/testdb"
 )
 
 // openTestStore is the fixture for these tests: a SQLite store with the schema
@@ -26,6 +27,7 @@ func openTestStore(t *testing.T) *db.Store {
 		AnonSalt:             "test-salt",
 		InternalServiceToken: "test-token",
 	}
+	testdb.Use(t, cfg)
 	store, err := db.Open(cfg)
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)

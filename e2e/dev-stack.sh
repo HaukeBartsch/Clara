@@ -6,6 +6,13 @@
 #   ./e2e/dev-stack.sh                      # then, in another shell:
 #   CLARA_WEB_URL=http://127.0.0.1:8090 npx playwright test --config e2e/playwright.config.ts
 #
+# The API runs on a throwaway SQLite file by default. CLARA_DB=mariadb runs it on a fresh, uniquely
+# named database in the MariaDB container of ci/mariadb.compose.yml instead (production engine,
+# REQ-TECH-005); the database is dropped again when the stack stops:
+#
+#   docker compose -f ci/mariadb.compose.yml up -d --wait
+#   CLARA_DB=mariadb ./e2e/dev-stack.sh
+#
 # Everything is development-only: a fresh database under /tmp, the bootstrap administrator created by
 # the API itself, and no value here that could be mistaken for a production secret. The repository's
 # own .env is deliberately not read — the stack has to be reproducible on a clean checkout, and one
@@ -31,10 +38,23 @@ bootstrap_password="${stack_seed}-pw"
 service_token="${stack_seed}-svc"
 anon_salt="${stack_seed}-salt"
 
+# --- the database --------------------------------------------------------------
+db_engine="${CLARA_DB:-sqlite}"
+mariadb_port="${CLARA_MARIADB_PORT:-3306}"
+mariadb_root_password="clara-dev-root"   # development-only value of ci/mariadb.compose.yml
+mariadb_name="clara_e2e_$(date +%s)_$$"
+mariadb() {
+  docker compose -f "$root/ci/mariadb.compose.yml" exec -T mariadb \
+    mariadb -uroot -p"$mariadb_root_password" "$@"
+}
+
 cleanup() {
   trap - INT TERM EXIT
   [[ -n "${api_pid:-}" ]] && kill "$api_pid" 2>/dev/null || true
   [[ -n "${web_pid:-}" ]] && kill "$web_pid" 2>/dev/null || true
+  if [[ "$db_engine" == mariadb ]]; then
+    mariadb -e "DROP DATABASE IF EXISTS \`$mariadb_name\`" 2>/dev/null || true
+  fi
   rm -rf "$state"
 }
 trap cleanup INT TERM EXIT
@@ -47,9 +67,27 @@ echo "==> state: $state"
 echo "==> building the API"
 (cd "$root/api" && go build -o "$state/server" ./cmd/server)
 
+case "$db_engine" in
+  sqlite)
+    db_env=(DB_CONNECTION=sqlite DB_DATABASE="$state/app.sqlite")
+    ;;
+  mariadb)
+    echo "==> creating MariaDB database $mariadb_name (ci/mariadb.compose.yml)"
+    mariadb -e "CREATE DATABASE \`$mariadb_name\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci" || {
+      echo "MariaDB is not reachable — start it with: docker compose -f ci/mariadb.compose.yml up -d --wait" >&2
+      exit 1
+    }
+    db_env=(DB_CONNECTION=mariadb DB_HOST=127.0.0.1 DB_PORT="$mariadb_port" DB_USERNAME=root
+      DB_PASSWORD="$mariadb_root_password" DB_DATABASE="$mariadb_name")
+    ;;
+  *)
+    echo "CLARA_DB: \"$db_engine\" (want sqlite or mariadb)" >&2
+    exit 1
+    ;;
+esac
+
 env APP_ENV=development \
-  DB_CONNECTION=sqlite \
-  DB_DATABASE="$state/app.sqlite" \
+  "${db_env[@]}" \
   API_ADDR="127.0.0.1:$api_port" \
   INTERNAL_SERVICE_TOKEN="$service_token" \
   ANON_SALT="$anon_salt" \
@@ -121,6 +159,7 @@ curl -s -o /dev/null "http://127.0.0.1:$web_port/login" || {
 cat <<EOF
 
 CLARA_WEB_URL=http://127.0.0.1:$web_port
+database: $db_engine$( [[ "$db_engine" == mariadb ]] && echo " ($mariadb_name)" )
 bootstrap administrator: $bootstrap_email / $bootstrap_password (local source "Local")
 source names: Local, Hospital 1 (unreachable directory), Hospital 2 (unreachable directory)
 logs: $state/api.log, $state/web.log

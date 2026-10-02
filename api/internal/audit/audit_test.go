@@ -10,6 +10,7 @@ import (
 
 	"csms/api/internal/config"
 	"csms/api/internal/db"
+	"csms/api/internal/testdb"
 )
 
 // openStore returns a migrated sqlite store; the plain migration-created
@@ -21,6 +22,7 @@ func openStore(t *testing.T) *db.Store {
 		DBConnection: "sqlite",
 		DBDatabase:   filepath.Join(t.TempDir(), "audit-test.sqlite"),
 	}
+	testdb.Use(t, cfg)
 	s, err := db.Open(cfg)
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
@@ -46,6 +48,7 @@ func masterKind(t *testing.T, s *db.Store, name string) string {
 }
 
 func TestEnsureYearRolloverSQLite(t *testing.T) {
+	testdb.SQLiteOnly(t) // inspects the per-year tables and view of §6.2
 	ctx := context.Background()
 	s := openStore(t)
 	year := time.Now().UTC().Year()
@@ -60,7 +63,7 @@ func TestEnsureYearRolloverSQLite(t *testing.T) {
 		t.Fatalf("seed plain table: %v", err)
 	}
 
-	w := NewWriter(s.DB, "sqlite")
+	w := NewWriter(s.DB, string(s.Dialect))
 	if err := w.EnsureYear(ctx); err != nil {
 		t.Fatalf("EnsureYear: %v", err)
 	}
@@ -92,7 +95,7 @@ func TestEnsureYearRolloverSQLite(t *testing.T) {
 func TestInsertThroughStableName(t *testing.T) {
 	ctx := context.Background()
 	s := openStore(t)
-	w := NewWriter(s.DB, "sqlite")
+	w := NewWriter(s.DB, string(s.Dialect))
 	if err := w.EnsureYear(ctx); err != nil {
 		t.Fatalf("EnsureYear: %v", err)
 	}
@@ -166,7 +169,7 @@ func TestInsertThroughStableName(t *testing.T) {
 func TestInsertTxRollback(t *testing.T) {
 	ctx := context.Background()
 	s := openStore(t)
-	w := NewWriter(s.DB, "sqlite")
+	w := NewWriter(s.DB, string(s.Dialect))
 	if err := w.EnsureYear(ctx); err != nil {
 		t.Fatalf("EnsureYear: %v", err)
 	}
@@ -196,7 +199,7 @@ func TestInsertTxRollback(t *testing.T) {
 func TestInsertViewTx(t *testing.T) {
 	ctx := context.Background()
 	s := openStore(t)
-	w := NewWriter(s.DB, "sqlite")
+	w := NewWriter(s.DB, string(s.Dialect))
 	if err := w.EnsureYear(ctx); err != nil {
 		t.Fatalf("EnsureYear: %v", err)
 	}

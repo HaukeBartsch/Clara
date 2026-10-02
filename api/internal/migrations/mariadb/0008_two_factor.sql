@@ -12,7 +12,7 @@
 -- never logged (REQ-AUTH-059).
 
 CREATE TABLE IF NOT EXISTS user_two_factor (
-    user_id               BIGINT NOT NULL,
+    user_id               INTEGER NOT NULL,                   -- same type as users.id (FK)
     method                VARCHAR(8) NOT NULL DEFAULT 'off',  -- off | totp | email
     totp_secret           VARCHAR(64),                        -- base32 shared secret
     totp_last_step        BIGINT,                             -- last accepted TOTP step

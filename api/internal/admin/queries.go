@@ -263,15 +263,13 @@ type auditPage struct {
 }
 
 // listAudit returns audit entries in reverse chronological order with
-// limit/cursor pagination (§1 convention). is_admin queries all projects; a
-// non-admin must supply the project filter and MUST be a member of it —
-// otherwise the uniform 403 that never discloses existence (REQ-API-078,
-// REQ-API-007). Filters: type=events|views, project, user, event_type,
-// from/to (UTC, inclusive).
+// limit/cursor pagination (§1 convention). Audit reads are reserved to
+// is_admin (REQ-API-078, finding F2): view entries carry the live data-API
+// token and event details carry record values, neither of which a project
+// member is entitled to see. Filters: type=events|views, project, user,
+// event_type, from/to (UTC, inclusive).
 func (h *Handler) listAudit(w http.ResponseWriter, r *http.Request) {
-	u, ok := actor(r)
-	if !ok {
-		errForbidden(w)
+	if _, ok := requireAdmin(w, r); !ok {
 		return
 	}
 	ctx := r.Context()
@@ -295,22 +293,6 @@ func (h *Handler) listAudit(w http.ResponseWriter, r *http.Request) {
 		}
 		projectFilter = &n
 	}
-	if !u.IsAdmin {
-		if projectFilter == nil { // REQ-API-078: mandatory outside is_admin
-			errBadRequest(w, "the project filter is required")
-			return
-		}
-		asg, err := h.Store.GetAssignment(ctx, u.ID, *projectFilter)
-		if err != nil {
-			errInternal(w)
-			return
-		}
-		if asg == nil { // not a member — never disclose (REQ-API-007)
-			errForbidden(w)
-			return
-		}
-	}
-
 	var userFilter *int64
 	if v := q.Get("user"); v != "" {
 		n, err := strconv.ParseInt(v, 10, 64)

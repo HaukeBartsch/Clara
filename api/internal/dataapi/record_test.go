@@ -12,14 +12,13 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"csms/api/internal/audit"
 	"csms/api/internal/config"
 	"csms/api/internal/db"
+	"csms/api/internal/testdb"
 )
 
 type recordFixture struct {
@@ -44,6 +43,7 @@ func newRecordFixture(t *testing.T) *recordFixture {
 		AnonDateShiftMax: 365,
 		AppTimezone:      "UTC",
 	}
+	testdb.Use(t, cfg)
 	s, err := db.Open(cfg)
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
@@ -178,9 +178,9 @@ func (f *recordFixture) exportJSON(t *testing.T, token string, extra url.Values)
 
 func auditCount(t *testing.T, s *db.Store, eventType string) int {
 	t.Helper()
-	table := "audit_events_" + strconv.Itoa(time.Now().UTC().Year())
+	// The stable name: a view on SQLite, the partitioned table on MariaDB.
 	var n int
-	err := s.DB.QueryRow(`SELECT COUNT(*) FROM `+table+` WHERE event_type = ?`, eventType).Scan(&n)
+	err := s.DB.QueryRow(`SELECT COUNT(*) FROM audit_events WHERE event_type = ?`, eventType).Scan(&n)
 	if err != nil {
 		t.Fatalf("count %s: %v", eventType, err)
 	}
@@ -189,9 +189,8 @@ func auditCount(t *testing.T, s *db.Store, eventType string) int {
 
 func viewCount(t *testing.T, s *db.Store) int {
 	t.Helper()
-	table := "audit_record_views_" + strconv.Itoa(time.Now().UTC().Year())
 	var n int
-	err := s.DB.QueryRow(`SELECT COUNT(*) FROM ` + table).Scan(&n)
+	err := s.DB.QueryRow(`SELECT COUNT(*) FROM audit_record_views`).Scan(&n)
 	if err != nil {
 		t.Fatalf("count record views: %v", err)
 	}
@@ -759,7 +758,7 @@ func TestRecordDelete(t *testing.T) {
 
 	// The record_deleted audit entry carries the deleted values (REQ-AUD-009).
 	var details string
-	err := f.s.DB.QueryRow(`SELECT details FROM audit_events_` + strconv.Itoa(time.Now().UTC().Year()) +
+	err := f.s.DB.QueryRow(`SELECT details FROM audit_events` +
 		` WHERE event_type = 'record_deleted' ORDER BY id DESC LIMIT 1`).Scan(&details)
 	if err != nil {
 		t.Fatalf("read record_deleted: %v", err)
@@ -809,7 +808,9 @@ func TestRecordDAGScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.s.CreateRecordEntityTx(ctx, tx, &db.RecordEntity{ProjectID: f.pid, RecordID: "8DISC001"}); err != nil {
+	if err := f.s.CreateRecordEntityTx(ctx, tx, &db.RecordEntity{ProjectID: f.pid, RecordID: "8DISC001",
+		CreatedAt: "2026-01-01 00:00:00"}); err != nil { // MariaDB rejects an empty DATETIME
+		_ = tx.Rollback()
 		t.Fatalf("CreateRecordEntityTx: %v", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -861,7 +862,9 @@ func TestRecordDAGScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.s.CreateRecordEntityTx(ctx, tx, &db.RecordEntity{ProjectID: f.pid, RecordID: "8DISC002"}); err != nil {
+	if err := f.s.CreateRecordEntityTx(ctx, tx, &db.RecordEntity{ProjectID: f.pid, RecordID: "8DISC002",
+		CreatedAt: "2026-01-01 00:00:00"}); err != nil {
+		_ = tx.Rollback()
 		t.Fatalf("CreateRecordEntityTx 8DISC002: %v", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -887,7 +890,9 @@ func TestRecordDAGScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.s.CreateRecordEntityTx(ctx, tx, &db.RecordEntity{ProjectID: f.pid, RecordID: "8DISC030"}); err != nil {
+	if err := f.s.CreateRecordEntityTx(ctx, tx, &db.RecordEntity{ProjectID: f.pid, RecordID: "8DISC030",
+		CreatedAt: "2026-01-01 00:00:00"}); err != nil {
+		_ = tx.Rollback()
 		t.Fatalf("CreateRecordEntityTx 8DISC030: %v", err)
 	}
 	if err := tx.Commit(); err != nil {

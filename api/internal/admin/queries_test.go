@@ -315,22 +315,20 @@ func TestListAudit(t *testing.T) {
 		}
 	}
 
-	// Non-admin: the project filter is required (REQ-API-078).
+	// Audit reads are is_admin only (REQ-API-078, finding F2): even a member
+	// of the queried project gets the uniform 403.
 	rec = e.do("GET", "/api/v1/audit", nil, member)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("missing project filter: got %d, want 400", rec.Code)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("member without filter: got %d, want 403", rec.Code)
 	}
-	// Non-member of the queried project: uniform 403.
+	rec = e.do("GET", "/api/v1/audit?project="+itoa(p1), nil, member)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("member with own project: got %d, want 403", rec.Code)
+	}
 	outsider := e.mustUser("out@example.org")
 	rec = e.do("GET", "/api/v1/audit?project="+itoa(p2), nil, outsider)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("non-member query: got %d, want 403", rec.Code)
-	}
-	// Member sees only their project's entries.
-	rec = e.do("GET", "/api/v1/audit?project="+itoa(p1), nil, member)
-	e.decode(rec, &page)
-	if len(page.Entries) != 1 || page.Entries[0].EventType != audit.ProjectUpdated {
-		t.Fatalf("member scope: %s", rec.Body.String())
 	}
 
 	// event_type and user filters (admin).

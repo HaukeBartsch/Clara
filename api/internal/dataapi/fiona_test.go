@@ -28,6 +28,7 @@ import (
 	"csms/api/internal/audit"
 	"csms/api/internal/config"
 	"csms/api/internal/db"
+	"csms/api/internal/testdb"
 )
 
 // fionaToken is the single project token every fixture call carries. The
@@ -52,6 +53,7 @@ func newFionaFixture(t *testing.T) *fionaFixture {
 		AnonDateShiftMax: 365,
 		AppTimezone:      "UTC",
 	}
+	testdb.Use(t, cfg)
 	s, err := db.Open(cfg)
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)

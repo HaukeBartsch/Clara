@@ -12,6 +12,7 @@ import (
 	"csms/api/internal/authz"
 	"csms/api/internal/config"
 	"csms/api/internal/db"
+	"csms/api/internal/testdb"
 )
 
 // env is the shared test fixture: a migrated SQLite store, an audit writer,
@@ -36,6 +37,7 @@ func newEnv(t *testing.T) *env {
 		WebPublicURL:             "https://csms.example.org",
 		AuthPasswordTokenTTLDays: 7,
 	}
+	testdb.Use(t, cfg)
 	store, err := db.Open(cfg)
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)

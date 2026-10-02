@@ -7,6 +7,7 @@ import (
 
 	"csms/api/internal/config"
 	"csms/api/internal/migrations"
+	"csms/api/internal/testdb"
 )
 
 // wantSchemaVersion is the version a fully migrated store reports: Migrate
@@ -35,6 +36,7 @@ func openTestStore(t *testing.T) *Store {
 		AnonSalt:             "test-salt",
 		InternalServiceToken: "test-token",
 	}
+	testdb.Use(t, cfg)
 	s, err := Open(cfg)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -69,8 +71,12 @@ func TestMigrateCreatesSchema(t *testing.T) {
 	}
 	for _, table := range want {
 		var n int
-		if err := s.DB.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&n); err != nil {
+		q := `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`
+		if s.Dialect == DialectMariaDB {
+			q = `SELECT COUNT(*) FROM information_schema.TABLES
+			     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE' AND TABLE_NAME = ?`
+		}
+		if err := s.DB.QueryRowContext(ctx, q, table).Scan(&n); err != nil {
 			t.Fatalf("query %s: %v", table, err)
 		}
 		if n != 1 {
@@ -81,10 +87,14 @@ func TestMigrateCreatesSchema(t *testing.T) {
 	// The mode column added by the GD-20 migration, NOT NULL with the starting
 	// mode as its default so existing rows land in development (REQ-DB-034).
 	var notNull, hasDefault int
-	if err := s.DB.QueryRowContext(ctx,
-		`SELECT "notnull", dflt_value IS NOT NULL
-		 FROM pragma_table_info('projects') WHERE name = 'mode'`).
-		Scan(&notNull, &hasDefault); err != nil {
+	q := `SELECT "notnull", dflt_value IS NOT NULL
+		 FROM pragma_table_info('projects') WHERE name = 'mode'`
+	if s.Dialect == DialectMariaDB {
+		q = `SELECT IS_NULLABLE = 'NO', COLUMN_DEFAULT IS NOT NULL
+		     FROM information_schema.COLUMNS
+		     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'projects' AND COLUMN_NAME = 'mode'`
+	}
+	if err := s.DB.QueryRowContext(ctx, q).Scan(&notNull, &hasDefault); err != nil {
 		t.Fatalf("projects.mode column: %v", err)
 	}
 	if notNull != 1 || hasDefault != 1 {

@@ -4,14 +4,14 @@
 -- insert here plus its validation, not a schema change (mirrors REQ-DB-031).
 
 CREATE TABLE IF NOT EXISTS system_settings (
-    key   VARCHAR(64) PRIMARY KEY,   -- dotted setting name
+    `key` VARCHAR(64) PRIMARY KEY,   -- dotted setting name (reserved word in MariaDB: always quoted)
     value TEXT NOT NULL              -- JSON scalar
 ) ENGINE=InnoDB;
 
-INSERT INTO system_settings (key, value)
+INSERT INTO system_settings (`key`, value)
 SELECT 'rate_limit_enabled', 'false'
-WHERE NOT EXISTS (SELECT 1 FROM system_settings WHERE key = 'rate_limit_enabled');
+WHERE NOT EXISTS (SELECT 1 FROM system_settings WHERE `key` = 'rate_limit_enabled');
 
-INSERT INTO system_settings (key, value)
+INSERT INTO system_settings (`key`, value)
 SELECT 'rate_limit_rpm', '600'
-WHERE NOT EXISTS (SELECT 1 FROM system_settings WHERE key = 'rate_limit_rpm');
+WHERE NOT EXISTS (SELECT 1 FROM system_settings WHERE `key` = 'rate_limit_rpm');

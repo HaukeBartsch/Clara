@@ -182,7 +182,8 @@ func secretOf(t *testing.T, e *env, userID int64) string {
 func auditContains(t *testing.T, e *env, needle string) bool {
 	t.Helper()
 	var count int
-	if err := e.Store.DB.QueryRow(`SELECT COUNT(*) FROM audit_events WHERE details LIKE '%' || ? || '%'`, needle).Scan(&count); err != nil {
+	// The pattern is built here: `'%' || ? || '%'` is a logical OR on MariaDB.
+	if err := e.Store.DB.QueryRow(`SELECT COUNT(*) FROM audit_events WHERE details LIKE ?`, "%"+needle+"%").Scan(&count); err != nil {
 		t.Fatalf("query audit details: %v", err)
 	}
 

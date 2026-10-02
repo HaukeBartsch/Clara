@@ -19,7 +19,7 @@ func (s *Store) MaxRecordID(ctx context.Context, projectID int64) (string, bool,
 			 SELECT record_id FROM data WHERE project_id = ?
 			 UNION
 			 SELECT record_id FROM record_entities WHERE project_id = ?
-		 )`, projectID, projectID).Scan(&v)
+		 ) AS ids`, projectID, projectID).Scan(&v)
 	if err != nil {
 		return "", false, err
 	}
@@ -57,7 +57,7 @@ func (s *Store) ListRecordIDs(ctx context.Context, projectID int64, dagGroupID *
 		 SELECT d.record_id FROM data d WHERE d.project_id = ?
 		 UNION
 		 SELECT e.record_id FROM record_entities e WHERE e.project_id = ?
-	 )`
+	 ) AS ids`
 	args := []any{projectID, projectID}
 	if dagGroupID != nil {
 		q = `SELECT DISTINCT d.record_id FROM data d

@@ -4,6 +4,6 @@
 -- setting is an insert into system_settings plus its validation at the API
 -- boundary, not a schema change (REQ-DB-037).
 
-INSERT INTO system_settings (key, value)
+INSERT INTO system_settings (`key`, value)
 SELECT 'rate_limit_block_minutes', '10'
-WHERE NOT EXISTS (SELECT 1 FROM system_settings WHERE key = 'rate_limit_block_minutes');
+WHERE NOT EXISTS (SELECT 1 FROM system_settings WHERE `key` = 'rate_limit_block_minutes');
