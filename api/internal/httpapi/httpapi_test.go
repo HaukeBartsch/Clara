@@ -771,3 +771,41 @@ func TestNewMuxRouting(t *testing.T) {
 		}
 	})
 }
+
+// TestRateLimitAlwaysOnForAuthPaths covers security finding F1: the
+// authentication endpoints are subject to the shared IP budget regardless of
+// the opt-in flag, so a settings state that turns rate limiting off must not
+// open login and the password flows to unlimited guessing.
+func TestRateLimitAlwaysOnForAuthPaths(t *testing.T) {
+	e := newEnv(t)
+	hits := 0
+	h := rateLimit(e.Store, e.Cfg, dataapi.NewRateLimiter(),
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits++
+			w.WriteHeader(http.StatusOK)
+		}))
+
+	setting := func(key, value string) {
+		if err := e.Store.SetSystemSetting(context.Background(), key, value); err != nil {
+			t.Fatalf("SetSystemSetting(%s): %v", key, err)
+		}
+	}
+	setting("rate_limit_enabled", "false")
+	setting("rate_limit_rpm", "1")
+
+	send := func(path string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		req.RemoteAddr = "203.0.113.9:1234"
+		return serve(t, h, req)
+	}
+	if rec := send("/api/v1/auth/login"); rec.Code != http.StatusOK {
+		t.Fatalf("first auth call = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	if rec := send("/api/v1/auth/login"); rec.Code != http.StatusTooManyRequests {
+		t.Errorf("second auth call with the setting off = %d, want 429", rec.Code)
+	}
+	// Non-auth paths keep honouring the opt-in flag (REQ-CFG-020).
+	if rec := send("/api/v1/users"); rec.Code != http.StatusOK {
+		t.Errorf("non-auth call with the setting off = %d, want 200", rec.Code)
+	}
+}

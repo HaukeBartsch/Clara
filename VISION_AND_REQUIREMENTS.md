@@ -569,6 +569,13 @@ For Requirements/, Plan/, and Design/ documents provide a classification of rele
 
 The api should measure performance metrics like response times and memory amounts for database operations and api internal data processing. The information should be sufficient to later evaluate extensions to the infrastructure that runs the api and to the database system that the api talks to.
 
+## Enhanced stress test
+
+Currently the stress test only creates fields with free-text. Also, alot of the fields are empty during export. Use mixed data dictionaries with validation types and drop-down menus during data generation (setup and import). Export as both label (text of multiple-choice fields) and raw data (numeric coding of multiple choice fields).
+
+## Add an is_admin "system administrator" flag to user
+
+The bootstrap user with "is_admin" should be used during setup of the system only. The bootstrap user should at any point be able to make another user account "is_admin" with all system permissions ("system administrator"). An api endpoint should allow is_admin users to assign "is_admin" to other existing users (is admin group). The administration user interface should display current system administrators add/remove this permission. At least one is_admin user should always exist (including the bootstrapped account).
 
 # Security relevant findings
 

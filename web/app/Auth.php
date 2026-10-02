@@ -124,8 +124,10 @@ final class Auth
 
         // The local attempt runs here, in this process, while the directory binds are in
         // flight: that overlap is what §2.9 asks for and a sequential chain cannot give.
-        // verify-password is side-effect-free, so losing costs nothing — login stays the
-        // only place login side effects happen (§2.6 step 3).
+        // verify-password produces no login side effects, so losing costs nothing — login
+        // stays the only place sessions and successes happen (§2.6 step 3). Failed
+        // verifies do extend the API-side Sequence E lockout (security finding F1), which
+        // is exactly the bound a guessed password needs.
         $localOutcome = null;
         $firstFactor = '';
         if ($sources['local']) {
