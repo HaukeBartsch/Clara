@@ -52,8 +52,11 @@ final class Session
         // Reject a session id the client invented rather than one we issued.
         ini_set('session.use_strict_mode', '1');
         ini_set('session.use_only_cookies', '1');
-        ini_set('session.sid_bits_per_character', '6');
-        ini_set('session.sid_length', '48');
+        // The sid stays at PHP's default — 32 hexadecimal characters, 128 bits of
+        // entropy, which is the strength the deprecation RFC calls the right choice
+        // for a secret. Changing session.sid_length or session.sid_bits_per_character
+        // is deprecated in PHP 8.4, and with display_errors on (development) the
+        // notice prints before the doctype and drops every page into quirks mode.
 
         session_name($config->sessionCookieName);
         session_set_cookie_params([
