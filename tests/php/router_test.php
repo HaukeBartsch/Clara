@@ -5,6 +5,7 @@
 
 declare(strict_types=1);
 
+use Clara\Request;
 use Clara\Response;
 use Clara\Router;
 use Clara\Session;

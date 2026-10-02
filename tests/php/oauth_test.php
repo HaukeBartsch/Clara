@@ -273,7 +273,7 @@ describe('oauth2 authorization code (Sequence A, §2.1)', function (): void {
  */
 function peek_oauth_state(Config $config): string
 {
-    $oauth = new Oauth($config, new Logger('error', true));
+    $oauth = oauth_client($config);
     $oauth->begin($config->oauthProviders[0], 'Hospital 1');
 
     return (string) $_SESSION['_oauth_txn']['state'];
