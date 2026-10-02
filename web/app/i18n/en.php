@@ -103,6 +103,106 @@ return [
     'dashboard.project.fields' => 'Fields',
     'dashboard.project.open' => 'Open project',
 
+    // --- project home (User_Interface_Design.md §6.1, REQ-UI-017) ---
+    'project.summary.records' => 'Records',
+    'project.summary.instruments' => 'Instruments',
+    'project.summary.fields' => 'Fields',
+    'project.actions' => 'This project',
+    'project.metadata' => 'Project details',
+    // The read-only metadata block; editing it is §5.2.
+    'project.field.project_name' => 'Project name',
+    'project.field.organization' => 'Organization',
+    'project.field.pi_name' => 'Principal investigator',
+    'project.field.pi_email' => 'Principal investigator e-mail',
+    'project.field.dm_name' => 'Data manager',
+    'project.field.dm_email' => 'Data manager e-mail',
+    'project.field.rek_number' => 'REK number',
+    'project.field.rek_start_date' => 'REK start date',
+    'project.field.rek_end_date' => 'REK end date',
+    'project.field.start_date' => 'Start date',
+    'project.field.end_date' => 'End date',
+    'project.field.participant_names' => 'Participant name pattern',
+
+    // --- two-factor settings (§2.5, REQ-UI-039) ---
+    'tfa.title' => 'Two-factor authentication',
+    'tfa.heading' => 'Two-factor sign-in',
+    'tfa.current_method' => 'Current method',
+    'tfa.method.off' => 'Off',
+    'tfa.method.totp' => 'Authenticator app',
+    'tfa.method.email' => 'Code by e-mail',
+    'tfa.enrolled_on' => 'Enabled {when}',
+    'tfa.codes_remaining' => '{count} recovery codes left',
+    'tfa.enable_help' => 'A second factor keeps an account usable even after its password appears somewhere it should not. Choose one to enable.',
+    'tfa.start_totp' => 'Use an authenticator app',
+    'tfa.start_email' => 'Use a code by e-mail',
+    'tfa.totp_step1' => 'Add the key below to your authenticator app.',
+    'tfa.totp_step2' => 'Enter the six-digit code it shows to finish.',
+    'tfa.manual_key' => 'Manual-entry key',
+    'tfa.setup_link' => 'Or open this setup link in your app:',
+    'tfa.copy' => 'Copy',
+    'tfa.copied' => 'Copied',
+    // A wrong confirmation code does not earn the key a second showing (§2.5).
+    'tfa.key_shown_once' => 'The key was shown once and is not repeated here. Another code from your app still works; if you never added the key, cancel and start again.',
+    'tfa.code' => 'Code',
+    'tfa.confirm' => 'Confirm and enable',
+    'tfa.cancel' => 'Cancel',
+    'tfa.email_help' => 'Enter the code we sent to {email}. It is valid for a few minutes and works once.',
+    'tfa.resend' => 'Send another code',
+    'tfa.recovery_warning' => 'These recovery codes are shown once and cannot be shown again. Save them somewhere you can reach without your phone.',
+    'tfa.saved' => 'I have saved my recovery codes',
+    'tfa.enabled' => 'Two-factor authentication is on.',
+    'tfa.disabled' => 'Two-factor authentication is off.',
+    'tfa.disable_heading' => 'Turn two-factor off',
+    // The mandate lives in the API’s configuration, which this page has no reason to read:
+    // the sentence is conditional so it stays true either way (§2.5).
+    'tfa.disable_help' => 'Turning it off asks for a current code or a recovery code first. If your installation requires two-factor sign-in, you will be asked to set it up again at your next sign-in.',
+    'tfa.disable_code' => 'Current code or recovery code',
+    'tfa.disable' => 'Turn two-factor off',
+    'tfa.failure.code' => 'That code is wrong or has expired.',
+    'tfa.failure.no_email' => 'This installation cannot send e-mail, so a code by e-mail is not available. Use an authenticator app instead.',
+    'tfa.failure.send_failed' => 'The code could not be sent. Try again shortly or use a recovery code.',
+
+    // --- change own password (§2.6, REQ-AUTH-061) ---
+    'account.password.title' => 'Change password',
+    'account.password.heading' => 'Change your password',
+    'account.password.address' => 'Signed in as',
+    'account.password.current' => 'Current password',
+    'account.password.new' => 'New password',
+    'account.password.repeat' => 'Repeat the new password',
+    // The policy the API applies (passwords.go, security finding F12) — stated where it can
+    // be met rather than discovered in a rejection.
+    'account.password.policy' => 'At least 12 characters.',
+    'account.password.mismatch' => 'The two passwords do not match.',
+    'account.password.changed' => 'Your password has been changed.',
+    'account.password.no_local_credential' => 'This account signs in through an identity provider, so it has no local password to change.',
+    'account.password.failure.missing' => 'Enter your current password and the new one twice.',
+    'account.password.failure.mismatch' => 'The two new passwords do not match.',
+
+    // --- forgot password (§2.6, GD-23, REQ-AUTH-062) ---
+    'password_reset.title' => 'Forgot password',
+    'password_reset.heading' => 'Reset your password',
+    'password_reset.help' => 'Enter the e-mail address you sign in with and we will send a link to choose a new password.',
+    'password_reset.local_only' => 'This works for accounts with a local password. An account that signs in through an identity provider resets its password there.',
+    'password_reset.submit' => 'Send reset link',
+    // The one sentence every outcome gets — nothing here may confirm or deny an account.
+    'password_reset.sent' => 'If that address has an account with a local password, a reset link has been sent.',
+    'password_reset.cancel' => 'Back to sign in',
+    'password_reset.back_to_login' => 'Return to sign in',
+    'password_reset.failure.missing' => 'Enter the e-mail address you sign in with.',
+
+    // --- set password through an invite or reset token (§2.6, Sequence H) ---
+    'set_password.title' => 'Set your password',
+    'set_password.heading' => 'Choose a new password',
+    'set_password.help' => 'Pick a password you have not used here before. It needs at least 12 characters.',
+    'set_password.submit' => 'Set password',
+    'set_password.done_heading' => 'Password set',
+    'set_password.done_help' => 'You can sign in with your new password now.',
+    'set_password.sign_in' => 'Sign in',
+    'set_password.sign_in_instead' => 'Go to sign in',
+    // One line for unknown, expired, consumed and wrong-purpose tokens alike (REQ-API-120).
+    'set_password.invalid' => 'This setup link does not work. It may have expired, been used already, or belong to a different kind of request.',
+    'set_password.request_new' => 'Request a new reset link',
+
     // --- no-access page (§2.3, REQ-UI-006) ---
     'no_access.title' => 'No projects yet',
     'no_access.body' => 'You are signed in, but you are not a member of any project yet. An administrator adds members to a project; once that is done the project appears here.',
@@ -114,6 +214,8 @@ return [
     // --- error pages and the §3.4 message table ---
     'error.generic' => 'Something went wrong. Please try again; if it continues, contact your administrator.',
     'error.invalid_request' => 'The form contains invalid values',
+    // The self-service password change (§2.6): the one line a rejected credential gets.
+    'error.bad_password' => 'The current password is not correct.',
     'error.forbidden' => 'You do not have permission for this action',
     'error.not_found' => 'The object does not exist or you do not have access',
     // The form was accepted but the request did not carry this session's token:

@@ -10,16 +10,19 @@ namespace Clara;
 final class Request
 {
     /**
-     * @param array<string, string> $headers lower-cased header names
-     * @param array<string, mixed>  $query   parsed query string
-     * @param array<string, mixed>  $post    parsed body (form-encoded)
+     * @param array<string, string> $headers    lower-cased header names
+     * @param array<string, mixed>  $query      parsed query string
+     * @param array<string, mixed>  $post       parsed body (form-encoded)
+     * @param array<string, string> $pathParams the `{name}` values the router matched,
+     *                                          filled in by withPathParams()
      */
     public function __construct(
         private readonly string $method,
         private readonly string $path,
         private readonly array $headers,
         private readonly array $query,
-        private readonly array $post
+        private readonly array $post,
+        private readonly array $pathParams = []
     ) {}
 
     public static function fromGlobals(): self
@@ -57,6 +60,23 @@ final class Request
     public function path(): string
     {
         return $this->path;
+    }
+
+    /**
+     * The value the router matched for one `{name}` placeholder of the route
+     * pattern (§2.1) — '' when the route has no such placeholder. Controllers read
+     * path segments through this rather than re-splitting the path, so a route
+     * change is a change to one row in Router and nowhere else.
+     */
+    public function pathParam(string $name, string $default = ''): string
+    {
+        return $this->pathParams[$name] ?? $default;
+    }
+
+    /** This request with the router's matched placeholders attached (immutably). */
+    public function withPathParams(array $pathParams): self
+    {
+        return new self($this->method, $this->path, $this->headers, $this->query, $this->post, $pathParams);
     }
 
     public function header(string $name): ?string

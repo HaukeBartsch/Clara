@@ -72,6 +72,48 @@ final class Router
         ['method' => 'GET', 'pattern' => '/', 'controller' => Controllers\DashboardController::class,
             'handler' => 'index', 'guard' => 'login', 'region' => 'projects'],
 
+        // The project workspace (§6.1). Its data region is the same summary the
+        // rendered page shows — records, instruments, fields, and the metadata
+        // block — and nothing more (REQ-UI-044).
+        ['method' => 'GET', 'pattern' => '/projects/{id}', 'controller' => Controllers\ProjectController::class,
+            'handler' => 'index', 'guard' => 'login', 'region' => 'project'],
+
+        // Self-service account pages (§2.4 item 4): the second factor (§2.5) and the
+        // local password (§2.6). Both live in the shell; both are mutations on their
+        // own route with ?action= like every other write (§2.1).
+        ['method' => 'GET', 'pattern' => '/account/two-factor', 'controller' => Controllers\TwoFactorController::class,
+            'handler' => 'index', 'guard' => 'login'],
+        ['method' => 'POST', 'pattern' => '/account/two-factor', 'controller' => Controllers\TwoFactorController::class,
+            'handler' => 'startTotp', 'guard' => 'login', 'action' => 'totp_start'],
+        ['method' => 'POST', 'pattern' => '/account/two-factor', 'controller' => Controllers\TwoFactorController::class,
+            'handler' => 'confirmTotp', 'guard' => 'login', 'action' => 'totp_confirm'],
+        ['method' => 'POST', 'pattern' => '/account/two-factor', 'controller' => Controllers\TwoFactorController::class,
+            'handler' => 'startEmail', 'guard' => 'login', 'action' => 'email_start'],
+        ['method' => 'POST', 'pattern' => '/account/two-factor', 'controller' => Controllers\TwoFactorController::class,
+            'handler' => 'confirmEmail', 'guard' => 'login', 'action' => 'email_confirm'],
+        ['method' => 'POST', 'pattern' => '/account/two-factor', 'controller' => Controllers\TwoFactorController::class,
+            'handler' => 'cancelEnrollment', 'guard' => 'login', 'action' => 'enroll_cancel'],
+        ['method' => 'POST', 'pattern' => '/account/two-factor', 'controller' => Controllers\TwoFactorController::class,
+            'handler' => 'enrollmentDone', 'guard' => 'login', 'action' => 'enroll_done'],
+        ['method' => 'POST', 'pattern' => '/account/two-factor', 'controller' => Controllers\TwoFactorController::class,
+            'handler' => 'disable', 'guard' => 'login', 'action' => 'disable'],
+        ['method' => 'GET', 'pattern' => '/account/password', 'controller' => Controllers\AccountController::class,
+            'handler' => 'password', 'guard' => 'login'],
+        ['method' => 'POST', 'pattern' => '/account/password', 'controller' => Controllers\AccountController::class,
+            'handler' => 'changePassword', 'guard' => 'login', 'action' => 'change'],
+
+        // The two public password pages (§2.6, GD-23). Public means no session is
+        // required and none is implied: the token in the field is the credential,
+        // and these routes establish no identity (Sequence H, Authentication §2.8).
+        ['method' => 'GET', 'pattern' => '/password-reset', 'controller' => Controllers\PasswordResetController::class,
+            'handler' => 'requestForm', 'guard' => 'public'],
+        ['method' => 'POST', 'pattern' => '/password-reset', 'controller' => Controllers\PasswordResetController::class,
+            'handler' => 'request', 'guard' => 'public', 'action' => 'request'],
+        ['method' => 'GET', 'pattern' => '/set-password', 'controller' => Controllers\PasswordResetController::class,
+            'handler' => 'setForm', 'guard' => 'public'],
+        ['method' => 'POST', 'pattern' => '/set-password', 'controller' => Controllers\PasswordResetController::class,
+            'handler' => 'complete', 'guard' => 'public', 'action' => 'complete'],
+
         ['method' => 'POST', 'pattern' => '/logout', 'controller' => Controllers\AccountController::class,
             'handler' => 'logout', 'guard' => 'login'],
         ['method' => 'POST', 'pattern' => '/lang', 'controller' => Controllers\AccountController::class,
@@ -93,11 +135,12 @@ final class Router
     /** Matches the request and produces its response. */
     public function dispatch(): Response
     {
-        $route = $this->match();
+        $matched = $this->match();
 
-        if ($route === null) {
+        if ($matched === null) {
             return $this->notFound();
         }
+        [$route, $pathParams] = $matched;
 
         // --- guard, before either shape (§3.1, REQ-UI-044) ---
         $denied = Auth::guard($route['guard'], $this->config, $this->request->path());
@@ -122,65 +165,84 @@ final class Router
                 return Response::notAcceptable();
             }
 
-            return $this->invoke($route, 'data');
+            return $this->invoke($route, 'data', $pathParams);
         }
 
-        return $this->invoke($route, $route['handler']);
+        return $this->invoke($route, $route['handler'], $pathParams);
     }
 
     /**
-     * Finds the route row for this request. A POST whose row declares an
-     * `action` only matches when `?action=` carries that value — the mutation
-     * convention of §2.1 — and a row without one matches any POST to its path.
+     * Finds the route row for this request and the values its `{name}`
+     * placeholders matched. A POST whose row declares an `action` only matches when
+     * `?action=` carries that value — the mutation convention of §2.1 — and a row
+     * without one matches any POST to its path.
      *
-     * @return array{method: string, pattern: string, controller: class-string, handler: string, guard: string, action?: string, region?: string}|null
+     * @return array{0: array{method: string, pattern: string, controller: class-string, handler: string, guard: string, action?: string, region?: string}, 1: array<string, string>}|null
      */
     private function match(): ?array
     {
-        $fallback = null;
-
         foreach (self::ROUTES as $route) {
             if ($route['method'] !== $this->request->method()) {
                 continue;
             }
-            if (!$this->matchesPattern($route['pattern'])) {
+            $pathParams = [];
+            if (!$this->matchesPattern($route['pattern'], $pathParams)) {
                 continue;
             }
 
             $expected = $route['action'] ?? null;
-            if ($expected === null) {
-                return $route;
+            // A row that declares an action matches only that mutation (§2.1); a
+            // POST to the same path with any other `action` is not a route, and the
+            // request ends as a 404 like any unknown path — the shell never offers a
+            // mutation this table does not carry, so nothing else can answer it.
+            if ($expected === null || hash_equals($expected, $this->request->action())) {
+                return [$route, $pathParams];
             }
-            if (hash_equals($expected, $this->request->action())) {
-                return $route;
-            }
-            // Remember a path match with the wrong action: an unknown mutation on
-            // an existing route is a 405-ish client error, not a 404 — but it must
-            // not shadow an exact match later in the table.
-            $fallback ??= $route;
         }
 
         return null;
     }
 
-    /** Path pattern matching with `{name}` placeholders (no regex from user input). */
-    private function matchesPattern(string $pattern): bool
+    /**
+     * Path pattern matching with `{name}` placeholders (no regex from user input:
+     * only the fixed placeholder syntax becomes a named group). Matched values are
+     * written into `$pathParams`.
+     */
+    private function matchesPattern(string $pattern, array &$pathParams): bool
     {
-        $regex = preg_replace('/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/', '[^/]+', $pattern);
+        $regex = preg_replace('/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/', '(?P<$1>[^/]+)', $pattern);
         if ($regex === null) {
             return false;
         }
 
-        return preg_match('#^' . $regex . '$#', $this->request->path()) === 1;
+        $matches = [];
+        if (preg_match('#^' . $regex . '$#', $this->request->path(), $matches) !== 1) {
+            return false;
+        }
+        // Keep the named groups only: offset 0 is the whole path.
+        $pathParams = array_map('strval', array_filter(
+            $matches,
+            'is_string',
+            ARRAY_FILTER_USE_KEY
+        ));
+
+        return true;
     }
 
-    /** @param array{controller: class-string, handler: string, region?: string} $route */
-    private function invoke(array $route, string $handler): Response
+    /**
+     * Builds the controller for one route and calls its handler. The controller
+     * receives the request with this route's placeholders attached, so a page reads
+     * its `{id}` from the request and never re-parses the path.
+     *
+     * @param array{controller: class-string, handler: string, region?: string} $route
+     * @param array<string, string> $pathParams
+     */
+    private function invoke(array $route, string $handler, array $pathParams = []): Response
     {
         $class = $route['controller'];
         $controller = new $class(
             $this->config,
-            $this->request,
+            $this->request->withPathParams($pathParams),
             $this->api,
             $this->i18n,
             $this->view,

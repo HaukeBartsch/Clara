@@ -74,4 +74,41 @@ abstract class Controller
     {
         return $this->view->render($template, $data, $options + ['layout' => 'standalone']);
     }
+
+    /**
+     * The projects the acting user may see, with the quick statistics exactly as
+     * the API returned them (REQ-API-049): visibility is the API's decision, so PHP
+     * renders what comes back and filters nothing
+     * (`User_Interface_Design.md` §4, REQ-AUTH-026).
+     *
+     * One call serves both the dashboard table and the sidebar's Projects section
+     * (§2.4 item 1) — a page never reads the list twice, and rows are never
+     * enriched per row (Plan/Web_Implementation.md §7 rule 13).
+     *
+     * @return list<array<string, mixed>>
+     */
+    protected function visibleProjects(): array
+    {
+        $projects = $this->api->get('/api/v1/projects');
+        if (!is_array($projects)) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($projects as $project) {
+            if (!is_array($project) || !isset($project['id'])) {
+                continue;
+            }
+            $out[] = [
+                'id' => (int) $project['id'],
+                'project_name' => (string) ($project['project_name'] ?? ''),
+                'organization' => (string) ($project['organization'] ?? ''),
+                'record_count' => (int) ($project['record_count'] ?? 0),
+                'instrument_count' => (int) ($project['instrument_count'] ?? 0),
+                'field_count' => (int) ($project['field_count'] ?? 0),
+            ];
+        }
+
+        return $out;
+    }
 }

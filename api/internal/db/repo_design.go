@@ -951,6 +951,19 @@ func (s *Store) ListRecordEntities(ctx context.Context, projectID int64) ([]Reco
 	return out, rows.Err()
 }
 
+// CountRecordEntities counts a project's records without reading them — the
+// one number the project home summary needs (REQ-UI-017), where loading every
+// record to take its length would be the whole cost of the page.
+func (s *Store) CountRecordEntities(ctx context.Context, projectID int64) (int, error) {
+	var n int
+	err := s.DB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM record_entities WHERE project_id = ?`, projectID).Scan(&n)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 // SetRecordDAG assigns a data access group to a record (REQ-DB-029).
 func (s *Store) SetRecordDAG(ctx context.Context, projectID int64, recordID string, dagGroupID sql.NullInt64) error {
 	_, err := s.DB.ExecContext(ctx,

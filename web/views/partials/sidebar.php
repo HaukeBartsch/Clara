@@ -3,8 +3,8 @@
  * The sidebar (§2.4). Each section is present only when the acting user may use
  * it, and only routes that exist in this build are linked — a link to a page that
  * is not implemented would be a disabled control by another name (§3.1,
- * REQ-UI-003). The Account section's two-factor and password entries arrive with
- * M2, when those routes do.
+ * REQ-UI-003). The Administration section's entries arrive with M3 and the
+ * project-context ones with M3–M5.
  *
  * Rendered inside the shell; $view comes from View::capture().
  */
@@ -64,5 +64,37 @@ $projects = $sidebarProjects ?? [];
                 <?php endforeach; ?>
             </ul>
         <?php endif; ?>
+
+        <?php
+        /**
+         * Account (§2.4 item 4). The language and theme selectors are part of the footer in
+         * this layout, so what is left here is the second-factor page — every signed-in
+         * user's — and the password page, which appears only for an account that has a local
+         * credential to change (GD-23): an entry whose only possible outcome is "this account
+         * signs in through a provider" offers nothing (§3.1).
+         */
+        $accountSections = [
+            ['path' => '/account/two-factor', 'labelKey' => 'nav.two_factor'],
+        ];
+        if ($view->hasLocalCredential()) {
+            $accountSections[] = ['path' => '/account/password', 'labelKey' => 'nav.password'];
+        }
+        ?>
+        <div class="clara-nav-heading"><?= View::e($view->t('nav.account')) ?></div>
+        <ul class="nav nav-pills flex-column clara-nav mb-3">
+            <?php foreach ($accountSections as $account): ?>
+                <li class="nav-item">
+                    <a class="nav-link<?= $view->isActive($account['path']) ? ' active' : '' ?>"
+                       href="<?= View::e($account['path']) ?>">
+                        <?= View::e($view->t($account['labelKey'])) ?>
+                    </a>
+                </li>
+            <?php endforeach; ?>
+        </ul>
+
+        <?php /* Project context (§2.4 item 3): Setup, Design, Record status, Export, Members,
+               Roles and Groups — one entry each as its route lands in M3–M5, gated by the
+               project's permissions block. Until then there is nothing to list here, and an
+               empty heading over nothing is what §3.1 forbids. */ ?>
     </div>
 </nav>
