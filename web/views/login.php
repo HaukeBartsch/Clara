@@ -32,22 +32,34 @@ use Clara\View;
         <fieldset class="mb-2">
             <legend class="form-label h6 mb-1"><?= View::e($view->t('login.source')) ?></legend>
             <p class="text-body-secondary small mt-0"><?= View::e($view->t('login.source_help')) ?></p>
-            <?php foreach ($sources as $index => $source): ?>
-                <?php
-                // The stored selection wins; with none yet, the first name is what the
-                // form would submit anyway, so it is what shows as chosen.
-                $checked = ($selected ?? '') !== ''
-                    ? $selected === $source['name']
-                    : $index === 0;
-                ?>
-                <div class="form-check">
-                    <input class="form-check-input" type="radio" name="source" id="source-<?= $index ?>"
-                           value="<?= View::e($source['name']) ?>"<?= $checked ? ' checked' : '' ?>>
-                    <label class="form-check-label" for="source-<?= $index ?>">
-                        <?= View::e($source['name']) ?>
+            <?php
+            // One tile per name, side by side (wrapping on narrow screens). Each tile is still
+            // a real radio: the input is stretched invisibly over the tile inside its label,
+            // so keyboard, screen reader and the no-script submit behave exactly as a plain
+            // radio group would. The highlight is pure CSS (app.css, "source tiles").
+            ?>
+            <div class="clara-sources">
+                <?php foreach ($sources as $index => $source): ?>
+                    <?php
+                    // The stored selection wins; with none yet, the first name is what the
+                    // form would submit anyway, so it is what shows as chosen.
+                    $checked = ($selected ?? '') !== ''
+                        ? $selected === $source['name']
+                        : $index === 0;
+                    ?>
+                    <label class="clara-source" for="source-<?= $index ?>">
+                        <input class="clara-source-input" type="radio" name="source" id="source-<?= $index ?>"
+                               value="<?= View::e($source['name']) ?>"<?= $checked ? ' checked' : '' ?>>
+                        <span class="clara-source-tile">
+                            <svg class="clara-source-icon" viewBox="0 0 16 16" width="20" height="20"
+                                 fill="currentColor" fill-rule="evenodd" aria-hidden="true" focusable="false">
+                                <path d="M8 1 15 7h-2v8H3V7H1zM6.5 15v-4.5h3V15z"/>
+                            </svg>
+                            <span class="clara-source-name"><?= View::e($source['name']) ?></span>
+                        </span>
                     </label>
-                </div>
-            <?php endforeach; ?>
+                <?php endforeach; ?>
+            </div>
         </fieldset>
 
         <button class="btn btn-outline-secondary btn-sm" type="submit">

@@ -143,3 +143,86 @@
   width: 100%;
   max-width: 26rem;
 }
+
+/* --- source tiles: the login page's source-name picker (§2.2, REQ-UI-042) --- */
+
+.clara-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.clara-source {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 6.5rem;
+  max-width: 9rem;
+  margin: 0;
+}
+
+/* The real radio, invisible and covering the whole tile: clicks and taps land on it. */
+.clara-source-input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.clara-source-tile {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  aspect-ratio: 1 / 1;
+  padding: 0.625rem;
+  border: 2px solid var(--bs-border-color);
+  border-radius: var(--bs-border-radius-lg);
+  background-color: var(--bs-tertiary-bg);
+  color: var(--bs-secondary-color);
+  opacity: 0.55;
+  transition: opacity 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.clara-source-icon {
+  flex: 0 0 auto;
+}
+
+.clara-source-name {
+  min-width: 0;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.2;
+  overflow-wrap: break-word;
+  hyphens: auto;
+}
+
+.clara-source-input:hover + .clara-source-tile {
+  opacity: 0.8;
+}
+
+/* The chosen name: blue frame, full colour; the others stay greyed out. */
+.clara-source-input:checked + .clara-source-tile {
+  border-color: var(--bs-primary);
+  box-shadow: 0 0 0 0.2rem rgba(var(--bs-primary-rgb), 0.25);
+  background-color: var(--bs-body-bg);
+  color: var(--bs-body-color);
+  opacity: 1;
+}
+
+.clara-source-input:checked + .clara-source-tile .clara-source-icon {
+  color: var(--bs-primary);
+}
+
+.clara-source-input:focus-visible + .clara-source-tile {
+  outline: 2px solid var(--bs-primary);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .clara-source-tile {
+    transition: none;
+  }
+}
