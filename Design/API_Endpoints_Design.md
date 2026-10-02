@@ -213,6 +213,8 @@ token=…&content=record&action=import
 
 Each value passes the full validation pipeline (`Data_Validation_Design.md` §2) before storage; invalid values are not stored (REQ-API-032, REQ-VAL-001). Empty values act as "no value" (clear/no-op, REQ-VAL-024) — an **intentional** clear: the UI data-entry path sends empties only for fields the user explicitly cleared (GD-14, REQ-UI-031). Values for calculated fields are rejected (`CALCULATED_READONLY`, REQ-API-095). Date/date-time values are stored with the collection offset — the `tz` parameter when present (UI: the browser's zone, sent by PHP), else `APP_TIMEZONE` (GD-16, REQ-VAL-041).
 
+The row's event key is accepted as `event_name` **or** `redcap_event_name` (REQ-API-138): the latter names the same value in a flat export (REQ-API-028), so a caller can post back what it pulled without renaming. An empty value means "not supplied", so one spelling is in force per row; two different events name an ambiguous target and the row is rejected — `event_name: CONTENT_INVALID — event_name 'baseline_arm_1' conflicts with redcap_event_name 'followup_arm_1'` — storing nothing of it (REQ-API-035). The alias applies to projects **with** events: a project without events stores under the empty event name, so there the alias would move the row's values out of the slot the rest of the code reads (calculated fields recompute into it) and it is ignored instead.
+
 #### 3.7.2 Response (REQ-API-034, REQ-VAL-008)
 
 HTTP 200 with one result row per imported record:
@@ -221,7 +223,7 @@ HTTP 200 with one result row per imported record:
 [
   { "record_id": "8DISC042", "form_name": "intake", "import_record_id": 2, "import_form_name": "intake" },
   { "record_id": "8DISC043", "form_name": "intake", "import_record_id": 0,
-    "import_form_name": "Validation error: age: TYPE_INVALID — value 'abc' is not a valid integer; status: CHOICE_INVALID — value '9' is not a choice of 'status'" }
+    "import_form_name": "Validation error: age: TYPE_INVALID — value \"abc\" is not a valid integer; status: CHOICE_INVALID — value \"9\" is not a choice of \"status\"" }
 ]
 ```
 
@@ -232,7 +234,13 @@ HTTP 200 with one result row per imported record:
 | `0` | validation error(s) — `import_form_name` lists the per-field detail `<field>: <CODE> — <message>`, joined by `; ` (rule codes from `Data_Validation_Design.md` §3) |
 | `255` | fatal request-level error — e.g. unknown `content`; the whole call fails (HTTP 400 with the §3.2 error body) |
 
+The detail's order is fixed (REQ-API-139): the row's field problems in data-dictionary order, then its unknown keys as `<field>: UNKNOWN_FIELD — unknown field '<name>'` in dictionary order, so a rejected batch reads the same every time and a caller can diff two responses. A row stops at its first **tuple** problem — a missing `record_id` or `form_name`, an unknown form, or an unknown event reports that alone and skips the row's remaining field detail (REQ-API-140 is open on whether it should report everything instead). An unknown event names the key the caller used: `redcap_event_name: CONTENT_INVALID — unknown event 'v1_arm_1_arm_1'` for a row that sent the alias.
+
 All-or-nothing per record: a failed value stores nothing of that record (single transaction, REQ-API-035); other records in the same call are unaffected. Successful imports are audit-logged (`record_created`/`record_updated` with old/new values) and trigger calculated-field recomputation in the same transaction (REQ-API-095, REQ-VAL-037). A new record is assigned to the holder's active data-access group, or none (REQ-API-093); an import never changes an existing record's group.
+
+#### 3.7.3 Open — aggregated error reporting (REQ-API-140, draft)
+
+The master spec's "Error messages by api" note shows one invalid value reported once for the whole call (`{"error":"The following values of redcap_event_name are invalid: v1_arm_1_arm_1"}`); this implementation answers one result row per `data[]` entry, so a batch of eight rows sharing that event repeats the same detail eight times (REQ-API-034) and never produces the aggregate. The deviation is deliberate pending the two decisions of REQ-API-140 — request-level body versus an addition to the §3.7.2 rows, and first-problem versus every-problem per row — because each changes what a caller may rely on: a request-level body costs the `1`/`2` results of the rows that were fine (REQ-API-035's per-record granularity), while reporting every problem per row means reordering the tuple checks in `importOneRow` (`api/internal/dataapi/record_import.go`), which is also where the arm-permission and data-access-group rejections sit. Until it is decided, §3.7.2 as written is normative, and nothing in the master spec example should be read as implemented behavior.
 
 ### 3.8 `content=record&action=delete` (GD-3, REQ-API-036)
 
