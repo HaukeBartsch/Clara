@@ -437,7 +437,7 @@
       "e1|t2": "2026-03-05 10:00:00"
     },
     "choices": null,
-    "expected": true
+    "expected": false
   },
   {
     "name": "datetime_offset_colon_instant_equal",
@@ -457,7 +457,37 @@
       "e1|t2": "2026-03-05 14:00"
     },
     "choices": null,
+    "expected": true
+  },
+  {
+    "name": "canonical_attached_equal",
+    "expr": "[e1][t] = [e1][t2]",
+    "values": {
+      "e1|t": "2026-03-05 12:00+02:00",
+      "e1|t2": "2026-03-05 10:00+00:00"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "canonical_attached_seconds_equal",
+    "expr": "[e1][t] = [e1][t2]",
+    "values": {
+      "e1|t": "2026-03-05 12:00:30+02:00",
+      "e1|t2": "2026-03-05 10:00:30"
+    },
+    "choices": null,
     "expected": false
+  },
+  {
+    "name": "canonical_date_attached_ordering",
+    "expr": "[e1][d] \u003e [e1][d2]",
+    "values": {
+      "e1|d": "2026-03-01+01:00",
+      "e1|d2": "2026-02-28+00:00"
+    },
+    "choices": null,
+    "expected": true
   },
   {
     "name": "date_invalid_not_instant_falls_back",

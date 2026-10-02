@@ -2,6 +2,7 @@ package validate
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -905,25 +906,41 @@ func parseNumberQuiet(s string) (float64, bool) {
 	return v, err == nil
 }
 
-var canonicalInstantLayouts = []string{
-	"2006-01-02 15:04:05 -0700",
-	"2006-01-02 15:04 -0700",
-	"2006-01-02 -0700",
-	"2006-01-02 15:04:05",
-	"2006-01-02 15:04",
-	"2006-01-02",
-}
+// canonicalInstantRE matches the §4.1 storage forms: the date, an optional
+// HH:MM[:ss] time, and an optional ±HH:MM (or ±HHMM) collection offset written
+// either attached ("2026-03-01 09:30+01:00") or space-separated. The stored
+// canonical form attaches the offset with a colon — layouts like
+// "2006-01-02 15:04 -0700" reject exactly that, so the pieces are reassembled
+// onto a fixed layout and time.Parse keeps the calendar validation.
+var canonicalInstantRE = regexp.MustCompile(
+	`^(\d{4}-\d{2}-\d{2})(?: (\d{1,2}:\d{2}(?::\d{2})?))? ?([+-]\d{2}):?(\d{2})?$`)
 
 // parseCanonicalInstant parses the §4.1 canonical storage forms (with or
 // without the ±HH:MM collection offset; a missing offset reads as UTC) into
 // an absolute instant for chronological comparison (§7.3).
 func parseCanonicalInstant(s string) (time.Time, bool) {
-	for _, layout := range canonicalInstantLayouts {
-		if t, err := time.Parse(layout, s); err == nil {
-			return t, true
+	m := canonicalInstantRE.FindStringSubmatch(s)
+	if m == nil {
+		return time.Time{}, false
+	}
+	value, layout := m[1], "2006-01-02"
+	if m[2] != "" {
+		value += " " + m[2]
+		if strings.Contains(m[2], ":") && strings.Count(m[2], ":") == 2 {
+			layout += " 15:04:05"
+		} else {
+			layout += " 15:04"
 		}
 	}
-	return time.Time{}, false
+	if m[3] != "" {
+		value += " " + m[3] + m[4] // ±HHMM, colon dropped for the -0700 layout
+		layout += " -0700"
+	}
+	t, err := time.Parse(layout, value)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
 }
 
 func (n logicFunc) eval(ev LogicEval) float64 {

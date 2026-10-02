@@ -127,6 +127,23 @@ func corpusInputs() []corpusCase {
 			Values:   map[string]string{"e1|t": "2026-03-05 11:00 -0400", "e1|t2": "2026-03-05 14:00"},
 			Expected: false, // 15:00Z vs 14:00Z
 		},
+		// The stored canonical form attaches ±HH:MM directly (§4.1) — the shape
+		// real values carry; both evaluators must read it as an instant.
+		{
+			Name: "canonical_attached_equal", Expr: `[e1][t] = [e1][t2]`,
+			Values: map[string]string{"e1|t": "2026-03-05 12:00+02:00", "e1|t2": "2026-03-05 10:00+00:00"},
+			Expected: true,
+		},
+		{
+			Name: "canonical_attached_seconds_equal", Expr: `[e1][t] = [e1][t2]`,
+			Values: map[string]string{"e1|t": "2026-03-05 12:00:30+02:00", "e1|t2": "2026-03-05 10:00:30"},
+			Expected: true,
+		},
+		{
+			Name: "canonical_date_attached_ordering", Expr: `[e1][d] > [e1][d2]`,
+			Values: map[string]string{"e1|d": "2026-03-01+01:00", "e1|d2": "2026-02-28+00:00"},
+			Expected: true, // 2026-02-28T23:00Z vs 2026-02-28T00:00Z
+		},
 		{Name: "date_invalid_not_instant_falls_back", Expr: `[e1][d] < [e1][d2]`, Values: map[string]string{"e1|d": "2026-02-30", "e1|d2": "2026-02-01"}, Expected: false},
 		{Name: "date_leap_day_valid", Expr: `[e1][d] = [e1][d2]`, Values: map[string]string{"e1|d": "2024-02-29", "e1|d2": "2024-02-29"}, Expected: true},
 		// Bare [field] shorthand resolves as an empty-event reference.
