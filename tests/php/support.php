@@ -186,6 +186,19 @@ function queue_shell(): void
     ]);
 }
 
+/**
+ * The sidebar's Projects list (§2.4 item 1), which every page in the shell renders.
+ * Queue it after any more specific `/api/v1/projects/…` fragment: the fake transport
+ * answers the first fragment it finds in the URL, and this one is a prefix of them all.
+ */
+function queue_sidebar_projects(?array $projects = null): void
+{
+    api_route('/api/v1/projects', $projects ?? [
+        ['id' => 3, 'project_name' => '8DISC', 'organization' => 'NAT EU',
+            'record_count' => 42, 'instrument_count' => 2, 'field_count' => 30],
+    ]);
+}
+
 final class FakeTransport implements Transport
 {
     public function request(string $method, string $url, array $headers, ?string $body): array

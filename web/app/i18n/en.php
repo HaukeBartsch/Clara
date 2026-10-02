@@ -159,6 +159,9 @@ return [
     'tfa.disable_code' => 'Current code or recovery code',
     'tfa.disable' => 'Turn two-factor off',
     'tfa.failure.code' => 'That code is wrong or has expired.',
+    // The standing note where the e-mail option used to be, after its own attempt said why
+    // it cannot work (REQ-AUTH-057).
+    'tfa.email_unavailable' => 'Codes by e-mail are not available on this installation: it has no mail server configured.',
     'tfa.failure.no_email' => 'This installation cannot send e-mail, so a code by e-mail is not available. Use an authenticator app instead.',
     'tfa.failure.send_failed' => 'The code could not be sent. Try again shortly or use a recovery code.',
 

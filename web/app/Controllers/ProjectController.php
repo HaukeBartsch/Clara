@@ -43,7 +43,7 @@ final class ProjectController extends Controller
             // The browser tab carries the project's own name — data, not a UI string, so it
             // is not translated (the shell falls back to the application name when empty).
             'pageTitle' => $this->projectName($detail),
-            'project' => $this->metadata($detail),
+            'metadata' => $this->metadata($detail),
             'summary' => $this->summary($detail),
             'cards' => $cards,
             // The brand bar names the project while the user is inside it (§2.4).
