@@ -720,7 +720,7 @@ Entries MAY carry the `token` column and payload values — the trail is the sol
 
 ### 4.16 Record history (REQ-API-079…081)
 
-**`GET /api/v1/projects/{id}/records/{record}/history`** — data access ≥ `read_only` on the record's arm (GD-2) + project visibility (REQ-API-007) + record visibility (REQ-AUTH-045). Query parameters: `instrument`, `event`, `field` (filters, REQ-API-080) and `limit`/`cursor` per §1. Chronological, covering all changes of the record since creation, transparent across the yearly rollover (REQ-AUD-006). 200:
+**`GET /api/v1/projects/{id}/records/{record}/history`** — data access ≥ `read_only` on the record's arm (GD-2) + project visibility (REQ-API-007) + record visibility (REQ-AUTH-045). Query parameters: `instrument`, `event`, `field` (filters, REQ-API-080), `order` (`chrono` default | `newest`, REQ-API-137 — see below) and `limit`/`cursor` per §1. Chronological, covering all changes of the record since creation, transparent across the yearly rollover (REQ-AUD-006). 200:
 
 ```json
 { "entries": [ { "created_at": "2026-09-18 14:02:11", "user_id": 3, "user_display_name": "User",
@@ -730,6 +730,8 @@ Entries MAY carry the `token` column and payload values — the trail is the sol
 ```
 
 `action` ∈ `create | update | delete`; for `create`, `old` is `null`; for `delete`, `new` is `null` and the `old` values are the deleted values (REQ-AUD-009). The endpoint is read-only with respect to the audit trail (REQ-AUD-002). The data entry form presents this per-field history — who entered or changed the value, when, and the old → new values — fetched from this endpoint (REQ-API-081; User_Interface plan, data entry form).
+
+`order=newest` serves the same entries in reverse chronological order (`created_at DESC, id DESC`) and the cursor pages backwards (`REQ-API-137`, DEV-API-23): each page's `next_cursor` continues from its last (oldest) row with a strictly-earlier condition. The filters apply within the page exactly as in `chrono`, so paging semantics are unchanged. This is the read direction the data entry form uses to derive current values — walking backwards it stops per field at the first entry seen (`User_Interface_Design.md` §8.3, closing its §11 open item 3). Any other `order` value → 400 `invalid_request`.
 
 ### 4.17 Survey links (GD-9, REQ-API-082…085)
 

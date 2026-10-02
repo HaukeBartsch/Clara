@@ -577,16 +577,25 @@ Prevent all is_admin users from loosing access.
 
 ## Error messages by api
 
-If the API cannot fulfil the request of the user it should generate an error message like the following:
+If the API cannot fulfil the request of the user to import data it should generate an error message like the following:
 
 ```
-b'{"error":"The following values of redcap_event_name are invalid: v1_arm_1_arm_1"}'
+{"error":"The following values of redcap_event_name are invalid: v1_arm_1_arm_1"}
 ```
 
 Data producing the error: 
 
 ```
-[{"record_id": "TNT-RECORD-17-025", "redcap_event_name": "v1_arm_1_arm_1", "first_name": "TNT-RECORD-17-025", "last_name": "TNT-RECORD-17-025"}, {"record_id": "TNT-RECORD-17-019", "redcap_event_name": "v1_arm_1_arm_1", "first_name": "TNT-RECORD-17-019", "last_name": "TNT-RECORD-17-019"}, {"record_id": "TNT-RECORD-17-020", "redcap_event_name": "v1_arm_1_arm_1", "first_name": "TNT-RECORD-17-020", "last_name": "TNT-RECORD-17-020"}, {"record_id": "TNT-RECORD-17-021", "redcap_event_name": "v1_arm_1_arm_1", "first_name": "TNT-RECORD-17-021", "last_name": "TNT-RECORD-17-021"}, {"record_id": "TNT-RECORD-17-022", "redcap_event_name": "v1_arm_1_arm_1", "first_name": "TNT-RECORD-17-022", "last_name": "TNT-RECORD-17-022"}, {"record_id": "TNT-RECORD-17-023", "redcap_event_name": "v1_arm_1_arm_1", "first_name": "TNT-RECORD-17-023", "last_name": "TNT-RECORD-17-023"}, {"record_id": "TNT-RECORD-17-024", "redcap_event_name": "v1_arm_1_arm_1", "first_name": "TNT-RECORD-17-024", "last_name": "TNT-RECORD-17-024"}, {"record_id": "TNT-RECORD-17-026", "redcap_event_name": "v1_arm_1_arm_1", "first_name": "TNT-RECORD-17-026", "last_name": "TNT-RECORD-17-026"}]
+[
+    {"record_id": "TNT-RECORD-17-025", "redcap_event_name": "v1_arm_1_arm_1", "first_name": "TNT-RECORD-17-025", "last_name": "TNT-RECORD-17-025"}, 
+    {"record_id": "TNT-RECORD-17-019", "redcap_event_name": "v1_arm_1_arm_1", "first_name": "TNT-RECORD-17-019", "last_name": "TNT-RECORD-17-019"}, 
+    {"record_id": "TNT-RECORD-17-020", "redcap_event_name": "v1_arm_1_arm_1", "first_name": "TNT-RECORD-17-020", "last_name": "TNT-RECORD-17-020"}, 
+    {"record_id": "TNT-RECORD-17-021", "redcap_event_name": "v1_arm_1_arm_1", "first_name": "TNT-RECORD-17-021", "last_name": "TNT-RECORD-17-021"}, 
+    {"record_id": "TNT-RECORD-17-022", "redcap_event_name": "v1_arm_1_arm_1", "first_name": "TNT-RECORD-17-022", "last_name": "TNT-RECORD-17-022"}, 
+    {"record_id": "TNT-RECORD-17-023", "redcap_event_name": "v1_arm_1_arm_1", "first_name": "TNT-RECORD-17-023", "last_name": "TNT-RECORD-17-023"}, 
+    {"record_id": "TNT-RECORD-17-024", "redcap_event_name": "v1_arm_1_arm_1", "first_name": "TNT-RECORD-17-024", "last_name": "TNT-RECORD-17-024"}, 
+    {"record_id": "TNT-RECORD-17-026", "redcap_event_name": "v1_arm_1_arm_1", "first_name": "TNT-RECORD-17-026", "last_name": "TNT-RECORD-17-026"}
+]
 ```
 
 

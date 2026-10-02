@@ -558,6 +558,87 @@ func TestRecordHistory(t *testing.T) {
 	}
 }
 
+// TestRecordHistoryNewestFirst covers the order=newest read direction
+// (REQ-API-137): reversed entries, a backwards cursor walk covering the same
+// set, filters applied within the page, and rejection of other values.
+func TestRecordHistoryNewestFirst(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	entry := e.mustUser("entry@example.org")
+	projectID := e.mustProject("Reverse Study")
+	armID := e.mustArm(projectID, 1)
+	e.mustEvent(projectID, armID, "Visit 1", "v1_arm_1")
+	e.mustRecord(projectID, "R1")
+
+	e.insertHistory(projectID, entry, "R1", "create", "intake", "v1_arm_1",
+		[]map[string]any{{"field": "age", "old": nil, "new": "42"}})
+	e.insertHistory(projectID, entry, "R1", "update", "scores", "v1_arm_1",
+		[]map[string]any{{"field": "score", "old": "1", "new": "2"}})
+	e.insertHistory(projectID, entry, "R1", "delete", "intake", "v1_arm_1",
+		[]map[string]any{{"field": "age", "old": "42", "new": nil}})
+
+	var page struct {
+		Entries    []historyEntry `json:"entries"`
+		NextCursor *string        `json:"next_cursor"`
+	}
+	rec := e.do("GET", e.historyPath(projectID, "R1")+"?order=newest", nil, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("order=newest: got %d %s", rec.Code, rec.Body.String())
+	}
+	e.decode(rec, &page)
+	if len(page.Entries) != 3 || page.NextCursor != nil {
+		t.Fatalf("order=newest entries: %s", rec.Body.String())
+	}
+	want := []string{"delete", "update", "create"}
+	for i, en := range page.Entries {
+		if en.Action != want[i] {
+			t.Fatalf("entry %d: got %s, want %s", i, en.Action, want[i])
+		}
+	}
+
+	// The explicit default and the absent parameter agree (REQ-API-137).
+	rec = e.do("GET", e.historyPath(projectID, "R1")+"?order=chrono", nil, admin)
+	e.decode(rec, &page)
+	if len(page.Entries) != 3 || page.Entries[0].Action != "create" {
+		t.Fatalf("order=chrono: %s", rec.Body.String())
+	}
+
+	// The backwards cursor walk covers the same set in reverse.
+	var actions []string
+	cursor := ""
+	for i := 0; i < 10; i++ {
+		path := e.historyPath(projectID, "R1") + "?limit=1&order=newest"
+		if cursor != "" {
+			path += "&cursor=" + cursor
+		}
+		rec = e.do("GET", path, nil, admin)
+		e.decode(rec, &page)
+		for _, en := range page.Entries {
+			actions = append(actions, en.Action)
+		}
+		if page.NextCursor == nil {
+			break
+		}
+		cursor = *page.NextCursor
+	}
+	if len(actions) != 3 || actions[0] != "delete" || actions[2] != "create" {
+		t.Fatalf("newest-first cursor walk: %v", actions)
+	}
+
+	// Filters keep applying within the reversed page (REQ-API-080).
+	rec = e.do("GET", e.historyPath(projectID, "R1")+"?order=newest&instrument=intake", nil, admin)
+	e.decode(rec, &page)
+	if len(page.Entries) != 2 || page.Entries[0].Action != "delete" {
+		t.Fatalf("newest-first instrument filter: %s", rec.Body.String())
+	}
+
+	// Any other value is a client error.
+	rec = e.do("GET", e.historyPath(projectID, "R1")+"?order=sideways", nil, admin)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad order: got %d, want 400", rec.Code)
+	}
+}
+
 // TestRecordHistoryVisibility covers the record-scoped gates: DAG visibility
 // (REQ-AUTH-045) and per-arm read access (GD-2).
 func TestRecordHistoryVisibility(t *testing.T) {

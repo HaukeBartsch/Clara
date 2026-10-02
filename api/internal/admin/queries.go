@@ -514,9 +514,12 @@ type historyDetails struct {
 	Fields     []historyField `json:"fields"`
 }
 
-// recordHistory returns the record's data-change history from the audit trail
-// in chronological order: every create/update/delete entry with the acting
-// user, the action, and per changed field the old → new values (REQ-API-079).
+// recordHistory returns the record's data-change history from the audit trail:
+// every create/update/delete entry with the acting user, the action, and per
+// changed field the old → new values (REQ-API-079). order=chrono (default)
+// serves entries oldest-first; order=newest reverses both the ORDER BY and the
+// cursor so a client deriving current values walks backwards from the newest
+// change (REQ-API-137, DEV-API-23) — same handler, same disclosure either way.
 // Requires data access ≥ read_only on the record's arm (GD-2), project
 // visibility (REQ-API-007) and record visibility under the DAG rule
 // (REQ-AUTH-045). Filters instrument, event and field apply within the
@@ -540,6 +543,12 @@ func (h *Handler) recordHistory(w http.ResponseWriter, r *http.Request) {
 		errBadRequest(w, "record id is required")
 		return
 	}
+	order := r.URL.Query().Get("order")
+	if order != "" && order != "chrono" && order != "newest" {
+		errBadRequest(w, "order must be chrono or newest")
+		return
+	}
+	newest := order == "newest"
 	p, err := h.Store.GetProject(ctx, projectID)
 	if err != nil {
 		errInternal(w)
@@ -608,8 +617,15 @@ func (h *Handler) recordHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	args := []any{projectID, recordID,
 		audit.RecordCreated, audit.RecordUpdated, audit.RecordDeleted}
+	dir := "ASC"
+	pageOp := ">"
+	if newest { // REQ-API-137 — the same walk from the newest change backwards
+		dir = "DESC"
+		pageOp = "<"
+	}
 	if c := ParseCursor(r); c != nil {
-		conds = append(conds, "(ae.created_at > ? OR (ae.created_at = ? AND ae.id > ?))")
+		conds = append(conds, fmt.Sprintf(
+			"(ae.created_at %s ? OR (ae.created_at = ? AND ae.id %s ?))", pageOp, pageOp))
 		args = append(args, c.CreatedAt, c.CreatedAt, c.ID)
 	}
 
@@ -617,7 +633,7 @@ func (h *Handler) recordHistory(w http.ResponseWriter, r *http.Request) {
 		`SELECT ae.id, ae.created_at, ae.user_id, u.display_name, ae.details
 		 FROM audit_events ae LEFT JOIN users u ON u.id = ae.user_id
 		 WHERE `+joinConditions(conds)+`
-		 ORDER BY ae.created_at ASC, ae.id ASC LIMIT ?`,
+		 ORDER BY ae.created_at `+dir+`, ae.id `+dir+` LIMIT ?`,
 		append(args, limit)...)
 	if err != nil {
 		errInternal(w)
