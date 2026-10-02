@@ -36,6 +36,32 @@ type Problem struct {
 	Problem ProblemKind
 }
 
+// Resource caps for every expression grammar (security finding F5). A
+// data-API request body may be 32 MiB, and the parsers are recursive descent:
+// without a cap, deeply nested parentheses overflow the Go stack — a fatal
+// runtime error that recover cannot catch, taking the whole process down.
+// Source length is checked before tokenizing; nesting depth is tracked by
+// nestGuard at every recursive production. Admin-entered branching and
+// calculation expressions share the parser and the same caps.
+const (
+	maxExprLen   = 4096 // runes of expression source text
+	maxExprDepth = 64   // nested parentheses, groups and unary operators
+)
+
+// nestGuard is embedded by the three recursive-descent parsers; enter/leave
+// wrap each recursive production so sibling constructs do not inflate depth.
+type nestGuard struct{ depth int }
+
+func (g *nestGuard) enter() error {
+	g.depth++
+	if g.depth > maxExprDepth {
+		return fmt.Errorf("expression nests deeper than %d levels", maxExprDepth)
+	}
+	return nil
+}
+
+func (g *nestGuard) leave() { g.depth-- }
+
 // --- tokenizer (shared by both grammars) ---
 
 type tokKind int
@@ -68,9 +94,12 @@ type token struct {
 // the minimum normative filterLogic form callers like Fiona send. The calc
 // grammar keeps the event-qualified [event][field] shape of §6.1.
 func tokenize(s string, bareRefs bool) ([]token, error) {
+	runes := []rune(s)
+	if len(runes) > maxExprLen { // security finding F5 — reject before parsing
+		return nil, fmt.Errorf("expression exceeds the maximum of %d characters", maxExprLen)
+	}
 	var toks []token
 	i := 0
-	runes := []rune(s)
 	for i < len(runes) {
 		c := runes[i]
 		switch {
@@ -274,6 +303,7 @@ func (e *calcEval) problem(operand string, kind ProblemKind) {
 
 // calcParser is a recursive-descent parser over the §6.1 grammar.
 type calcParser struct {
+	nestGuard
 	toks []token
 	pos  int
 	refs []Ref
@@ -350,6 +380,10 @@ func (p *calcParser) parseFactor() (calcNode, error) {
 	case tokOp:
 		if t.text == "-" { // unary minus
 			p.advance()
+			if err := p.enter(); err != nil { // security finding F5
+				return nil, err
+			}
+			defer p.leave()
 			inner, err := p.parseFactor()
 			if err != nil {
 				return nil, err
@@ -359,6 +393,10 @@ func (p *calcParser) parseFactor() (calcNode, error) {
 		return nil, fmt.Errorf("unexpected operator %q", t.text)
 	case tokLParen:
 		p.advance()
+		if err := p.enter(); err != nil { // security finding F5
+			return nil, err
+		}
+		defer p.leave()
 		inner, err := p.parseSum()
 		if err != nil {
 			return nil, err
@@ -443,6 +481,7 @@ func ValidateBranching(expr string, resolve func(Ref) bool) error {
 }
 
 type branchParser struct {
+	nestGuard
 	toks    []token
 	pos     int
 	resolve func(Ref) bool
@@ -544,6 +583,10 @@ func (p *branchParser) parseOperand() error {
 		return nil
 	case tokLParen:
 		p.advance()
+		if err := p.enter(); err != nil { // security finding F5
+			return err
+		}
+		defer p.leave()
 		if err := p.parseOr(); err != nil {
 			return err
 		}
@@ -629,24 +672,50 @@ type LogicEval struct {
 // EvalLogic evaluates a branching/filterLogic expression against one
 // record's values and reports whether it holds (the single normative
 // semantics of §7.3 — filterLogic, REQ-API-025, uses the same evaluator).
+// Callers that evaluate the same expression for many records compile it once
+// with CompileLogic instead.
 func EvalLogic(expr string, ev LogicEval) (bool, error) {
-	toks, err := tokenize(expr, true) // same grammar as ValidateBranching
+	prog, err := CompileLogic(expr)
 	if err != nil {
 		return false, err
 	}
+	return prog.Eval(ev), nil
+}
+
+// LogicProgram is a branching/filterLogic expression parsed once and
+// evaluated per record. Compiling up front turns the export's filter check
+// from one parse per record into one parse per request (security finding F5)
+// and surfaces a malformed expression as a client error before any output
+// starts (REQ-API-025).
+type LogicProgram struct {
+	root logicNode
+}
+
+// CompileLogic parses a branching/filterLogic expression (the §3.6.3 grammar
+// shared with ValidateBranching, bare [field] references included) into an
+// evaluable program. Length and nesting are capped by tokenize and the
+// parser's nestGuard (security finding F5).
+func CompileLogic(expr string) (*LogicProgram, error) {
+	toks, err := tokenize(expr, true) // same grammar as ValidateBranching
+	if err != nil {
+		return nil, err
+	}
 	if len(toks) == 1 && toks[0].kind == tokEOF {
-		return false, fmt.Errorf("empty expression")
+		return nil, fmt.Errorf("empty expression")
 	}
 	p := &logicParser{toks: toks}
 	root, err := p.parseOr()
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	if p.cur().kind != tokEOF {
-		return false, fmt.Errorf("unexpected token after expression: %q", p.cur().text)
+		return nil, fmt.Errorf("unexpected token after expression: %q", p.cur().text)
 	}
-	return root.eval(ev) == 1, nil
+	return &LogicProgram{root: root}, nil
 }
+
+// Eval reports whether the compiled expression holds for one record's values.
+func (c *LogicProgram) Eval(ev LogicEval) bool { return c.root.eval(ev) == 1 }
 
 // logicNode evaluates to 1 or 0 (the §7.3 logical values).
 type logicNode interface{ eval(ev LogicEval) float64 }
@@ -883,6 +952,7 @@ func (n logicFunc) eval(ev LogicEval) float64 {
 }
 
 type logicParser struct {
+	nestGuard
 	toks []token
 	pos  int
 }
@@ -930,6 +1000,10 @@ func (p *logicParser) parseComparison() (logicNode, error) {
 	switch p.cur().kind {
 	case tokLParen:
 		p.advance()
+		if err := p.enter(); err != nil { // security finding F5
+			return nil, err
+		}
+		defer p.leave()
 		n, err := p.parseOr()
 		if err != nil {
 			return nil, err

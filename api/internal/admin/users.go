@@ -117,6 +117,10 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 
 	var hash sql.NullString
 	if body.Password != nil && *body.Password != "" {
+		if msg := passwordPolicyError(*body.Password); msg != "" {
+			errBadRequest(w, msg) // security finding F12 — no policy-free back door
+			return
+		}
 		bh, err := bcrypt.GenerateFromPassword([]byte(*body.Password), bcrypt.DefaultCost)
 		if err != nil {
 			errInternal(w)
@@ -276,6 +280,10 @@ func (h *Handler) updateUser(w http.ResponseWriter, r *http.Request) {
 			writePw = true // clears the hash
 			writesPassword = sql.NullString{}
 		} else {
+			if msg := passwordPolicyError(pw); msg != "" {
+				errBadRequest(w, msg) // security finding F12 — no policy-free back door
+				return
+			}
 			bh, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
 			if err != nil {
 				errInternal(w)

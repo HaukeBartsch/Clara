@@ -262,16 +262,17 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 
 	// filterLogic: a malformed expression is a client error, caught before
 	// any output starts (REQ-API-025; grammar of Data_Validation_Design.md §7).
+	// Compiled once here — the per-record check runs the parsed program
+	// instead of re-tokenizing and re-parsing for every record (security
+	// finding F5).
 	evaluate := func(_ recordValues) bool { return true }
 	if s.FilterLogic != "" {
-		if err := validate.ValidateBranching(s.FilterLogic, nil); err != nil {
+		prog, err := validate.CompileLogic(s.FilterLogic)
+		if err != nil {
 			s.fail(w, http.StatusBadRequest, "Invalid request")
 			return
 		}
-		evaluate = func(rv recordValues) bool {
-			ok, _ := validate.EvalLogic(s.FilterLogic, rv.eval(d))
-			return ok
-		}
+		evaluate = func(rv recordValues) bool { return prog.Eval(rv.eval(d)) }
 	}
 
 	labelValues := strings.EqualFold(s.RawOrLabel, "label")

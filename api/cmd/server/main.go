@@ -20,6 +20,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"csms/api/internal/admin"
 	"csms/api/internal/audit"
 	"csms/api/internal/config"
 	"csms/api/internal/db"
@@ -84,6 +85,15 @@ func run() error {
 		Addr:              cfg.APIAddr,
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
+		// Security finding F16: bound the whole exchange, not just headers —
+		// a slow request body (up to the 32 MiB import cap) or a stalled
+		// reader must not hold a connection open indefinitely. ReadTimeout
+		// is generous enough for a full import on a slow uplink;
+		// WriteTimeout stays generous for large exports.
+		ReadTimeout:    5 * time.Minute,
+		WriteTimeout:   10 * time.Minute,
+		IdleTimeout:    2 * time.Minute,
+		MaxHeaderBytes: 1 << 20,
 	}
 
 	errCh := make(chan error, 1)
@@ -119,6 +129,13 @@ func run() error {
 func bootstrapAdmin(ctx context.Context, store *db.Store, cfg *config.Config) error {
 	if cfg.AdminBootstrapEmail == "" || cfg.AdminBootstrapPassword == "" {
 		return nil
+	}
+	// The password policy applies to the configured bootstrap password too
+	// (security finding F12): fail fast at startup rather than minting an
+	// admin account on a guessable credential — or surfacing bcrypt's 72-byte
+	// limit as a hash failure.
+	if err := admin.ValidatePasswordPolicy(cfg.AdminBootstrapPassword); err != nil {
+		return fmt.Errorf("ADMIN_BOOTSTRAP_PASSWORD: %w", err)
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(cfg.AdminBootstrapPassword), bcrypt.DefaultCost)
 	if err != nil {

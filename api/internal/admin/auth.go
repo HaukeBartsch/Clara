@@ -223,13 +223,17 @@ func (h *Handler) isBootstrapEmail(email string) bool {
 // credential race (Authentication_Authorization_Design.md §2.9). It runs
 // Sequence C steps 0–1 only — the bcrypt hash check and the account-active
 // rule — and answers ok / bad_password / account_disabled / account_expired.
-// No last_login_at or auth_source write, no audit event, no user object:
-// that is what makes it safe to fire alongside the LDAP binds of a race,
-// with login remaining the single place side effects happen (REQ-AUTH-065).
+// No last_login_at or auth_source write and no user object: that is what
+// makes it safe to fire alongside the LDAP binds of a race, with login
+// remaining the single place login side effects happen (REQ-AUTH-065).
 // An unknown account and a wrong password are not distinguished (§2.6).
-// The brute-force check (Sequence E) runs in PHP before dispatch; the API's
-// shared IP limiter already covers this path. The password is never logged
-// (REQ-AUTH-036). For an account a second factor still guards the ok answer also
+// The brute-force rule (Sequence E) is enforced here, not delegated to PHP
+// (security finding F1): a locked address is rejected before any credential
+// probing, every failed attempt counts toward the shared lockout, and each
+// rejection writes the login_failure entry the guessing trail needs — the
+// same budget login spends, so splitting the flow across the two endpoints
+// cannot double it. The password is never logged (REQ-AUTH-036).
+// For an account a second factor still guards the ok answer also
 // carries a first-factor handle — the proof the challenge's second login call
 // presents in place of the password, so no layer has to hold one (REQ-API-131).
 func (h *Handler) verifyPassword(w http.ResponseWriter, r *http.Request) {
@@ -247,6 +251,16 @@ func (h *Handler) verifyPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 
+	// Sequence E before any credential probing (security finding F1): the
+	// web login fires this endpoint first, so without the check here an
+	// attacker could guess indefinitely without ever reaching login's lock.
+	if h.lockouts.locked(body.Email, time.Now()) {
+		h.verifyFailure(ctx, body.Email, "rate_limited")
+		APIError(w, http.StatusTooManyRequests, "rate_limited",
+			"too many failed attempts for this address — try again later")
+		return
+	}
+
 	u, err := h.Store.GetUserByEmail(ctx, body.Email)
 	if err != nil {
 		errInternal(w)
@@ -254,6 +268,12 @@ func (h *Handler) verifyPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	if u == nil || !u.PasswordHash.Valid ||
 		bcrypt.CompareHashAndPassword([]byte(u.PasswordHash.String), []byte(body.Password)) != nil {
+		// Count toward the lock and leave the audit trail (security finding
+		// F1); an unknown account counts identically, so neither outcome is
+		// distinguishable (§2.6). A rate_limited rejection never counts —
+		// a locked address must not extend its own lockout (REQ-AUTH-035).
+		h.lockouts.failure(body.Email, time.Now())
+		h.verifyFailure(ctx, body.Email, "bad_password")
 		APIError(w, http.StatusUnauthorized, "bad_password", "invalid email or password")
 		return
 	}
@@ -290,6 +310,21 @@ func (h *Handler) verifyPassword(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// verifyFailure writes the login_failure entry for a rejected
+// verify-password attempt (security finding F1): the guessing trail lives in
+// the audit log, so the verify leg of the race can no longer be hammered
+// without a trace. It only audits — the lockout counter is recorded by the
+// caller exactly where the attempt is a credential failure, never for a
+// rate_limited rejection (REQ-AUTH-035). Reason vocabulary per §3.1; never
+// the password (REQ-AUTH-036).
+func (h *Handler) verifyFailure(ctx context.Context, email, reason string) {
+	_ = h.Audit.Insert(ctx, audit.Entry{
+		EventType: audit.LoginFailure, Source: audit.SourceUI,
+		Email:   email,
+		Details: map[string]any{"source": "local", "email": email, "reason": reason},
+	})
 }
 
 // loginFailure writes the login_failure entry (§3.1): source, email and a

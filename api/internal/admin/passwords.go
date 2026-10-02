@@ -6,11 +6,13 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -33,6 +35,38 @@ func (h *Handler) registerPasswords(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/invite/complete", h.inviteComplete)
 	mux.HandleFunc("POST /api/v1/users/{id}/invite", h.inviteUser)
 	mux.HandleFunc("PUT /api/v1/users/me/password", h.changeMyPassword)
+}
+
+// --- password policy (security finding F12) ---
+
+const (
+	passwordMinLen   = 12 // characters
+	passwordMaxBytes = 72 // bcrypt's input limit — beyond it hashing fails with a 500
+)
+
+// passwordPolicyError returns the rejection message when pw violates the
+// policy, "" when it satisfies it. Every point where a password is created
+// applies it: the setup completions, the self-service change, the
+// administrator-set passwords in users.go, and ADMIN_BOOTSTRAP_PASSWORD at
+// startup (via ValidatePasswordPolicy). Stored hashes are never re-checked —
+// a legacy account keeps working until its next change.
+func passwordPolicyError(pw string) string {
+	if utf8.RuneCountInString(pw) < passwordMinLen {
+		return fmt.Sprintf("password must be at least %d characters", passwordMinLen)
+	}
+	if len(pw) > passwordMaxBytes {
+		return fmt.Sprintf("password must be at most %d bytes", passwordMaxBytes)
+	}
+	return ""
+}
+
+// ValidatePasswordPolicy is the exported form of the policy check, used by
+// cmd/server to fail fast on a non-compliant ADMIN_BOOTSTRAP_PASSWORD.
+func ValidatePasswordPolicy(pw string) error {
+	if msg := passwordPolicyError(pw); msg != "" {
+		return errors.New(msg)
+	}
+	return nil
 }
 
 // --- shared token mechanics (Authentication_Authorization_Design.md §2.8) ---
@@ -100,6 +134,13 @@ func (h *Handler) completeSetup(w http.ResponseWriter, r *http.Request, purpose,
 	}
 	if !validSetupToken(stored, purpose, hex.EncodeToString(sum[:]), time.Now().UTC()) {
 		invalidSetupToken(w)
+		return
+	}
+	// The policy is checked only once the token has proven itself, so a
+	// probing request keeps answering the one indistinguishable rejection
+	// (REQ-API-120/121) instead of leaking whether the password is short.
+	if msg := passwordPolicyError(body.Password); msg != "" {
+		errBadRequest(w, msg)
 		return
 	}
 
@@ -370,6 +411,10 @@ func (h *Handler) changeMyPassword(w http.ResponseWriter, r *http.Request) {
 	if bcrypt.CompareHashAndPassword([]byte(current.PasswordHash.String), []byte(body.CurrentPassword)) != nil {
 		h.loginFailure(ctx, fakeBody, "bad_password") // audited + counted toward the lockout
 		APIError(w, http.StatusUnauthorized, "bad_password", "the current password is not correct")
+		return
+	}
+	if msg := passwordPolicyError(body.NewPassword); msg != "" {
+		errBadRequest(w, msg) // the proof stood; only the new password is rejected
 		return
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(body.NewPassword), bcrypt.DefaultCost)

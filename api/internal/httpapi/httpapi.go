@@ -98,9 +98,14 @@ func (w *statusWriter) Flush() {
 // system settings, read per request, and an over-budget IP is blocked for the
 // configured period. The data API applies the same limiter inside its handler,
 // where the requested error format is known (§3.9).
+//
+// The authentication endpoints ignore the opt-in flag and are always limited
+// (security finding F1): a default-off setting must not leave login,
+// verify-password and the password-reset flow open to unlimited guessing.
 func rateLimit(store *db.Store, cfg *config.Config, l *dataapi.RateLimiter, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if enabled, lim := dataapi.RateLimitSettings(r.Context(), store); enabled {
+		enabled, lim := dataapi.RateLimitSettings(r.Context(), store)
+		if enabled || strings.HasPrefix(r.URL.Path, "/api/v1/auth/") {
 			ok, retryAfter := l.Allow(dataapi.SourceIP(cfg, r), lim, time.Now())
 			if !ok {
 				dataapi.SetRetryAfter(w, retryAfter)

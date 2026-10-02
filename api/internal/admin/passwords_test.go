@@ -192,7 +192,7 @@ func TestInviteReissueKillsOldLink(t *testing.T) {
 		t.Errorf("old invite link = %d, want 401 after re-invite", rec.Code)
 	}
 	rec = e.do(http.MethodPost, "/api/v1/auth/invite/complete",
-		map[string]string{"token": newToken, "password": "***"}, nil)
+		map[string]string{"token": newToken, "password": "a-brand-new-pw"}, nil)
 	if rec.Code != http.StatusOK {
 		t.Errorf("new invite link = %d %s, want 200", rec.Code, rec.Body.String())
 	}
@@ -325,11 +325,11 @@ func TestResetCompletionInvalidatesOtherTokens(t *testing.T) {
 	resetToken := tokenOf()
 
 	rec := e.do(http.MethodPost, "/api/v1/auth/password-reset/complete",
-		map[string]string{"token": resetToken, "password": "brand-new"}, nil)
+		map[string]string{"token": resetToken, "password": "a-brand-new-pw"}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("reset complete = %d %s, want 200", rec.Code, rec.Body.String())
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(e.passwordHash(member.ID)), []byte("brand-new")); err != nil {
+	if err := bcrypt.CompareHashAndPassword([]byte(e.passwordHash(member.ID)), []byte("a-brand-new-pw")); err != nil {
 		t.Errorf("new password not stored: %v", err)
 	}
 	rec = e.do(http.MethodPost, "/api/v1/auth/invite/complete",
@@ -413,5 +413,95 @@ func TestLoginLockoutSequenceE(t *testing.T) {
 	}
 	if types := e.auditTypes(); !hasAudit(types, "login_failure") {
 		t.Errorf("audit = %v, want login_failure rows", types)
+	}
+}
+
+// --- password policy (security finding F12) ---
+
+func TestPasswordPolicyOnSetupCompletion(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	target := e.mustUser("invited@example.org")
+	tokenOf := e.captureMail()
+	e.do(http.MethodPost, "/api/v1/users/"+itoa(target.ID)+"/invite", nil, admin)
+	token := tokenOf()
+
+	// Too short: a clear 400 — and the token survives for one more try.
+	rec := e.do(http.MethodPost, "/api/v1/auth/invite/complete",
+		map[string]string{"token": token, "password": "short"}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("short password = %d %s, want 400", rec.Code, rec.Body.String())
+	}
+	// Too long (bcrypt would fail with a 500 beyond 72 bytes): also a 400.
+	rec = e.do(http.MethodPost, "/api/v1/auth/invite/complete",
+		map[string]string{"token": token, "password": strings.Repeat("x", 73)}, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("long password = %d %s, want 400", rec.Code, rec.Body.String())
+	}
+	// A policy-compliant choice still completes.
+	rec = e.do(http.MethodPost, "/api/v1/auth/invite/complete",
+		map[string]string{"token": token, "password": "a-good-long-password"}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("compliant password = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+
+	// An invalid token is still the one indistinguishable rejection — the
+	// policy check must not become an oracle for token validity.
+	rec = e.do(http.MethodPost, "/api/v1/auth/invite/complete",
+		map[string]string{"token": strings.Repeat("a", 64), "password": "short"}, nil)
+	if rec.Code != http.StatusUnauthorized || decodeError(t, rec) != "invalid_setup_token" {
+		t.Errorf("invalid token + short password = %d %s, want 401 invalid_setup_token",
+			rec.Code, rec.Body.String())
+	}
+}
+
+func TestPasswordPolicyOnSelfServiceChange(t *testing.T) {
+	e := newEnv(t)
+	member := e.mustLocalUser("member@example.org", "old-password-long")
+	path := "/api/v1/users/me/password"
+
+	// Wrong current password keeps its answer even with a short new one.
+	rec := e.do(http.MethodPut, path,
+		map[string]string{"current_password": "wrong", "new_password": "short"}, member)
+	if rec.Code != http.StatusUnauthorized || decodeError(t, rec) != "bad_password" {
+		t.Fatalf("wrong current = %d %s, want 401 bad_password", rec.Code, rec.Body.String())
+	}
+
+	// Right proof, non-compliant new password: 400 and the hash stands.
+	rec = e.do(http.MethodPut, path,
+		map[string]string{"current_password": "old-password-long", "new_password": "short"}, member)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("short new password = %d %s, want 400", rec.Code, rec.Body.String())
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(e.passwordHash(member.ID)), []byte("old-password-long")); err != nil {
+		t.Errorf("rejected change must leave the stored hash intact: %v", err)
+	}
+
+	// Compliant new password succeeds.
+	rec = e.do(http.MethodPut, path,
+		map[string]string{"current_password": "old-password-long", "new_password": "a-good-long-password"}, member)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("compliant change = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+}
+
+// TestValidatePasswordPolicy pins the exported rule cmd/server applies to
+// ADMIN_BOOTSTRAP_PASSWORD at startup.
+func TestValidatePasswordPolicy(t *testing.T) {
+	if err := ValidatePasswordPolicy("twelve-char!"); err != nil {
+		t.Errorf("12-char password rejected: %v", err)
+	}
+	if err := ValidatePasswordPolicy(strings.Repeat("x", 72)); err != nil {
+		t.Errorf("72-byte password rejected: %v", err)
+	}
+	if err := ValidatePasswordPolicy(strings.Repeat("x", 73)); err == nil {
+		t.Error("73-byte password accepted")
+	}
+	if err := ValidatePasswordPolicy("eleven-ch"); err == nil {
+		t.Error("11-char password accepted")
+	}
+	// Length counts characters, not bytes.
+	if err := ValidatePasswordPolicy("fünf-wörters"); err != nil { // 12 runes / 14 bytes
+		t.Errorf("multi-byte password rejected: %v", err)
 	}
 }

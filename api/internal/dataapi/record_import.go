@@ -206,6 +206,16 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 		if !ok || importMetaKeys[f.FieldName] {
 			continue
 		}
+		// A row writes its named instrument and the record identifier —
+		// never fields of other instruments (security finding F3). The survey
+		// link's (record, form) pin must mean "this instrument only", or an
+		// anonymous respondent could overwrite clinician data elsewhere in
+		// the record; for project tokens, form_name means what it says.
+		if f.Instrument != formName && f.FieldName != d.identifier {
+			problems = append(problems, f.FieldName+": CONTENT_INVALID — field '"+f.FieldName+
+				"' belongs to instrument '"+f.Instrument+"', not '"+formName+"'")
+			continue
+		}
 		vf := validate.Field{
 			Name:           f.FieldName,
 			Type:           f.FieldType,
@@ -256,6 +266,21 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 	entity, err := h.Store.GetRecordEntityTx(ctx, tx, sub.Project.ID, recordID)
 	if err != nil {
 		return importRow{}, err
+	}
+	// Data-access-group scope (security finding F4): a holder with an active
+	// group may only write records of that group — the same visibility rule
+	// export and delete apply. An existing record never changes its group on
+	// import (REQ-API-093), so a foreign record is a row-level failure; a new
+	// record joins the holder's group below. A survey link has no group and
+	// stays pinned to its own record by the check in the preamble.
+	if entity != nil {
+		groupID, err := h.activeGroupID(ctx, sub)
+		if err != nil {
+			return importRow{}, err
+		}
+		if groupID != nil && (!entity.DagGroupID.Valid || entity.DagGroupID.Int64 != *groupID) {
+			return fail("record_id: PERMISSION_DENIED — the record belongs to another data access group")
+		}
 	}
 	existed := len(oldValues) > 0 || entity != nil
 	rv := valuesIndex(oldValues)

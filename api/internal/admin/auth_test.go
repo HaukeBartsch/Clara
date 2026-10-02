@@ -352,7 +352,9 @@ func TestVerifyPasswordOK(t *testing.T) {
 }
 
 // TestVerifyPasswordBadCredentials: a wrong password and an unknown account
-// answer identically with 401 bad_password (§2.6 step 2), no audit event.
+// answer identically with 401 bad_password (§2.6 step 2). Rejections are no
+// longer silent — each one leaves a login_failure entry (security finding F1),
+// identically for both cases so the answer stays indistinguishable.
 func TestVerifyPasswordBadCredentials(t *testing.T) {
 	e := newEnv(t)
 	mustLocalUser(t, e, "user@example.org", "hunter2")
@@ -370,8 +372,14 @@ func TestVerifyPasswordBadCredentials(t *testing.T) {
 			t.Errorf("%s: error = %q, want bad_password (not distinguishable)", email, eb.Error)
 		}
 	}
-	if types := e.auditTypes(); len(types) != 0 {
-		t.Errorf("audit types = %v, want none", types)
+	types := e.auditTypes()
+	if len(types) != 2 {
+		t.Fatalf("audit types = %v, want one login_failure per rejection", types)
+	}
+	for _, ty := range types {
+		if ty != "login_failure" {
+			t.Errorf("audit type = %q, want login_failure", ty)
+		}
 	}
 }
 
@@ -493,5 +501,48 @@ func TestLoginRaceFailureAudited(t *testing.T) {
 	}
 	if got := lastAuditDetails(t, e, "login_failure")["reason"]; got != "bad_credentials" {
 		t.Errorf("reason = %v, want bad_credentials", got)
+	}
+}
+
+// TestVerifyPasswordLockoutAndAudit (security finding F1): failed
+// verify-password attempts count toward the shared Sequence E lockout and
+// leave the login_failure trail — the endpoint can no longer be hammered to
+// guess passwords without either consequence. The same budget covers login,
+// so splitting the flow across the two endpoints does not double it.
+func TestVerifyPasswordLockoutAndAudit(t *testing.T) {
+	e := newEnv(t)
+	mustLocalUser(t, e, "user@example.org", "hunter2")
+
+	for i := 0; i < lockoutThreshold; i++ {
+		rec := e.do("POST", "/api/v1/auth/verify-password", map[string]any{
+			"email": "user@example.org", "password": "wrong",
+		}, nil)
+		if rec.Code != http.StatusUnauthorized || decodeError(t, rec) != "bad_password" {
+			t.Fatalf("attempt %d = %d %s, want 401 bad_password", i+1, rec.Code, rec.Body.String())
+		}
+	}
+
+	// Locked: even the correct credential is rejected before any probing.
+	rec := e.do("POST", "/api/v1/auth/verify-password", map[string]any{
+		"email": "user@example.org", "password": "hunter2",
+	}, nil)
+	if rec.Code != http.StatusTooManyRequests || decodeError(t, rec) != "rate_limited" {
+		t.Errorf("locked verify = %d %s, want 429 rate_limited", rec.Code, rec.Body.String())
+	}
+
+	// The same lock guards login for the address.
+	rec = e.do("POST", "/api/v1/auth/login", map[string]any{
+		"email": "user@example.org", "source": "local", "password": "hunter2",
+	}, nil)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Errorf("locked login = %d, want 429", rec.Code)
+	}
+
+	types := e.auditTypes()
+	if !hasType(types, "login_failure") {
+		t.Errorf("audit = %v, want the guessing trail as login_failure", types)
+	}
+	if hasType(types, "login_success") {
+		t.Error("unexpected login_success for rejected attempts")
 	}
 }

@@ -39,7 +39,7 @@ func TestCreateAndReEnableUser(t *testing.T) {
 
 	rec := e.do("POST", "/api/v1/users", map[string]any{
 		"email": "new@example.org", "display_name": "New User",
-		"valid_days": 90, "password": "s3cret",
+		"valid_days": 90, "password": "a-long-enough-pw",
 	}, admin)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
@@ -140,7 +140,7 @@ func TestUpdateUser(t *testing.T) {
 	}
 
 	// Password set then cleared; the trail says password_changed only.
-	rec = e.do("PUT", "/api/v1/users/"+itoa(target.ID), map[string]any{"password": "hunter2"}, admin)
+	rec = e.do("PUT", "/api/v1/users/"+itoa(target.ID), map[string]any{"password": "hunter2-set-now"}, admin)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("set password: %d", rec.Code)
 	}

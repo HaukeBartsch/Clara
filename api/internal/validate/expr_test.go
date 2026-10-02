@@ -195,3 +195,66 @@ func TestEvalCalcLongChain(t *testing.T) {
 		t.Fatalf("long chain = %q %+v %v", got, problems, err)
 	}
 }
+
+// TestExpressionDepthLimit covers security finding F5: deeply nested
+// parentheses and unary operators must surface as a parse error — never as a
+// stack overflow, which would take the whole process down. All three grammars
+// share the cap.
+func TestExpressionDepthLimit(t *testing.T) {
+	deep := strings.Repeat("(", maxExprDepth+1) + "1" + strings.Repeat(")", maxExprDepth+1)
+	if _, err := ParseCalcExpression(deep); err == nil {
+		t.Error("calc: deeply nested expression accepted, want depth error")
+	}
+	if err := ValidateBranching(strings.ReplaceAll(deep, "1", "[a]"), nil); err == nil {
+		t.Error("branching: deeply nested expression accepted, want depth error")
+	}
+	if _, err := EvalLogic(strings.ReplaceAll(deep, "1", "[a]"), LogicEval{}); err == nil {
+		t.Error("logic: deeply nested expression accepted, want depth error")
+	}
+	// Unary minus nests the calc parser too.
+	if _, err := ParseCalcExpression(strings.Repeat("-", maxExprDepth+1) + "1"); err == nil {
+		t.Error("calc: unary-minus chain accepted, want depth error")
+	}
+	// Within the cap, nesting still parses.
+	ok := strings.Repeat("(", 40) + "[e][x]" + strings.Repeat(")", 40)
+	if _, err := ParseCalcExpression(ok); err != nil {
+		t.Errorf("nested expression within the cap rejected: %v", err)
+	}
+}
+
+// TestExpressionLengthLimit covers security finding F5's other half: a huge
+// expression is rejected by the tokenizer before any parsing starts.
+func TestExpressionLengthLimit(t *testing.T) {
+	long := strings.Repeat("1+ ", maxExprLen) + "1"
+	if _, err := ParseCalcExpression(long); err == nil {
+		t.Error("calc: oversized expression accepted, want length error")
+	}
+	if err := ValidateBranching(strings.Repeat("[a]||", maxExprLen)+"[a]", nil); err == nil {
+		t.Error("branching: oversized expression accepted, want length error")
+	}
+	if _, err := EvalLogic(strings.Repeat("[a]||", maxExprLen)+"[a]", LogicEval{}); err == nil {
+		t.Error("logic: oversized expression accepted, want length error")
+	}
+}
+
+// TestCompileLogic covers the compile-once program used by the export's
+// filterLogic path (security finding F5): a malformed expression fails to
+// compile; a compiled program evaluates per record without re-parsing.
+func TestCompileLogic(t *testing.T) {
+	if _, err := CompileLogic("[a] ="); err == nil {
+		t.Fatal("malformed expression compiled without error")
+	}
+	prog, err := CompileLogic(`[age] >= "18" && [status] = "2"`)
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	ev := func(vals map[string]string) LogicEval {
+		return LogicEval{Value: func(r Ref) string { return vals[r.Field] }}
+	}
+	if !prog.Eval(ev(map[string]string{"age": "21", "status": "2"})) {
+		t.Error("matching record rejected")
+	}
+	if prog.Eval(ev(map[string]string{"age": "17", "status": "2"})) {
+		t.Error("non-matching record accepted")
+	}
+}

@@ -842,6 +842,97 @@ func TestRecordDAGScope(t *testing.T) {
 	if !re.DagGroupID.Valid || re.DagGroupID.Int64 != groupID {
 		t.Errorf("new record group = %+v, want %d", re.DagGroupID, groupID)
 	}
+
+	// The holder may still update their own group's record.
+	res := f.importRows(t, importForm("tok-edit", map[string]string{
+		"record_id": "8DISC001", "form_name": "demo", "event_name": "baseline_arm_1", "age": "43",
+	}))
+	if res[0].ImportRecordID != importUpdated {
+		t.Fatalf("own-group update = %v, want 2", res)
+	}
+
+	// A record of another group is a row-level failure and stays untouched —
+	// export and delete apply the same scope (security finding F4).
+	groupB, err := f.s.CreateDAGGroup(ctx, &db.DagGroup{ProjectID: f.pid, Name: "site-b"})
+	if err != nil {
+		t.Fatalf("CreateDAGGroup b: %v", err)
+	}
+	tx, err = f.s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.CreateRecordEntityTx(ctx, tx, &db.RecordEntity{ProjectID: f.pid, RecordID: "8DISC002"}); err != nil {
+		t.Fatalf("CreateRecordEntityTx 8DISC002: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.SetRecordDAG(ctx, f.pid, "8DISC002", sql.NullInt64{Int64: groupB, Valid: true}); err != nil {
+		t.Fatalf("SetRecordDAG 8DISC002: %v", err)
+	}
+	res = f.importRows(t, importForm("tok-edit", map[string]string{
+		"record_id": "8DISC002", "form_name": "demo", "event_name": "baseline_arm_1", "age": "99",
+	}))
+	if res[0].ImportRecordID != importInvalid {
+		t.Fatalf("foreign-group import = %v, want a row-level failure", res)
+	}
+	if got := storedValue(t, f, "8DISC002", "baseline_arm_1", "age"); got != "30" {
+		t.Errorf("foreign record age = %q, want the untouched 30", got)
+	}
+
+	// A record in no group is equally out of a grouped holder's reach — the
+	// same visibility export applies (a record with only values and no
+	// identity row still creates one and joins the holder's group).
+	tx, err = f.s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.s.CreateRecordEntityTx(ctx, tx, &db.RecordEntity{ProjectID: f.pid, RecordID: "8DISC030"}); err != nil {
+		t.Fatalf("CreateRecordEntityTx 8DISC030: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	res = f.importRows(t, importForm("tok-edit", map[string]string{
+		"record_id": "8DISC030", "form_name": "demo", "event_name": "baseline_arm_1", "age": "7",
+	}))
+	if res[0].ImportRecordID != importInvalid {
+		t.Fatalf("no-group record import = %v, want a row-level failure", res)
+	}
+}
+
+// TestRecordImportRejectsForeignInstrumentFields covers security finding F3:
+// a row writes its named instrument and the record identifier — fields of
+// other instruments are rejected for every token, so form_name means what it
+// says.
+func TestRecordImportRejectsForeignInstrumentFields(t *testing.T) {
+	f := newRecordFixture(t)
+
+	// "total" belongs to the calc instrument; a row naming demo cannot write it.
+	res := f.importRows(t, importForm("tok-admin", map[string]string{
+		"record_id": "8DISC001", "form_name": "demo", "event_name": "baseline_arm_1",
+		"age": "45", "total": "999",
+	}))
+	if res[0].ImportRecordID != importInvalid {
+		t.Fatalf("cross-form row = %v, want a validation error", res)
+	}
+	for _, want := range []string{"total", "calc", "demo"} {
+		if !strings.Contains(res[0].ImportFormName, want) {
+			t.Errorf("error %q should name %q", res[0].ImportFormName, want)
+		}
+	}
+	// The whole row is rejected — its legitimate field wrote nothing either.
+	if got := storedValue(t, f, "8DISC001", "baseline_arm_1", "age"); got != "42" {
+		t.Errorf("age = %q, want the untouched 42", got)
+	}
+
+	// The record identifier is exempt: a row naming calc may carry it.
+	res = f.importRows(t, importForm("tok-admin", map[string]string{
+		"record_id": "8DISC001", "form_name": "calc", "event_name": "baseline_arm_1",
+	}))
+	if res[0].ImportRecordID == importInvalid {
+		t.Fatalf("identifier on a calc row = %v, want acceptance", res)
+	}
 }
 
 // decodeInto decodes a record-response JSON array (all values are strings

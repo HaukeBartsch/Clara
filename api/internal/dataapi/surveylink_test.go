@@ -352,3 +352,28 @@ func TestSurveyLinkNewRecordHasNoAuthor(t *testing.T) {
 		t.Errorf("dag_group_id = %d, want no group for a survey record", group.Int64)
 	}
 }
+
+// A link row that smuggles a field of another instrument is rejected as a
+// row-level failure (security finding F3): the (record, form) pin means this
+// instrument only, and an anonymous respondent must not reach clinician data
+// elsewhere in the record. The whole row writes nothing.
+func TestSurveyLinkCannotWriteForeignInstrumentFields(t *testing.T) {
+	f, link := surveyLinkFixture(t)
+
+	res := f.importRows(t, importForm(link.Token, map[string]string{
+		"record_id": "8DISC001", "form_name": "demo", "event_name": "baseline_arm_1",
+		"age": "44", "total": "999", // total belongs to the calc instrument
+	}))
+	if len(res) != 1 || res[0].ImportRecordID != importInvalid {
+		t.Fatalf("import result = %v, want a validation-error row", res)
+	}
+	if !strings.Contains(res[0].ImportFormName, "total") {
+		t.Errorf("error = %q, want one naming the foreign field", res[0].ImportFormName)
+	}
+	if got := storedValue(t, f, "8DISC001", "baseline_arm_1", "age"); got != "42" {
+		t.Errorf("age = %q — a rejected row must write nothing, not even its own fields", got)
+	}
+	if e := lastSurveyEntry(t, f); e == nil || e.Details.Status != "failure" {
+		t.Errorf("want a failure survey_submitted entry, got %+v", e)
+	}
+}
