@@ -32,6 +32,9 @@ SERVER_PID=""
 cleanup() {
   if [[ -n "$SERVER_PID" ]] && kill -0 "$SERVER_PID" 2>/dev/null; then
     echo "stopping server $SERVER_PID"
+    # go run does not forward SIGTERM to the compiled binary it spawned —
+    # kill the child first, or an orphaned server keeps holding the port.
+    pkill -P "$SERVER_PID" 2>/dev/null || true
     kill "$SERVER_PID" 2>/dev/null || true
     wait "$SERVER_PID" 2>/dev/null || true
   fi
