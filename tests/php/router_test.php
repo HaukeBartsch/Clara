@@ -5,47 +5,12 @@
 
 declare(strict_types=1);
 
-use Clara\ApiClient;
-use Clara\Auth;
-use Clara\Config;
-use Clara\I18n;
-use Clara\Logger;
-use Clara\Request;
 use Clara\Response;
 use Clara\Router;
 use Clara\Session;
-use Clara\View;
 
-/**
- * The object graph the front controller builds, with the fake transport in place
- * of curl. Every authenticated render also spends one call on the i18n bundle, so
- * queue that response before whatever the page itself reads.
- */
-function router_for(Request $request, ?Config $config = null): Router
-{
-    $config ??= test_config();
-    $logger = new Logger('error', true);
-    $api = new ApiClient($config, $logger, $request, new FakeTransport());
-    $i18n = new I18n($api, $logger, true);
-
-    return new Router($config, $request, $api, $i18n, new View($config, $i18n, $request), new Auth($api, $logger, $config), $logger);
-}
-
-function http_request(string $method, string $path, array $headers = [], array $post = [], array $query = []): Request
-{
-    return new Request($method, $path, $headers, $query, $post);
-}
-
-function browser_headers(): array
-{
-    // What a browser actually sends — the wildcard must not read as JSON.
-    return ['accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'];
-}
-
-function json_headers(): array
-{
-    return ['accept' => 'application/json'];
-}
+// router_for(), http_request(), browser_headers() and json_headers() live in
+// support.php: every suite that drives a dispatch needs the same object graph.
 
 describe('router — guard and dispatch', function (): void {
     it('sends an anonymous visitor to the login page', function (): void {
@@ -239,6 +204,10 @@ describe('login — the local credential path (Sequences F + C)', function (): v
     it('shows one translated line for a wrong password and no session', function (): void {
         $_SESSION = ['csrf_token' => str_repeat('c', 64)];
         api_route('/auth/verify-password', ['error' => 'bad_password', 'message' => 'invalid email or password', 'status' => 401], 401);
+        // A failed race reports itself once, through the login endpoint carrying the
+        // per-source outcomes — that call is what writes the submission's audit row, and
+        // it cannot authenticate whatever it says (REQ-API-135).
+        api_route('/auth/login', ['error' => 'bad_password', 'message' => 'invalid email or password', 'status' => 401], 401);
 
         $response = router_for(http_request(
             'POST', '/login', browser_headers(),
@@ -247,11 +216,19 @@ describe('login — the local credential path (Sequences F + C)', function (): v
 
         assert_true(!Session::isAuthenticated(), 'a rejected credential must not sign anyone in');
         assert_contains('not recognised', $response->body());
+
+        assert_same(1, api_calls_to('/auth/login'), 'exactly one login_failure per submission (§2.9)');
+        $reported = api_request_body('/auth/login');
+        assert_same(['local' => 'bad_password'], $reported['attempts']);
+        assert_true(!array_key_exists('password', $reported), 'the failure report carries no password (REQ-API-135)');
     });
 
     it('names the account state when the account is disabled, not a password failure', function (): void {
         $_SESSION = ['csrf_token' => str_repeat('c', 64)];
         api_route('/auth/verify-password', ['error' => 'account_disabled', 'message' => 'this account is disabled', 'status' => 403], 403);
+        // The account's own state outranks the generic credential line, and the API says
+        // which it is rather than PHP guessing (§2.6 step 4).
+        api_route('/auth/login', ['error' => 'account_disabled', 'message' => 'this account is disabled', 'status' => 403], 403);
 
         $response = router_for(http_request(
             'POST', '/login', browser_headers(),

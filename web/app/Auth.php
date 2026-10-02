@@ -10,10 +10,13 @@
 // declared on the route and evaluated before either shape dispatches, so it
 // cannot be skipped; Auth::guard() below is what the router calls.
 //
-// This pass implements the local (table-based) path only: Sequence F's verify
-// step followed by Sequence C's finalize (Authentication_Authorization_Design.md
-// §2.6/§2.3). The OAuth2 redirect, the LDAP binds and the parallel race of
-// Sequence I are M1's remainder.
+// Three first-factor paths, all finalizing through Sequence C so that login side
+// effects happen in exactly one place (Authentication_Authorization_Design.md §2.3):
+// the local verify of Sequence F, the directory binds of Sequence B — attempted
+// concurrently with it, under the name the user selected, per §2.9 — and the OAuth2
+// authorization-code round trip of Sequence A, which is a browser flow and so never
+// joins the race (REQ-AUTH-066). The second factor then guards whatever the first one
+// answered (§2.7).
 
 declare(strict_types=1);
 
@@ -21,11 +24,22 @@ namespace Clara;
 
 final class Auth
 {
+    private readonly Oauth $oauth;
+
+    private readonly LdapRace $ldap;
+
     public function __construct(
         private readonly ApiClient $api,
         private readonly Logger $logger,
-        private readonly Config $config
-    ) {}
+        private readonly Config $config,
+        ?Oauth $oauth = null,
+        ?LdapRace $ldap = null
+    ) {
+        // Injectable rather than constructed inline so the redirect and the directory
+        // race can be exercised against a fixture (Plan/Web_Implementation.md §8).
+        $this->oauth = $oauth ?? new Oauth($config, $logger);
+        $this->ldap = $ldap ?? new LdapRace($config, $logger);
+    }
 
     /**
      * The router's guard step. Returns a redirect when the request may not
@@ -80,51 +94,189 @@ final class Auth
     }
 
     /**
-     * The local credential path — Sequence F's verify step followed by
-     * Sequence C's finalize. Throws ApiException with the API's code on any
-     * rejection — bad_password, account_disabled, account_expired, rate_limited —
-     * or with a flow state (mfa_required / tfa_enrollment_required) that the
-     * caller must not present as a password failure; by then the pending state is
-     * already recorded, so the panel it renders has what it needs.
+     * Sequence I — the credential race for the name the user selected (§2.9). Every
+     * credential source under that name is attempted concurrently: Sequence F's verify
+     * step in this process, one directory bind per child process. The first attempt to
+     * succeed finalizes through Sequence C alone; when none does, the submission is
+     * reported once — with the per-source outcomes — through a call that cannot
+     * authenticate (REQ-API-135).
      *
-     * Two calls, deliberately: verify-password is side-effect-free, and login is
-     * the only place login side effects happen (§2.6 step 3), which keeps M1's
-     * parallel LDAP attempts from producing a second session or a duplicate
-     * audit success. Verify also returns the first-factor handle the challenge
-     * completes with (REQ-API-131) — the one credential-shaped value PHP is
-     * allowed to hold for five minutes, precisely because it is not one.
+     * Throws ApiException with the API's code on rejection — bad_password,
+     * account_disabled, account_expired, provider_unavailable, rate_limited — or with a
+     * flow state (mfa_required / tfa_enrollment_required) that the caller must not
+     * present as a password failure; by then the pending state is recorded, so the panel
+     * it renders has what it needs.
      *
      * @return array<mixed> the user object the API returned
      */
-    public function loginWithLocalCredentials(string $email, string $password, string $sourceName): array
+    public function loginWithCredentials(string $email, string $password, string $sourceName): array
     {
-        $verify = $this->api->post('/api/v1/auth/verify-password', [
-            'email' => $email,
-            'password' => $password,
-        ]);
+        $sources = $this->sourcesFor($sourceName);
 
-        $state = (string) ($verify['status'] ?? '');
-        if ($state !== '' && $state !== 'ok') {
-            // verify-password answers ok / bad_password / account_disabled /
-            // account_expired without the envelope shape; map it onto one so the
-            // caller has a single code path.
-            throw new ApiException($state, '', 401);
+        if (!$sources['local'] && $sources['ldap'] === []) {
+            // Nothing under this name verifies a password: it is an OAuth2-only name. The
+            // page offers that provider instead — accepting a password here would promise
+            // a check nobody is able to perform (§2.2, REQ-AUTH-066).
+            throw new ApiException('provider_unavailable', 'no credential source under this name', 503);
         }
 
-        $body = ['email' => $email, 'source' => 'local', 'password' => $password];
+        $running = $this->ldap->start($sources['ldap'], $email, $password);
+
+        // The local attempt runs here, in this process, while the directory binds are in
+        // flight: that overlap is what §2.9 asks for and a sequential chain cannot give.
+        // verify-password is side-effect-free, so losing costs nothing — login stays the
+        // only place login side effects happen (§2.6 step 3).
+        $localOutcome = null;
+        $firstFactor = '';
+        if ($sources['local']) {
+            [$localOutcome, $firstFactor] = $this->verifyLocal($email, $password);
+        }
+
+        if ($localOutcome === 'ok') {
+            // First "login ok" wins. The directories still probing are stopped now, so no
+            // later success can produce a second session or a duplicate audit success
+            // (REQ-AUTH-065).
+            $this->ldap->abandon($running);
+
+            return $this->finalize([
+                'email' => $email,
+                'source' => 'local',
+                'provider' => '',
+                'source_name' => $sourceName,
+                // The handle REQ-API-131's challenge completes with — the one
+                // credential-shaped value PHP may hold for five minutes, precisely because
+                // it is not one.
+                'first_factor' => $firstFactor,
+            ], $this->loginBody($email, 'local', $sourceName, [
+                'password' => $password,
+                'first_factor' => $firstFactor,
+            ]));
+        }
+
+        $race = $this->ldap->finish($running);
+        $attempts = $race['outcomes'];
+        if ($localOutcome !== null) {
+            $attempts = ['local' => $localOutcome] + $attempts;
+        }
+
+        if ($race['winner'] !== null) {
+            // The address the directory holds, not the one that was typed: on this path
+            // the directory is the authority on identity (§2.2 step 3, REQ-AUTH-004).
+            $winner = $race['winner'];
+
+            return $this->finalize([
+                'email' => $winner['email'],
+                'source' => 'ldap',
+                'provider' => $winner['provider'],
+                'source_name' => $sourceName,
+                'first_factor' => '',
+            ], $this->loginBody($winner['email'], 'ldap', $sourceName, [
+                'provider' => $winner['provider'],
+            ]));
+        }
+
+        throw $this->reportFailedRace($email, $sourceName, $sources, $attempts);
+    }
+
+    /**
+     * Sequence F's verify step, expressed the way the race needs it: an outcome word for
+     * the attempts map, plus the first-factor handle when a second factor guards the
+     * account. It never throws — one source failing must not end the race (§2.9).
+     *
+     * @return array{0: string, 1: string}
+     */
+    private function verifyLocal(string $email, string $password): array
+    {
+        try {
+            $verify = $this->api->post('/api/v1/auth/verify-password', [
+                'email' => $email,
+                'password' => $password,
+            ]);
+        } catch (ApiException $e) {
+            return [self::localOutcome($e->code()), ''];
+        }
+
+        // verify-password answers ok / bad_password / account_disabled / account_expired
+        // without the error-envelope shape; anything else means the API did not answer as
+        // itself, which is an outage on this source rather than a credential result.
+        $state = (string) ($verify['status'] ?? 'ok');
+
+        return [$state === '' ? 'ok' : $state, (string) ($verify['first_factor'] ?? '')];
+    }
+
+    /** What a local attempt's API answer means in the race's `attempts` map (§2.6). */
+    private static function localOutcome(string $code): string
+    {
+        return match ($code) {
+            'ok' => 'ok',
+            // Unknown account and wrong password are one outcome, as everywhere else in
+            // login: telling them apart is an enumeration oracle (REQ-AUTH-050).
+            'bad_password', 'account_not_found' => 'bad_password',
+            'account_disabled' => 'account_disabled',
+            'account_expired' => 'account_expired',
+            default => 'unreachable',
+        };
+    }
+
+    /**
+     * One login body, carrying exactly the attributes Sequence C defines (§2.3) and none
+     * that are empty — the same discipline every other write keeps, since the API answers
+     * 400 on attributes outside its whitelist.
+     *
+     * @param array<string, string> $extra
+     * @return array<string, scalar>
+     */
+    private function loginBody(string $email, string $source, string $sourceName, array $extra): array
+    {
+        $body = ['email' => $email, 'source' => $source];
+
         if ($sourceName !== '') {
-            // Recorded in the login audit details; never affects authorization
-            // or identity resolution (REQ-AUTH-067).
+            // Recorded in the login audit details; never affects authorization or
+            // identity resolution (REQ-AUTH-067).
             $body['source_name'] = $sourceName;
         }
 
-        return $this->finalize([
-            'email' => $email,
-            'source' => 'local',
-            'provider' => '',
-            'source_name' => $sourceName,
-            'first_factor' => (string) ($verify['first_factor'] ?? ''),
-        ], $body);
+        foreach ($extra as $key => $value) {
+            if ($value !== '') {
+                $body[$key] = $value;
+            }
+        }
+
+        return $body;
+    }
+
+    /**
+     * The submission's single `login_failure` (§2.9 "All failed"). PHP holds no database
+     * access to write it (REQ-TECH-006), so the API records it — through the login
+     * endpoint, with the per-source outcomes attached and a contract that makes such a
+     * call unable to authenticate (REQ-API-135). That contract is what makes this safe
+     * for `source: "ldap"`, whose word the API otherwise takes at face value.
+     *
+     * @param array{local: bool, ldap: list<array<string, int|string>>} $sources
+     * @param array<string, string>                                      $attempts
+     */
+    private function reportFailedRace(string $email, string $sourceName, array $sources, array $attempts): ApiException
+    {
+        $body = $this->loginBody($email, $sources['local'] ? 'local' : 'ldap', $sourceName, []);
+        if (!$sources['local'] && $sources['ldap'] !== []) {
+            $body['provider'] = 'ldap-' . $sources['ldap'][0]['index'];
+        }
+        $body['attempts'] = $attempts;
+
+        try {
+            $this->api->post('/api/v1/auth/login', $body);
+        } catch (ApiException $e) {
+            // The API's answer is the line the page shows: a credential failure, or the
+            // outage when nothing could be reached, or the account's own state — which
+            // outranks both (§2.6 step 4).
+            return $e;
+        }
+
+        // Unreachable while REQ-API-135 holds. Should that contract ever break, no session
+        // is established from the answer either way.
+        $this->logger->error('login authenticated an attempts-bearing failure report');
+
+        return new ApiException('internal', '', 500);
     }
 
     /**
@@ -335,6 +487,115 @@ final class Auth
         usort($names, static fn (array $a, array $b): int => strcmp($a['name'], $b['name']));
 
         return $names;
+    }
+
+    /**
+     * Which sources a selected name selects (REQ-AUTH-063/064): the local kind, and the
+     * OAuth2 providers and LDAP servers whose name list contains it. Credentials entered
+     * for a name never go to a source registered under another (§2.9).
+     *
+     * Two conveniences from REQ-AUTH-067 apply here rather than in the page:
+     *
+     *   * with exactly one distinct name configured, no picker is shown and that name
+     *     applies implicitly — so an empty selection resolves to it;
+     *   * a source carrying no name belongs to the implicit default set, selected when no
+     *     name is in play. It also answers under a single-name installation, where this
+     *     source was never given the chance to carry that name and would otherwise be
+     *     unreachable through a picker that does not exist.
+     *
+     * @return array{local: bool, oauth2: list<array<string, string|int>>, ldap: list<array<string, string|int>>}
+     */
+    public function sourcesFor(string $selectedName): array
+    {
+        $distinct = array_column($this->sourceNames(), 'name');
+        $name = trim($selectedName);
+        $implicit = false;
+
+        if ($name === '' && count($distinct) === 1) {
+            $name = $distinct[0];
+            $implicit = true;
+        }
+
+        $selects = static function (array $namesOfSource) use ($name, $implicit): bool {
+            if ($namesOfSource === []) {
+                return $name === '' || $implicit;
+            }
+
+            return in_array($name, $namesOfSource, true);
+        };
+
+        return [
+            'local' => $selects($this->config->localNames),
+            'oauth2' => array_values(array_filter(
+                $this->config->oauthProviders,
+                static fn (array $provider): bool => $selects($provider['names'])
+            )),
+            'ldap' => array_values(array_filter(
+                $this->config->ldapServers,
+                static fn (array $server): bool => $selects($server['names'])
+            )),
+        ];
+    }
+
+    /**
+     * Whether an email+password form makes sense for this name at all (§2.2). A name
+     * whose only sources are OAuth2 offers providers, and the page says so plainly
+     * rather than accepting a password it cannot verify.
+     */
+    public function offersCredentialForm(string $selectedName): bool
+    {
+        $sources = $this->sourcesFor($selectedName);
+
+        return $sources['local'] || $sources['ldap'] !== [];
+    }
+
+    /**
+     * The OAuth2 providers this name offers. One of them continues directly into its
+     * authorization-code flow; several are offered for individual selection
+     * (REQ-AUTH-066), and none of them joins the credential race.
+     *
+     * @return list<array<string, string|int>>
+     */
+    public function oauthProvidersFor(string $selectedName): array
+    {
+        return $this->sourcesFor($selectedName)['oauth2'];
+    }
+
+    /** Sequence A step 1: the URL that starts this provider's own login. */
+    public function beginOauthRedirect(array $provider, string $sourceName): string
+    {
+        return $this->oauth->begin($provider, $sourceName);
+    }
+
+    /** The provider a stored callback transaction belongs to (null if it was removed). */
+    public function oauthProvider(int $index): ?array
+    {
+        return $this->oauth->provider($index);
+    }
+
+    /**
+     * Sequence A steps 3–6: verify the callback, resolve the identity the provider
+     * vouches for, and finalize through Sequence C with `source:"oauth2"`. The OAuth2
+     * path is never challenged by the second factor — the identity provider owns its own
+     * (DEV-AUTH-10) — so no pending state can arise here.
+     *
+     * @return array{user: array<mixed>, source_name: string}
+     */
+    public function completeOauthLogin(string $code, string $state): array
+    {
+        $identity = $this->oauth->complete($code, $state);
+
+        $user = $this->finalize([
+            'email' => $identity['email'],
+            'source' => 'oauth2',
+            'provider' => $identity['provider'],
+            'source_name' => $identity['source_name'],
+            'first_factor' => '',
+        ], $this->loginBody($identity['email'], 'oauth2', $identity['source_name'], [
+            'provider' => $identity['provider'],
+        ]));
+
+        return ['user' => $user, 'source_name' => $identity['source_name']];
     }
 
     /** @return list<array{kind: string, name: string}> */

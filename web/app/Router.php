@@ -36,6 +36,18 @@ final class Router
             'handler' => 'index', 'guard' => 'public'],
         ['method' => 'POST', 'pattern' => '/login', 'controller' => Controllers\LoginController::class,
             'handler' => 'credentials', 'guard' => 'public', 'action' => 'credentials'],
+        // The source-name picker and the OAuth2 hand-off live on the same route as the
+        // credential form (§2.1): choosing a name re-renders the panel for it, and a
+        // provider button leaves for the IdP (Sequence A, REQ-AUTH-066).
+        ['method' => 'POST', 'pattern' => '/login', 'controller' => Controllers\LoginController::class,
+            'handler' => 'chooseSource', 'guard' => 'public', 'action' => 'source'],
+        ['method' => 'POST', 'pattern' => '/login', 'controller' => Controllers\LoginController::class,
+            'handler' => 'authorize', 'guard' => 'public', 'action' => 'oauth'],
+        // The provider's redirect back. Public by necessity — it is how a first-time
+        // browser arrives with no session — and the only thing it can do is verify `state`
+        // against the transaction this browser started (§2.1 step 3).
+        ['method' => 'GET', 'pattern' => '/auth/callback', 'controller' => Controllers\LoginController::class,
+            'handler' => 'callback', 'guard' => 'public'],
         // The two-factor panel and the enrollment wizard live on the same route
         // (§2.1: "login incl. source-name picker and the two-factor step"), so
         // the pre-auth `tfa_pending` state reaches exactly these handlers and

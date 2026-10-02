@@ -7,9 +7,11 @@
 // (Sequence I, §2.9). With no names configured anywhere, or exactly one distinct
 // name, the source picker is skipped and that name applies implicitly
 // (REQ-UI-042, REQ-AUTH-067); a local-only installation is precisely that case.
-// The OAuth2 redirect (Sequence A) and the LDAP race (Sequence B) are M1's
-// remainder; where a selected name has only those sources behind it, the page
-// says so plainly rather than accepting a password it cannot verify.
+// The OAuth2 redirect (Sequence A) and the directory race (Sequence B) are wired here:
+// what the selected name offers decides what shows below the picker — the credential form
+// when a local source or a directory stands behind it, one "Sign in with …" button per
+// provider that needs a browser round trip (REQ-AUTH-066). A name whose sources are all
+// OAuth2 says so plainly rather than accepting a password it cannot verify.
 //
 // While `tfa_pending` stands nothing else is reachable (§2.7): this controller
 // owns both panels, and every other route's guard rejects the state. The panel a
@@ -35,22 +37,105 @@ final class LoginController extends Controller
             return Response::redirect('/');
         }
 
+        // A name whose only source is a single OAuth2 provider continues directly into
+        // that provider's flow — there is nothing here left to ask first (§2.2,
+        // REQ-AUTH-066). Mid-challenge or mid-enrollment, the panel wins: the user is
+        // partway through something else.
+        if (!Session::hasPendingSecondFactor()) {
+            $name = $this->selectedName();
+            $providers = $this->auth->oauthProvidersFor($name);
+
+            if (count($providers) === 1 && !$this->auth->offersCredentialForm($name)) {
+                return Response::redirect($this->auth->beginOauthRedirect($providers[0], $name));
+            }
+        }
+
         return $this->renderPanel();
     }
 
-    /** POST /login?action=credentials — the local credential attempt. */
+    /**
+     * POST /login?action=source — the source-name picker (§2.2). The selection is stored
+     * before any credential exchange (§2.9) and the page re-renders for it; what the name
+     * offers changes, which is the whole point of choosing.
+     */
+    public function chooseSource(): Response
+    {
+        Session::selectSourceName(trim($this->request->field('source')));
+
+        // A redirect rather than a render: the browser's own reload then repeats this
+        // POST, and the page it lands on is a GET of the login panel.
+        return Response::redirect('/login' . ($this->safeNext() === '/' ? '' : '?next=' . rawurlencode($this->safeNext())));
+    }
+
+    /**
+     * POST /login?action=oauth — "Sign in with `<provider>`" (§2.2). Sequence A step 1:
+     * state and PKCE verifier go into the session, the browser goes to the provider.
+     */
+    public function authorize(): Response
+    {
+        $providers = $this->auth->oauthProvidersFor($this->selectedName());
+        $wanted = (int) $this->request->field('provider');
+
+        foreach ($providers as $provider) {
+            if ((int) $provider['index'] === $wanted) {
+                return Response::redirect($this->auth->beginOauthRedirect($provider, $this->selectedName()));
+            }
+        }
+
+        // A provider the selected name does not offer is not offered — including the case
+        // where a hand-made request names one under another name (§2.9).
+        return $this->renderCredentials('', $this->i18n->t('login.failure.provider_unavailable'));
+    }
+
+    /**
+     * GET /auth/callback — the provider's redirect back (Sequence A steps 3–7). Any
+     * failure returns the user to the login page with one translated line; nothing about
+     * the provider's response is shown (§2.1, REQ-API-006).
+     */
+    public function callback(): Response
+    {
+        // The error the provider reports (access_denied and friends) is its own words and
+        // never a reason to log anybody in: one line, back to the form.
+        if ($this->request->query('error') !== '') {
+            $this->logger->info('oauth provider reported an error', [
+                'error' => substr($this->request->query('error'), 0, 64),
+            ]);
+
+            return $this->renderCredentials('', $this->i18n->t('login.failure.state_mismatch'));
+        }
+
+        try {
+            $signedIn = $this->auth->completeOauthLogin(
+                $this->request->query('code'),
+                $this->request->query('state')
+            );
+        } catch (ApiException $e) {
+            return $this->afterAttempt($e, '');
+        }
+
+        Session::establish($signedIn['user'], $signedIn['source_name']);
+
+        return Response::redirect($this->safeNext());
+    }
+
+    /**
+     * POST /login?action=credentials — the credential race for the selected name: local
+     * verify and every directory under that name, concurrently, first success wins
+     * (§2.9). A name with no credential source under it never reaches this path: the page
+     * offers its providers instead (§2.2).
+     */
     public function credentials(): Response
     {
         $email = trim($this->request->field('email'));
         $password = $this->request->field('password');
-        $sourceName = $this->request->field('source');
+        $sourceName = $this->selectedName();
 
         if ($email === '' || $password === '') {
             return $this->renderCredentials($email, $this->i18n->t('login.failure.credentials'));
         }
 
         try {
-            $user = $this->auth->loginWithLocalCredentials($email, $password, $sourceName);
+            $user = $this->auth->loginWithCredentials($email, $password, $sourceName);
         } catch (ApiException $e) {
             return $this->afterAttempt($e, $email);
         }
@@ -256,6 +341,7 @@ final class LoginController extends Controller
     private function renderCredentials(string $email = '', string $error = ''): Response
     {
         $names = $this->auth->sourceNames();
+        $selected = $this->selectedName();
 
         // A rejected credential re-renders the page with one translated line
         // (§3.3): the status stays 200 so the form is usable, and the reason is
@@ -266,8 +352,43 @@ final class LoginController extends Controller
             'error' => $error,
             // The picker appears only when there is a real choice to make.
             'sources' => count($names) > 1 ? $names : [],
+            'selected' => $selected,
+            // What the selected name can verify: the credential form when a local source
+            // or a directory stands behind it (REQ-AUTH-065), and one button per provider
+            // whose login needs a browser round trip (REQ-AUTH-066).
+            'offersForm' => $this->auth->offersCredentialForm($selected),
+            // Named on its button by the issuer's host: no variable carries a display
+            // name for a provider itself — the names in configuration are the source
+            // names it may answer to, which several sources can share (§2.9).
+            'providers' => array_map(
+                static fn (array $provider): array => [
+                    'index' => (int) $provider['index'],
+                    'label' => (string) (parse_url((string) $provider['issuer'], PHP_URL_HOST) ?: $provider['issuer']),
+                ],
+                $this->auth->oauthProvidersFor($selected)
+            ),
             'next' => $this->safeNext(),
-        ], ['titleKey' => 'login.title']);
+        ], [
+            'titleKey' => 'login.title',
+            // Changing the selection re-renders the page for it (§2.2) — a submit on
+            // change, which is all this section's module does (REQ-UI-045).
+            'scripts' => ['/assets/js/login.js'],
+        ]);
+    }
+
+    /**
+     * The source name in play: what this request selected, or what the session remembers.
+     * §2.9 stores the selection before any credential exchange, so a re-render and the
+     * credential POST that follows both act on the name the user chose.
+     */
+    private function selectedName(): string
+    {
+        $posted = trim($this->request->field('source'));
+        if ($posted === '') {
+            $posted = trim($this->request->query('source'));
+        }
+
+        return $posted !== '' ? $posted : Session::selectedSourceName();
     }
 
     /**

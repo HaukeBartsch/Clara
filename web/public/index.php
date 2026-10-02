@@ -15,8 +15,10 @@ use Clara\ApiClient;
 use Clara\Auth;
 use Clara\Config;
 use Clara\ConfigError;
+use Clara\CurlTransport;
 use Clara\I18n;
 use Clara\Logger;
+use Clara\Oauth;
 use Clara\Request;
 use Clara\Response;
 use Clara\Router;
@@ -58,10 +60,14 @@ Session::start($config);
 $i18n = null;
 
 try {
-    $api = new ApiClient($config, $logger, $request);
+    // One transport for the process's outbound HTTP: the API client and the identity
+    // providers an OAuth2 login talks to share it, so a deployment that needs a
+    // different transport changes it in one place (and a test can replace both).
+    $transport = new CurlTransport();
+    $api = new ApiClient($config, $logger, $request, $transport);
     $i18n = new I18n($api, $logger, $config->isDevelopment);
     $view = new View($config, $i18n, $request);
-    $auth = new Auth($api, $logger, $config);
+    $auth = new Auth($api, $logger, $config, new Oauth($config, $logger, $transport));
 
     $router = new Router($config, $request, $api, $i18n, $view, $auth, $logger);
     $response = $router->dispatch();

@@ -10,8 +10,16 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../../web/app/bootstrap.php';
 
+use Clara\Auth;
+use Clara\ApiClient;
 use Clara\Config;
+use Clara\I18n;
+use Clara\Logger;
+use Clara\Oauth;
+use Clara\Request;
+use Clara\Router;
 use Clara\Transport;
+use Clara\View;
 
 final class TestFailure extends RuntimeException {}
 
@@ -238,4 +246,63 @@ function api_request_body(string $fragment): array
     }
 
     return [];
+}
+
+/** The body sent to the first call to one endpoint, undecoded (form encodings). */
+function api_request_raw(string $fragment): string
+{
+    foreach ($GLOBALS['api_calls'] as $call) {
+        if (str_contains($call['url'], $fragment)) {
+            return (string) $call['body'];
+        }
+    }
+
+    return '';
+}
+
+// --- the object graph and the requests that go through it ----------------------
+
+/**
+ * The object graph the front controller builds, with the fake transport in place of
+ * curl. Every authenticated render also spends one call on the i18n bundle, so queue
+ * that response before whatever the page itself reads.
+ *
+ * `auth` substitutes the authentication collaborators — a directory race, an identity
+ * provider — while everything else stays the real thing.
+ */
+function router_for(Request $request, ?Config $config = null, ?Auth $auth = null): Router
+{
+    $config ??= test_config();
+    $logger = new Logger('error', true);
+    $transport = new FakeTransport();
+    $api = new ApiClient($config, $logger, $request, $transport);
+    $i18n = new I18n($api, $logger, true);
+
+    return new Router(
+        $config,
+        $request,
+        $api,
+        $i18n,
+        new View($config, $i18n, $request),
+        // The same transport answers the API and any identity provider, exactly as the
+        // front controller shares one between them.
+        $auth ?? new Auth($api, $logger, $config, new Oauth($config, $logger, $transport)),
+        $logger
+    );
+}
+
+function http_request(string $method, string $path, array $headers = [], array $post = [], array $query = []): Request
+{
+    return new Request($method, $path, $headers, $query, $post);
+}
+
+function browser_headers(): array
+{
+    // What a browser actually sends — the wildcard must not read as JSON.
+    return ['accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'];
+}
+
+function json_headers(): array
+{
+    return ['accept' => 'application/json'];
 }

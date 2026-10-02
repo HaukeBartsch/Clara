@@ -24,6 +24,9 @@ final class Config
     /** Installed theme identifiers (REQ-TECH-027) — mirrors config.UIThemes in Go. */
     public const THEME_INSTALL_ORDER = ['bootstrap', 'darkly', 'yeti'];
 
+    /** How many indexed OAuth2 providers / LDAP servers the variable set allows (`OAUTH2_1…3`). */
+    private const SOURCE_INDEX_MAX = 3;
+
     public string $appEnv = 'development';
 
     public bool $isDevelopment = true;
@@ -57,6 +60,33 @@ final class Config
      * @var list<array{kind: string, name: string}>
      */
     public array $authSources = [];
+
+    /**
+     * The OAuth2 providers configured for this installation (REQ-CFG-011). PHP
+     * owns the redirect (Authentication_Authorization_Design.md §2.1), so it needs
+     * the client credentials and the claim that names the user; the secret is a
+     * secret — never logged, never rendered (REQ-CFG-021, REQ-AUTH-036).
+     *
+     * @var list<array{index: int, issuer: string, client_id: string, client_secret: string, redirect_uri: string, email_attr: string, names: list<string>}>
+     */
+    public array $oauthProviders = [];
+
+    /**
+     * The LDAP servers configured for this installation (REQ-CFG-012). PHP binds
+     * the directory itself (Sequence B), so it holds the search credentials.
+     *
+     * @var list<array{index: int, url: string, bind_dn: string, bind_password: string, search_base: string, uid_attr: string, email_attr: string, name_attr: string, names: list<string>}>
+     */
+    public array $ldapServers = [];
+
+    /**
+     * Names the one local source answers to (REQ-CFG-032). Empty means it joins
+     * whichever implicit default set applies (REQ-AUTH-067); the local kind exists
+     * at most once because there is one `users` table (GD-18).
+     *
+     * @var list<string>
+     */
+    public array $localNames = [];
 
     private function __construct() {}
 
@@ -186,7 +216,15 @@ final class Config
         }
 
         // --- authentication sources (REQ-CFG-032) ---
-        $c->authSources = self::readAuthSources($get, $errors);
+        $c->authSources = self::readAuthSources($c, $get, $errors);
+
+        // A configured directory is only usable if this PHP can bind one. Naming the
+        // missing extension at startup beats a login page that can never verify anybody
+        // (REQ-CFG-005), and mirrors how CurlTransport reports a missing cURL.
+        if ($c->ldapServers !== [] && !function_exists('ldap_connect')) {
+            $errors[] = 'An LDAP server is configured but the PHP LDAP extension is not loaded — install it'
+                . ' (Debian/Ubuntu: php' . PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION . '-ldap).';
+        }
 
         if ($errors !== []) {
             throw new ConfigError(implode("\n", $errors));
@@ -268,36 +306,86 @@ final class Config
 
     /**
      * Collects the configured authentication sources and their display names
-     * (REQ-CFG-032). Only what the login page needs in order to decide what it can
-     * offer is parsed here — provider details stay with the API.
+     * (REQ-CFG-032), and validates the variable set each kind needs — PHP runs the
+     * OAuth2 redirect and the LDAP binds itself (`Authentication_Authorization_Design.md`
+     * §2.1/§2.2), so a half-configured source has to fail at startup rather than
+     * vanish: `System_Configuration_Design.md` §4.1 makes the client pair required
+     * once an issuer is set and the search base once a directory URL is set.
      *
      * @param callable(string, string=): string $get
-     * @param list<string>                      $errors collected name-list problems
+     * @param list<string>                      $errors collected problems
      * @return list<array{kind: string, name: string}>
      */
-    private static function readAuthSources(callable $get, array &$errors): array
+    private static function readAuthSources(self $c, callable $get, array &$errors): array
     {
-        $sources = [];
+        for ($n = 1; $n <= self::SOURCE_INDEX_MAX; $n++) {
+            $issuer = rtrim($get("OAUTH2_{$n}_ISSUER"), '/');
+            if ($issuer !== '') {
+                if ($get("OAUTH2_{$n}_CLIENT_ID") === '' || $get("OAUTH2_{$n}_CLIENT_SECRET") === '') {
+                    $errors[] = "OAUTH2_{$n}_CLIENT_ID and OAUTH2_{$n}_CLIENT_SECRET are required once "
+                        . "OAUTH2_{$n}_ISSUER is set (REQ-CFG-011)";
+                }
+                if (preg_match('#^https?://[A-Za-z0-9._\-]+#i', $issuer) !== 1) {
+                    $errors[] = "OAUTH2_{$n}_ISSUER must be an absolute http(s) URL, got a value that is not one (REQ-CFG-011)";
+                }
+
+                $c->oauthProviders[] = [
+                    'index' => $n,
+                    'issuer' => $issuer,
+                    'client_id' => $get("OAUTH2_{$n}_CLIENT_ID"),
+                    'client_secret' => $get("OAUTH2_{$n}_CLIENT_SECRET"),
+                    // Unset means the documented default: WEB_PUBLIC_URL + /auth/callback
+                    // (REQ-CFG-011), which Oauth::redirectUri() resolves.
+                    'redirect_uri' => $get("OAUTH2_{$n}_REDIRECT_URI"),
+                    'email_attr' => $get("OAUTH2_{$n}_EMAIL_ATTR", 'email'),
+                    'names' => self::nameList("OAUTH2_{$n}_NAMES", $get("OAUTH2_{$n}_NAMES"), $errors),
+                ];
+            }
+
+            $url = $get("LDAP_SERVER_{$n}_URL");
+            if ($url !== '') {
+                if ($get("LDAP_SERVER_{$n}_SEARCH_BASE") === '') {
+                    $errors[] = "LDAP_SERVER_{$n}_SEARCH_BASE is required once LDAP_SERVER_{$n}_URL is set (REQ-CFG-012)";
+                }
+                if (preg_match('#^ldaps?://[A-Za-z0-9._\-]+#i', $url) !== 1) {
+                    $errors[] = "LDAP_SERVER_{$n}_URL must be an ldap:// or ldaps:// URL, got a value that is not one (REQ-CFG-012)";
+                }
+
+                $c->ldapServers[] = [
+                    'index' => $n,
+                    'url' => $url,
+                    // Empty search credentials mean an anonymous directory search
+                    // (REQ-CFG-012, ASM-AUTH-2); the user's own bind follows.
+                    'bind_dn' => $get("LDAP_SERVER_{$n}_BIND_DN"),
+                    'bind_password' => $get("LDAP_SERVER_{$n}_BIND_PASSWORD"),
+                    'search_base' => $get("LDAP_SERVER_{$n}_SEARCH_BASE"),
+                    'uid_attr' => $get("LDAP_SERVER_{$n}_UID_ATTR", 'uid'),
+                    'email_attr' => $get("LDAP_SERVER_{$n}_EMAIL_ATTR", 'mail'),
+                    'name_attr' => $get("LDAP_SERVER_{$n}_NAME_ATTR", 'cn'),
+                    'names' => self::nameList("LDAP_SERVER_{$n}_NAMES", $get("LDAP_SERVER_{$n}_NAMES"), $errors),
+                ];
+            }
+        }
 
         // The local source exists exactly once (one users table, GD-18) but may
         // carry several names; unset means it joins the implicit default set.
-        foreach (self::nameList('LOCAL_LOGIN_NAMES', $get('LOCAL_LOGIN_NAMES'), $errors) as $name) {
+        $c->localNames = self::nameList('LOCAL_LOGIN_NAMES', $get('LOCAL_LOGIN_NAMES'), $errors);
+
+        // The pairs the login page selects between: one per (source, name), with an
+        // empty name list contributing no pair — which is how a source ends up in the
+        // implicit default set instead (REQ-AUTH-067).
+        $sources = [];
+        foreach ($c->localNames as $name) {
             $sources[] = ['kind' => 'local', 'name' => $name];
         }
-
-        for ($n = 1; $n <= 3; $n++) {
-            // An OAuth2 provider counts when its issuer and client are set.
-            if (rtrim($get("OAUTH2_{$n}_ISSUER"), '/') !== '' && $get("OAUTH2_{$n}_CLIENT_ID") !== '') {
-                foreach (self::nameList("OAUTH2_{$n}_NAMES", $get("OAUTH2_{$n}_NAMES"), $errors) as $name) {
-                    $sources[] = ['kind' => 'oauth2', 'name' => $name];
-                }
+        foreach ($c->oauthProviders as $provider) {
+            foreach ($provider['names'] as $name) {
+                $sources[] = ['kind' => 'oauth2', 'name' => $name];
             }
-
-            // An LDAP server counts when URL and search base are set.
-            if ($get("LDAP_SERVER_{$n}_URL") !== '' && $get("LDAP_SERVER_{$n}_SEARCH_BASE") !== '') {
-                foreach (self::nameList("LDAP_SERVER_{$n}_NAMES", $get("LDAP_SERVER_{$n}_NAMES"), $errors) as $name) {
-                    $sources[] = ['kind' => 'ldap', 'name' => $name];
-                }
+        }
+        foreach ($c->ldapServers as $server) {
+            foreach ($server['names'] as $name) {
+                $sources[] = ['kind' => 'ldap', 'name' => $name];
             }
         }
 
@@ -345,12 +433,20 @@ final class Config
             'SESSION_DIR', 'SESSION_COOKIE_NAME', 'SESSION_LIFETIME', 'SESSION_COOKIE_SECURE',
             'UI_THEME', 'LOCAL_LOGIN_NAMES',
         ];
-        for ($n = 1; $n <= 3; $n++) {
+        for ($n = 1; $n <= self::SOURCE_INDEX_MAX; $n++) {
             $keys[] = "OAUTH2_{$n}_ISSUER";
             $keys[] = "OAUTH2_{$n}_CLIENT_ID";
+            $keys[] = "OAUTH2_{$n}_CLIENT_SECRET";
+            $keys[] = "OAUTH2_{$n}_REDIRECT_URI";
+            $keys[] = "OAUTH2_{$n}_EMAIL_ATTR";
             $keys[] = "OAUTH2_{$n}_NAMES";
             $keys[] = "LDAP_SERVER_{$n}_URL";
+            $keys[] = "LDAP_SERVER_{$n}_BIND_DN";
+            $keys[] = "LDAP_SERVER_{$n}_BIND_PASSWORD";
             $keys[] = "LDAP_SERVER_{$n}_SEARCH_BASE";
+            $keys[] = "LDAP_SERVER_{$n}_UID_ATTR";
+            $keys[] = "LDAP_SERVER_{$n}_EMAIL_ATTR";
+            $keys[] = "LDAP_SERVER_{$n}_NAME_ATTR";
             $keys[] = "LDAP_SERVER_{$n}_NAMES";
         }
 

@@ -14,6 +14,8 @@
 //   _flash        one-shot alert buffer for the redirect-back pattern (§3.4, §3.8)
 //   _i18n_bundle  the translated overlay for the current language, invalidated
 //                 on POST /lang (Plan/Web_Implementation.md §5 sanctions it)
+// A third holds the in-flight OAuth2 round trip (`_oauth_txn`) — the `state` and
+// PKCE verifier Sequence A needs between the two browser hops (§2.1).
 
 declare(strict_types=1);
 
@@ -23,6 +25,9 @@ final class Session
 {
     /** How long a first-factor success stays pending (§2.7: TTL 5 minutes). */
     public const PENDING_SECOND_FACTOR_SECONDS = 300;
+
+    /** How long an OAuth2 round trip may stay unfinished before its state is dropped. */
+    public const OAUTH_TRANSACTION_SECONDS = 600;
 
     private function __construct() {}
 
@@ -173,6 +178,45 @@ final class Session
     }
 
     /**
+     * The in-flight OAuth2 round trip (`_oauth_txn`, not part of §3's auth schema):
+     * the `state` and PKCE verifier Sequence A step 1 remembers, the provider it
+     * belongs to, and the source name the user selected so the login that completes
+     * can carry it (§2.9). Single-use by construction — read it with
+     * takeOauthTransaction(), which removes it — because `state` is what stops a
+     * forged callback being accepted twice (§2.1 step 3).
+     *
+     * @param array{provider_index: int, state: string, code_verifier: string, source_name: string} $txn
+     */
+    public static function beginOauthTransaction(array $txn): void
+    {
+        $_SESSION['_oauth_txn'] = $txn + ['started_at' => time()];
+    }
+
+    /** The pending round trip, or [] when none stands, was already used, or timed out. */
+    public static function takeOauthTransaction(): array
+    {
+        $txn = $_SESSION['_oauth_txn'] ?? null;
+        unset($_SESSION['_oauth_txn']);
+
+        if (!is_array($txn) || !isset($txn['started_at'])) {
+            return [];
+        }
+
+        // A round trip left unfinished is discarded rather than honoured later: the
+        // browser may have come back to this tab hours afterwards.
+        if ((int) $txn['started_at'] + self::OAUTH_TRANSACTION_SECONDS < time()) {
+            return [];
+        }
+
+        return [
+            'provider_index' => (int) ($txn['provider_index'] ?? 0),
+            'state' => (string) ($txn['state'] ?? ''),
+            'code_verifier' => (string) ($txn['code_verifier'] ?? ''),
+            'source_name' => (string) ($txn['source_name'] ?? ''),
+        ];
+    }
+
+    /**
      * Absolute session bound: the normative `issued_at` key plus SESSION_LIFETIME
      * (REQ-AUTH-015). Reading §3's key set literally, issued_at is the only
      * timestamp available, so this is an absolute rather than a sliding window —
@@ -280,6 +324,23 @@ final class Session
     public static function authSource(): string
     {
         return (string) ($_SESSION['auth_source'] ?? '');
+    }
+
+    /**
+     * The authentication-source name in play. §3 lists `auth_source_name` as the
+     * identity key login writes, and §2.9 stores the user's picker selection under the
+     * same key before any credential exchange — so this reads both states, and a signed-in
+     * user's session carries the name they logged in with.
+     */
+    public static function selectedSourceName(): string
+    {
+        return (string) ($_SESSION['auth_source_name'] ?? '');
+    }
+
+    /** Remembers the picker selection so the panels under it re-render for it (§2.2). */
+    public static function selectSourceName(string $name): void
+    {
+        $_SESSION['auth_source_name'] = $name;
     }
 
     /** True when the account has a local credential — the Password link's gate (§2.4). */
