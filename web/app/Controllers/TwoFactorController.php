@@ -171,14 +171,12 @@ final class TwoFactorController extends Controller
      * relay exists, and its 409 is authoritative (REQ-AUTH-057).
      *
      * @param array{method: string, enrolled_at: string, recovery_codes_remaining: int} $status
+     * @param string $panel the enrollment step to re-open; '' is the status view, which is
+     *                      where a failed disable belongs — its form is part of that view
      */
-    private function afterFailure(ApiException $e, array $status, string $step = ''): Response
+    private function afterFailure(ApiException $e, array $status, string $panel = ''): Response
     {
         $this->logger->info('two-factor change rejected', ['code' => $e->code(), 'status' => $e->status()]);
-
-        // The send cap, a delivery failure and a wrong code are all about the attempt the
-        // user was making, so the panel they were made from is where they show.
-        $panel = $step !== '' ? $step : (in_array($e->code(), ['bad_mfa_code', 'code_send_limited', 'smtp_send_failed'], true) ? 'email' : '');
 
         $error = match ($e->code()) {
             'bad_mfa_code' => $this->i18n->t('tfa.failure.code'),
@@ -216,7 +214,7 @@ final class TwoFactorController extends Controller
             'recoveryCodes' => is_array($view['recoveryCodes'] ?? null) ? $view['recoveryCodes'] : [],
             'error' => (string) ($view['error'] ?? ''),
             // The e-mail method is offered unless this very render learned it cannot be.
-            'emailAvailable' => !isset($view['emailUnavailable']),
+            'emailAvailable' => empty($view['emailUnavailable']),
             'sidebarProjects' => $this->visibleProjects(),
         ], [
             'titleKey' => '',

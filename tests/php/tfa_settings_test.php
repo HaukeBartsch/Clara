@@ -164,6 +164,34 @@ describe('two-factor settings (§2.5, REQ-UI-039)', function (): void {
         assert_contains('Two-factor authentication is off.', $flash[0]['text'] ?? '');
     });
 
+    it('keeps the disable form where it belongs when the code is wrong', function (): void {
+        sign_in();
+        queue_shell();
+        api_route('/api/v1/users/me/tfa/disable',
+            ['error' => 'bad_mfa_code', 'message' => 'a current code or recovery code is required', 'status' => 401], 401);
+        queue_tfa_status(['method' => 'totp']);
+
+        $response = tfa_post('disable', ['code' => '000000']);
+
+        assert_contains('wrong or has expired', $response->body());
+        // The status view with its disable form — not an enrollment panel nobody asked for.
+        assert_contains('action=disable', $response->body());
+        assert_not_contains('action=email_confirm', $response->body());
+    });
+
+    it('keeps offering the e-mail method after a failure that was not about delivery', function (): void {
+        sign_in();
+        queue_shell();
+        api_route('/api/v1/users/me/tfa/totp/enroll',
+            ['error' => 'conflict', 'message' => 'two-factor is already enabled — disable it first', 'status' => 409], 409);
+        queue_tfa_status();
+
+        $response = tfa_post('totp_start');
+
+        assert_contains('already enabled', $response->body(), 'a conflict shows the API reason (§3.4)');
+        assert_contains('action=email_start', $response->body());
+    });
+
     it('refuses a mutation with no CSRF token, before any API call (§3.3)', function (): void {
         sign_in();
         queue_tfa_status();
