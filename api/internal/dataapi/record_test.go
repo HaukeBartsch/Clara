@@ -940,3 +940,105 @@ func TestRecordImportRejectsForeignInstrumentFields(t *testing.T) {
 func decodeInto(body string, out any) error {
 	return json.Unmarshal([]byte(body), out)
 }
+
+// TestRecordImportEventNameAlias covers the redcap_event_name spelling of the
+// row's event key (REQ-API-138): the name a caller reads back from an export
+// (REQ-API-028) is accepted on import, an empty value counts as not supplied,
+// and two different events are an ambiguous target rather than a silent pick.
+func TestRecordImportEventNameAlias(t *testing.T) {
+	f := newRecordFixture(t)
+
+	// The alias alone writes the row under that event (1: a new record).
+	res := f.importRows(t, importForm("tok-edit", map[string]string{
+		"record_id": "8DISC030", "form_name": "demo", "redcap_event_name": "followup_arm_1", "age": "44",
+	}))
+	if res[0].ImportRecordID != 1 {
+		t.Fatalf("alias row = %v, want 1", res[0])
+	}
+	if got := storedValue(t, f, "8DISC030", "followup_arm_1", "age"); got != "44" {
+		t.Errorf("alias row stored age = %q under followup_arm_1, want 44", got)
+	}
+
+	// Both spellings agreeing name one row.
+	res = f.importRows(t, importForm("tok-edit", map[string]string{
+		"record_id": "8DISC030", "form_name": "demo",
+		"event_name": "followup_arm_1", "redcap_event_name": "followup_arm_1", "age": "45",
+	}))
+	if res[0].ImportRecordID != 2 {
+		t.Fatalf("agreeing spellings = %v, want 2", res[0])
+	}
+
+	// An empty event_name beside a filled alias still selects the alias:
+	// empty means "not supplied" (the REQ-VAL-024 reading).
+	res = f.importRows(t, importForm("tok-edit", map[string]string{
+		"record_id": "8DISC031", "form_name": "demo",
+		"event_name": "", "redcap_event_name": "baseline_arm_1", "age": "46",
+	}))
+	if res[0].ImportRecordID != 1 {
+		t.Fatalf("empty event_name + alias = %v, want 1", res[0])
+	}
+	if got := storedValue(t, f, "8DISC031", "baseline_arm_1", "age"); got != "46" {
+		t.Errorf("stored age = %q under baseline_arm_1, want 46", got)
+	}
+
+	// Two different events are an ambiguous target: the row is rejected and
+	// neither event receives a value.
+	res = f.importRows(t, importForm("tok-edit", map[string]string{
+		"record_id": "8DISC032", "form_name": "demo",
+		"event_name": "baseline_arm_1", "redcap_event_name": "followup_arm_1", "age": "47",
+	}))
+	if res[0].ImportRecordID != 0 {
+		t.Fatalf("conflicting spellings = %v, want 0", res[0])
+	}
+	if !strings.Contains(res[0].ImportFormName, "conflicts with") {
+		t.Errorf("conflict message = %q, want it to name the conflict", res[0].ImportFormName)
+	}
+	for _, event := range []string{"baseline_arm_1", "followup_arm_1"} {
+		if got := storedValue(t, f, "8DISC032", event, "age"); got != "" {
+			t.Errorf("conflicting row wrote %q to %s", got, event)
+		}
+	}
+
+	// The rejection names the key the caller used — redcap_event_name here —
+	// so the message is about what was sent; the old report named an empty
+	// event for a caller that had sent none.
+	res = f.importRows(t, importForm("tok-edit", map[string]string{
+		"record_id": "8DISC033", "form_name": "demo", "redcap_event_name": "v1_arm_1_arm_1", "age": "48",
+	}))
+	if res[0].ImportRecordID != 0 ||
+		!strings.Contains(res[0].ImportFormName, "redcap_event_name: CONTENT_INVALID — unknown event 'v1_arm_1_arm_1'") {
+		t.Fatalf("unknown alias event = %v", res[0])
+	}
+
+	// event_name keeps its own spelling when it is the key that was used.
+	res = f.importRows(t, importForm("tok-edit", map[string]string{
+		"record_id": "8DISC034", "form_name": "demo", "event_name": "v1_arm_1_arm_1",
+	}))
+	if !strings.Contains(res[0].ImportFormName, "event_name: CONTENT_INVALID — unknown event 'v1_arm_1_arm_1'") {
+		t.Fatalf("unknown event_name = %v", res[0])
+	}
+}
+
+// TestRecordImportErrorDetailOrder fixes the order of a rejected row's detail
+// (REQ-API-139): field problems in data-dictionary order, then the unknown
+// keys in dictionary order — so identical input answers identically and a
+// caller can diff two responses.
+func TestRecordImportErrorDetailOrder(t *testing.T) {
+	f := newRecordFixture(t)
+
+	form := importForm("tok-edit", map[string]string{
+		"record_id": "8DISC040", "form_name": "demo", "event_name": "baseline_arm_1",
+		"status": "9", "age": "not-a-number", "zzz_unknown": "x", "aaa_unknown": "y",
+	})
+	want := `Validation error: age: TYPE_INVALID — value "not-a-number" is not a valid integer; ` +
+		`status: CHOICE_INVALID — value "9" is not a choice of "status"; ` +
+		`aaa_unknown: UNKNOWN_FIELD — unknown field 'aaa_unknown'; ` +
+		`zzz_unknown: UNKNOWN_FIELD — unknown field 'zzz_unknown'`
+	// Repeated because map iteration used to shuffle the unknown-key tail.
+	for i := 0; i < 25; i++ {
+		res := f.importRows(t, form)
+		if res[0].ImportFormName != want {
+			t.Fatalf("pass %d error detail =\n%s\nwant\n%s", i, res[0].ImportFormName, want)
+		}
+	}
+}

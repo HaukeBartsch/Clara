@@ -80,9 +80,12 @@ func parseImportRows(r *http.Request) []map[string]string {
 // importMetaKeys are the row tuple keys (and REDCap repeat columns this
 // implementation stores as instance 1); everything else names a field.
 // record_id is deliberately not here — it doubles as the identifier field
-// and is stored like any other value of the row.
+// and is stored like any other value of the row. redcap_event_name is the
+// accepted alias of event_name (REQ-API-138), listed so it never reaches the
+// unknown-field pass; no project field can carry the name — reserved
+// (Data_Validation_Design.md §9).
 var importMetaKeys = map[string]bool{
-	"form_name": true, "event_name": true,
+	"form_name": true, "event_name": true, "redcap_event_name": true,
 	"redcap_repeat_instrument": true, "redcap_repeat_instance": true,
 }
 
@@ -177,11 +180,33 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 	// Event and arm. Projects without events store under the empty event
 	// name; the data-level check then falls back to any arm (already done
 	// for the call).
-	event := row["event_name"]
+	//
+	//
+	// redcap_event_name is accepted next to event_name where an event exists
+	// at all (REQ-API-138): it is the spelling a caller round-tripping an
+	// export sees (REQ-API-028), so accepting it keeps export → edit → import
+	// one shape. The alias is unambiguous — no project may name a field that
+	// (reserved names, Data_Validation_Design.md §9). An empty value counts as
+	// not supplied (the REQ-VAL-024 reading of empty), so sending both keys
+	// with one filled is how a caller picks either spelling; two *different*
+	// events name an ambiguous target, and taking one silently would put the
+	// row's values in the wrong event. The reported key is the one the caller
+	// used, which keeps the message about what was sent rather than about what
+	// was expected.
+	event, eventKey := row["event_name"], "event_name"
 	if d.hasEvents {
+		if alias := row["redcap_event_name"]; alias != "" {
+			switch {
+			case event == "":
+				event, eventKey = alias, "redcap_event_name"
+			case event != alias:
+				return fail("event_name: CONTENT_INVALID — event_name '" + event +
+					"' conflicts with redcap_event_name '" + alias + "'")
+			}
+		}
 		arm, ok := d.eventArm[event]
 		if !ok {
-			return fail("event_name: CONTENT_INVALID — unknown event '" + event + "'")
+			return fail(eventKey + ": CONTENT_INVALID — unknown event '" + event + "'")
 		}
 		// A survey link carries no arm grant at all: §3.10 admits it for its
 		// own (record, instrument) whatever arm the event belongs to.
@@ -240,13 +265,22 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 		}
 		pendings = append(pendings, pending{field: f, value: raw})
 	}
+	// Unknown keys, in dictionary order (REQ-API-139): map iteration would
+	// shuffle this list between otherwise identical calls, so a caller
+	// diffing two responses — or an audit comparison of two rejected batches —
+	// could not tell whether the data changed.
+	var unknown []string
 	for k := range row {
 		if importMetaKeys[k] {
 			continue
 		}
 		if _, ok := d.byName[k]; !ok {
-			problems = append(problems, k+": "+string(validate.CodeUnknownField)+" — unknown field '"+k+"'")
+			unknown = append(unknown, k)
 		}
+	}
+	sort.Strings(unknown)
+	for _, k := range unknown {
+		problems = append(problems, k+": "+string(validate.CodeUnknownField)+" — unknown field '"+k+"'")
 	}
 	if len(problems) > 0 {
 		return fail(strings.Join(problems, "; "))
