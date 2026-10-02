@@ -1,0 +1,591 @@
+[
+  {
+    "name": "num_eq",
+    "expr": "[e1][age] = 18",
+    "values": {
+      "e1|age": "18"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "num_ne",
+    "expr": "[e1][age] != 18",
+    "values": {
+      "e1|age": "19"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "num_lt_str_values",
+    "expr": "[e1][a] \u003c [e1][b]",
+    "values": {
+      "e1|a": "2",
+      "e1|b": "10"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "num_float",
+    "expr": "[e1][bmi] \u003e= 25.0",
+    "values": {
+      "e1|bmi": "24.99"
+    },
+    "choices": null,
+    "expected": false
+  },
+  {
+    "name": "num_signed_value",
+    "expr": "[e1][delta] \u003c 0",
+    "values": {
+      "e1|delta": "-3"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "num_plus_value_vs_ref",
+    "expr": "[e1][delta] = [e1][other]",
+    "values": {
+      "e1|delta": "+3",
+      "e1|other": "3"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "err_signed_literal",
+    "expr": "[e1][a] = -3",
+    "values": {},
+    "choices": null,
+    "expected": false,
+    "want_err": true
+  },
+  {
+    "name": "num_zero_forms",
+    "expr": "[e1][a] = [e1][b]",
+    "values": {
+      "e1|a": "0.0",
+      "e1|b": "0"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "missing_eq",
+    "expr": "[e1][x] = 5",
+    "values": {},
+    "choices": null,
+    "expected": false
+  },
+  {
+    "name": "missing_ne_is_false",
+    "expr": "[e1][x] != 5",
+    "values": {},
+    "choices": null,
+    "expected": false
+  },
+  {
+    "name": "missing_lt",
+    "expr": "[e1][x] \u003c 5",
+    "values": {},
+    "choices": null,
+    "expected": false
+  },
+  {
+    "name": "both_missing_eq",
+    "expr": "[e1][x] = [e1][y]",
+    "values": {},
+    "choices": null,
+    "expected": false
+  },
+  {
+    "name": "str_eq",
+    "expr": "[e1][site] = \"oslo\"",
+    "values": {
+      "e1|site": "oslo"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "str_ne_case",
+    "expr": "[e1][site] != \"Oslo\"",
+    "values": {
+      "e1|site": "oslo"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "str_lt_lexicographic",
+    "expr": "[e1][a] \u003c [e1][b]",
+    "values": {
+      "e1|a": "abc",
+      "e1|b": "abd"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "str_numeric_vs_text_falls_back",
+    "expr": "[e1][x] = 1",
+    "values": {
+      "e1|x": "abc"
+    },
+    "choices": null,
+    "expected": false
+  },
+  {
+    "name": "str_nonascii_order",
+    "expr": "[e1][a] \u003c [e1][b]",
+    "values": {
+      "e1|a": "é",
+      "e1|b": "f"
+    },
+    "choices": null,
+    "expected": false
+  },
+  {
+    "name": "str_escaped_quote",
+    "expr": "[e1][x] = \"a\\\"b\"",
+    "values": {
+      "e1|x": "a\"b"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "str_escaped_backslash",
+    "expr": "[e1][x] = \"a\\\\b\"",
+    "values": {
+      "e1|x": "a\\b"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "choice_label_eq",
+    "expr": "[e1][sex] = \"Male\"",
+    "values": {
+      "e1|sex": "1"
+    },
+    "choices": {
+      "e1|sex": "1$Male##2$Female"
+    },
+    "expected": true
+  },
+  {
+    "name": "choice_label_ne",
+    "expr": "[e1][sex] != \"Female\"",
+    "values": {
+      "e1|sex": "1"
+    },
+    "choices": {
+      "e1|sex": "1$Male##2$Female"
+    },
+    "expected": true
+  },
+  {
+    "name": "choice_code_used_directly",
+    "expr": "[e1][sex] = \"2\"",
+    "values": {
+      "e1|sex": "2"
+    },
+    "choices": {
+      "e1|sex": "1$Male##2$Female"
+    },
+    "expected": true
+  },
+  {
+    "name": "choice_label_on_left",
+    "expr": "\"Female\" = [e1][sex]",
+    "values": {
+      "e1|sex": "2"
+    },
+    "choices": {
+      "e1|sex": "1$Male##2$Female"
+    },
+    "expected": true
+  },
+  {
+    "name": "choice_label_no_match_passes_through",
+    "expr": "[e1][sex] = \"man\"",
+    "values": {
+      "e1|sex": "1"
+    },
+    "choices": {
+      "e1|sex": "1$Male##2$Female"
+    },
+    "expected": false
+  },
+  {
+    "name": "truthy_radio_selected",
+    "expr": "[e1][chk]",
+    "values": {
+      "e1|chk": "1"
+    },
+    "choices": {
+      "e1|chk": "1$Yes"
+    },
+    "expected": true
+  },
+  {
+    "name": "truthy_radio_zero_code_still_true",
+    "expr": "[e1][chk]",
+    "values": {
+      "e1|chk": "0"
+    },
+    "choices": {
+      "e1|chk": "0$No##1$Yes"
+    },
+    "expected": true
+  },
+  {
+    "name": "truthy_radio_unselected",
+    "expr": "[e1][chk]",
+    "values": {},
+    "choices": {
+      "e1|chk": "1$Yes"
+    },
+    "expected": false
+  },
+  {
+    "name": "truthy_text_nonempty",
+    "expr": "[e1][note]",
+    "values": {
+      "e1|note": "x"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "truthy_numeric_zero",
+    "expr": "[e1][score]",
+    "values": {
+      "e1|score": "0"
+    },
+    "choices": null,
+    "expected": false
+  },
+  {
+    "name": "truthy_numeric_zero_dot_zero",
+    "expr": "[e1][score]",
+    "values": {
+      "e1|score": "0.0"
+    },
+    "choices": null,
+    "expected": false
+  },
+  {
+    "name": "truthy_numeric_nonzero",
+    "expr": "[e1][score]",
+    "values": {
+      "e1|score": "0.5"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "truthy_text_zero_like_word",
+    "expr": "[e1][note]",
+    "values": {
+      "e1|note": "no"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "truthy_num_literal",
+    "expr": "1",
+    "values": {},
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "truthy_num_literal_zero",
+    "expr": "0",
+    "values": {},
+    "choices": null,
+    "expected": false
+  },
+  {
+    "name": "is_blank_true",
+    "expr": "is_blank([e1][x])",
+    "values": {},
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "is_blank_false",
+    "expr": "is_blank([e1][x])",
+    "values": {
+      "e1|x": "v"
+    },
+    "choices": null,
+    "expected": false
+  },
+  {
+    "name": "is_not_blank",
+    "expr": "is_not_blank([e1][x])",
+    "values": {
+      "e1|x": "v"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "text_contains_hit",
+    "expr": "text_contains([e1][notes], \"follow-up\")",
+    "values": {
+      "e1|notes": "a follow-up visit"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "text_contains_miss",
+    "expr": "text_contains([e1][notes], \"follow-up\")",
+    "values": {
+      "e1|notes": "routine"
+    },
+    "choices": null,
+    "expected": false
+  },
+  {
+    "name": "text_contains_empty_ref",
+    "expr": "text_contains([e1][notes], \"x\")",
+    "values": {},
+    "choices": null,
+    "expected": false
+  },
+  {
+    "name": "text_contains_num_needle",
+    "expr": "text_contains([e1][code], 42)",
+    "values": {
+      "e1|code": "room-42"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "and_or_precedence",
+    "expr": "[e1][a] = 1 || [e1][b] = 2 \u0026\u0026 [e1][c] = 3",
+    "values": {
+      "e1|a": "0",
+      "e1|b": "2",
+      "e1|c": "3"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "parens_override_precedence",
+    "expr": "([e1][a] = 1 || [e1][b] = 2) \u0026\u0026 [e1][c] = 9",
+    "values": {
+      "e1|a": "0",
+      "e1|b": "2",
+      "e1|c": "3"
+    },
+    "choices": null,
+    "expected": false
+  },
+  {
+    "name": "deep_parens",
+    "expr": "((([e1][a] = 1)))",
+    "values": {
+      "e1|a": "1"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "and_with_functions",
+    "expr": "is_not_blank([e1][x]) \u0026\u0026 text_contains([e1][x], \"ok\")",
+    "values": {
+      "e1|x": "looks ok"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "date_eq",
+    "expr": "[e1][d] = \"2026-03-05\"",
+    "values": {
+      "e1|d": "2026-03-05"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "date_lt_chronological",
+    "expr": "[e1][d] \u003c [e1][d2]",
+    "values": {
+      "e1|d": "2026-02-28",
+      "e1|d2": "2026-03-01"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "datetime_offset_instant_equal",
+    "expr": "[e1][t] = [e1][t2]",
+    "values": {
+      "e1|t": "2026-03-05 12:00:00 +0200",
+      "e1|t2": "2026-03-05 10:00:00"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "datetime_offset_colon_instant_equal",
+    "expr": "[e1][t] = [e1][t2]",
+    "values": {
+      "e1|t": "2026-03-05 12:00 +02:00",
+      "e1|t2": "2026-03-05 10:00"
+    },
+    "choices": null,
+    "expected": false
+  },
+  {
+    "name": "datetime_offset_ordering",
+    "expr": "[e1][t] \u003c [e1][t2]",
+    "values": {
+      "e1|t": "2026-03-05 11:00 -0400",
+      "e1|t2": "2026-03-05 14:00"
+    },
+    "choices": null,
+    "expected": false
+  },
+  {
+    "name": "date_invalid_not_instant_falls_back",
+    "expr": "[e1][d] \u003c [e1][d2]",
+    "values": {
+      "e1|d": "2026-02-30",
+      "e1|d2": "2026-02-01"
+    },
+    "choices": null,
+    "expected": false
+  },
+  {
+    "name": "date_leap_day_valid",
+    "expr": "[e1][d] = [e1][d2]",
+    "values": {
+      "e1|d": "2024-02-29",
+      "e1|d2": "2024-02-29"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "bare_ref",
+    "expr": "[age] = 30",
+    "values": {
+      "|age": "30"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "bare_and_qualified_mixed",
+    "expr": "[age] = 30 \u0026\u0026 [e1][sex] = \"Male\"",
+    "values": {
+      "e1|sex": "1",
+      "|age": "30"
+    },
+    "choices": {
+      "e1|sex": "1$Male"
+    },
+    "expected": true
+  },
+  {
+    "name": "err_empty",
+    "expr": "",
+    "values": {},
+    "choices": null,
+    "expected": false,
+    "want_err": true
+  },
+  {
+    "name": "err_unknown_function",
+    "expr": "contains([e1][x], \"a\")",
+    "values": {},
+    "choices": null,
+    "expected": false,
+    "want_err": true
+  },
+  {
+    "name": "err_wrong_arity",
+    "expr": "is_blank([e1][x], 2)",
+    "values": {},
+    "choices": null,
+    "expected": false,
+    "want_err": true
+  },
+  {
+    "name": "err_unbalanced_open",
+    "expr": "([e1][a] = 1",
+    "values": {},
+    "choices": null,
+    "expected": false,
+    "want_err": true
+  },
+  {
+    "name": "err_unbalanced_close",
+    "expr": "[e1][a] = 1)",
+    "values": {},
+    "choices": null,
+    "expected": false,
+    "want_err": true
+  },
+  {
+    "name": "err_trailing_operator",
+    "expr": "[e1][a] =",
+    "values": {},
+    "choices": null,
+    "expected": false,
+    "want_err": true
+  },
+  {
+    "name": "err_double_compare",
+    "expr": "1 \u003c [e1][a] \u003c 2",
+    "values": {},
+    "choices": null,
+    "expected": false,
+    "want_err": true
+  },
+  {
+    "name": "err_unterminated_string",
+    "expr": "[e1][x] = \"abc",
+    "values": {},
+    "choices": null,
+    "expected": false,
+    "want_err": true
+  },
+  {
+    "name": "err_unterminated_ref",
+    "expr": "[e1][x = 1",
+    "values": {},
+    "choices": null,
+    "expected": false,
+    "want_err": true
+  },
+  {
+    "name": "err_bare_identifier",
+    "expr": "foo",
+    "values": {},
+    "choices": null,
+    "expected": false,
+    "want_err": true
+  },
+  {
+    "name": "err_arithmetic_in_branching",
+    "expr": "[e1][a] + 1",
+    "values": {},
+    "choices": null,
+    "expected": false,
+    "want_err": true
+  }
+]
