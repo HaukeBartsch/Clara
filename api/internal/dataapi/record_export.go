@@ -308,7 +308,7 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 	}
 	type wideSlot struct {
 		col   int
-		event string // "" = bare name (single-event field)
+		event string          // "" = bare name (single-event field)
 		comp  *dictInstrument // set = an <instrument>_complete slot, col unused
 	}
 	// cols grouped by instrument, in position order — one pass, and the
