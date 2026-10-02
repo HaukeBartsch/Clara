@@ -569,14 +569,26 @@ For Requirements/, Plan/, and Design/ documents provide a classification of rele
 
 The api should measure performance metrics like response times and memory amounts for database operations and api internal data processing. The information should be sufficient to later evaluate extensions to the infrastructure that runs the api and to the database system that the api talks to.
 
-## Enhanced stress test
-
-Currently the stress test only creates fields with free-text. Also, alot of the fields are empty during export. Use mixed data dictionaries with validation types and drop-down menus during data generation (setup and import). Export as both label (text of multiple-choice fields) and raw data (numeric coding of multiple choice fields).
-
 ## Add an is_admin "system administrator" flag to user
 
 The bootstrap user with "is_admin" should be used during setup of the system only. The bootstrap user should at any point be able to make another user account "is_admin" with all system permissions ("system administrator"). An api endpoint should allow is_admin users to assign "is_admin" to other existing users (is admin group). The administration user interface should display current system administrators add/remove this permission. At least one is_admin user should always exist (including the bootstrapped account).
 Prevent all is_admin users from loosing access. 
+
+
+## Error messages by api
+
+If the API cannot fulfil the request of the user it should generate an error message like the following:
+
+```
+b'{"error":"The following values of redcap_event_name are invalid: v1_arm_1_arm_1"}'
+```
+
+Data producing the error: 
+
+```
+[{"record_id": "TNT-RECORD-17-025", "redcap_event_name": "v1_arm_1_arm_1", "first_name": "TNT-RECORD-17-025", "last_name": "TNT-RECORD-17-025"}, {"record_id": "TNT-RECORD-17-019", "redcap_event_name": "v1_arm_1_arm_1", "first_name": "TNT-RECORD-17-019", "last_name": "TNT-RECORD-17-019"}, {"record_id": "TNT-RECORD-17-020", "redcap_event_name": "v1_arm_1_arm_1", "first_name": "TNT-RECORD-17-020", "last_name": "TNT-RECORD-17-020"}, {"record_id": "TNT-RECORD-17-021", "redcap_event_name": "v1_arm_1_arm_1", "first_name": "TNT-RECORD-17-021", "last_name": "TNT-RECORD-17-021"}, {"record_id": "TNT-RECORD-17-022", "redcap_event_name": "v1_arm_1_arm_1", "first_name": "TNT-RECORD-17-022", "last_name": "TNT-RECORD-17-022"}, {"record_id": "TNT-RECORD-17-023", "redcap_event_name": "v1_arm_1_arm_1", "first_name": "TNT-RECORD-17-023", "last_name": "TNT-RECORD-17-023"}, {"record_id": "TNT-RECORD-17-024", "redcap_event_name": "v1_arm_1_arm_1", "first_name": "TNT-RECORD-17-024", "last_name": "TNT-RECORD-17-024"}, {"record_id": "TNT-RECORD-17-026", "redcap_event_name": "v1_arm_1_arm_1", "first_name": "TNT-RECORD-17-026", "last_name": "TNT-RECORD-17-026"}]
+```
+
 
 # Security relevant findings
 
