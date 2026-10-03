@@ -39,6 +39,13 @@ use Clara\View;
             // chosen the container carries clara-sources-chosen and the other tiles grey out
             // (app.css, "source tiles").
             ?>
+            <?php
+            // One hospital picture per tile, picked at random on every render: the icon list is
+            // shuffled once for the page so tiles differ from each other, and wraps around if
+            // more names than icons are configured.
+            $icons = array_values(glob(__DIR__ . '/../assets/hospital_icons/*.png') ?: []);
+            shuffle($icons);
+            ?>
             <div class="clara-sources<?= !empty($chosen) ? ' clara-sources-chosen' : '' ?>">
                 <?php foreach ($sources as $index => $source): ?>
                     <?php
@@ -49,10 +56,10 @@ use Clara\View;
                         <input class="clara-source-input" type="radio" name="source" id="source-<?= $index ?>"
                                value="<?= View::e($source['name']) ?>"<?= $checked ? ' checked' : '' ?>>
                         <span class="clara-source-tile">
-                            <svg class="clara-source-icon" viewBox="0 0 16 16" width="20" height="20"
-                                 fill="currentColor" fill-rule="evenodd" aria-hidden="true" focusable="false">
-                                <path d="M8 1 15 7h-2v8H3V7H1zM6.5 15v-4.5h3V15z"/>
-                            </svg>
+                            <?php if ($icons !== []): ?>
+                                <img class="clara-source-icon" alt="" aria-hidden="true" width="28" height="28"
+                                     src="/assets/hospital_icons/<?= rawurlencode(basename($icons[$index % count($icons)])) ?>">
+                            <?php endif; ?>
                             <span class="clara-source-name"><?= View::e($source['name']) ?></span>
                         </span>
                     </label>

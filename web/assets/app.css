@@ -187,7 +187,10 @@
 
 .clara-source-icon {
   flex: 0 0 auto;
-  color: var(--bs-secondary-color);
+  width: 1.75rem;
+  height: 1.75rem;
+  object-fit: cover;
+  border-radius: var(--bs-border-radius);
 }
 
 .clara-source-name {
@@ -221,10 +224,6 @@
   background-color: var(--bs-body-bg);
   color: var(--bs-body-color);
   opacity: 1;
-}
-
-.clara-source-input:checked + .clara-source-tile .clara-source-icon {
-  color: var(--bs-primary);
 }
 
 .clara-source-input:focus-visible + .clara-source-tile {
