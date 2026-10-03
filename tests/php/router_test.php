@@ -39,7 +39,33 @@ describe('router — guard and dispatch', function (): void {
 
         assert_same(200, $response->status());
         assert_contains('data-region="projects"', $response->body());
-        assert_contains('clara-sidebar', $response->body());
+    });
+
+    it('renders the project overview as a single panel with no left panel (§2.4 A, REQ-UI-009)', function (): void {
+        sign_in();
+        queue_shell();
+        api_route('/api/v1/projects', [['id' => 1, 'project_name' => '8DISC', 'organization' => 'NAT EU',
+            'record_count' => 42, 'instrument_count' => 5, 'field_count' => 128]]);
+
+        $response = router_for(http_request('GET', '/', browser_headers()))->dispatch();
+
+        // The first screen after login is information, not navigation: no left panel at all,
+        // and so no off-canvas toggle for one either (REQ-UI-046).
+        assert_not_contains('id="clara-nav"', $response->body());
+        // An ordinary member sees no administration entry point anywhere (REQ-UI-003).
+        assert_not_contains('href="/admin"', $response->body());
+    });
+
+    it('offers an administrator the Control Panel button in the header (§2.4, REQ-UI-009/047)', function (): void {
+        sign_in(['is_admin' => 1]);
+        queue_shell();
+        api_route('/api/v1/projects', [['id' => 1, 'project_name' => '8DISC', 'organization' => 'NAT EU',
+            'record_count' => 42, 'instrument_count' => 5, 'field_count' => 128]]);
+
+        $response = router_for(http_request('GET', '/', browser_headers()))->dispatch();
+
+        assert_contains('href="/admin"', $response->body());
+        assert_contains('Control Panel', $response->body());
     });
 
     it('serves the same route as JSON when Accept asks for it (REQ-UI-044)', function (): void {

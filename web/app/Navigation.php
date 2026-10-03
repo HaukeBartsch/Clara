@@ -61,39 +61,57 @@ final class Navigation
     }
 
     /**
-     * The project page's left panel (§6.1, REQ-UI-017) in canonical order: Overview,
-     * Setup, Design, Record Status Dashboard, Export, then the project-scoped
-     * administration entries. Each appears only when the acting user may use it —
-     * `project_admin` for Setup and Design, data access ≥ `read_only` for the record
-     * status dashboard and for reading groups, a non-`export_none` level on some arm for
-     * Export, `is_admin` for Members and Roles (REQ-UI-003).
+     * The project page's candidate entries (§6.1, REQ-UI-017) in canonical order, each
+     * carrying the two answers the panels need: may this member use it (`allowed`), and does
+     * this build serve it (`built`). Splitting them out keeps the permission rule — Setup and
+     * Design for `project_admin`, Record Status Dashboard at data access ≥ `read_only`,
+     * Export at a non-`export_none` level on some arm, Members and Roles for `is_admin`,
+     * Groups readable at `read_only` (REQ-UI-003) — checkable whether or not the section's
+     * page exists yet.
+     *
+     * @return list<array{key: string, path: string, labelKey: string, allowed: bool, built: bool}>
+     */
+    public static function projectSectionDefinitions(int $projectId, Permissions $permissions): array
+    {
+        $base = '/projects/' . $projectId;
+        $seesData = $permissions->anyArmReachesData(Permissions::dataRank('read_only'));
+
+        return [
+            ['key' => 'overview', 'path' => $base . '/overview', 'labelKey' => 'nav.overview',
+                'allowed' => true, 'built' => true],
+            ['key' => 'setup', 'path' => $base . '/setup', 'labelKey' => 'nav.setup',
+                'allowed' => $permissions->projectAdmin, 'built' => false],
+            ['key' => 'design', 'path' => $base . '/design', 'labelKey' => 'nav.design',
+                'allowed' => $permissions->projectAdmin, 'built' => false],
+            ['key' => 'record_status', 'path' => $base . '/record-status', 'labelKey' => 'nav.record_status',
+                'allowed' => $seesData, 'built' => false],
+            ['key' => 'export', 'path' => $base . '/export', 'labelKey' => 'nav.export',
+                'allowed' => $permissions->canExportAny(), 'built' => false],
+            ['key' => 'members', 'path' => $base . '/members', 'labelKey' => 'nav.members',
+                'allowed' => Session::isAdmin(), 'built' => false],
+            ['key' => 'roles', 'path' => $base . '/roles', 'labelKey' => 'nav.roles',
+                'allowed' => Session::isAdmin(), 'built' => false],
+            ['key' => 'groups', 'path' => $base . '/groups', 'labelKey' => 'nav.groups',
+                'allowed' => $seesData, 'built' => false],
+        ];
+    }
+
+    /**
+     * The project page's left panel: the entries this member may use **and** this build
+     * serves. An entry whose page does not exist yet is absent rather than disabled (§3.1,
+     * REQ-UI-003), so landing milestones change one `built` flag and nothing else.
      *
      * @return list<array{key: string, path: string, labelKey: string}>
      */
     public static function projectSections(int $projectId, Permissions $permissions): array
     {
-        $base = '/projects/' . $projectId;
-
-        // key => [path, labelKey, may the acting user use it, does this build serve it]
-        $candidates = [
-            ['overview', $base . '/overview', 'nav.overview', true, true],
-            ['setup', $base . '/setup', 'nav.setup', $permissions->projectAdmin, false],
-            ['design', $base . '/design', 'nav.design', $permissions->projectAdmin, false],
-            ['record_status', $base . '/record-status', 'nav.record_status',
-                $permissions->anyArmReachesData(Permissions::dataRank('read_only')), false],
-            ['export', $base . '/export', 'nav.export', $permissions->canExportAny(), false],
-            ['members', $base . '/members', 'nav.members', Session::isAdmin(), false],
-            ['roles', $base . '/roles', 'nav.roles', Session::isAdmin(), false],
-            ['groups', $base . '/groups', 'nav.groups',
-                $permissions->anyArmReachesData(Permissions::dataRank('read_only')), false],
-        ];
-
         $sections = [];
-        foreach ($candidates as [$key, $path, $labelKey, $allowed, $built]) {
-            if (!$allowed || !$built) {
+        foreach (self::projectSectionDefinitions($projectId, $permissions) as $section) {
+            if (!$section['allowed'] || !$section['built']) {
                 continue;
             }
-            $sections[] = ['key' => $key, 'path' => $path, 'labelKey' => $labelKey];
+            unset($section['allowed'], $section['built']);
+            $sections[] = $section;
         }
 
         return $sections;

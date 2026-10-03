@@ -89,7 +89,7 @@ final class AccountController extends Controller
      * The e-mail address is shown read-only and there is no field for it: identity
      * changes go through an administrator (REQ-AUTH-061). An account that authenticates
      * through a provider has no local password to change, so the page says so instead of
-     * posting something the API must refuse with 409 `no_local_credential`; the sidebar
+     * posting something the API must refuse with 409 `no_local_credential`; the footer
      * already hides the entry for such an account (§2.4, GD-23).
      */
     public function password(): Response

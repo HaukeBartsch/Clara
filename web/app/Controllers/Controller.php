@@ -81,9 +81,10 @@ abstract class Controller
      * renders what comes back and filters nothing
      * (`User_Interface_Design.md` §4, REQ-AUTH-026).
      *
-     * One call serves both the dashboard table and the sidebar's Projects section
-     * (§2.4 item 1) — a page never reads the list twice, and rows are never
-     * enriched per row (Plan/Web_Implementation.md §7 rule 13).
+     * The project overview's table is its only caller (§2.4 A): one call per render, and
+     * rows are never enriched per row (Plan/Web_Implementation.md §7 rule 13). The page
+     * that needs one project's permissions asks for that project, which is why entering a
+     * project resolves there rather than here (REQ-UI-017).
      *
      * @return list<array<string, mixed>>
      */
