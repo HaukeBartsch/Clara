@@ -9,14 +9,14 @@ import (
 	"context"
 	"net/http"
 	"sort"
-	"strings"
 
 	"csms/api/internal/audit"
 )
 
 // serveSurveyLink dispatches one call made with a survey-link token. Only
-// content=metadata for the link's instrument and content=record&
-// action=import for its record are admitted; every other content — export,
+// content=metadata for the link's instrument and a `data`-carrying
+// content=record for its record are admitted (REQ-API-012); every other
+// content — export,
 // delete, anything else — is the uniform 403 (REQ-API-083). The rate limit
 // of §3.9 applies unchanged: it is checked before token resolution in
 // ServeHTTP (REQ-API-038).
@@ -37,9 +37,10 @@ func (h *Handler) serveSurveyLink(ctx context.Context, w http.ResponseWriter, r 
 		// arm levels, and §3.10 grants this call by the link itself.
 		h.contentMetadata(ctx, w, enc, sub, p)
 	case "record":
-		// An absent action means export in the REDCap convention, which a
-		// link never gets (REQ-API-083).
-		if !strings.EqualFold(p.Action, "import") {
+		// A submission is a `data`-carrying call (REQ-API-012); without it
+		// the request would be an export or a delete, which a link never
+		// gets (REQ-API-083).
+		if !p.HasData {
 			writeError(w, enc, http.StatusForbidden, "Permission denied")
 			return
 		}

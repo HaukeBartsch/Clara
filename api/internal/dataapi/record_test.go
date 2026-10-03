@@ -1,6 +1,7 @@
 package dataapi
 
-// Tests for content=record&action=export|import|delete (§3.6–§3.8): the
+// Tests for content=record — export without `data`, import with it, delete
+// via action=delete (§3.6–§3.8, REQ-API-012): the
 // sensitivity pipeline, filterLogic, the import response codes and
 // validation, delete scoping, DAG visibility, and the audit side effects.
 
@@ -1045,5 +1046,128 @@ func TestRecordImportErrorDetailOrder(t *testing.T) {
 		if res[0].ImportFormName != want {
 			t.Fatalf("pass %d error detail =\n%s\nwant\n%s", i, res[0].ImportFormName, want)
 		}
+	}
+}
+
+// The recorded REDCap encoding (DEV-API-24): content=record with a JSON-array
+// `data` parameter and no action is an import (REQ-API-012, REQ-API-031), not
+// an export; non-string values are coerced to their string spelling.
+func TestRecordImportJSONDataNoAction(t *testing.T) {
+	f := newRecordFixture(t)
+
+	code, body := f.call(t, url.Values{
+		"token": {"tok-edit"}, "content": {"record"}, "returnFormat": {"json"},
+		"type": {"flat"}, "overwriteBehavior": {"overwrite"}, "forceAutoNumber": {"false"},
+		"data": {`[{"record_id":"8DISC010","redcap_event_name":"baseline_arm_1",` +
+			`"age":51,"status":true,"notes":"from json"}]`},
+	})
+	res := importResults(t, code, body)
+	if len(res) != 1 || res[0].ImportRecordID != importAdded {
+		t.Fatalf("import result = %v, want one added row", res)
+	}
+	if got := storedValue(t, f, "8DISC010", "baseline_arm_1", "age"); got != "51" {
+		t.Errorf("stored age = %q, want the JSON number coerced to \"51\"", got)
+	}
+	if got := storedValue(t, f, "8DISC010", "baseline_arm_1", "status"); got != "1" {
+		t.Errorf("stored status = %q, want the boolean coerced to \"1\"", got)
+	}
+	if got := storedValue(t, f, "8DISC010", "baseline_arm_1", "notes"); got != "from json" {
+		t.Errorf("stored notes = %q", got)
+	}
+}
+
+// An explicit action never overrides the data rule (REQ-API-012): action=export
+// with a data parameter is still an import.
+func TestRecordImportDataWinsOverAction(t *testing.T) {
+	f := newRecordFixture(t)
+
+	code, body := f.call(t, url.Values{
+		"token": {"tok-edit"}, "content": {"record"}, "action": {"export"},
+		"returnFormat": {"json"},
+		"data":         {`[{"record_id":"8DISC013","redcap_event_name":"baseline_arm_1","age":"48"}]`},
+	})
+	res := importResults(t, code, body)
+	if len(res) != 1 || res[0].ImportRecordID != importAdded {
+		t.Fatalf("result = %v, want one added row (import), not an export", res)
+	}
+}
+
+// returnContent=count answers the number of rows applied and nothing else:
+// rejected rows are not counted, no per-row detail is rendered (REQ-API-142).
+func TestRecordImportCountResponse(t *testing.T) {
+	f := newRecordFixture(t)
+
+	form := url.Values{
+		"token": {"tok-edit"}, "content": {"record"}, "returnFormat": {"json"},
+		"returnContent": {"count"},
+		"data": {`[{"record_id":"8DISC010","redcap_event_name":"baseline_arm_1","age":"51"},` +
+			`{"record_id":"8DISC011","redcap_event_name":"baseline_arm_1","age":"abc"}]`},
+	}
+	code, body := f.call(t, form)
+	mustStatus(t, code, 200, body)
+	if strings.TrimSpace(body) != `{"count":1}` {
+		t.Fatalf("count body = %s, want {\"count\":1}", body)
+	}
+	if got := storedValue(t, f, "8DISC010", "baseline_arm_1", "age"); got != "51" {
+		t.Errorf("applied row not stored (age = %q)", got)
+	}
+	if got := storedValue(t, f, "8DISC011", "baseline_arm_1", "age"); got != "" {
+		t.Errorf("rejected row stored (age = %q), want nothing", got)
+	}
+	// CSV encoding: a bare count line.
+	form.Set("returnFormat", "csv")
+	code, body = f.call(t, form)
+	mustStatus(t, code, 200, body)
+	if strings.TrimSpace(body) != "1" {
+		t.Errorf("csv count body = %q, want a bare 1", body)
+	}
+}
+
+// A row without form_name is flat (REQ-API-031): every supplied field stores
+// on its own instrument from the data dictionary. The event rules are
+// unchanged — this project has events, so a row must still name one.
+func TestRecordImportFlatRow(t *testing.T) {
+	f := newRecordFixture(t)
+
+	code, body := f.call(t, url.Values{
+		"token": {"tok-edit"}, "content": {"record"}, "returnFormat": {"json"},
+		"data": {`[{"record_id":"8DISC012","redcap_event_name":"baseline_arm_1",` +
+			`"age":"47","status":"2"}]`},
+	})
+	res := importResults(t, code, body)
+	if len(res) != 1 || res[0].ImportRecordID != importAdded {
+		t.Fatalf("flat import result = %v, want one added row", res)
+	}
+	if got := storedValue(t, f, "8DISC012", "baseline_arm_1", "age"); got != "47" {
+		t.Errorf("stored age = %q", got)
+	}
+	if got := storedValue(t, f, "8DISC012", "baseline_arm_1", "status"); got != "2" {
+		t.Errorf("stored status = %q", got)
+	}
+
+	// A project with events still requires the flat row to name its event.
+	code, body = f.call(t, url.Values{
+		"token": {"tok-edit"}, "content": {"record"}, "returnFormat": {"json"},
+		"data": {`[{"record_id":"8DISC014","age":"47"}]`},
+	})
+	res = importResults(t, code, body)
+	if len(res) != 1 || res[0].ImportRecordID != importInvalid ||
+		!strings.Contains(res[0].ImportFormName, "unknown event") {
+		t.Fatalf("event-less flat row = %v, want a rejected row naming the event problem", res)
+	}
+}
+
+// A data parameter that is present but not a JSON array of objects makes the
+// call an import with nothing parseable — the uniform 400.
+func TestRecordImportMalformedJSONData(t *testing.T) {
+	f := newRecordFixture(t)
+
+	code, body := f.call(t, url.Values{
+		"token": {"tok-edit"}, "content": {"record"}, "returnFormat": {"json"},
+		"data": {"not json"},
+	})
+	mustStatus(t, code, 400, body)
+	if !strings.Contains(body, "Invalid request") {
+		t.Errorf("body = %s, want \"Invalid request\"", body)
 	}
 }

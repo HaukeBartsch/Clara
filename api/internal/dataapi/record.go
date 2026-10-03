@@ -1,7 +1,8 @@
 package dataapi
 
-// content=record&action=export|import|delete — API_Endpoints_Design.md
-// §3.6–§3.8, with the sensitivity pipeline of Data_Export_Anonymization_
+// content=record — API_Endpoints_Design.md §3.6–§3.8, dispatched by the
+// presence of `data` (REQ-API-012), with the sensitivity pipeline of
+// Data_Export_Anonymization_
 // Design.md §4 and the validation/canonicalization rules of
 // Data_Validation_Design.md §2/§4.1. This file holds the pieces the three
 // actions share: the project dictionary, the data-access-group scope, and
@@ -23,16 +24,20 @@ import (
 	"csms/api/internal/validate"
 )
 
-// contentRecord dispatches the record actions. A missing action defaults to
-// export (the REDCap convention); anything else is a uniform 400.
+// contentRecord dispatches the record actions by the request itself
+// (REQ-API-012): a call carrying `data` is an import, one without it an
+// export — the REDCap convention the recorded callers use, which sends no
+// action at all. Deletion stays explicit (`action=delete`); an explicit
+// `export`/`import` is accepted and never overrides the data rule. Any
+// other action is a uniform 400.
 func (h *Handler) contentRecord(w http.ResponseWriter, r *http.Request, enc string, sub *subject, p Params) {
-	switch strings.ToLower(p.Action) {
-	case "", "export":
-		h.contentRecordExport(w, r, enc, sub, p)
-	case "import":
+	switch {
+	case p.HasData:
 		h.contentRecordImport(w, r, enc, sub, p)
-	case "delete":
+	case strings.EqualFold(p.Action, "delete"):
 		h.contentRecordDelete(w, r, enc, sub, p)
+	case p.Action == "" || strings.EqualFold(p.Action, "export") || strings.EqualFold(p.Action, "import"):
+		h.contentRecordExport(w, r, enc, sub, p)
 	default:
 		writeError(w, enc, http.StatusBadRequest, "Invalid request")
 	}

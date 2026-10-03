@@ -141,6 +141,19 @@ func writeJSON(w http.ResponseWriter, rows any) {
 	_ = enc.Encode(rows)
 }
 
+// writeCount renders the returnContent=count import response (REQ-API-142):
+// {"count": N} for JSON callers, a bare count line otherwise.
+func writeCount(w http.ResponseWriter, enc string, n int) {
+	if enc == "json" {
+		writeJSON(w, struct {
+			Count int `json:"count"`
+		}{Count: n})
+		return
+	}
+	w.Header().Set("Content-Type", "text/csv")
+	_, _ = fmt.Fprintln(w, n)
+}
+
 // writeCSV renders the same rows with a header line. The header is always
 // written — even for a zero-row result, so callers get the column names
 // (REDCap returns a header row for an empty result). Header and values are

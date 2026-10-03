@@ -375,3 +375,34 @@ func TestSurveyLinkCannotWriteForeignInstrumentFields(t *testing.T) {
 		t.Errorf("want a failure survey_submitted entry, got %+v", e)
 	}
 }
+
+// A submission is decided by `data` too (REQ-API-012): with neither action nor
+// form_name the row still fills the link's (record, instrument) — and nothing
+// else.
+func TestSurveyLinkSubmissionDecidedByData(t *testing.T) {
+	f, link := surveyLinkFixture(t)
+
+	code, body := f.call(t, url.Values{
+		"token": {link.Token}, "content": {"record"}, "returnFormat": {"json"},
+		"data": {`[{"record_id":"8DISC001","redcap_event_name":"baseline_arm_1","age":"45"}]`},
+	})
+	res := importResults(t, code, body)
+	if len(res) != 1 || res[0].ImportRecordID != importUpdated {
+		t.Fatalf("flat link submission = %v, want one updated row", res)
+	}
+	if got := storedValue(t, f, "8DISC001", "baseline_arm_1", "age"); got != "45" {
+		t.Errorf("stored age = %q, want 45", got)
+	}
+
+	// The pin still holds without form_name: a field of another instrument
+	// is refused.
+	code, body = f.call(t, url.Values{
+		"token": {link.Token}, "content": {"record"}, "returnFormat": {"json"},
+		"data": {`[{"record_id":"8DISC001","redcap_event_name":"baseline_arm_1","total":"9"}]`},
+	})
+	res = importResults(t, code, body)
+	if len(res) != 1 || res[0].ImportRecordID != importInvalid ||
+		!strings.Contains(res[0].ImportFormName, "belongs to instrument 'calc', not 'demo'") {
+		t.Fatalf("cross-instrument flat submission = %v, want the pin's instrument message", res)
+	}
+}

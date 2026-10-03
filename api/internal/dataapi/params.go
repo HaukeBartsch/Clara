@@ -39,6 +39,12 @@ type Params struct {
 	RawOrLabel        string
 	RawOrLabelHeaders string
 	TZ                string
+	Data              string // import payload as a JSON array (§3.7.1, REQ-API-031)
+	ReturnContent     string // "count" switches the import response (REQ-API-142)
+
+	// HasData reports a `data` parameter in any encoding; for
+	// content=record its presence decides import vs export (REQ-API-012).
+	HasData bool
 }
 
 // ParseParams extracts the protocol parameters from a GET query string or
@@ -103,7 +109,22 @@ func ParseParams(r *http.Request) (Params, error) {
 		RawOrLabel:        single("rawOrLabel"),
 		RawOrLabelHeaders: single("rawOrLabelHeaders"),
 		TZ:                single("tz"),
+		Data:              single("data"),
+		ReturnContent:     single("returnContent"),
+		HasData:           hasDataKey(body) || hasDataKey(query),
 	}, nil
+}
+
+// hasDataKey reports a `data` parameter in either encoding — the JSON-array
+// spelling (`data`) or indexed rows (`data[0][…]`). Its presence decides
+// import vs export for content=record (REQ-API-012).
+func hasDataKey(m map[string][]string) bool {
+	for k := range m {
+		if k == "data" || strings.HasPrefix(k, "data[") {
+			return true
+		}
+	}
+	return false
 }
 
 // formValues parses the POST body as urlencoded, tolerating a missing or

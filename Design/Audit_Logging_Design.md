@@ -111,7 +111,7 @@ Field renames are `field_updated` with `"changes":{"name":{"old":"…","new":"�
 
 | Code | When | `details` payload |
 |---|---|---|
-| `export` | every data export on both surfaces — data API (`content=record&action=export`) and administration API (`GET /api/v1/projects/{id}/export`) | `{"surface":"data_api or ui","sensitivity":"export_full or export_no_identifiers or export_de_identified","filters":{"records":["…"],"fields":["…"],"forms":["…"],"events":["…"],"filter_logic":"[age]=\"42\""}}` |
+| `export` | every data export on both surfaces — data API (`content=record` without `data`, REQ-API-012) and administration API (`GET /api/v1/projects/{id}/export`) | `{"surface":"data_api or ui","sensitivity":"export_full or export_no_identifiers or export_de_identified","filters":{"records":["…"],"fields":["…"],"forms":["…"],"events":["…"],"filter_logic":"[age]=\"42\""}}` |
 
 Rules: omitted filters are empty arrays; `sensitivity` is the ladder name of the level applied per REQ-API-026/075 (for multi-arm exports, the **lowest / most protective** level among the exported arms — the one actually applied to every row, `Data_Export_Anonymization_Design.md` §4.3); a record-view row (§4) is written **in addition** to this entry for data-API exports only — the table is keyed by the call's token, which a UI export does not have, so its `export` event alone is the trail (REQ-AUD-013).
 
@@ -146,7 +146,7 @@ Rejected transitions and rejected commits (409: disallowed transition, open stag
 
 ## 4. Record View Entries — `audit_record_views`
 
-One row per invocation of `content=record&action=export` — regardless of initiator (external caller or the PHP layer, REQ-AUD-013, ASM-API-3). Rejected invocations (invalid token, `export_none`, no visibility) write no row (REQ-AUD-004).
+One row per invocation of the data API export (`content=record` without `data`, REQ-API-012) — regardless of initiator (external caller or the PHP layer, REQ-AUD-013, ASM-API-3). Rejected invocations (invalid token, `export_none`, no visibility) write no row (REQ-AUD-004).
 
 | Column | Content |
 |---|------|
@@ -268,7 +268,7 @@ Both endpoints are read-only; no endpoint exists that writes, updates, or delete
 |---|------|
 | `details` JSON shapes per audit event type (`Database_Schema_Design.md` §12) | complete catalog with payload schemas, §3 |
 | ASM-AUD-1 (retention) | no expiry; indefinite retention on yearly objects; dropping years is an operational action (§6.3) |
-| ASM-AUD-2 (UI-mediated reads) | a record-view row is written when the PHP layer initiates `content=record&action=export`; record status and structure reads are not record views (§4) |
+| ASM-AUD-2 (UI-mediated reads) | a record-view row is written when the PHP layer initiates the data API export (`content=record` without `data`, REQ-API-012); record status and structure reads are not record views (§4) |
 | ASM-AUD-3 (event codes and payload schemas) | §3 is the normative catalog |
 | record-scoped read index (REQ-AUD-020, DEV-AUD-2) | `target_record` column + `idx_audit_events_record` (§6.4) |
 

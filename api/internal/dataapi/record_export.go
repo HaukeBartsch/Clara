@@ -1,6 +1,7 @@
 package dataapi
 
-// content=record&action=export (API_Endpoints_Design.md §3.6) and the
+// content=record without `data` — export (API_Endpoints_Design.md §3.6,
+// REQ-API-012) and the
 // administration export GET /api/v1/projects/{id}/export (§4.14) share one
 // streaming core: row shape flat (normative) or simplified wide (DEV-API-1),
 // the sensitivity pipeline of Data_Export_Anonymization_Design.md §4.2, CSV

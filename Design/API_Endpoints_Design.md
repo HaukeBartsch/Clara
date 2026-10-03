@@ -42,8 +42,8 @@ One endpoint: `POST /api/` with an `application/x-www-form-urlencoded` body; `GE
 | Parameter | Accepted | Default | Notes |
 |---|---|---|---|
 | `token` | UUID string | — (required) | body or query; MUST NOT be read from an `Authorization` header (REQ-API-010, REQ-AUTH-031) |
-| `content` | `project` / `metadata` / `event` / `formEventMapping` / `exportFieldNames` / `generateNextRecordName` / `record` | — (required) | `record` requires `action` (REQ-API-012) |
-| `action` | `export` / `import` / `delete` (with `content=record` only) | — | unknown or missing → REDCap-style error (REQ-API-012) |
+| `content` | `project` / `metadata` / `event` / `formEventMapping` / `exportFieldNames` / `generateNextRecordName` / `record` | — (required) | with `content=record`, a call carrying `data` is an import, one without it an export; deletion needs `action=delete` (REQ-API-012) |
+| `action` | `export` / `import` / `delete` (with `content=record` only) | — | optional: `export`/`import` are accepted and never override the `data` rule; `delete` is the only action that dispatches; any other value → REDCap-style error (REQ-API-012, DEV-API-24) |
 | `format` / `returnFormat` | `json` / `csv` | `csv` (REDCap default) | a present `returnFormat` takes precedence for the response encoding (REQ-API-013) |
 | `type` | `flat` / `wide` | `wide` (REDCap default) | `flat` is normative — one row per (record, event); `wide` is the simplified compatibility mode of §3.6.2 (DEV-API-1) |
 | `csvDelimiter` | single character | `,` | empty value = comma (REQ-API-029) |
@@ -51,7 +51,8 @@ One endpoint: `POST /api/` with an `application/x-www-form-urlencoded` body; `GE
 | `filterLogic` | expression (§3.6.3) | — | export only (REQ-API-025) |
 | `rawOrLabel` | `raw` / `label` | `raw` | choice fields (REQ-API-027) |
 | `rawOrLabelHeaders` | `raw` / `label` / `both` | `raw` | field names; `both` renders each header as `<Field Label> (field_name)` — the bare name where the field carries no label (REQ-API-027) |
-| `data[]` | import entries (§3.7.1) | — | import only (REQ-API-031) |
+| `data[i][key]` / `data` | import rows (§3.7.1) | — | import only; indexed form parameters or a JSON array of record objects — its presence makes the call an import (REQ-API-012, REQ-API-031) |
+| `returnContent` | `count` (or any other value) | result rows | with `content=record` import: `count` answers `{"count": N}` for the rows applied; anything else keeps the §3.7.2 result rows (REQ-API-142, DEV-API-24) |
 | `tz` | IANA timezone name or `±HH:MM` offset | `APP_TIMEZONE` (REQ-CFG-026) | import only — timezone of collection for the call's date/date-time values (GD-16, REQ-VAL-041, REQ-API-031) |
 | `exportCheckboxLabel`, `exportSurveyFields`, `exportDataAccessGroups` | any | — | accepted and **ignored** (REQ-API-016, DEV-API-2) |
 
@@ -158,7 +159,9 @@ All require data access ≥ `read_only` except `generateNextRecordName` (≥ `vi
 
 `generateNextRecordName` follows the project's naming pattern (REQ-DB-007) — digit-placeholder style (`8DISC[0-9][0-9][0-9]`) and counter-prefix style (`0001_01`, width preserved) — and MUST NOT return a name an existing record already holds (REQ-API-023). The next name is one counter step above the greatest existing name of the same shape (max + 1); names freed by deleted records are not reused (no gap-filling, REQ-API-023).
 
-### 3.6 `content=record&action=export`
+### 3.6 Record export — `content=record` without `data` (REQ-API-012)
+
+An explicit `action=export` may accompany the call and changes nothing; a `data` parameter on the same call makes it an import instead (§3.7).
 
 #### 3.6.1 Rules
 
@@ -195,29 +198,40 @@ All require data access ≥ `read_only` except `generateNextRecordName` (≥ `vi
 
 Minimum normative support: equality on string fields, `[field]="value"`, and compound conditions with `&&` / `||` and parentheses — the full grammar (value comparisons `=`, `!=`, `<`, `>`, `<=`, `>=`, numeric/chronological/string comparison semantics, `text_contains`, `is_blank`, `is_not_blank`, precedence) is the branching-logic grammar of `Data_Validation_Design.md` §7, evaluated against the record's stored values. A single-segment reference `[field]` names no event and falls back to the project's **first event** in canonical order GD-15 (`Data_Validation_Design.md` §7.1). `filterLogic` filters which **records** are returned; it never changes the sensitivity level.
 
-### 3.7 `content=record&action=import`
+### 3.7 Record import — `content=record` with `data` (REQ-API-012)
 
-Requires data access ≥ `view_edit` on the record's arm (REQ-API-033); a `read_only`/`no_access` token is rejected (403 `Permission denied`). In **analysis mode** every import is rejected — 403 `Project in analysis mode` (GD-20, REQ-API-109); reads and exports are unaffected.
+The presence of the `data` parameter makes the call an import; an explicit `action=import` may accompany it and changes nothing. Requires data access ≥ `view_edit` on the record's arm (REQ-API-033); a `read_only`/`no_access` token is rejected (403 `Permission denied`). In **analysis mode** every import is rejected — 403 `Project in analysis mode` (GD-20, REQ-API-109); reads and exports are unaffected.
 
 #### 3.7.1 Request shape (REQ-API-031)
 
-`data[]` entries, each a (record, form, event) row of field values:
+Each row is a (record, form, event) tuple of field values, supplied in either REDCap encoding:
 
 ```
-token=…&content=record&action=import
+token=…&content=record
 &data[0][record_id]=8DISC042&data[0][form_name]=intake&data[0][event_name]=baseline_arm_1
 &data[0][age]=42&data[0][status]=2&data[0][notes]=ok
 &data[1][record_id]=8DISC043&data[1][form_name]=intake&data[1][event_name]=baseline_arm_1
 &data[1][age]=&data[1][status]=1
 ```
 
+or as a single `data` parameter holding a **JSON array of record objects** — the encoding of the recorded callers (DEV-API-24), whose values may be JSON numbers or booleans and are coerced to their string spelling:
+
+```
+token=…&content=record&format=json&type=flat&overwriteBehavior=overwrite
+&returnContent=count
+&data=[{"record_id":"1.3.6.1.4.1.45037.411…","ids7_patient_name":"ENDO_MONT_049",
+        "ids7_number_of_series":18,"ids7_study_date":"20221202"}]
+```
+
+A row may omit `form_name` — a **flat row**: every supplied field is stored on its own instrument from the data dictionary, so a caller can post back an export without naming forms. The event rules are unchanged: a project with events still requires each row to name its event (`event_name`/`redcap_event_name`). Indexed parameters win when a call carries both encodings. `overwriteBehavior` and `forceAutoNumber` are accepted and ignored (REQ-API-017): import always upserts (REQ-API-033) and never assigns record ids itself.
+
 Each value passes the full validation pipeline (`Data_Validation_Design.md` §2) before storage; invalid values are not stored (REQ-API-032, REQ-VAL-001). Empty values act as "no value" (clear/no-op, REQ-VAL-024) — an **intentional** clear: the UI data-entry path sends empties only for fields the user explicitly cleared (GD-14, REQ-UI-031). Values for calculated fields are rejected (`CALCULATED_READONLY`, REQ-API-095). Date/date-time values are stored with the collection offset — the `tz` parameter when present (UI: the browser's zone, sent by PHP), else `APP_TIMEZONE` (GD-16, REQ-VAL-041).
 
 The row's event key is accepted as `event_name` **or** `redcap_event_name` (REQ-API-138): the latter names the same value in a flat export (REQ-API-028), so a caller can post back what it pulled without renaming. An empty value means "not supplied", so one spelling is in force per row; two different events name an ambiguous target and the row is rejected — `event_name: CONTENT_INVALID — event_name 'baseline_arm_1' conflicts with redcap_event_name 'followup_arm_1'` — storing nothing of it (REQ-API-035). The alias applies to projects **with** events: a project without events stores under the empty event name, so there the alias would move the row's values out of the slot the rest of the code reads (calculated fields recompute into it) and it is ignored instead.
 
-#### 3.7.2 Response (REQ-API-034, REQ-VAL-008)
+#### 3.7.2 Response (REQ-API-034, REQ-VAL-008, REQ-API-142)
 
-HTTP 200 with one result row per imported record:
+With `returnContent=count` the response is HTTP 200 and the number of rows applied (added + updated) — `{"count": 86}` in JSON, a bare count line in CSV; rejected rows are not counted and no per-row detail is rendered (REQ-API-142). Otherwise — any other value or none — HTTP 200 with one result row per imported record:
 
 ```json
 [
@@ -234,7 +248,7 @@ HTTP 200 with one result row per imported record:
 | `0` | validation error(s) — `import_form_name` lists the per-field detail `<field>: <CODE> — <message>`, joined by `; ` (rule codes from `Data_Validation_Design.md` §3) |
 | `255` | fatal request-level error — e.g. unknown `content`; the whole call fails (HTTP 400 with the §3.2 error body) |
 
-The detail's order is fixed (REQ-API-139): the row's field problems in data-dictionary order, then its unknown keys as `<field>: UNKNOWN_FIELD — unknown field '<name>'` in dictionary order, so a rejected batch reads the same every time and a caller can diff two responses. A row stops at its first **tuple** problem — a missing `record_id` or `form_name`, an unknown form, or an unknown event reports that alone and skips the row's remaining field detail (REQ-API-140 is open on whether it should report everything instead). An unknown event names the key the caller used: `redcap_event_name: CONTENT_INVALID — unknown event 'v1_arm_1_arm_1'` for a row that sent the alias.
+The detail's order is fixed (REQ-API-139): the row's field problems in data-dictionary order, then its unknown keys as `<field>: UNKNOWN_FIELD — unknown field '<name>'` in dictionary order, so a rejected batch reads the same every time and a caller can diff two responses. A row stops at its first **tuple** problem — a missing `record_id`, an unknown form, or an unknown event reports that alone and skips the row's remaining field detail (REQ-API-140 is open on whether it should report everything instead); a row without `form_name` has no such problem, it is flat (§3.7.1). An unknown event names the key the caller used: `redcap_event_name: CONTENT_INVALID — unknown event 'v1_arm_1_arm_1'` for a row that sent the alias.
 
 All-or-nothing per record: a failed value stores nothing of that record (single transaction, REQ-API-035); other records in the same call are unaffected. Successful imports are audit-logged (`record_created`/`record_updated` with old/new values) and trigger calculated-field recomputation in the same transaction (REQ-API-095, REQ-VAL-037). A new record is assigned to the holder's active data-access group, or none (REQ-API-093); an import never changes an existing record's group.
 
@@ -278,7 +292,7 @@ A survey link token (`survey_links.token`, `Database_Schema_Design.md` §8) is a
 | Call | Allowed scope |
 |---|------|
 | `content=metadata` | the field definitions of that instrument (a `forms[]` naming another instrument → 403) |
-| `content=record&action=import` | values for that record and that instrument |
+| `content=record` with `data` (REQ-API-012) | values for that record and that instrument |
 
 Every other `content` (including `export` and `delete`), another record, or another instrument is rejected with 403 `Permission denied` (REQ-API-083, REQ-AUTH-039). In an analysis-mode project the permitted import is rejected too — `Project in analysis mode` (GD-20, REQ-API-109); the survey page then shows its closed state (`User_Interface_Design.md` §8.8). A revoked link is rejected on every call (REQ-AUTH-040). Link tokens are subject to the §3.9 rate limit (REQ-API-038). Submissions are audit-logged as `survey_submitted` — success and failure (`Audit_Logging_Design.md` §3.6). The public survey page is served by the PHP application; the browser never calls `/api/v1/*` from it (GD-1, REQ-API-084).
 

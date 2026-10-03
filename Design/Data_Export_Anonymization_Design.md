@@ -26,7 +26,7 @@ Two surfaces, one pipeline (§4):
 
 | Surface | Entry | Level source |
 |---|---|---|
-| data API (Fiona and any external caller) | `POST /api/` `content=record&action=export` | the token holder's export level for the arm of the exported data (REQ-API-026, GD-2) |
+| data API (Fiona and any external caller) | `POST /api/` `content=record` without `data` (REQ-API-012) | the token holder's export level for the arm of the exported data (REQ-API-026, GD-2) |
 | administration API (web UI) | `GET /api/v1/projects/{id}/export?format=csv\|json&arm=N&rawOrLabel=…&rawOrLabelHeaders=…&csvDelimiter=…` (REQ-API-075; full parameter table in `API_Endpoints_Design.md` §4.14) | the acting user's export level per arm (GD-2, REQ-API-075) |
 
 Common to both (normative):

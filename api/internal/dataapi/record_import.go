@@ -1,13 +1,18 @@
 package dataapi
 
-// content=record&action=import (API_Endpoints_Design.md §3.7). The request
-// is a set of data[i][…] rows, each a (record, form, event) tuple of field
-// values; every value passes the full validation pipeline before storage
-// and each record is all-or-nothing in its own transaction.
+// content=record with a `data` parameter (API_Endpoints_Design.md §3.7,
+// REQ-API-012). The request is either data[i][…] form rows or a single
+// `data` parameter holding a JSON array of record objects (§3.7.1), each a
+// (record, form, event) tuple of field values — a row may omit form_name and
+// store flat, every field on its own instrument. Every value passes the full
+// validation pipeline before storage and each record is all-or-nothing in
+// its own transaction; returnContent=count answers the applied count
+// (REQ-API-142).
 
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"regexp"
 	"sort"
@@ -37,10 +42,12 @@ const (
 // dataRowKeyRE splits data[<i>][<key>] parameter names.
 var dataRowKeyRE = regexp.MustCompile(`^data\[(\d+)\]\[(.+)\]$`)
 
-// parseImportRows collects the data[i][key] parameters into rows in index
-// order. Body values take precedence over the query string, matching
-// ParseParams (REQ-API-010).
-func parseImportRows(r *http.Request) []map[string]string {
+// parseImportRows collects the import rows in either §3.7.1 encoding:
+// indexed data[i][key] parameters (body over query, matching ParseParams —
+// REQ-API-010), or — when none are present — a single `data` parameter
+// holding a JSON array of record objects (REQ-API-031). A malformed JSON
+// encoding yields no rows, which the caller answers as the uniform 400.
+func parseImportRows(r *http.Request, p Params) []map[string]string {
 	merged := map[string][]string{}
 	if r.URL != nil {
 		for k, vs := range r.URL.Query() {
@@ -69,12 +76,66 @@ func parseImportRows(r *http.Request) []map[string]string {
 	for i := range indexed {
 		order = append(order, i)
 	}
+	if len(order) == 0 {
+		return parseJSONData(p.Data)
+	}
 	sort.Ints(order)
 	rows := make([]map[string]string, 0, len(order))
 	for _, i := range order {
 		rows = append(rows, indexed[i])
 	}
 	return rows
+}
+
+// parseJSONData reads the JSON-array encoding of `data` (REQ-API-031): an
+// array of objects whose values are coerced to their string spelling — a
+// number keeps its literal text ("18"), a boolean becomes "1"/"0", null
+// becomes "". Anything that is not an array of objects yields no rows.
+func parseJSONData(s string) []map[string]string {
+	if s == "" {
+		return nil
+	}
+	dec := json.NewDecoder(strings.NewReader(s))
+	dec.UseNumber()
+	var items []any
+	if err := dec.Decode(&items); err != nil {
+		return nil
+	}
+	rows := make([]map[string]string, 0, len(items))
+	for _, it := range items {
+		obj, ok := it.(map[string]any)
+		if !ok {
+			return nil
+		}
+		row := make(map[string]string, len(obj))
+		for k, v := range obj {
+			row[k] = jsonValueString(v)
+		}
+		rows = append(rows, row)
+	}
+	return rows
+}
+
+func jsonValueString(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return t
+	case json.Number:
+		return t.String()
+	case bool:
+		if t {
+			return "1"
+		}
+		return "0"
+	default: // a nested object or array keeps its compact JSON
+		b, err := json.Marshal(t)
+		if err != nil {
+			return ""
+		}
+		return string(b)
+	}
 }
 
 // importMetaKeys are the row tuple keys (and REDCap repeat columns this
@@ -114,7 +175,7 @@ func (h *Handler) contentRecordImport(w http.ResponseWriter, r *http.Request, en
 		h.storeError(w, enc)
 		return
 	}
-	rows := parseImportRows(r)
+	rows := parseImportRows(r, p)
 	if len(rows) == 0 {
 		writeError(w, enc, http.StatusBadRequest, "Invalid request")
 		return
@@ -132,6 +193,19 @@ func (h *Handler) contentRecordImport(w http.ResponseWriter, r *http.Request, en
 			return
 		}
 		results = append(results, res)
+	}
+	// returnContent=count answers the number of rows applied — added and
+	// updated; rejected rows are not counted and their detail is not
+	// rendered (REQ-API-142). Any other value keeps the §3.7.2 result rows.
+	if strings.EqualFold(p.ReturnContent, "count") {
+		applied := 0
+		for _, res := range results {
+			if res.ImportRecordID == importAdded || res.ImportRecordID == importUpdated {
+				applied++
+			}
+		}
+		writeCount(w, enc, applied)
+		return
 	}
 	render(w, enc, p.Delimiter(), results)
 }
@@ -157,24 +231,28 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 	if recordID == "" {
 		return fail("record_id: CONTENT_INVALID — a record id is required")
 	}
-	if formName == "" {
-		return fail("form_name: CONTENT_INVALID — a form name is required")
-	}
-	// A survey link fills its own (record, instrument) and nothing else. A
-	// row naming another pair is a permission mismatch, not a validation
-	// failure — the same shape as the arm check below (§3.10, REQ-API-083).
-	if sub.isLink() && (recordID != sub.Link.RecordID || formName != sub.Instrument) {
+	// A row without form_name is flat (REQ-API-031): every supplied field
+	// stores on its own instrument from the data dictionary, so a caller can
+	// post back an export without naming forms. The cross-instrument rule in
+	// the value loop below keeps each value on its own field's instrument.
+	// A survey link fills its own (record, instrument) and nothing else: the
+	// pin replaces form_name there, and a row *naming* another instrument is
+	// a permission mismatch, not a validation failure — the same shape as
+	// the arm check below (§3.10, REQ-API-083).
+	if sub.isLink() && (recordID != sub.Link.RecordID || (formName != "" && formName != sub.Instrument)) {
 		return importRow{}, errForbiddenRequest
 	}
-	formKnown := false
-	for _, f := range d.fields {
-		if f.Instrument == formName {
-			formKnown = true
-			break
+	if formName != "" {
+		formKnown := false
+		for _, f := range d.fields {
+			if f.Instrument == formName {
+				formKnown = true
+				break
+			}
 		}
-	}
-	if !formKnown {
-		return fail("form_name: CONTENT_INVALID — unknown form '" + formName + "'")
+		if !formKnown {
+			return fail("form_name: CONTENT_INVALID — unknown form '" + formName + "'")
+		}
 	}
 
 	// Event and arm. Projects without events store under the empty event
@@ -232,13 +310,22 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 			continue
 		}
 		// A row writes its named instrument and the record identifier —
-		// never fields of other instruments (security finding F3). The survey
-		// link's (record, form) pin must mean "this instrument only", or an
-		// anonymous respondent could overwrite clinician data elsewhere in
-		// the record; for project tokens, form_name means what it says.
-		if f.Instrument != formName && f.FieldName != d.identifier {
+		// never fields of other instruments (security finding F3); a flat
+		// row writes each field's own instrument, the same rule read from
+		// the dictionary instead of from the caller. The survey link's pin
+		// must mean "this instrument only", or an anonymous respondent could
+		// overwrite clinician data elsewhere in the record; for project
+		// tokens, form_name means what it says.
+		own := formName
+		if own == "" {
+			own = f.Instrument // flat: the dictionary assigns the instrument
+			if sub.isLink() {
+				own = sub.Instrument // the link's pin replaces form_name
+			}
+		}
+		if f.Instrument != own && f.FieldName != d.identifier {
 			problems = append(problems, f.FieldName+": CONTENT_INVALID — field '"+f.FieldName+
-				"' belongs to instrument '"+f.Instrument+"', not '"+formName+"'")
+				"' belongs to instrument '"+f.Instrument+"', not '"+own+"'")
 			continue
 		}
 		vf := validate.Field{
