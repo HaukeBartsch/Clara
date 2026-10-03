@@ -32,14 +32,14 @@ func (h *Handler) registerMembers(mux *http.ServeMux) {
 // than rebuilding a second shape. An empty list is `[]`, never null: "holds no
 // group" is a value, not an absent field (REQ-AUTH-044).
 type memberObject struct {
-	UserID        int64    `json:"user_id"`
-	Email         string   `json:"email"`
-	DisplayName   string   `json:"display_name"`
-	Role          *string  `json:"role"`
-	TokenPresent  bool     `json:"token_present"`
-	Enabled       bool     `json:"enabled"`
-	Groups        []int64  `json:"groups"`
-	ActiveGroupID *int64   `json:"active_group_id"`
+	UserID        int64   `json:"user_id"`
+	Email         string  `json:"email"`
+	DisplayName   string  `json:"display_name"`
+	Role          *string `json:"role"`
+	TokenPresent  bool    `json:"token_present"`
+	Enabled       bool    `json:"enabled"`
+	Groups        []int64 `json:"groups"`
+	ActiveGroupID *int64  `json:"active_group_id"`
 }
 
 // memberWithToken is the add/rotation response — the only place the token
