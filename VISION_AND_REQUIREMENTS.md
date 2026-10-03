@@ -746,6 +746,8 @@ The screen "project overview" page, after logging in should only show a single p
 
 A projects role has permission groups for "data access" and "export". In an arm permissions are specific to each individual instrument and event. The user interface displays a "Define/Edit a roles" as a table (per arm). Each row of the table are the permissions for an instrument (event). Columns display radio buttons for data access and export. Additional permission are coded as checkboxes. a) delete a records instrument (delete the instruments field values), b) edit already collected surveys.
 
+Define/Edit a role for your project with name like "data manager", "data-entry", "controller", etc.. 
+Each role stores permissions by arm like this:
 ┌────────────────────┬───────────────────┐
 │ Permissions arm_1  │ Permissions arm_2 │   
 ├──────────────┬─────┴───────────────────┴───────────────────────┬────────────────────────────────────────┐
@@ -766,3 +768,17 @@ A projects role has permission groups for "data access" and "export". In an arm 
 │ instrument 2 │ ( )    │ ( )  │ (O)  │    [X]     │     [X]     │ ( )  │ ( )        │ ( )         │ (O)  │
 │ (followup)   │        │      │      │            │             │      │            │             │      │
 └──────────────┴────────┴──────┴──────┴────────────┴─────────────┴──────┴────────────┴─────────────┴──────┘
+
+
+## Adjust login screen
+
+Style a clara-source-tile with bootstrap like this:
+
+```html
+<div class="card" style="width: 18rem;">
+  <img class="card-img-top" src="..." alt="Hospital 1 image">
+  <div class="card-body">
+    <p class="card-text">Hospital 1</p>
+  </div>
+</div>
+```
