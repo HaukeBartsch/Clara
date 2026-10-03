@@ -46,7 +46,8 @@ final class CurlTransport implements Transport
 
         $raw = curl_exec($handle);
         $status = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
-        curl_close($handle);
+        // No curl_close(): the handle is an object released at scope exit
+        // (the function has been a no-op since PHP 8.0 and deprecated in 8.5).
 
         // A failed exchange — refused, timed out, unresolvable — carries no status.
         return $raw === false ? ['status' => 0, 'body' => ''] : ['status' => $status, 'body' => (string) $raw];
