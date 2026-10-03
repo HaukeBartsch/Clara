@@ -207,18 +207,20 @@ The start page after login (REQ-UI-009): **one content panel between header and 
 ├───────────────────────────────────────────────────────────────────────────┤
 │  Hauke Bartsch                                                            │
 │  Projects (2)                                                             │
-│  ┌────────────────────┬──────────────┬─────────┬─────────┬───────────┐    │
-│  │ Project            │ Organization │ Records │ Instr.  │ Fields    │    │
-│  ├────────────────────┼──────────────┼─────────┼─────────┼───────────┤    │
-│  │ 8DISC              │ NAT EU       │      42 │       5 │      128  │    │
-│  │ EMIT-23            │ OTHER        │     128 │       1 │      146  │    │
-│  └────────────────────┴──────────────┴─────────┴─────────┴───────────┘    │
+│  ┌──────────────────────────┬─────────┬─────────────┬──────────┐          │
+│  │ Project                  │ Records │ Instruments │ Fields   │          │
+│  ├──────────────────────────┼─────────┼─────────────┼──────────┤          │
+│  │ 8DISC                    │      42 │           5 │     128  │          │
+│  │ NAT EU                   │         │             │          │          │
+│  │ EMIT-23                  │     128 │           1 │     146  │          │
+│  │ OTHER                    │         │             │          │          │
+│  └──────────────────────────┴─────────┴─────────────┴──────────┘          │
 ├───────────────────────────────────────────────────────────────────────────┤
 │  language ▾  theme ▾  Two-factor · Password · Hauke Bartsch · [Sign out]  │  footer
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
-- One **table row** per visible project — `table-sm` (REQ-UI-032) — with the project name and organization and the quick statistics **in columns**, exactly as returned (`record_count`, `instrument_count`, `field_count` — REQ-UI-009, REQ-API-049). The **project name is the link**: it opens that project's page (`/projects/{id}`, §6.1), which lands on its first available section.
+- One **table row** per visible project — `table-sm` (REQ-UI-032) — with the project name (its organization on a second line of the same cell) and the quick statistics **in columns**, exactly as returned (`record_count`, `instrument_count`, `field_count` — REQ-UI-009, REQ-API-049). The **project name is the link**: it opens that project's page (`/projects/{id}`, §6.1), which lands on its first available section.
 - **The header carries the [Control Panel] button for `is_admin` only** (REQ-UI-003/009) — the single entry point to §5, replacing the former dashboard `[Administration]` link and the Administration sidebar section.
 - **Data access groups** (REQ-UI-010): for a member with one or more assigned groups, the row shows the **currently active group** and a switch control listing the member's assigned groups. Switching `POST`s to the PHP route → `PUT /api/v1/projects/{id}/active-data-access-group` (REQ-API-090); the switch takes effect on the **next** data page load (the current page's data was already scoped). A member without any assignment sees no group control — they see all records of the project (GD-10).
 - No projects and not `is_admin` → the no-access page (§2.3).

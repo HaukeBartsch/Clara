@@ -97,7 +97,7 @@ final class View
 
     /**
      * Whether the account has a local password to change — the gate on the Password entry
-     * in the sidebar's Account section (§2.4 item 4, GD-23).
+     * in the shell footer (§2.4, GD-23).
      */
     public function hasLocalCredential(): bool
     {
@@ -120,7 +120,7 @@ final class View
         return Session::isAuthenticated();
     }
 
-    /** The path being rendered — what marks the active sidebar entry. */
+    /** The path being rendered — what marks the active left-panel entry. */
     public function currentPath(): string
     {
         return $this->request->path();

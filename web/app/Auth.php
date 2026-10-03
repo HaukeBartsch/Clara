@@ -48,7 +48,7 @@ final class Auth
      * `public`   — no session needed (login, the password pages).
      * `login`    — an authenticated identity; an expired session goes to /login.
      * `admin`    — additionally is_admin; a signed-in non-admin is refused, not
-     *              redirected, because the sidebar never offered the page (§3.1).
+     *              redirected, because the header never offered the Control Panel (§3.1).
      */
     public static function guard(string $level, Config $config, ?string $returnTo = null): ?Response
     {
