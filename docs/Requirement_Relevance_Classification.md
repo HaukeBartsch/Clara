@@ -10,7 +10,7 @@ relevance into five categories. A code appears under every category that applies
 - **scalability** — graceful growth in data volume, users and projects: storage model, partitioning and rollover, avoiding full rewrites, concurrency.
 - **resilience** — correct behavior under failure and protection of data integrity: transactions and atomicity, idempotence, immutability, health checks, enforced invariants.
 
-Totals across all documents: security 348, performance 25, workflow 266, scalability 60, resilience 122 (codes may carry more than one category).
+Totals across all documents: security 350, performance 25, workflow 270, scalability 60, resilience 122 (codes may carry more than one category).
 
 | Requirements document | Relevance | Codes |
 |---|---|---|
@@ -56,8 +56,8 @@ Totals across all documents: security 348, performance 25, workflow 266, scalabi
 | `Requirements/Technology_Stack_Requirements.md` | workflow | REQ-TECH-001, REQ-TECH-004, REQ-TECH-005, REQ-TECH-008, REQ-TECH-009, REQ-TECH-013, REQ-TECH-021, REQ-TECH-022, REQ-TECH-025, REQ-TECH-028, ASM-TECH-1 |
 | `Requirements/Technology_Stack_Requirements.md` | scalability | REQ-TECH-003, REQ-TECH-005, REQ-TECH-007, REQ-TECH-008, REQ-TECH-011, REQ-TECH-012 |
 | `Requirements/Technology_Stack_Requirements.md` | resilience | REQ-TECH-014, REQ-TECH-016, REQ-TECH-026, REQ-TECH-027, ASM-TECH-2, DEV-TECH-2 |
-| `Requirements/User_Interface_Requirements.md` | security | REQ-UI-002, REQ-UI-003, REQ-UI-004, REQ-UI-005, REQ-UI-007, REQ-UI-009, REQ-UI-011, REQ-UI-013, REQ-UI-014, REQ-UI-015, REQ-UI-016, REQ-UI-017, REQ-UI-026, REQ-UI-027, REQ-UI-028, REQ-UI-030, REQ-UI-032, REQ-UI-038, REQ-UI-039, REQ-UI-042, REQ-UI-043, REQ-UI-044, REQ-UI-045, ASM-UI-3, DEV-UI-1, DEV-UI-5, DEV-UI-10, DEV-UI-11 |
+| `Requirements/User_Interface_Requirements.md` | security | REQ-UI-002, REQ-UI-003, REQ-UI-004, REQ-UI-005, REQ-UI-007, REQ-UI-009, REQ-UI-011, REQ-UI-013, REQ-UI-014, REQ-UI-015, REQ-UI-016, REQ-UI-017, REQ-UI-026, REQ-UI-027, REQ-UI-028, REQ-UI-030, REQ-UI-032, REQ-UI-038, REQ-UI-039, REQ-UI-042, REQ-UI-043, REQ-UI-044, REQ-UI-045, REQ-UI-046, REQ-UI-047, ASM-UI-3, DEV-UI-1, DEV-UI-5, DEV-UI-10, DEV-UI-11 |
 | `Requirements/User_Interface_Requirements.md` | performance | REQ-UI-016, REQ-UI-020 |
-| `Requirements/User_Interface_Requirements.md` | workflow | REQ-UI-001, REQ-UI-006, REQ-UI-008, REQ-UI-009, REQ-UI-010, REQ-UI-011, REQ-UI-012, REQ-UI-013, REQ-UI-014, REQ-UI-015, REQ-UI-017, REQ-UI-018, REQ-UI-019, REQ-UI-020, REQ-UI-021, REQ-UI-022, REQ-UI-023, REQ-UI-024, REQ-UI-025, REQ-UI-026, REQ-UI-027, REQ-UI-028, REQ-UI-029, REQ-UI-030, REQ-UI-032, REQ-UI-033, REQ-UI-034, REQ-UI-035, REQ-UI-036, REQ-UI-037, REQ-UI-040, REQ-UI-041, REQ-UI-045, ASM-UI-1, ASM-UI-2, ASM-UI-3, DEV-UI-2, DEV-UI-4, DEV-UI-5, DEV-UI-6, DEV-UI-7, DEV-UI-8, DEV-UI-9, DEV-UI-12 |
+| `Requirements/User_Interface_Requirements.md` | workflow | REQ-UI-001, REQ-UI-006, REQ-UI-008, REQ-UI-009, REQ-UI-010, REQ-UI-011, REQ-UI-012, REQ-UI-013, REQ-UI-014, REQ-UI-015, REQ-UI-017, REQ-UI-018, REQ-UI-019, REQ-UI-020, REQ-UI-021, REQ-UI-022, REQ-UI-023, REQ-UI-024, REQ-UI-025, REQ-UI-026, REQ-UI-027, REQ-UI-028, REQ-UI-029, REQ-UI-030, REQ-UI-032, REQ-UI-033, REQ-UI-034, REQ-UI-035, REQ-UI-036, REQ-UI-037, REQ-UI-040, REQ-UI-041, REQ-UI-045, REQ-UI-046, REQ-UI-047, ASM-UI-1, ASM-UI-2, ASM-UI-3, DEV-UI-2, DEV-UI-4, DEV-UI-5, DEV-UI-6, DEV-UI-7, DEV-UI-8, DEV-UI-9, DEV-UI-12, DEV-UI-14, DEV-UI-15 |
 | `Requirements/User_Interface_Requirements.md` | scalability | REQ-UI-019 |
 | `Requirements/User_Interface_Requirements.md` | resilience | REQ-UI-021, REQ-UI-022, REQ-UI-023, REQ-UI-031, REQ-UI-033, REQ-UI-034, REQ-UI-035, REQ-UI-037, REQ-UI-040, REQ-UI-044, DEV-UI-3 |

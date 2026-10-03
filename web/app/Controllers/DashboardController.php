@@ -1,13 +1,15 @@
 <?php
-// The dashboard (User_Interface_Design.md §4, REQ-UI-009) — the page after login,
-// listing the projects the acting user may see. Visibility is the API's decision
-// (REQ-API-049/007): PHP asks for `GET /api/v1/projects` and renders what comes
-// back, with no filtering of its own and no notion of a project it was not told
-// about.
+// The project overview (User_Interface_Design.md §4, REQ-UI-009) — the page after login,
+// listing the projects the acting user may see as rows with their statistics in columns.
+// It is a single content panel: no left panel is passed to the shell, because the first
+// screen after login is information rather than navigation (§2.4 A, REQ-UI-046).
+// Visibility is the API's decision (REQ-API-049/007): PHP asks for `GET /api/v1/projects`
+// and renders what comes back, with no filtering of its own and no notion of a project it
+// was not told about.
 //
-// The route also serves the §4 list as a data region (REQ-UI-044): `data()` is
-// reached by the same guard, performs the same read, and returns the same three
-// counts the rendered rows show — never more.
+// The route also serves the §4 list as a data region (REQ-UI-044): `data()` is reached by
+// the same guard, performs the same read, and returns the same three counts the rendered
+// rows show — never more.
 
 declare(strict_types=1);
 
@@ -38,9 +40,6 @@ final class DashboardController extends Controller
 
         return $this->page('dashboard', [
             'projects' => $projects,
-            // The sidebar lists the visible projects too (§2.4) — the same read,
-            // not a second one (Plan/Web_Implementation.md §7 rule 13).
-            'sidebarProjects' => $projects,
         ], [
             'titleKey' => 'dashboard.title',
             // The shared runtime plus this page's own section module — a page

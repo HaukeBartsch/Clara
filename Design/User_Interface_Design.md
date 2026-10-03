@@ -25,7 +25,7 @@ Common conventions (REQ-UI-001…008), binding on every page:
 - **CSRF** (REQ-UI-005, REQ-AUTH-037): every state-changing browser request is a `POST` (form or fetch) carrying the per-session `csrf_token` — hidden `csrf_token` form field for forms, `X-CSRF-Token` header for fetch calls.
 - **Language** (REQ-UI-008, GD-12): English is the default and fallback; `nb` and `nn` are the first targets. Translations are applied **server-side at render time** — no i18n JavaScript library (REQ-TECH-001); §9 covers how JavaScript-originated messages are translated.
 - **Time** (GD-7, GD-16): **system** timestamps (audit, history, account fields) are displayed as UTC, in the `YYYY-MM-DD HH:MM:SS` form the API returns. Clinical date/date-time **values** are displayed **exactly as stored** — canonical form **including the collection timezone offset** (e.g. `2026-03-01+01:00`, `2026-03-01 09:30+01:00`); the UI performs no locale reformatting of stored data and no timezone conversion (resolves ASM-UI-1). When the user enters a date/date-time in the data-entry form, the form submits it as typed (the field's `validation_format`) and the browser's timezone is sent as the collection zone (GD-16, REQ-VAL-041 — the PHP layer resolves the browser zone to the offset and passes `tz`).
-- **Layout** (master spec, "User interface details"): a **sidebar + content-panel** shell — the navigation lives in a left sidebar; selecting a function (e.g. *Setup*) renders the corresponding page in the right-hand content panel (§2.4). This is a shared multi-page layout, not a single-page app: each route of §2.1 renders the same sidebar and swaps the panel content (consistent with REQ-UI-001 — no framework). The shell, visual style, and interaction style follow the historic FIONA reference in `assets/table_based_authentication_plus_user_management/` (master spec, "Details"; REQ-UI-032, REQ-TECH-025): sidebar + panel, `table-sm` tables, responsive layout, and a client that populates data regions from JSON — realized in Bootstrap 5.3.x and vanilla ES2020.
+- **Layout** (master spec, "User interface details"; DEV-UI-14): the left panel belongs to the page that has switchable sections. The signed-in surface has three shells — the **project overview** (`/`) is a single content panel with no left panel; the **project page** (`/projects/{id}…`) carries the project's functions in a left panel and shows the selected one on the right; the **Control Panel** (`/admin`) does the same for the administration sections (§2.4). Selecting a section (e.g. *Setup*) renders that page in the right-hand panel. This is a shared multi-page layout, not a single-page app: each route of §2.1 renders the same shell and swaps the panel content (consistent with REQ-UI-001 — no framework). The shells, visual style, and interaction style follow the historic FIONA reference in `assets/table_based_authentication_plus_user_management/` (master spec, "Details"; REQ-UI-032, REQ-TECH-025): left panel + content panel, `table-sm` tables, responsive layout, and a client that populates data regions from JSON — realized in Bootstrap 5.3.x and vanilla ES2020.
 
 ## 2. Application Shell and Routes
 
@@ -36,19 +36,16 @@ Common conventions (REQ-UI-001…008), binding on every page:
 | `GET /login` | login incl. source-name picker and the two-factor step (§2.2) | public (pre-auth `tfa_pending` state for the challenge, GD-21) | — (PHP named-source selection + OAuth2/LDAP/local flow; `Authentication_Authorization_Design.md` §2.9/2.1/2.2/2.7) |
 | `GET /auth/callback` | OAuth2 redirect | public | `POST /api/v1/auth/login` on success |
 | `POST /logout` | — (redirect to `/login`) | any authenticated | `POST /api/v1/auth/logout` **before** session destruction (REQ-UI-007, `Authentication_Authorization_Design.md` §2.4) |
-| `GET /` | dashboard (§4) | any authenticated | `GET /api/v1/projects` |
+| `GET /` | project overview (§4) | any authenticated | `GET /api/v1/projects` |
 | `POST /lang` | language switch (redirect back) | any authenticated | `PUT /api/v1/users/me/ui-language` |
 | `POST /theme` | theme switch (redirect back, §3.8) | any authenticated | `PUT /api/v1/users/me/ui-theme` (GD-26) |
 | `GET /account/two-factor` | two-factor settings (§2.5) | any authenticated | `GET /api/v1/users/me/tfa`, `POST /api/v1/users/me/tfa/*` (GD-21, REQ-UI-039) |
 | `GET\|POST /account/password` | change own password (§2.6) | any authenticated | `PUT /api/v1/users/me/password` (GD-23, REQ-AUTH-061) |
 | `GET\|POST /password-reset` | forgot-password request (§2.6) | public — no session | `POST /api/v1/auth/password-reset/request` (GD-23, REQ-AUTH-062) |
 | `GET\|POST /set-password?token=…` | set password via invite/reset token (§2.6) | public — valid token, no session | `POST /api/v1/auth/invite/complete`, `POST /api/v1/auth/password-reset/complete` (GD-22/GD-23, Sequence H) |
-| `GET /admin/users` | user accounts (§5.1) | `is_admin` | `GET/POST /api/v1/users`, `PUT /api/v1/users/{id}` |
-| `GET /admin/projects` | project create/edit (§5.2) | `is_admin` | `POST /api/v1/projects`, `GET/PUT /api/v1/projects/{id}` |
-| `GET /admin/audit` | audit view (§5.6) | `is_admin` (REQ-API-078) | `GET /api/v1/audit` |
-| `GET /admin/i18n` | translation management (§5.7) | `is_admin` | `GET /api/v1/i18n/strings?language=`, `PUT /api/v1/i18n/strings` |
-| `GET /admin/settings` | system settings (§5.8) | `is_admin` | `GET/PUT /api/v1/settings` |
-| `GET /projects/{id}` | project workspace (§6.1) | project visibility (REQ-API-007) | `GET /api/v1/projects/{id}` |
+| `GET /admin?section=users\|projects\|audits\|translations\|settings` | **Control Panel** (§5) — the one administration page; its left panel selects the section, the right-hand panel shows it (REQ-UI-047). `section` defaults to the first available | `is_admin` | per section (§5.1/§5.2/§5.6/§5.7/§5.8): `GET/POST /api/v1/users`, `PUT /api/v1/users/{id}` · `POST /api/v1/projects`, `GET/PUT /api/v1/projects/{id}` · `GET /api/v1/audit` · `GET /api/v1/i18n/strings?language=`, `PUT /api/v1/i18n/strings` · `GET/PUT /api/v1/settings` |
+| `GET /projects/{id}` | project page — **entry**: resolves the first available section (§6.1) and redirects to it | project visibility (REQ-API-007) | `GET /api/v1/projects/{id}` (its permissions block decides the target, REQ-API-126) |
+| `GET /projects/{id}/overview` | project Overview — summary, metadata, mode (§6.1) | project visibility (REQ-API-007) | `GET /api/v1/projects/{id}` |
 | `GET /projects/{id}/setup` | setup page (§6.2) | `project_admin` | arms / events / instruments / mapping endpoints |
 | `GET /projects/{id}/design` | instrument designer (§7.1) | `project_admin` | instruments / fields endpoints |
 | `GET /projects/{id}/design/instruments/{iid}` | field editor (§7.2) | `project_admin` | `GET/POST …/instruments/{iid}/fields`, `PUT/DELETE …/fields/{fid}`, `PUT …/fields/order` |
@@ -60,7 +57,7 @@ Common conventions (REQ-UI-001…008), binding on every page:
 | `GET /projects/{id}/export` | export (streams the response) | a non-`export_none` level per arm (REQ-UI-020) | `GET …/export` (streamed, REQ-TECH-011) |
 | `GET /s/{link}` | public survey page (§8.8) | none — no session, outside the login (GD-9, DEV-UI-1) | data API `content=metadata` + `content=record&action=import` with the link token (REQ-API-083) |
 
-There are no other browser-reachable routes. State-changing browser requests are `POST`s to the same routes with a `?action=<name>` parameter (or a dedicated `POST` route where noted); the table lists the read route each page is bound to. The JSON a page's client binds its data regions from (§3.7) is served by **that same route**, selected on `Accept: application/json` — no proxy route joins this set (REQ-UI-044). The browser never sees `/api/v1/*` (REQ-UI-002).
+There are no other browser-reachable routes. State-changing browser requests are `POST`s to the same routes with a `?action=<name>` parameter (or a dedicated `POST` route where noted); the table lists the read route each page is bound to. The Control Panel's `?section=<name>` (`§2.4`, REQ-UI-047) works the same way: an allowlisted query parameter resolved in PHP, never forwarded to the API as a path fragment, and unknown values render the first available section rather than an error. The JSON a page's client binds its data regions from (§3.7) is served by **that same route**, selected on `Accept: application/json` — no proxy route joins this set (REQ-UI-044); for `/admin` the region is the one belonging to the requested section, and `GET /projects/{id}` answers a data request with the project object instead of its redirect. The browser never sees `/api/v1/*` (REQ-UI-002).
 
 ### 2.2 Login page (`GET /login`, REQ-UI-007)
 
@@ -81,34 +78,37 @@ A user who is neither an administrator nor a member of any project MUST be shown
 
 - Title: "No projects yet" (translated); a short explanation that access is granted when an administrator adds them to a project (or grants the administrator flag).
 - For `is_admin` users with no projects: the same page shows the administration entry points (create project — §5.2, manage users — §5.1) instead of the explanation.
-- The sidebar (§2.4) is rendered with only the sections the user may use; the page is the right-hand panel.
+- The page renders as the single content panel of the project-overview shell (§2.4 A) — no left panel; for `is_admin` the header's Control Panel button is the only entry point (§2.4).
 
-### 2.4 Application layout — sidebar + content panel (master spec, "User interface details")
+### 2.4 Application layout — three shells (master spec, "User interface details"; DEV-UI-14)
 
-All authenticated pages (and the public survey page, §8.8, which renders a reduced shell) use a two-pane Bootstrap layout:
+Every authenticated page renders in one of three shells, and **a left panel appears only where it switches between sections** (REQ-UI-046). All three share the header and footer described here.
 
 ```
-┌────────────────────────────────────────────────────────────┐
-│  brand bar (project name when in a project context)        │
-├──────────────┬─────────────────────────────────────────────┤
-│  sidebar     │                                             │
-│  (nav)       │              content panel                  │
-│              │         (the page of §2.1, rendered         │
-│  …           │          right-hand; the page's own         │
-│              │          headings, forms, tables)           │
-├──────────────┴─────────────────────────────────────────────┤
-│  footer (language selector, user name, Sign out)           │
-└────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────────┐
+│ header  CLARA · <project name> / Overview       [ Control Panel ]   (adm) │
+├───────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│  A · project overview (`/`)      B · project page, Control Panel          │
+│  ┌────────────────────────────┐  ┌────────────┬───────────────────────┐   │
+│  │  single content panel      │  │ left panel │    content panel      │   │
+│  │  projects table with the   │  │ Overview   │   the selected        │   │
+│  │  statistics in columns     │  │ Setup      │   section's page —    │   │
+│  │                            │  │ Record …   │   its own headings,   │   │
+│  │  no left panel             │  │ Export …   │   forms, tables       │   │
+│  └────────────────────────────┘  └────────────┴───────────────────────┘   │
+│                                                                           │
+├───────────────────────────────────────────────────────────────────────────┤
+│ footer  language · theme · Two-factor · Password · <name> · Sign out      │
+└───────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Selecting a sidebar item loads the corresponding page in the content panel** (master spec). Mechanically this is plain navigation — a `GET` to the route of §2.1 — rendered into the same shell; there is no client-side page switching and no SPA (REQ-UI-001). The active item is marked `active` in the sidebar.
-- **Sidebar sections** (each section absent from the DOM unless allowed — REQ-UI-003):
-  1. **Projects** (any authenticated user with ≥ 1 visible project): a link to the dashboard (`/`) and one entry per visible project (name + organization) to its home page (`/projects/{id}`).
-  2. **Administration** (`is_admin` only): Users (`/admin/users`), Projects (`/admin/projects`), Audit log (`/admin/audit`), Translations (`/admin/i18n`).
-  3. **Project context** — shown only while the user is on a page of a specific project (the brand bar shows that project's name): Setup, Design, Record status, Export (gated per §6.1), and — for `is_admin` — Members, Roles; — for `project_admin` or better — Groups. Selecting one of these loads that page in the panel (the master spec's "selecting different functions (like setup) should load the corresponding page in the right hand panel").
-  4. **Account**: the language selector (§9) and the theme selector (§3.8, GD-26), a "Two-factor authentication" link (`GET /account/two-factor`, §2.5 — GD-21), a "Password" link (`GET /account/password`, §2.6 — shown only when the account has a local credential, GD-23), and a "Sign out" action (`POST /logout`, CSRF token, REQ-UI-007).
-- **Responsive collapse** (REQ-UI-008): below the Bootstrap `lg` breakpoint the sidebar collapses to the standard off-canvas/overlay pattern (Bootstrap navbar + offcanvas); no mobile-specific optimization beyond Bootstrap defaults (ASM-UI-1).
-- The login page (§2.2), the public password pages (`/password-reset`, `/set-password`, §2.6), and the public survey page (§8.8) render **without** the sidebar (no session, no navigation) — each is a single centered form panel (DEV-UI-1 pattern).
+- **Header** (all shells): the brand (`CLARA`, linking to the project overview `/`) and, inside a project context, that project's name linked to its Overview (`/projects/{id}/overview`) as a breadcrumb. On the right, for `is_admin` users only, the **Control Panel** button → `/admin` (REQ-UI-009/047); it is absent from the DOM for every other user (REQ-UI-003), and nothing else administration-related appears in the header.
+- **A · Project overview** (`GET /`, §4): one content panel between header and footer with **no left panel** — the first screen after login is information about the projects, not navigation (REQ-UI-009).
+- **B · Left-panel shells** — the **project page** (§6.1) and the **Control Panel** (§5). The left panel lists that page's sections as links in its canonical order; the current one is marked `active`. Selecting an entry loads the corresponding page in the right-hand panel (master spec): mechanically plain navigation — a `GET` to the route of §2.1 rendered into the same shell, with no client-side page switching and no SPA (REQ-UI-001). An entry whose permission the acting user lacks, or whose section this build does not serve, is absent from the panel rather than disabled (REQ-UI-003).
+- **Footer** (all shells): language selector (§9, REQ-UI-029), theme selector (§3.8, REQ-UI-041), a "Two-factor authentication" link (`/account/two-factor`, §2.5 — GD-21), a "Password" link (`/account/password`, §2.6 — only when the account has a local credential, GD-23), the user's display name, and a "Sign out" action (`POST /logout`, CSRF token, REQ-UI-007). These are user-scoped rather than project-scoped, so they sit outside any section panel and stay put while the panel changes.
+- **Responsive collapse** (REQ-UI-008): below the Bootstrap `lg` breakpoint a left panel collapses to the standard off-canvas/overlay pattern (Bootstrap navbar + offcanvas) with its toggle in the header; no mobile-specific optimization beyond Bootstrap defaults (ASM-UI-1).
+- The login page (§2.2), the public password pages (`/password-reset`, `/set-password`, §2.6), and the public survey page (§8.8) render a single centered panel with **no** left panel, no header navigation, and no account footer — there is no session to scope them by (DEV-UI-1 pattern).
 
 ### 2.5 Two-factor settings (`GET /account/two-factor`, REQ-UI-039)
 
@@ -122,7 +122,7 @@ Self-service page in the shell, reachable by every signed-in user (also rendered
 
 ### 2.6 Password change, reset, and invite completion (GD-22/GD-23)
 
-**Change own password (`GET /account/password`, authenticated, in the shell).** Shown in the Account sidebar only when the account has a local credential (GD-23). One form: current password, new password + repeat; submits `PUT /api/v1/users/me/password` (CSRF, REQ-UI-005). A wrong current password shows the generic bad-password line (`API_Endpoints_Design.md` §4.2); success shows a confirmation and clears the fields. The account's **email address is displayed read-only** — identity changes go through an administrator (REQ-AUTH-061). Existing sessions stay valid (DEV-AUTH-13).
+**Change own password (`GET /account/password`, authenticated, in the shell).** Offered in the footer (§2.4) only when the account has a local credential (GD-23). One form: current password, new password + repeat; submits `PUT /api/v1/users/me/password` (CSRF, REQ-UI-005). A wrong current password shows the generic bad-password line (`API_Endpoints_Design.md` §4.2); success shows a confirmation and clears the fields. The account's **email address is displayed read-only** — identity changes go through an administrator (REQ-AUTH-061). Existing sessions stay valid (DEV-AUTH-13).
 
 **Forgot password (`GET /password-reset`, public, standalone panel).** One email field; submits `POST /api/v1/auth/password-reset/request`; the page always shows the same translated line — "If that address has an account with a local password, a reset link has been sent" — never revealing whether it did (REQ-AUTH-062). Rate-limit rejection (429) shows a retry-soon message.
 
@@ -135,7 +135,7 @@ These rules apply on every page of §2.1 and are the single implementation of th
 ### 3.1 Permission gating (REQ-UI-003, REQ-AUTH-027)
 
 - A single PHP helper resolves, per request, the acting user's effective permissions for the target project (via the API — the API re-checks on every call, REQ-AUTH-033) and the template renders conditionally. The `permissions` object of `GET /api/v1/projects/{id}` (REQ-API-126) is that read: `project_admin` plus the data access and export level of every arm, so no page needs a second round trip to know what it may offer. "Hidden" = **absent from the DOM** — no `display:none`, no disabled control.
-- Consequence table (normative): a control whose permission is missing MUST NOT be emitted — not as a disabled button, not as a link to a 403 page. This holds for sidebar entries (§2.4), page action buttons, and per-row actions (e.g. the per-member token rotation, §5.3).
+- Consequence table (normative): a control whose permission is missing MUST NOT be emitted — not as a disabled button, not as a link to a 403 page. This holds for left-panel entries (§2.4), the header's Control Panel button, page action buttons, and per-row actions (e.g. the per-member token rotation, §5.3).
 
 ### 3.2 Escaping and free-text (REQ-UI-004, REQ-TECH-020)
 
@@ -182,7 +182,7 @@ Success confirmations (created/updated/removed) are one translated alert line at
 
 The reference application's interfacing style (master spec, "Details"; `assets/table_based_authentication_plus_user_management/` — `/php/*.php` JSON endpoints, `js/all.js` fetch-and-populate) is adopted for the presentation layer, in vanilla ES2020:
 
-- **Server renders the shell and static content.** Each route of §2.1 returns the page shell — sidebar, headings, forms, empty data containers — fully rendered, permission-gated (REQ-UI-003), and with UI strings translated (REQ-UI-008).
+- **Server renders the shell and static content.** Each route of §2.1 returns the page shell — header, the left panel where that page has one (§2.4), headings, forms, empty data containers — fully rendered, permission-gated (REQ-UI-003), and with UI strings translated (REQ-UI-008).
 - **Client binds data regions.** The page's modules fetch JSON from the route that served the page — the same route, content-negotiated (REQ-UI-044), proxying the API server-side (REQ-TECH-006, GD-1) — and populate data regions: list rows, table bodies, and `<select>` options. They write with **safe DOM APIs** — `createElement`/`textContent` for all content except the stored free-text allowlist HTML (the §3.2 exception); `innerHTML` with user data is forbidden (REQ-UI-004, REQ-TECH-020).
 - **Where the JSON comes from — one mechanism, in the router** (REQ-UI-044). A data region is served by the page's own route, selected on `Accept`: a request preferring `application/json` (which the client always sends) receives that route's data region as JSON, anything else receives the rendered page. The decision lives in the front controller/router, before the controller runs — a controller exposes one handler per §2.1 route and declares the regions it can serve, so **adding a page adds no routing code** and no page re-implements the negotiation. Because dispatch happens after the session guard and the permission gate, a data request is authorized exactly like the page render it stands for and discloses no more than that page would (§3.1, REQ-UI-003); its failures carry the HTTP status and stable `error` code of `API_Endpoints_Design.md` §4.2, which the client renders through the §3.4 table.
 - **Which script does it** (REQ-UI-045). `web/assets/app.js` is the shared runtime — the fetch helper (sets `Accept: application/json`, attaches `X-CSRF-Token`, reads the §9 string block once and exposes it), the data-region binders, and the defaults every table shares (Tabulator configuration, empty states per §3.6). One module per view or logical section lives beside it under `web/assets/js/` (`record.js`, `record-status.js`, `setup.js`, `design.js`, `members.js`, `admin-users.js`, `survey.js`, …) and carries that surface's behaviour: the advisory validation and branching evaluator of §8.4 (shared by `record.js` and `survey.js` as a module both import), the expression editors of §7, the submission-policy diff of §8.6. A page emits `<script type="module" src="…">` for the runtime plus the modules it needs — relative paths, unbundled, same-origin (`Technology_Stack_Design.md` §4).
@@ -194,33 +194,42 @@ The reference application's interfacing style (master spec, "Details"; `assets/t
 
 - **One stylesheet per page.** The PHP shell links exactly one Bootstrap stylesheet in the `<head>`: the standard `vendor/bootstrap/bootstrap.min.css`, or the selected theme's `vendor/bootstrap/themes/<name>/bootstrap.min.css` (vendored per `Technology_Stack_Design.md` §2/§4; themes are full replacements — never both, never layered). All other assets (bundle JS, Tabulator, Geist) are theme-independent and unchanged.
 - **Resolution at render time.** The effective theme is the acting user's override (`users.ui_theme`, from the session's user object) when set, else the installation default `UI_THEME` (REQ-CFG-031). Only installed theme identifiers resolve; the value never comes from the request, so no arbitrary path lands in the `href` (REQ-TECH-027). The login page, the public password pages (§2.6), and the survey page (§8.8) have no user context and render with the installation default.
-- **Theme selector** (sidebar Account section, §2.4; REQ-UI-041): a `<select>` beside the language selector listing the installed themes (`Standard`, `Darkly`, `Yeti` — translated display names) plus **"Default"** (= follow the installation theme, i.e. clear the personal override). Choosing one is a CSRF-protected `POST /theme` (form submit, redirect back like `POST /lang`) → `PUT /api/v1/users/me/ui-theme` (REQ-API-122); the new stylesheet applies **from the next page load** — the current page keeps its already-rendered theme.
+- **Theme selector** (shell footer, §2.4; REQ-UI-041): a `<select>` beside the language selector listing the installed themes (`Standard`, `Darkly`, `Yeti` — translated display names) plus **"Default"** (= follow the installation theme, i.e. clear the personal override). Choosing one is a CSRF-protected `POST /theme` (form submit, redirect back like `POST /lang`) → `PUT /api/v1/users/me/ui-theme` (REQ-API-122); the new stylesheet applies **from the next page load** — the current page keeps its already-rendered theme.
 - **Markup is theme-neutral.** No page structure or component changes with the theme (REQ-TECH-027): `table-sm`, the offcanvas collapse (§2.4), modals, and badges render from the same markup under every installed theme. The CSP of §3.2 already allows only same-origin styles — a theme introduces no new source.
 
-## 4. Dashboard (`GET /`)
+## 4. Project overview (`GET /`)
 
-The start page after login (REQ-UI-009). Data: `GET /api/v1/projects` (visible projects only — REQ-API-049, REQ-API-007).
+The start page after login (REQ-UI-009): **one content panel between header and footer, no left panel** (§2.4 A). Data: `GET /api/v1/projects` (visible projects only — REQ-API-049, REQ-API-007).
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────┐
-│  <user display name>                                                      │
-│  Projects (n)                          [Administration] (adm)             │
+│  CLARA                                     [ Control Panel ]   Hauke      │  header
 ├───────────────────────────────────────────────────────────────────────────┤
-│  8DISC                 NAT EU      42 records · 5 instr. · 128 fields  →  │
-│  EMIT-23               OTHER       128 records · 1 instr. · 146 fields →  │
+│  Hauke Bartsch                                                            │
+│  Projects (2)                                                             │
+│  ┌────────────────────┬──────────────┬─────────┬─────────┬───────────┐    │
+│  │ Project            │ Organization │ Records │ Instr.  │ Fields    │    │
+│  ├────────────────────┼──────────────┼─────────┼─────────┼───────────┤    │
+│  │ 8DISC              │ NAT EU       │      42 │       5 │      128  │    │
+│  │ EMIT-23            │ OTHER        │     128 │       1 │      146  │    │
+│  └────────────────────┴──────────────┴─────────┴─────────┴───────────┘    │
+├───────────────────────────────────────────────────────────────────────────┤
+│  language ▾  theme ▾  Two-factor · Password · Hauke Bartsch · [Sign out]  │  footer
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
-- One row/card per visible project: name, organization, and the quick statistics exactly as returned (`record_count`, `instrument_count`, `field_count` — REQ-UI-009, REQ-API-049). The row links to the project home (`/projects/{id}`, §6.1).
-- **[Administration]** entry point is present only for `is_admin` (REQ-UI-003/009) and links to the §5 pages.
-- **Data access groups** (REQ-UI-010): for a member with one or more assigned groups, the dashboard shows the **currently active group** (per project, where the member is assigned to ≥ 1 group) and a switch control listing the member's assigned groups. Switching `POST`s to the PHP route → `PUT /api/v1/projects/{id}/active-data-access-group` (REQ-API-090); the switch takes effect on the **next** data page load (the current page's data was already scoped). A member without any assignment sees no group control — they see all records of the project (GD-10).
+- One **table row** per visible project — `table-sm` (REQ-UI-032) — with the project name and organization and the quick statistics **in columns**, exactly as returned (`record_count`, `instrument_count`, `field_count` — REQ-UI-009, REQ-API-049). The **project name is the link**: it opens that project's page (`/projects/{id}`, §6.1), which lands on its first available section.
+- **The header carries the [Control Panel] button for `is_admin` only** (REQ-UI-003/009) — the single entry point to §5, replacing the former dashboard `[Administration]` link and the Administration sidebar section.
+- **Data access groups** (REQ-UI-010): for a member with one or more assigned groups, the row shows the **currently active group** and a switch control listing the member's assigned groups. Switching `POST`s to the PHP route → `PUT /api/v1/projects/{id}/active-data-access-group` (REQ-API-090); the switch takes effect on the **next** data page load (the current page's data was already scoped). A member without any assignment sees no group control — they see all records of the project (GD-10).
 - No projects and not `is_admin` → the no-access page (§2.3).
 
-## 5. Administration Interface
+## 5. Administration Interface — the Control Panel (`GET /admin`)
 
-The pages of §5.1/§5.2/§5.6/§5.7 are global (`is_admin`); §5.3/§5.4/§5.5 are project-scoped and are also linked from the project home sidebar (§2.4, §6.1 — master spec: the project home offers "administer users in the project").
+One page carries every installation-administration function (REQ-UI-047, DEV-UI-15): the **Control Panel**, reached from the header button of §2.4 and from nothing else. It is a left-panel shell (§2.4 B) whose panel lists the sections in this order — **Users** (`section=users`, §5.1), **Projects** (`section=projects`, §5.2), **Audits** (`section=audits`, §5.6), **Translations** (`section=translations`, §5.7), **Settings** (`section=settings`, §5.8) — and whose right-hand panel shows the section selected there. `GET /admin` with no `section` renders the first available one; a section this build does not serve is absent from the panel rather than disabled (REQ-UI-003). Mutations stay `POST /admin?section=<name>&action=<name>` (§2.1, REQ-UI-005), and a JSON request's data region is that section's (§3.7, REQ-UI-044).
 
-### 5.1 User accounts (`GET /admin/users`, `is_admin`, REQ-UI-011)
+§5.3/§5.4/§5.5 are **project-scoped** and live on the project page's left panel (§6.1 — master spec: the project offers "administer users in the project"); they are not Control Panel sections, because their permission comes from the project rather than from the installation (REQ-UI-047).
+
+### 5.1 Users section (`GET /admin?section=users`, `is_admin`, REQ-UI-011)
 
 Data: `GET /api/v1/users` (the full user object, `API_Endpoints_Design.md` §4.3/§4.4). Table columns: `email`, `display_name`, `enabled` (badge), `is_admin` (badge), `auth_source` (`oauth2`/`ldap`/`local`), **`last_login_at`** (UTC; "never" when `null`), **`valid_until`** ("indefinite" when `null`), the derived **status** badge — `active` / `disabled` / `expired` / `auto_disabled` (GD-19, REQ-AUTH-052/053) — and the **two-factor method** badge `off` / `totp` / `email` (GD-21, REQ-API-116). An `auto_disabled` row is visually distinct and shows the inactivity reason ("no login for more than `AUTH_INACTIVITY_LIMIT_DAYS` days — re-enabled by an administrator").
 
@@ -236,7 +245,7 @@ Data: `GET /api/v1/users` (the full user object, `API_Endpoints_Design.md` §4.3
 
 The `is_admin` flag is provisioned by the bootstrap mechanism at setup (GD-4, REQ-AUTH-007) and assigned to other accounts by administrators through the grant/revoke action above (REQ-API-136); the web page carrying it lands with M3 (`Plan/Web_Implementation.md`).
 
-### 5.2 Projects — create and edit (`GET /admin/projects`, `is_admin`, REQ-UI-012)
+### 5.2 Projects section (`GET /admin?section=projects`, `is_admin`, REQ-UI-012)
 
 **Create** — a single form covering the simplified creation fields of REQ-DB-006 (GD-17), submitting `POST /api/v1/projects`:
 
@@ -248,7 +257,7 @@ The option flags, the end-user-contract confirmation, the end provision, and the
 
 On 201 the page offers a link into the new project's setup (§6.2).
 
-**Edit** (`/admin/projects?edit={id}` → `PUT /api/v1/projects/{id}`): the same form pre-filled from `GET /api/v1/projects/{id}`; any subset may be changed (idempotent, REQ-API-042); metadata changes are audit-logged with old/new (REQ-API-052).
+**Edit** (`/admin?section=projects&edit={id}` → `PUT /api/v1/projects/{id}`): the same form pre-filled from `GET /api/v1/projects/{id}`; any subset may be changed (idempotent, REQ-API-042); metadata changes are audit-logged with old/new (REQ-API-052).
 
 ### 5.3 Members and tokens (`GET /projects/{id}/members`, `is_admin`, REQ-UI-013)
 
@@ -284,7 +293,7 @@ Data: `GET …/data-access-groups` (read: data access ≥ `read_only`; mutations
 - **Delete**: confirmation modal **with the warning that deletion is rejected while records are still assigned** (REQ-API-088; the 409 message is shown per §3.4) → `DELETE …/data-access-groups/{gid}`. Deleting removes the group and its member assignments (REQ-API-088).
 - The member-assignment and record-assignment actions live in §5.3 (members) and §8.8 (record view) respectively.
 
-### 5.6 Audit view (`GET /admin/audit`, REQ-UI-016)
+### 5.6 Audits section (`GET /admin?section=audits`, REQ-UI-016)
 
 Data: `GET /api/v1/audit` — read-only (REQ-API-077). Presentation: a filter bar + paginated table (§3.6) + an expandable detail cell.
 
@@ -293,7 +302,7 @@ Data: `GET /api/v1/audit` — read-only (REQ-API-077). Presentation: a filter ba
 - **Detail**: the full `details` payload rendered as a read-only key/value list — **every value escaped** (§3.2; REQ-UI-004). Token values may appear (the trail is the sole sanctioned carrier, REQ-AUD-007) — they are displayed escaped and never copied into the page's other elements.
 - Rows are reverse-chronological (REQ-API-077); there is **no** write control anywhere on this page (REQ-DB-024).
 
-### 5.7 Translation management (`GET /admin/i18n`, `is_admin`, REQ-UI-030)
+### 5.7 Translations section (`GET /admin?section=translations`, `is_admin`, REQ-UI-030)
 
 Data: `GET /api/v1/i18n/strings?language=<code>` (after `GET /api/v1/i18n/languages` for the language select).
 
@@ -302,7 +311,7 @@ Data: `GET /api/v1/i18n/strings?language=<code>` (after `GET /api/v1/i18n/langua
 - **Editor**: inline `text` editing per row (or a side form); empty `text` **removes** the translation (fallback to English). Save → `PUT /api/v1/i18n/strings` with `{ "language", "entries": [ { "key", "text" } ] }` (upsert; REQ-API-100).
 - Translated strings are escaped on render (§3.2, REQ-UI-004).
 
-### 5.8 System settings (`GET /admin/settings`, `is_admin`)
+### 5.8 Settings section (`GET /admin?section=settings`, `is_admin`)
 
 Data: `GET /api/v1/settings`; save → `PUT /api/v1/settings` (CSRF, §3.3; contract `API_Endpoints_Design.md` §4.22).
 
@@ -310,23 +319,25 @@ Data: `GET /api/v1/settings`; save → `PUT /api/v1/settings` (CSRF, §3.3; cont
 
 ## 6. Project Workspace
 
-### 6.1 Project home (`GET /projects/{id}`, REQ-UI-017)
+### 6.1 The project page (`GET /projects/{id}`, REQ-UI-017)
 
-Data: `GET /api/v1/projects/{id}` (full metadata + structure). Gating: project visibility (REQ-API-007).
+The project page is a left-panel shell (§2.4 B): its left panel lists the project's own functions, and the right-hand panel shows the section selected there (master spec: "selecting different functions (like setup) should load the corresponding page in the right hand panel"). Data: `GET /api/v1/projects/{id}` — full metadata + structure, whose `permissions` block (REQ-API-126) decides both which entries appear and which section opens. Gating: project visibility (REQ-API-007).
 
-- **Summary** (REQ-UI-017): record count, instrument count, field count, plus the project metadata block (name, organization, PI, REK number, dates — read-only display; editing goes to §5.2 for `project_admin`).
-- **Action cards** — each present **only** when allowed (REQ-UI-003), and mirrored in the sidebar's project context (§2.4). This realizes the master spec's project-home option list (setup the project, design all instruments, create arms and events, assign instruments to arms and events, administer users, export):
+**Left-panel entries**, in this canonical order, each present **only** when the acting user may use it (REQ-UI-003):
 
-| Card | Target | Required permission | Master-spec option |
+| Entry | Route | Required permission | Master-spec option |
 |---|---|---|---|
-| Setup | §6.2 | `project_admin` | i) setup the project; iii) create arms and events; iv) assign instruments to arms and events |
-| Design | §7.1 | `project_admin` | ii) design all instruments |
-| Record status | §6.3 | data access ≥ `read_only` | (participant overview) |
-| Export | §6.4 | a non-`export_none` level on the arm (REQ-API-075) | vi) export |
-| Members · Roles | §5.3 · §5.4 | `is_admin` | v) administer users in the project (match roles to permissions) |
-| Groups | §5.5 | data access ≥ `read_only` (mutate: `project_admin`) | (record scope) |
-| End provision | §6.5 | `is_admin` | (end of project — BR-009) |
-| Mode | §6.6 | `is_admin` (the mode badge is visible to every member) | project modes (GD-20) |
+| Overview | `/projects/{id}/overview` | project visibility | (project summary and mode) |
+| **Setup** | `/projects/{id}/setup` (§6.2) | `project_admin` | i) setup the project; iii) create arms and events; iv) assign instruments to arms and events |
+| Design | `/projects/{id}/design` (§7.1) | `project_admin` | ii) design all instruments |
+| **Record Status Dashboard** | `/projects/{id}/record-status` (§6.3) | data access ≥ `read_only` | (participant overview) |
+| **Export** | `/projects/{id}/export` (§6.4) | a non-`export_none` level on the arm (REQ-API-075) | vi) export |
+| Members · Roles | `/projects/{id}/members` · `/roles` (§5.3 · §5.4) | `is_admin` | v) administer users in the project (match roles to permissions) |
+| Groups | `/projects/{id}/groups` (§5.5) | data access ≥ `read_only` (mutate: `project_admin`) | (record scope) |
+
+- **Default section** (REQ-UI-017). `GET /projects/{id}` is the entry point PHP resolves rather than a page of its own: it reads the project and answers `303 See Other` to the first available entry **after Overview** — `/setup` for a member allowed to change the setup, otherwise `/record-status` for a member with data access ≥ `read_only`, otherwise `/overview`. Clicking a project on the overview screen therefore lands a project administrator on **Setup** and a data-entry member on the **Record Status Dashboard**, without a per-project permission read on the overview page itself (the list endpoint does not carry one, REQ-API-049). The left panel still lists everything else the user may use, so each remains one click away.
+- **Overview** (`GET /projects/{id}/overview`) — the project's own summary page: record count, instrument count, field count (REQ-API-051), the metadata block (name, organization, PI, REK number, dates — read-only display; editing goes to §5.2 for `project_admin`), the mode badge and its control (§6.6, REQ-UI-033), and the End provision card (§6.5, `is_admin`, BR-009).
+- **Header breadcrumb** — the project's name links back to Overview; the brand link leaves the project for the project overview (`/`) (§2.4).
 
 ### 6.2 Setup page (`GET /projects/{id}/setup`, `project_admin`, REQ-UI-018)
 
@@ -370,9 +381,9 @@ Data: `GET …/record-status` (data access ≥ `read_only` + record visibility, 
 - Gating: present only when the member holds a non-`export_none` level on the arm (REQ-UI-017/020, REQ-API-075); `export_none` → the card is absent (REQ-UI-003).
 - Every call is audit-logged with `surface:"ui"`, the project, and the sensitivity level (REQ-API-076, `Audit_Logging_Design.md` §3.5).
 
-### 6.5 End-of-Project Provision (project home card, `is_admin`, BR-009)
+### 6.5 End-of-Project Provision (Overview card, `is_admin`, BR-009)
 
-Present on the project home (§6.1) **only** for `is_admin` (REQ-UI-003; the action is `is_admin`-gated at the API, `API_Endpoints_Design.md` §4.20). The operator's cue is the REK end date in the §6.1 summary (`rek_end_date`, `Data_Export_Anonymization_Design.md` §7.1) — nothing runs automatically (no scheduler, `Project_Charter_Design.md` §5).
+Present on Overview (§6.1) **only** for `is_admin` (REQ-UI-003; the action is `is_admin`-gated at the API, `API_Endpoints_Design.md` §4.20). The operator's cue is the REK end date in the §6.1 summary (`rek_end_date`, `Data_Export_Anonymization_Design.md` §7.1) — nothing runs automatically (no scheduler, `Project_Charter_Design.md` §5).
 
 - **Action**: `POST` to the project route (CSRF, §3.3) → `POST /api/v1/projects/{id}/end-provision` (contract `API_Endpoints_Design.md` §4.20; rules `Data_Export_Anonymization_Design.md` §7).
 - **Choice** — a radio pair in the confirmation modal:
@@ -383,7 +394,7 @@ Present on the project home (§6.1) **only** for `is_admin` (REQ-UI-003; the act
 
 ### 6.6 Project mode (GD-20, REQ-UI-033)
 
-The project home (§6.1) shows the current mode as a **badge** next to the project name — `development` / `production` / `analysis` — from `GET …/mode` (visible to every member; the sidebar brand bar carries it in the project context, §2.4). Data pages state the active design they serve when a staging set is open (§6.7).
+Overview (§6.1) shows the current mode as a **badge** next to the project name — `development` / `production` / `analysis` — from `GET …/mode` (visible to every member; the header breadcrumb carries the same badge beside the project name in a project context, §2.4). Data pages state the active design they serve when a staging set is open (§6.7).
 
 The **Mode card** (`is_admin` only — a project's own `project_admin` gets no mode control; REQ-UI-003) offers `PUT /api/v1/projects/{id}/mode` through `?action=` on the project route (CSRF, §3.3), presenting **only the allowed transitions**:
 
@@ -536,7 +547,7 @@ Present per the member's levels (REQ-UI-003):
 
 ### 8.8 Public survey page (`GET /s/{link}`, GD-9, REQ-UI-028)
 
-A standalone PHP route — **no login, outside the session** (GD-1, REQ-API-084, DEV-UI-1), rendered without the sidebar (§2.4). The link is `WEB_PUBLIC_URL + /s/<link token>` — the path the API itself builds when it issues the link (`API_Endpoints_Design.md` §4.17), so the value handed to `Copy link` and the route that serves it cannot drift apart.
+A standalone PHP route — **no login, outside the session** (GD-1, REQ-API-084, DEV-UI-1), rendered as a single centered panel with no left panel and no account footer (§2.4). The link is `WEB_PUBLIC_URL + /s/<link token>` — the path the API itself builds when it issues the link (`API_Endpoints_Design.md` §4.17), so the value handed to `Copy link` and the route that serves it cannot drift apart.
 
 - **Render**: PHP calls the **data API** `content=metadata` with the link token — the API accepts a link token only for the calls that render and fill its (record, instrument) (REQ-API-083, `API_Endpoints_Design.md` §3.10); the page shows **only** that instrument's fields for that record (values prefilled from the respondent's prior submission, if any).
 - **Submit**: PHP → data API `content=record&action=import` with the link token, applying the same **submission policy** as the data-entry form (GD-14, REQ-UI-031 — entered values plus explicitly cleared fields only) and sending the respondent's browser timezone as the collection zone (GD-16). Submissions pass the **same validation and audit rules as any import** (REQ-AUTH-041, REQ-VAL-001; audit `survey_submitted` — success and failure, `Audit_Logging_Design.md` §3.6).
@@ -548,7 +559,7 @@ A standalone PHP route — **no login, outside the session** (GD-1, REQ-API-084,
 
 ## 9. Multilingual (GD-12, REQ-UI-008/029/030)
 
-- **Language selector** (footer/sidebar, §2.4): a `<select>` of the enabled languages (`GET /api/v1/i18n/languages` — code + display name; any authenticated user, REQ-API-097). Choosing one `POST`s to the PHP route → `PUT /api/v1/users/me/ui-language` (REQ-API-098); the setting persists across sessions (REQ-DB-008) and applies **from the next page load** (the current page is already rendered). Users without a setting get English (the default, REQ-API-098).
+- **Language selector** (shell footer, §2.4): a `<select>` of the enabled languages (`GET /api/v1/i18n/languages` — code + display name; any authenticated user, REQ-API-097). Choosing one `POST`s to the PHP route → `PUT /api/v1/users/me/ui-language` (REQ-API-098); the setting persists across sessions (REQ-DB-008) and applies **from the next page load** (the current page is already rendered). Users without a setting get English (the default, REQ-API-098).
 - **Server-side resolution** (REQ-UI-008, REQ-TECH-001): every UI string — page text, labels, buttons, alerts, the §3.4 error messages — is resolved at render time via the mapping tables (REQ-DB-031) or **falls back to English**; a blank or a raw key is never rendered (REQ-UI-008). Translated strings are escaped on render (§3.2).
 - **JavaScript-originated messages** (REQ-UI-008: "including JavaScript-originated messages"): since no i18n library is allowed, the server injects the page's small set of JS-visible strings as a single JSON object in a `<script type="application/json" data-i18n>` element (values escaped/JSON-encoded server-side); the shared runtime reads it once and exposes it to the page's modules (§3.7), which use those strings for toasts, confirmation texts, and the advisory-validation hints of §8.4 — a module never carries a UI string of its own (REQ-UI-045). The JSON contains **no** data values — only UI copy.
 - **Translation management**: §5.7 (add/change/clear per language, missing-key visibility, empty text = removal → English fallback).
@@ -562,9 +573,9 @@ A standalone PHP route — **no login, outside the session** (GD-1, REQ-API-084,
 | locale-specific date/number formatting (ASM-UI-1) | displayed as stored — system timestamps in UTC `YYYY-MM-DD HH:MM:SS`; clinical date/date-time values **with their collection offset** (GD-16); no locale reformatting, no conversion (§1) |
 | token source for UI data entry (ASM-API-3; conflict with `Authentication_Authorization_Design.md` §3 "never in the session") | the self-service fetch `GET …/users/{uid}/token` (REQ-API-102) + a **session cache** invalidated on 401/rotate (§8.6); the session stores it as a cache, never as an authorization input (owner decision, 2026-09-22, master spec "Details") |
 | where the data-entry form reads current values (not specified in the baseline) | the record-history endpoint (data-access gated per REQ-AUTH-018 `read_only` = "read the arm's record values"; untransformed values suitable for round-trip entry — unlike the export-gated surfaces, REQ-API-026) (§8.3) |
-| sidebar + panel layout, arm tabs (arm_1 default), mapping orientation (instruments × events) (master spec "User interface details") | §2.4, §6.2 (tabbed arm blocks; D = rows × columns checkbox matrix) |
+| left panel + content-panel layout, arm tabs (arm_1 default), mapping orientation (instruments × events) (master spec "User interface details") | §2.4 (three shells — DEV-UI-14), §6.2 (tabbed arm blocks; D = rows × columns checkbox matrix) |
 | participant overview + new-participant creation (master spec) | §6.3 (list + record_id/auto-name creation via REQ-API-023/033) |
-| project-home option list incl. "administer users in the project" (master spec) | §6.1 action cards + sidebar project context (§2.4); §5.3/§5.4 are project-scoped routes |
+| project-home option list incl. "administer users in the project" (master spec) | §6.1 left-panel entries (§2.4); §5.3/§5.4 stay project-scoped routes rather than Control Panel sections (REQ-UI-047) |
 
 ## 11. Open Items and Backend Dependencies
 

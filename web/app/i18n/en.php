@@ -18,6 +18,17 @@ return [
     'app.tagline' => 'Clinical study data capture',
     'nav.projects' => 'Projects',
     'nav.dashboard' => 'Dashboard',
+    'nav.project_sections' => 'Project',
+    'nav.sections' => 'Sections',
+    'nav.control_panel' => 'Control Panel',
+    'nav.overview' => 'Overview',
+    'nav.setup' => 'Setup',
+    'nav.design' => 'Design',
+    'nav.record_status' => 'Record Status Dashboard',
+    'nav.export' => 'Export',
+    'nav.members' => 'Members',
+    'nav.roles' => 'Roles',
+    'nav.groups' => 'Data access groups',
     'nav.administration' => 'Administration',
     'nav.users' => 'User accounts',
     'nav.project_list' => 'Projects',
@@ -101,11 +112,31 @@ return [
     'dashboard.project.fields' => 'Fields',
     'dashboard.project.open' => 'Open project',
 
-    // --- project home (User_Interface_Design.md §6.1, REQ-UI-017) ---
+    // --- Control Panel (User_Interface_Design.md §5, REQ-UI-047) ---
+    'admin.title' => 'Control Panel',
+    'admin.section.users' => 'Users',
+    'admin.section.projects' => 'Projects',
+    'admin.section.audits' => 'Audits',
+    'admin.section.translations' => 'Translations',
+    'admin.section.settings' => 'Settings',
+    // Only reachable by typing the URL: with no section built the header button is absent
+    // rather than leading nowhere (§3.1, REQ-UI-003).
+    'admin.none' => 'No administration function is available in this installation yet.',
+    'admin.settings.title' => 'System settings',
+    // The §5.8 helper text: what the limiter covers and when a change takes effect.
+    'admin.settings.help' => 'Limits every caller IP on both the data API and the administration surface; an IP over its per-minute budget is refused for this many minutes. Changes apply immediately after saving.',
+    'admin.settings.saved' => 'System settings saved.',
+    // A number field that did not hold a whole number: never sent to the API, which owns
+    // every range rule (§5.8, REQ-VAL-002).
+    'admin.settings.invalid' => 'Both limits must be whole numbers.',
+    'settings.rate_limit_enabled' => 'Rate limiting',
+    'settings.rate_limit_rpm' => 'Requests per minute per source IP',
+    'settings.rate_limit_block_minutes' => 'Blockout period (minutes)',
+
+    // --- project Overview (User_Interface_Design.md §6.1, REQ-UI-017) ---
     'project.summary.records' => 'Records',
     'project.summary.instruments' => 'Instruments',
     'project.summary.fields' => 'Fields',
-    'project.actions' => 'This project',
     'project.metadata' => 'Project details',
     // The read-only metadata block; editing it is §5.2.
     'project.field.project_name' => 'Project name',

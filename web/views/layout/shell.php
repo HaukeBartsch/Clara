@@ -1,23 +1,44 @@
 <?php
 /**
- * The application shell: brand bar, sidebar, content panel, footer
- * (Design/User_Interface_Design.md §2.4). Every authenticated page renders inside
- * it; selecting a sidebar item is a plain GET to that route and swaps the panel —
- * this is a shared multi-page layout, not a single-page app (REQ-UI-001).
+ * The application shell (§2.4): header, an optional left panel, the content panel and
+ * the footer. One shell serves the three page shapes — the project overview renders no
+ * left panel at all (REQ-UI-009), while the project page and the Control Panel pass one
+ * in `$nav` (REQ-UI-046/047). Selecting a panel item is a plain GET to that route,
+ * rendered back into this shell: a shared multi-page layout, not a single-page app
+ * (REQ-UI-001).
  *
- * Below the Bootstrap `lg` breakpoint the sidebar collapses to the standard
+ * Below the Bootstrap `lg` breakpoint a left panel collapses to the standard
  * off-canvas pattern via .offcanvas-lg: one markup tree serves both layouts, so
  * nothing here changes with the theme or the viewport (REQ-UI-008, REQ-TECH-027).
  *
  * A section is emitted only when it may be used, and a link is emitted only when
  * its route exists in this build — "hidden" means absent from the DOM, not
- * disabled (§3.1, REQ-UI-003).
+ * disabled (§3.1, REQ-UI-003). The panel's entries therefore arrive computed, from
+ * Clara\Navigation.
  */
 
 use Clara\Csrf;
+use Clara\Navigation;
 use Clara\View;
 
 $pageTitle = $pageTitle ?? ($titleKey !== '' ? $view->t($titleKey) : '');
+
+/**
+ * The left panel: ['headingKey' => string, 'items' => list<{path, labelKey}>], supplied
+ * by the page that has sections. Empty or absent means this page shows a single content
+ * panel — which is the project overview's shape (§2.4 A).
+ *
+ * @var array{headingKey?: string, items?: list<array{path: string, labelKey: string}>} $nav
+ */
+$nav = $nav ?? [];
+$navItems = $nav['items'] ?? [];
+if ($navItems === []) {
+    $nav = [];
+}
+
+// The Control Panel button appears for an administrator only when the panel has at
+// least one section this build serves (§2.4, REQ-UI-003/009/047).
+$controlPanel = $view->isAdmin() && Navigation::controlPanelExists();
 ?>
 <!doctype html>
 <html lang="<?= View::e($view->currentLanguage()) ?>">
@@ -48,15 +69,20 @@ $pageTitle = $pageTitle ?? ($titleKey !== '' ? $view->t($titleKey) : '');
 
 <header class="navbar navbar-expand-lg border-bottom">
     <div class="container-fluid">
-        <button class="btn btn-outline-secondary btn-sm d-lg-none" type="button" data-bs-toggle="offcanvas"
-                data-bs-target="#clara-sidebar" aria-controls="clara-sidebar" aria-label="<?= View::e($view->t('nav.projects')) ?>">
-            ☰
-        </button>
+        <?php if ($nav !== []): ?>
+            <!-- The off-canvas toggle exists only where there is a panel to open (§2.4). -->
+            <button class="btn btn-outline-secondary btn-sm d-lg-none" type="button" data-bs-toggle="offcanvas"
+                    data-bs-target="#clara-nav" aria-controls="clara-nav"
+                    aria-label="<?= View::e($view->t($nav['headingKey'] ?? 'nav.sections')) ?>">
+                ☰
+            </button>
+        <?php endif; ?>
+
         <a class="navbar-brand clara-brand mb-0" href="/"><?= View::e($view->t('app.name')) ?></a>
         <?php if (($brandProject ?? '') !== ''): ?>
-            <!-- Inside a project the brand bar names it, and the name goes back to that
-                 project's home (§2.4) — the same plain navigation as every other sidebar
-                 item, not a client-side view switch (REQ-UI-001). -->
+            <!-- Inside a project the header names it, and the name goes back to that
+                 project's Overview (§2.4) — plain navigation like every other panel item,
+                 not a client-side view switch (REQ-UI-001). -->
             <span class="text-body-secondary small px-1" aria-hidden="true">/</span>
             <?php if (($brandProjectUrl ?? '') !== ''): ?>
                 <a class="text-body-emphasis text-decoration-none small"
@@ -67,11 +93,22 @@ $pageTitle = $pageTitle ?? ($titleKey !== '' ? $view->t($titleKey) : '');
         <?php else: ?>
             <span class="d-none d-sm-inline text-body-secondary small"><?= View::e($view->t('app.tagline')) ?></span>
         <?php endif; ?>
+
+        <div class="ms-auto d-flex align-items-center gap-2">
+            <?php if ($controlPanel): ?>
+                <!-- The single entry point to installation administration (§5, REQ-UI-047);
+                     absent from the DOM for anyone who is not an administrator. -->
+                <a class="btn btn-sm btn-outline-primary<?= $view->isActive('/admin') ? ' active' : '' ?>"
+                   href="/admin"><?= View::e($view->t('nav.control_panel')) ?></a>
+            <?php endif; ?>
+        </div>
     </div>
 </header>
 
 <div class="clara-body">
-    <?php require __DIR__ . '/../partials/sidebar.php'; ?>
+    <?php if ($nav !== []): ?>
+        <?php require __DIR__ . '/../partials/nav-panel.php'; ?>
+    <?php endif; ?>
 
     <main id="clara-content" class="clara-content" tabindex="-1">
         <?php require __DIR__ . '/../partials/alerts.php'; ?>
@@ -112,6 +149,18 @@ $pageTitle = $pageTitle ?? ($titleKey !== '' ? $view->t($titleKey) : '');
                 </select>
                 <button class="btn btn-sm btn-outline-secondary" type="submit"><?= View::e($view->t('action.save')) ?></button>
             </form>
+
+            <!-- Account entries (§2.4): user-scoped, so they live outside any section
+                 panel and stay put while the panel changes. The password link appears only
+                 for an account with a local credential to change (GD-23) — an entry whose
+                 only outcome is "this account signs in through a provider" offers nothing
+                 (§3.1). -->
+            <nav class="clara-account-links d-flex flex-wrap gap-2" aria-label="<?= View::e($view->t('nav.account')) ?>">
+                <a class="small" href="/account/two-factor"><?= View::e($view->t('nav.two_factor')) ?></a>
+                <?php if ($view->hasLocalCredential()): ?>
+                    <a class="small" href="/account/password"><?= View::e($view->t('nav.password')) ?></a>
+                <?php endif; ?>
+            </nav>
 
             <span class="ms-auto text-body-secondary small"><?= View::e($view->displayName()) ?></span>
 

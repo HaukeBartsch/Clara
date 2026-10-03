@@ -1,12 +1,14 @@
 <?php
-// The project workspace landing page (`User_Interface_Design.md` §6.1, REQ-UI-017):
-// the summary and the read-only metadata block for one project, plus the action
-// cards that lead into the rest of the workspace.
+// The project page (`User_Interface_Design.md` §6.1, REQ-UI-017): a left panel of the
+// project's own functions with the selected one in the right-hand panel. This controller
+// serves two routes of that shell — the entry point `GET /projects/{id}`, which resolves
+// the first available section and answers 303, and Overview, which shows the summary, the
+// read-only metadata block and the mode badge.
 //
-// One read serves the whole page — `GET /api/v1/projects/{id}` carries the metadata,
-// the structure the counts come from, and the acting user's effective permissions
-// (REQ-API-126). The permissions block is disclosure only: it decides which cards and
-// sidebar entries exist, and every call behind them is re-checked by the API
+// One read serves a render — `GET /api/v1/projects/{id}` carries the metadata, the
+// structure the counts come from, and the acting user's effective permissions
+// (REQ-API-126). The permissions block is disclosure only: it decides which panel entries
+// exist and which section opens, and every call behind them is re-checked by the API
 // (REQ-AUTH-033, Plan/Web_Implementation.md §7 rule 15).
 //
 // Gating is the API's own — a member with no data access on any arm is refused by the
@@ -18,40 +20,52 @@ declare(strict_types=1);
 namespace Clara\Controllers;
 
 use Clara\ApiException;
+use Clara\Navigation;
+use Clara\Permissions;
 use Clara\Response;
 
 final class ProjectController extends Controller
 {
-    /** GET /projects/{id} — the rendered page. */
+    /**
+     * GET /projects/{id} — entering a project (§6.1, REQ-UI-017). Not a page of its own:
+     * the first available section after Overview opens — Setup for a member who may change
+     * the setup, Record Status Dashboard for one with data access, Overview for nobody else
+     * having a way in. The permission read this needs is the same detail read the entry
+     * makes anyway, which is why the project-overview page does not resolve it per row
+     * (REQ-API-049 carries no permissions block).
+     */
     public function index(): Response
     {
         $detail = $this->projectDetail();
 
-        /*
-         * Action cards (§6.1): one per workspace surface, present only when the acting
-         * user may use it — and only when this build has the page it leads to, because a
-         * card that opens a 404 is a disabled control by another name (§3.1, REQ-UI-003).
-         * Members and Roles arrive with M3, Setup and Design with M4, Record status and
-         * Export with M5; each adds one row here and one in the sidebar's project-context
-         * section. The levels they test on came with this same read —
-         * `Permissions::fromProjectDetail($detail)` → `projectAdmin`, `anyArmReachesData()`,
-         * `canExportAny()` — so no card needs an API call of its own (§7 rule 15).
-         */
-        $cards = [];
+        return Response::redirect(
+            Navigation::defaultProjectSection($this->projectIdOf($detail), Permissions::fromProjectDetail($detail)),
+            303
+        );
+    }
 
-        return $this->page('project', [
+    /** GET /projects/{id}/overview — the project's own summary page (§6.1). */
+    public function overview(): Response
+    {
+        $detail = $this->projectDetail();
+        $projectId = $this->projectIdOf($detail);
+
+        return $this->page('overview', [
             // The browser tab carries the project's own name — data, not a UI string, so it
             // is not translated (the shell falls back to the application name when empty).
             'pageTitle' => $this->projectName($detail),
             'metadata' => $this->metadata($detail),
             'summary' => $this->summary($detail),
-            'cards' => $cards,
-            // The brand bar names the project while the user is inside it (§2.4).
+            // The header names the project while the user is inside it, and the name goes
+            // back to this page (§2.4).
             'brandProject' => $this->projectName($detail),
-            'brandProjectUrl' => '/projects/' . (int) ($detail['id'] ?? 0),
-            // The sidebar's Projects section (§2.4 item 1) — one list read per render,
-            // never one per entry (Plan/Web_Implementation.md §7 rule 13).
-            'sidebarProjects' => $this->visibleProjects(),
+            'brandProjectUrl' => '/projects/' . $projectId . '/overview',
+            // The project's left panel (§6.1): every entry this build serves and this
+            // member may use, in canonical order (REQ-UI-003).
+            'nav' => [
+                'headingKey' => 'nav.project_sections',
+                'items' => Navigation::projectSections($projectId, Permissions::fromProjectDetail($detail)),
+            ],
         ], [
             'titleKey' => '',
             'scripts' => ['/assets/app.js'],
@@ -60,7 +74,8 @@ final class ProjectController extends Controller
 
     /**
      * The `project` data region of this route (REQ-UI-044): the same summary and
-     * metadata the rendered page shows, and nothing beyond what that page discloses.
+     * metadata the rendered Overview shows, and nothing beyond what that page discloses.
+     * A data request is answered with the object rather than with the entry's redirect.
      */
     public function data(): Response
     {
@@ -91,6 +106,17 @@ final class ProjectController extends Controller
         $detail = $this->api->get('/api/v1/projects/' . (int) $raw);
 
         return is_array($detail) ? $detail : [];
+    }
+
+    /**
+     * The id to build the project's own routes from: the detail object's, falling back to
+     * the path parameter when a stubbed or partial read carries none.
+     *
+     * @param array<string, mixed> $detail
+     */
+    private function projectIdOf(array $detail): int
+    {
+        return (int) ($detail['id'] ?? $this->request->pathParam('id'));
     }
 
     /**

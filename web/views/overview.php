@@ -1,14 +1,15 @@
 <?php
 
 /**
- * The project home (§6.1, REQ-UI-017): the summary counts, the read-only metadata
- * block, and the action cards that lead into the workspace.
+ * The project's Overview section (§6.1, REQ-UI-017): the summary counts and the read-only
+ * metadata block, shown in the right-hand panel of the project page. The functions that
+ * used to be action cards are the left panel's entries now (§2.4 B, REQ-UI-046), so this
+ * template shows information only — no navigation of its own, and nothing that edits the
+ * metadata (that is §5.2 for `project_admin`, and offering it from the wrong page would be
+ * a permission decision made in the wrong place).
  *
- * Nothing here edits the metadata — that is §5.2 for `project_admin`, and offering it
- * from the wrong page would be a permission decision made in the wrong place. Cards are
- * emitted by the controller only when the acting user may use them and the target route
- * exists in this build (§3.1, REQ-UI-003), so this template renders whatever list it is
- * given and stays silent when the list is empty.
+ * The mode badge of §6.6 lands here with the mode endpoints (REQ-UI-033); until that read
+ * exists nothing is emitted for it, rather than a placeholder waiting for data.
  *
  * Timestamps and dates are printed as the API returned them: system values are UTC and
  * clinical dates are stored as entered, offsets included (Plan/Web_Implementation.md §7
@@ -21,8 +22,6 @@ use Clara\View;
 $summary = $summary ?? ['records' => 0, 'instruments' => 0, 'fields' => 0];
 /** @var array<string, string> $metadata */
 $metadata = $metadata ?? [];
-/** @var list<array{path: string, label: string, help: string}> $cards */
-$cards = $cards ?? [];
 
 /** metadata field name → the catalog key holding its label (the §6.1 block). */
 $labels = [
@@ -57,21 +56,6 @@ $labels = [
         </div>
     <?php endforeach; ?>
 </div>
-
-<?php if ($cards !== []): ?>
-    <h2 class="h6 mb-2"><?= View::e($view->t('project.actions')) ?></h2>
-    <div class="row row-cols-1 row-cols-md-2 g-2 mb-4">
-        <?php foreach ($cards as $card): ?>
-            <div class="col">
-                <a class="border rounded p-3 d-block h-100 text-decoration-none clara-card"
-                   href="<?= View::e($card['path']) ?>">
-                    <span class="d-block fw-semibold"><?= View::e($card['label']) ?></span>
-                    <span class="d-block small text-body-secondary"><?= View::e($card['help']) ?></span>
-                </a>
-            </div>
-        <?php endforeach; ?>
-    </div>
-<?php endif; ?>
 
 <h2 class="h6 mb-2"><?= View::e($view->t('project.metadata')) ?></h2>
 <table class="table table-sm clara-metadata">

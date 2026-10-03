@@ -91,16 +91,18 @@ web/
 │   ├── Auth.php                  # require_login(); local/LDAP/OAuth2 flows; tfa_pending gate
 │   ├── Csrf.php                  # issue/validate (REQ-UI-005)
 │   ├── Permissions.php           # gating predicates over P0-a's payload — the single place §3.1 lives
+│   ├── Navigation.php            # the two left panels + the default-section rule (§2.4, REQ-UI-046/047)
 │   ├── View.php                  # layout + template render, e() escaping, CSP header (REQ-TECH-020)
 │   ├── I18n.php                  # English catalog + bundle overlay, t(), JS-string injection (§9)
 │   ├── Messages.php              # API error code → translated line (§3.4 table)
 │   ├── DataApi.php               # data-API form encoding: import rows data[i][key], delete, export passthrough
 │   └── i18n/en.php               # English source of truth (REQ-DB-031)
-├── app/Controllers/…             # one class per page group of §2.1 (Login, Dashboard, AdminUsers, Setup, Record, …)
+├── app/Controllers/…             # one class per page group of §2.1 (Login, Dashboard, ControlPanel, Project, Setup, Record, …)
 ├── views/
-│   ├── layout/shell.php          # sidebar + content panel + footer (§2.4)
+│   ├── layout/shell.php          # header + content panel + footer; renders a left panel only when the page supplies one (§2.4)
 │   ├── layout/standalone.php     # login, password pages (§2.4 — no navigation)
 │   ├── layout/survey.php         # public survey shell (§8.8)
+│   ├── partials/nav-panel.php    # the left panel of a section-bearing page — entries computed by app/Navigation.php (§2.4, REQ-UI-046/047)
 │   └── <page>.php …              # Bootstrap 5.3, table-sm, escaped by default
 ├── assets/
 │   ├── app.js                    # shared runtime: fetch helper (Accept + X-CSRF-Token), data-region binders, i18n block reader, Tabulator defaults
@@ -138,7 +140,7 @@ Each milestone is a vertical slice that runs against the real API (SQLite, `APP_
 | M0 | Skeleton + assets | front controller, router, config validation, View/layout, CSP, vendored Bootstrap 5.3 + themes + Tabulator + Geist | M | — |
 | M1 | Authentication and shell | `/login` (source picker, local/LDAP race, OAuth2 redirect), `/auth/callback`, TFA panels, `POST /logout`, `/lang`, `/theme`, no-access page | **XL** | M0 |
 | M2 | Dashboard, project home, self-service | `/`, `/projects/{id}`, `/account/two-factor`, `/account/password`, `/password-reset`, `/set-password` | L | M1 |
-| M3 | Administration surface | `/admin/users`, `/admin/projects`, `/admin/audit`, `/admin/i18n`, `/admin/settings`, `/projects/{id}/members`, `/roles`, `/groups` | L | M2 |
+| M3 | Administration surface | `/admin` (Control Panel: `?section=users\|projects\|audits\|translations\|settings`, REQ-UI-047), `/projects/{id}/members`, `/roles`, `/groups` | L | M2 |
 | M4 | Setup and designer | `/projects/{id}/setup` (blocks A–D, arm tabs), `/design`, `/design/instruments/{iid}`, expression editors + test panel, staging banner/commit/discard, analysis-mode acknowledge, mode card | **XL** | M3 |
 | M5 | Data entry and record view | `/projects/{id}/record-status` (colour grid, new participant, auto-name), `/projects/{id}/records/{record}` (form render, prefill from history, per-field history, completion control, branching evaluator, submit via data-API import), record actions (delete scoped, DAG assign, survey link) | **XL** | M4 |
 | M6 | Export, public survey, hardening | `/projects/{id}/export` (streamed), `/s/{link}`, responsive pass, error-mapping completeness, `nb`/`nn` catalog population, PHP smoke tests + Playwright browser tests (`REQ-TECH-028`) in CI | M | M5 |
@@ -199,4 +201,4 @@ These are the ones most likely to be got wrong, gathered from the code-level fac
 
 ## 10. Suggested first session of work
 
-M0: front controller, router carrying the one `Accept`-based page/JSON dispatch (`REQ-UI-044`), config validation, layout shell with sidebar/footer, escaping/CSP/CSRF plumbing, the shared `app.js` runtime plus the first section module and the way a page declares its scripts (`REQ-UI-045`), and the vendored assets (Bootstrap 5.3 + derived `darkly`/`yeti` with remote `@import`s stripped + Tabulator + Geist) — enough that M1's login work lands into a real, styled shell instead of a bare page. Both P0-c and P0-d are closed, so M0 builds them rather than choosing between them.
+M0: front controller, router carrying the one `Accept`-based page/JSON dispatch (`REQ-UI-044`), config validation, layout shell with header/footer and the optional left panel (§2.4), escaping/CSP/CSRF plumbing, the shared `app.js` runtime plus the first section module and the way a page declares its scripts (`REQ-UI-045`), and the vendored assets (Bootstrap 5.3 + derived `darkly`/`yeti` with remote `@import`s stripped + Tabulator + Geist) — enough that M1's login work lands into a real, styled shell instead of a bare page. Both P0-c and P0-d are closed, so M0 builds them rather than choosing between them.
