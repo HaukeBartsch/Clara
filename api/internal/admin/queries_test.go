@@ -111,8 +111,11 @@ func TestRecordStatus(t *testing.T) {
 	)
 	e.mustRecord(projectID, "R1")
 	e.mustRecord(projectID, "R2")
-	e.mustValue(projectID, "R1", "v1_arm_1", "intake", "age", "42") // complete
-	e.mustValue(projectID, "R1", "v2_arm_1", "intake", "age", "")   // empty ≠ value
+	// Values belong to an instrument through their field, stored as an import
+	// stores them — repeating_instrument empty (no repeat instance).
+	e.mustField(projectID, intake, "age", "text", 1)
+	e.mustValue(projectID, "R1", "v1_arm_1", "", "age", "42") // complete
+	e.mustValue(projectID, "R1", "v2_arm_1", "", "age", "")   // empty ≠ value
 
 	rec := e.do("GET", "/api/v1/projects/999999/record-status", nil, admin)
 	if rec.Code != http.StatusNotFound {
@@ -701,5 +704,61 @@ func TestRecordHistoryVisibility(t *testing.T) {
 	e.decode(rec, &page)
 	if len(page.Entries) != 0 {
 		t.Fatalf("arm-1 entries leaked to arm-2 reader: %s", rec.Body.String())
+	}
+}
+
+// TestRecordHistoryServesRecomputedResults: a calculated result changes the
+// record's values like an import does, so the history serves its
+// calculated_recomputed entries (Audit_Logging_Design.md §3.2) as an update of
+// that one field at the event it is stored — filterable like any entry
+// (REQ-API-079/080) — and the data-entry form can show a calculated field's
+// current value and history (User_Interface_Design.md §8.2/§8.3).
+func TestRecordHistoryServesRecomputedResults(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	entry := e.mustUser("entry@example.org")
+	projectID := e.mustProject("Recompute History")
+	armID := e.mustArm(projectID, 1)
+	e.mustEvent(projectID, armID, "Visit 1", "v1_arm_1")
+	e.mustRecord(projectID, "R1")
+
+	e.insertHistory(projectID, entry, "R1", "create", "intake", "v1_arm_1",
+		[]map[string]any{{"field": "age", "old": nil, "new": "42"}})
+	if err := e.Audit.Insert(context.Background(), audit.Entry{
+		EventType: audit.CalculatedRecomputed, Source: audit.SourceAPI,
+		UserID: entry.ID, Email: entry.Email, ProjectID: projectID, TargetRecord: "R1",
+		Details: map[string]any{
+			"record_id": "R1", "field": "double", "instrument": "calc", "event": "v1_arm_1",
+			"old": "", "new": "84", "trigger_field": "age", "trigger_event": "v1_arm_1",
+		},
+	}); err != nil {
+		t.Fatalf("insert recomputation: %v", err)
+	}
+
+	var page struct {
+		Entries []historyEntry `json:"entries"`
+	}
+	rec := e.do("GET", e.historyPath(projectID, "R1")+"?order=newest", nil, admin)
+	e.decode(rec, &page)
+	if len(page.Entries) != 2 {
+		t.Fatalf("history: %s", rec.Body.String())
+	}
+	calc := page.Entries[0]
+	if calc.Action != "update" || calc.Instrument != "calc" || calc.Event != "v1_arm_1" ||
+		len(calc.Fields) != 1 || calc.Fields[0].Field != "double" ||
+		calc.Fields[0].Old != nil || calc.Fields[0].New == nil || *calc.Fields[0].New != "84" {
+		t.Fatalf("recomputed entry: %+v", calc)
+	}
+
+	// The filters apply to it like to any other entry.
+	for query, want := range map[string]int{
+		"?field=double": 1, "?instrument=calc": 1, "?instrument=intake": 1, "?event=v1_arm_1": 2, "?event=v9_arm_1": 0,
+	} {
+		rec = e.do("GET", e.historyPath(projectID, "R1")+query, nil, admin)
+		page.Entries = nil
+		e.decode(rec, &page)
+		if len(page.Entries) != want {
+			t.Fatalf("%s: %d entries, want %d (%s)", query, len(page.Entries), want, rec.Body.String())
+		}
 	}
 }

@@ -757,15 +757,25 @@ func TestRecordDelete(t *testing.T) {
 		t.Error("unrelated field must survive a scoped delete")
 	}
 
-	// The record_deleted audit entry carries the deleted values (REQ-AUD-009).
-	var details string
-	err := f.s.DB.QueryRow(`SELECT details FROM audit_events` +
-		` WHERE event_type = 'record_deleted' ORDER BY id DESC LIMIT 1`).Scan(&details)
-	if err != nil {
-		t.Fatalf("read record_deleted: %v", err)
+	// The record_deleted entries carry the deleted values (REQ-AUD-009) in the
+	// data-change shape of Audit_Logging_Design.md §3.2: one entry per
+	// (instrument, event) the delete reached, the value on the old side.
+	deleted := dataChangeEntries(t, f, "record_deleted", "8DISC001")
+	if len(deleted) != 2 {
+		t.Fatalf("record_deleted entries = %+v, want one per event", deleted)
 	}
-	if !strings.Contains(details, "age") || !strings.Contains(details, "42") {
-		t.Errorf("audit details lack the deleted values: %s", details)
+	byEvent := map[string]dataChangeDetails{}
+	for _, d := range deleted {
+		byEvent[d.Event] = d
+	}
+	base := byEvent["baseline_arm_1"]
+	if base.Action != "delete" || base.RecordID != "8DISC001" || base.Instrument != "demo" ||
+		len(base.Fields) != 1 || base.Fields[0].Field != "age" ||
+		base.Fields[0].Old == nil || *base.Fields[0].Old != "42" || base.Fields[0].New != nil {
+		t.Errorf("baseline record_deleted = %+v", base)
+	}
+	if fu := byEvent["followup_arm_1"]; len(fu.Fields) != 1 || fu.Fields[0].Old == nil || *fu.Fields[0].Old != "43" {
+		t.Errorf("follow-up record_deleted = %+v", fu)
 	}
 
 	// A read-only holder cannot delete.
@@ -1170,4 +1180,29 @@ func TestRecordImportMalformedJSONData(t *testing.T) {
 	if !strings.Contains(body, "Invalid request") {
 		t.Errorf("body = %s, want \"Invalid request\"", body)
 	}
+}
+
+// dataChangeEntries reads every audit entry of one data-change code for a
+// record, oldest first, decoded as the §3.2 shape the record history parses.
+func dataChangeEntries(t *testing.T, f *recordFixture, eventType, recordID string) []dataChangeDetails {
+	t.Helper()
+	rows, err := f.s.DB.Query(`SELECT details FROM audit_events
+		WHERE event_type = ? AND target_record = ? ORDER BY id`, eventType, recordID)
+	if err != nil {
+		t.Fatalf("read %s: %v", eventType, err)
+	}
+	defer rows.Close()
+	var out []dataChangeDetails
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			t.Fatal(err)
+		}
+		var d dataChangeDetails
+		if err := json.Unmarshal([]byte(raw), &d); err != nil {
+			t.Fatalf("%s details %s: %v", eventType, raw, err)
+		}
+		out = append(out, d)
+	}
+	return out
 }

@@ -7,8 +7,12 @@
 // plus the acting user's own two display preferences, ui_language and ui_theme:
 // §3.8 resolves the effective theme from "the session's user object", so those
 // fields are expected here; they are presentation settings, not authorization
-// inputs. Nothing permission-shaped and no project token is ever stored —
-// permissions are re-derived from the API on every request (REQ-AUTH-033).
+// inputs. Nothing permission-shaped is ever stored — permissions are re-derived
+// from the API on every request (REQ-AUTH-033). The one sanctioned exception for
+// a credential is the member's own project token for UI data entry, held as a
+// cache under `proj_token_{id}` and discarded on a data-API 401
+// (User_Interface_Design.md §8.6/§10, Plan/Web_Implementation.md §5): it is never
+// an authorization input, and it dies with the session.
 //
 // The two underscore-prefixed keys are explicitly not part of the auth schema:
 //   _flash        one-shot alert buffer for the redirect-back pattern (§3.4, §3.8)
@@ -401,6 +405,29 @@ final class Session
     public static function stashReveal(array $reveal): void
     {
         $_SESSION['_reveal'] = $reveal;
+    }
+
+    /**
+     * The acting member's project token, cached for UI data entry (§8.6 step 1) — or null
+     * when this session has not fetched it yet. The session is per user and is emptied on
+     * every login (establish()), so the cache is per (user, project) by construction.
+     */
+    public static function cachedProjectToken(int $projectId): ?string
+    {
+        $token = $_SESSION['proj_token_' . $projectId] ?? null;
+
+        return is_string($token) && $token !== '' ? $token : null;
+    }
+
+    public static function storeProjectToken(int $projectId, string $token): void
+    {
+        $_SESSION['proj_token_' . $projectId] = $token;
+    }
+
+    /** Drops a token the data API refused as invalid (§8.6 step 3). */
+    public static function forgetProjectToken(int $projectId): void
+    {
+        unset($_SESSION['proj_token_' . $projectId]);
     }
 
     /** @return array{token: string, email: string}|null */

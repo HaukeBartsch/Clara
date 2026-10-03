@@ -53,7 +53,10 @@ func newCompletionFixture(t *testing.T, e *env) completionFixture {
 		db.InstrumentEvent{InstrumentID: surveyID, EventID: v1},
 	)
 	e.mustRecord(f.projectID, "R1")
-	e.mustValue(f.projectID, "R1", "v1_arm_1", "intake", "age", "42") // some_data
+	// Stored the way an import stores it: the value belongs to intake through
+	// its field, and repeating_instrument stays empty (no repeat instance).
+	e.mustField(f.projectID, f.intake, "age", "text", 1)
+	e.mustValue(f.projectID, "R1", "v1_arm_1", "", "age", "42") // some_data
 	return f
 }
 

@@ -148,6 +148,29 @@ final class Router
         ['method' => 'POST', 'pattern' => '/projects/{id}/design/instruments/{iid}', 'controller' => Controllers\DesignController::class,
             'handler' => 'discardStaging', 'guard' => 'login', 'action' => 'staging_discard'],
 
+        // M5 — the Record Status Dashboard (§6.3) and the record view (§8). Both need data access
+        // ≥ read_only on some arm, which is a per-project permission the API discloses
+        // (REQ-API-126): the guard needs a session, the controllers refuse anyone else. The
+        // dashboard's region is its rows; the record view's is the per-field history (§8.3).
+        ['method' => 'GET', 'pattern' => '/projects/{id}/record-status', 'controller' => Controllers\RecordStatusController::class,
+            'handler' => 'index', 'guard' => 'login', 'region' => 'records'],
+        ['method' => 'POST', 'pattern' => '/projects/{id}/record-status', 'controller' => Controllers\RecordStatusController::class,
+            'handler' => 'create', 'guard' => 'login', 'action' => 'new_record'],
+        ['method' => 'POST', 'pattern' => '/projects/{id}/record-status', 'controller' => Controllers\RecordStatusController::class,
+            'handler' => 'autoName', 'guard' => 'login', 'action' => 'auto_name'],
+        ['method' => 'GET', 'pattern' => '/projects/{id}/records/{record}', 'controller' => Controllers\RecordController::class,
+            'handler' => 'view', 'guard' => 'login', 'region' => 'history'],
+        ['method' => 'POST', 'pattern' => '/projects/{id}/records/{record}', 'controller' => Controllers\RecordController::class,
+            'handler' => 'save', 'guard' => 'login', 'action' => 'save'],
+        ['method' => 'POST', 'pattern' => '/projects/{id}/records/{record}', 'controller' => Controllers\RecordController::class,
+            'handler' => 'delete', 'guard' => 'login', 'action' => 'delete'],
+        ['method' => 'POST', 'pattern' => '/projects/{id}/records/{record}', 'controller' => Controllers\RecordController::class,
+            'handler' => 'assignGroup', 'guard' => 'login', 'action' => 'assign_group'],
+        ['method' => 'POST', 'pattern' => '/projects/{id}/records/{record}', 'controller' => Controllers\RecordController::class,
+            'handler' => 'surveyLink', 'guard' => 'login', 'action' => 'survey_link'],
+        ['method' => 'POST', 'pattern' => '/projects/{id}/records/{record}', 'controller' => Controllers\RecordController::class,
+            'handler' => 'revokeLink', 'guard' => 'login', 'action' => 'revoke_link'],
+
         // The Control Panel (§5, REQ-UI-047): one is_admin route whose `?section=` picks the
         // section shown in the right-hand panel, defaulting to the first available.
         ['method' => 'GET', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,

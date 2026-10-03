@@ -211,7 +211,7 @@ final class FakeTransport implements Transport
         ];
 
         foreach ($GLOBALS['api_routes'] as $fragment => $queue) {
-            if ($queue === [] || !str_contains($url, $fragment)) {
+            if ($queue === [] || !self::matches((string) $fragment, $url, $body)) {
                 continue;
             }
 
@@ -224,6 +224,45 @@ final class FakeTransport implements Transport
 
         throw new TestFailure('no queued API response for ' . $method . ' ' . $url);
     }
+
+    /**
+     * A plain fragment matches the URL. The data API has one URL for every call (`/api/`,
+     * API_Endpoints_Design.md §3.1) and says what it wants in the form body, so a fragment
+     * written `data:<text>` matches a data-API call whose body contains <text> —
+     * `data:content=generateNextRecordName`, `data:action=import`.
+     */
+    private static function matches(string $fragment, string $url, ?string $body): bool
+    {
+        if (str_starts_with($fragment, 'data:')) {
+            return str_ends_with($url, '/api/') && str_contains((string) $body, substr($fragment, 5));
+        }
+
+        return str_contains($url, $fragment);
+    }
+}
+
+/** The form body of the last data-API call whose body contains `$needle`, decoded. */
+function data_api_body(string $needle): array
+{
+    $found = null;
+    foreach ($GLOBALS['api_calls'] as $call) {
+        if (str_ends_with($call['url'], '/api/') && str_contains((string) $call['body'], $needle)) {
+            $found = $call;
+        }
+    }
+    if ($found === null) {
+        throw new TestFailure('no data-API call containing ' . $needle);
+    }
+    parse_str((string) $found['body'], $parsed);
+
+    return $parsed;
+}
+
+/** How many data-API calls carried `$needle` in their body. */
+function data_api_calls(string $needle): int
+{
+    return count(array_filter($GLOBALS['api_calls'], static fn (array $c): bool =>
+        str_ends_with($c['url'], '/api/') && str_contains((string) $c['body'], $needle)));
 }
 
 /** How many calls reached one endpoint — a page's read budget, asserted. */

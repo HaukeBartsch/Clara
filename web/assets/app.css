@@ -274,3 +274,60 @@ h1 .clara-mode-badge {
   min-width: 4rem;
   white-space: nowrap;
 }
+
+/* --- data entry (§6.3, §8) --- */
+
+/* The three-state colour code of the Record Status Dashboard (§6.3): grey no data, amber some
+   data, green finished. Bootstrap's own colour variables, so every installed theme supplies
+   its shades (REQ-UI-040); the state is also named in the cell's title and label, never by
+   colour alone. */
+.clara-state {
+  display: inline-block;
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 50%;
+  vertical-align: middle;
+  border: 1px solid var(--bs-border-color);
+}
+
+.clara-state-no_data { background-color: var(--bs-secondary-bg); }
+.clara-state-some_data { background-color: var(--bs-warning); border-color: var(--bs-warning-border-subtle); }
+.clara-state-finished { background-color: var(--bs-success); border-color: var(--bs-success-border-subtle); }
+
+.clara-state-link {
+  display: inline-block;
+  padding: 0.125rem 0.375rem;
+  border-radius: var(--bs-border-radius-sm);
+}
+
+.clara-state-link:hover,
+.clara-state-link:focus-visible {
+  background-color: var(--bs-tertiary-bg);
+}
+
+.clara-record-status th.clara-status-col {
+  min-width: 4rem;
+  white-space: nowrap;
+}
+
+/* The required marker (REQ-VAL-028) and a required field left empty at submit. */
+.clara-required {
+  color: var(--bs-danger-text-emphasis);
+}
+
+.clara-field-missing .form-control,
+.clara-field-missing .form-select {
+  border-color: var(--bs-warning);
+}
+
+.clara-field-invalid .form-label {
+  color: var(--bs-danger-text-emphasis);
+}
+
+.clara-matrix th[scope="row"] {
+  min-width: 12rem;
+}
+
+.clara-history-change {
+  word-break: break-word;
+}

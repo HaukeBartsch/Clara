@@ -63,10 +63,10 @@ describe('project page (§6.1, REQ-UI-017)', function (): void {
 
         $response = router_for(http_request('GET', '/projects/3', browser_headers()))->dispatch();
 
-        // Setup and Record Status Dashboard arrive with M4/M5; until they exist, Overview is
-        // the only section this build can open, so the entry resolves to it (REQ-UI-003).
+        // A data-entry member (view_edit, no project_admin) lands on the Record Status
+        // Dashboard — the first entry after Overview they may use (REQ-UI-017, M5).
         assert_same(303, $response->status());
-        assert_same('/projects/3/overview', $response->headers()['Location']);
+        assert_same('/projects/3/record-status', $response->headers()['Location']);
     });
 
     it('shows the summary counts from the one detail read', function (): void {
@@ -167,11 +167,13 @@ describe('project page (§6.1, REQ-UI-017)', function (): void {
 
         $response = router_for(http_request('GET', '/projects/3/overview', browser_headers()))->dispatch();
 
-        // Setup, Design, Record status and the rest arrive with M3–M5; until then no link
-        // to them exists anywhere on the page.
+        // Export arrives with M6; until then no link to it exists anywhere on the page.
+        // Setup and Design are built but project_admin-only, so this member has no link to
+        // them either (REQ-UI-003); the Record Status Dashboard is built and allowed (M5).
+        assert_not_contains('/export', $response->body());
         assert_not_contains('/setup', $response->body());
-        assert_not_contains('/record-status', $response->body());
         assert_not_contains('/design', $response->body());
+        assert_contains('/projects/3/record-status', $response->body());
     });
 
     it('serves the same summary as JSON, and no more (REQ-UI-044)', function (): void {
@@ -305,19 +307,25 @@ describe('project page panel rules (§6.1, REQ-UI-003/017)', function (): void {
         $detail['permissions']['project_admin'] = true;
         $paths = array_column(Navigation::projectSections(3, Permissions::fromProjectDetail($detail)), 'path');
 
-        // Record Status Dashboard and Export are allowed for this member and still absent:
-        // their pages arrive with M5/M6, so a link would be a disabled control by another
-        // name. Setup and Design (project_admin) are built since M4; Members, Roles
-        // (is_admin) and Groups (data access) since M3.
+        // Export is allowed for this member and still absent: its page arrives with M6, so a
+        // link would be a disabled control by another name. Setup and Design (project_admin)
+        // are built since M4, the Record Status Dashboard since M5; Members, Roles (is_admin)
+        // and Groups (data access) since M3.
         assert_same(['/projects/3/overview', '/projects/3/setup', '/projects/3/design',
-            '/projects/3/members', '/projects/3/roles', '/projects/3/groups'], $paths);
+            '/projects/3/record-status', '/projects/3/members', '/projects/3/roles', '/projects/3/groups'], $paths);
     });
 
     it('opens the first section after Overview, and Overview only as the fallback (REQ-UI-017)', function (): void {
         sign_in();
-        // With nothing but Overview built, that is where the entry lands…
-        assert_same('/projects/3/overview',
+        // A data-entry member lands on the Record Status Dashboard (M5)…
+        assert_same('/projects/3/record-status',
             Navigation::defaultProjectSection(3, Permissions::fromProjectDetail(project_home_detail())));
+        // …a project_admin on Setup…
+        $admin = project_home_detail();
+        $admin['permissions']['project_admin'] = true;
+        assert_same('/projects/3/setup', Navigation::defaultProjectSection(3, Permissions::fromProjectDetail($admin)));
+        // …and a member with neither on Overview, the fallback.
+        assert_same('/projects/3/overview', Navigation::defaultProjectSection(3, Permissions::none()));
 
         // …and the rule reads "first entry after Overview", so it needs no change when the
         // sections land: Overview is never the answer because it comes first.

@@ -84,7 +84,7 @@ final class Navigation
             ['key' => 'design', 'path' => $base . '/design', 'labelKey' => 'nav.design',
                 'allowed' => $permissions->projectAdmin, 'built' => true],
             ['key' => 'record_status', 'path' => $base . '/record-status', 'labelKey' => 'nav.record_status',
-                'allowed' => $seesData, 'built' => false],
+                'allowed' => $seesData, 'built' => true],
             ['key' => 'export', 'path' => $base . '/export', 'labelKey' => 'nav.export',
                 'allowed' => $permissions->canExportAny(), 'built' => false],
             ['key' => 'members', 'path' => $base . '/members', 'labelKey' => 'nav.members',

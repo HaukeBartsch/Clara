@@ -141,14 +141,21 @@ func (h *Handler) recordStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The derived half of the state, in one pass: a (record, event, instrument)
-	// holds some data when any stored value of it is non-empty ("any field has
-	// a value vs. none"). Values are aggregated away here — none leaves this
-	// function (REQ-API-074).
+	// holds some data when any stored value of one of the instrument's fields
+	// is non-empty at that event ("any field has a value vs. none"). A value
+	// belongs to an instrument through its field — the data row's
+	// repeating_instrument column names a repeat instance, and is empty for
+	// every ordinary value — which is the same test the export's
+	// `<instrument>_complete` column applies (REQ-API-134). Values are
+	// aggregated away here — none leaves this function (REQ-API-074).
 	type cellKey struct{ record, event, instrument string }
 	complete := map[cellKey]bool{}
 	rows, err := h.Store.DB.QueryContext(ctx,
-		`SELECT DISTINCT record_id, unique_event_name, repeating_instrument
-		 FROM data WHERE project_id = ? AND value <> ''`, projectID)
+		`SELECT DISTINCT d.record_id, d.unique_event_name, i.name
+		 FROM data d
+		 JOIN fields f ON f.project_id = d.project_id AND f.field_name = d.field_name
+		 JOIN instruments i ON i.id = f.instrument_id
+		 WHERE d.project_id = ? AND d.value <> ''`, projectID)
 	if err != nil {
 		errInternal(w)
 		return
@@ -496,6 +503,44 @@ type historyDetails struct {
 	Fields     []historyField `json:"fields"`
 }
 
+// recomputedDetails is the calculated_recomputed payload of §3.2: one stored
+// result, where it is stored, and its old and new value. The history serves it
+// as an update of that field, so a calculated value has a history and a current
+// value like any entered one (REQ-API-079, REQ-AUD-023).
+type recomputedDetails struct {
+	Field      string `json:"field"`
+	Instrument string `json:"instrument"`
+	Event      string `json:"event"`
+	Old        string `json:"old"`
+	New        string `json:"new"`
+}
+
+// asHistory reads one entry's payload into the data-change shape: the
+// data-change codes as written, a recomputation as an update of its one field.
+// A payload without that shape yields false and is skipped.
+func asHistory(eventType string, raw []byte) (historyDetails, bool) {
+	if eventType == audit.CalculatedRecomputed {
+		var c recomputedDetails
+		if json.Unmarshal(raw, &c) != nil || c.Field == "" {
+			return historyDetails{}, false
+		}
+		old, nw := c.Old, c.New
+		f := historyField{Field: c.Field, Old: &old, New: &nw}
+		if old == "" {
+			f.Old = nil
+		}
+		if nw == "" {
+			f.New = nil
+		}
+		return historyDetails{Action: "update", Instrument: c.Instrument, Event: c.Event, Fields: []historyField{f}}, true
+	}
+	var d historyDetails
+	if json.Unmarshal(raw, &d) != nil {
+		return historyDetails{}, false
+	}
+	return d, true
+}
+
 // recordHistory returns the record's data-change history from the audit trail:
 // every create/update/delete entry with the acting user, the action, and per
 // changed field the old → new values (REQ-API-079). order=chrono (default)
@@ -591,14 +636,15 @@ func (h *Handler) recordHistory(w http.ResponseWriter, r *http.Request) {
 	fieldFilter := r.URL.Query().Get("field")
 
 	limit := ParseLimit(r)
-	// The record-scoped page: target_record + the three data-change codes,
-	// chronological (REQ-API-079), served by idx_audit_events_record (§6.4).
+	// The record-scoped page: target_record + the data-change codes of §3.2 —
+	// recomputed calculated results included, they change the record's values
+	// too — chronological (REQ-API-079), served by idx_audit_events_record (§6.4).
 	conds := []string{
 		"ae.project_id = ?", "ae.target_record = ?",
-		fmt.Sprintf("ae.event_type IN (%s, %s, %s)", "?", "?", "?"),
+		fmt.Sprintf("ae.event_type IN (%s, %s, %s, %s)", "?", "?", "?", "?"),
 	}
 	args := []any{projectID, recordID,
-		audit.RecordCreated, audit.RecordUpdated, audit.RecordDeleted}
+		audit.RecordCreated, audit.RecordUpdated, audit.RecordDeleted, audit.CalculatedRecomputed}
 	dir := "ASC"
 	pageOp := ">"
 	if newest { // REQ-API-137 — the same walk from the newest change backwards
@@ -612,7 +658,7 @@ func (h *Handler) recordHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.Store.DB.QueryContext(ctx,
-		`SELECT ae.id, ae.created_at, ae.user_id, u.display_name, ae.details
+		`SELECT ae.id, ae.created_at, ae.user_id, u.display_name, ae.event_type, ae.details
 		 FROM audit_events ae LEFT JOIN users u ON u.id = ae.user_id
 		 WHERE `+joinConditions(conds)+`
 		 ORDER BY ae.created_at `+dir+`, ae.id `+dir+` LIMIT ?`,
@@ -628,13 +674,14 @@ func (h *Handler) recordHistory(w http.ResponseWriter, r *http.Request) {
 	var lastID int64
 	for rows.Next() {
 		var (
-			id      int64
-			created any
-			userID  sql.NullInt64
-			display sql.NullString
-			details sql.NullString
+			id        int64
+			created   any
+			userID    sql.NullInt64
+			display   sql.NullString
+			eventType string
+			details   sql.NullString
 		)
-		if err := rows.Scan(&id, &created, &userID, &display, &details); err != nil {
+		if err := rows.Scan(&id, &created, &userID, &display, &eventType, &details); err != nil {
 			errInternal(w)
 			return
 		}
@@ -642,8 +689,11 @@ func (h *Handler) recordHistory(w http.ResponseWriter, r *http.Request) {
 		lastCreated = normDatetime(created)
 		lastID = id
 
-		var d historyDetails
-		if !details.Valid || json.Unmarshal([]byte(details.String), &d) != nil {
+		if !details.Valid {
+			continue
+		}
+		d, ok := asHistory(eventType, []byte(details.String))
+		if !ok {
 			continue // unparseable payload — nothing renderable (defensive)
 		}
 		// Per-arm read check (GD-2): entries of arms the acting user cannot

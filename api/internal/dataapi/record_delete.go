@@ -124,26 +124,23 @@ func (h *Handler) contentRecordDelete(w http.ResponseWriter, r *http.Request, en
 					return
 				}
 			}
-			// Audit with the deleted values (REQ-AUD-009).
-			values := make([]map[string]string, 0, len(removed))
-			for _, dv := range removed {
-				values = append(values, map[string]string{
-					"event": dv.UniqueEventName, "field": dv.FieldName, "value": dv.Value,
-				})
-			}
-			if err := h.AuditTx(ctx, tx, audit.Entry{
-				EventType:    audit.RecordDeleted,
-				Source:       audit.SourceAPI,
-				UserID:       sub.User.ID,
-				Email:        sub.User.Email,
-				Token:        p.Token,
-				ProjectID:    sub.Project.ID,
-				TargetRecord: recordID,
-				Details:      map[string]any{"values": values},
-			}); err != nil {
-				tx.Rollback()
-				h.storeError(w, enc)
-				return
+			// Audit with the deleted values (REQ-AUD-009), in the data-change
+			// shape of §3.2: one entry per (instrument, event) the delete reached.
+			for _, details := range deleteChangeGroups(d, recordID, removed) {
+				if err := h.AuditTx(ctx, tx, audit.Entry{
+					EventType:    audit.RecordDeleted,
+					Source:       audit.SourceAPI,
+					UserID:       sub.User.ID,
+					Email:        sub.User.Email,
+					Token:        p.Token,
+					ProjectID:    sub.Project.ID,
+					TargetRecord: recordID,
+					Details:      details,
+				}); err != nil {
+					tx.Rollback()
+					h.storeError(w, enc)
+					return
+				}
 			}
 			row.Deleted = 1
 		}

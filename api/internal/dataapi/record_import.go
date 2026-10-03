@@ -465,27 +465,35 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 		return importRow{}, err
 	}
 
-	// Audit with old/new values (§3.7.2, REQ-AUD-009's data-change family).
-	// A survey submission has no account behind it: the actor columns stay
-	// unset and the link itself is the token column (REQ-AUTH-041).
-	eventType := audit.RecordCreated
+	// Audit with old/new values in the data-change shape of
+	// Audit_Logging_Design.md §3.2 (REQ-AUD-009): one entry per (record,
+	// instrument, event) group, which is what the record history reads back
+	// and filters (§4.16, REQ-API-079/080). A survey submission has no account
+	// behind it: the actor columns stay unset and the link itself is the token
+	// column (REQ-AUTH-041).
+	eventType, action := audit.RecordCreated, "create"
 	if existed {
-		eventType = audit.RecordUpdated
+		eventType, action = audit.RecordUpdated, "update"
 	}
 	if len(changes) > 0 || !existed {
-		if err := h.AuditTx(ctx, tx, audit.Entry{Token: p.Token,
-			EventType:    eventType,
-			Source:       audit.SourceAPI,
-			UserID:       sub.actorUserID(),
-			Email:        sub.actorEmail(),
-			ProjectID:    sub.Project.ID,
-			TargetRecord: recordID,
-			Details:      map[string]any{"changes": changes},
-		}); err != nil {
-			return importRow{}, err
+		for _, details := range importChangeGroups(d, action, recordID, formName, event, changes) {
+			if err := h.AuditTx(ctx, tx, audit.Entry{Token: p.Token,
+				EventType:    eventType,
+				Source:       audit.SourceAPI,
+				UserID:       sub.actorUserID(),
+				Email:        sub.actorEmail(),
+				ProjectID:    sub.Project.ID,
+				TargetRecord: recordID,
+				Details:      details,
+			}); err != nil {
+				return importRow{}, err
+			}
 		}
 	}
-	if len(calcChanges) > 0 {
+	// One calculated_recomputed entry per changed result (§3.2, REQ-AUD-023),
+	// naming where it is stored and which change of this row set it off.
+	for _, c := range sortedCalculated(calcChanges) {
+		triggerField, triggerEvent := importTrigger(d.byName[c.Field].Calculation.String, event, changes)
 		if err := h.AuditTx(ctx, tx, audit.Entry{Token: p.Token,
 			EventType:    audit.CalculatedRecomputed,
 			Source:       audit.SourceAPI,
@@ -493,7 +501,8 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 			Email:        sub.actorEmail(),
 			ProjectID:    sub.Project.ID,
 			TargetRecord: recordID,
-			Details:      map[string]any{"changes": calcChanges},
+			Details: calculatedDetails{RecordID: recordID, Field: c.Field, Instrument: c.Instrument,
+				Event: c.Event, Old: c.Old, New: c.New, TriggerField: triggerField, TriggerEvent: triggerEvent},
 		}); err != nil {
 			return importRow{}, err
 		}
@@ -527,11 +536,11 @@ func (*forbiddenError) Error() string { return "permission denied" }
 
 // recomputeCalculated evaluates every calculated field of the project for
 // one record against its current values and stores changed results in tx,
-// returning their old/new map (REQ-VAL-037).
+// returning each changed result with the event it is stored at (REQ-VAL-037).
 func (h *Handler) recomputeCalculated(ctx context.Context, tx *sql.Tx, projectID int64,
-	recordID string, rv recordValues, d *projectDict) (map[string]map[string]string, error) {
+	recordID string, rv recordValues, d *projectDict) ([]calculatedChange, error) {
 
-	out := map[string]map[string]string{}
+	var out []calculatedChange
 	for _, f := range d.fields {
 		if f.FieldType != "calculated" || !f.Calculation.Valid || f.Calculation.String == "" {
 			continue
@@ -571,7 +580,8 @@ func (h *Handler) recomputeCalculated(ctx context.Context, tx *sql.Tx, projectID
 					if err := h.Store.DeleteDataValueTx(ctx, tx, dv); err != nil {
 						return nil, err
 					}
-					out[f.FieldName] = map[string]string{"old": oldV, "new": ""}
+					out = append(out, calculatedChange{Field: f.FieldName, Instrument: f.Instrument,
+						Event: event, Old: oldV, New: ""})
 					delete(rv[event], f.FieldName)
 				}
 				continue
@@ -579,7 +589,8 @@ func (h *Handler) recomputeCalculated(ctx context.Context, tx *sql.Tx, projectID
 			if err := h.Store.UpsertDataValueTx(ctx, tx, dv); err != nil {
 				return nil, err
 			}
-			out[f.FieldName] = map[string]string{"old": oldV, "new": value}
+			out = append(out, calculatedChange{Field: f.FieldName, Instrument: f.Instrument,
+				Event: event, Old: oldV, New: value})
 			if rv[event] == nil {
 				rv[event] = map[string]string{}
 			}

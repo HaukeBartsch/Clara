@@ -51,6 +51,16 @@ final class ApiClient
     }
 
     /**
+     * The data-API client (§3 of API_Endpoints_Design.md) over this client's transport — one
+     * transport for the process's outbound HTTP, as the front controller arranges it — and
+     * with this client for the member's self-service token fetch (§8.6, REQ-API-102).
+     */
+    public function dataApi(): DataApi
+    {
+        return new DataApi($this->config, $this->logger, $this->request, $this->transport, $this);
+    }
+
+    /**
      * @param array<string, scalar|null> $query
      * @return array<mixed> decoded JSON body; [] for a 204
      */

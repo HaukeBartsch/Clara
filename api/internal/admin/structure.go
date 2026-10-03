@@ -3177,7 +3177,7 @@ func (h *Handler) updateField(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if calcChanged {
-			if err := h.recomputeCalcField(ctx, tx, u, projectID, next); err != nil {
+			if err := h.recomputeCalcField(ctx, tx, u, projectID, inst.Name, next); err != nil {
 				errInternal(w)
 				return
 			}
@@ -3210,8 +3210,11 @@ func (h *Handler) updateField(w http.ResponseWriter, r *http.Request) {
 
 // recomputeCalcField evaluates the field's expression for every record of
 // the project at each event where its instrument is active, overwriting the
-// stored values and auditing each change (§6.3 trigger row 2, ASM-VAL-4).
-func (h *Handler) recomputeCalcField(ctx context.Context, tx *sql.Tx, u *db.User, projectID int64, f db.Field) error {
+// stored values and auditing each change (§6.3 trigger row 2, ASM-VAL-4). The
+// audit entry names where the result is stored — instrument and event — so the
+// record history serves it beside the values it was computed from
+// (Audit_Logging_Design.md §3.2, REQ-API-079).
+func (h *Handler) recomputeCalcField(ctx context.Context, tx *sql.Tx, u *db.User, projectID int64, instrument string, f db.Field) error {
 	rows, err := tx.QueryContext(ctx,
 		`SELECT DISTINCT e.unique_event_name
 		 FROM events e JOIN instrument_events ie ON ie.event_id = e.id
@@ -3275,6 +3278,7 @@ func (h *Handler) recomputeCalcField(ctx context.Context, tx *sql.Tx, u *db.User
 				UserID: u.ID, Email: u.Email, ProjectID: projectID, TargetRecord: recordID,
 				Details: map[string]any{
 					"record_id": recordID, "field": f.FieldName,
+					"instrument": instrument, "event": eventName,
 					"old": oldVal, "new": value,
 					"trigger_field": nil, "trigger_event": nil,
 				},
