@@ -741,3 +741,28 @@ A member with no role holds `edit_survey_responses`, `export_full` and `project_
 ## User page flow
 
 The screen "project overview" page, after logging in should only show a single panel (plus header and footer). If an is_admin user is logged in the header should have a button "Control Panel" (all admin related setting are on a separate page "Control Panel", like setting up permissions and roles for users). In the project overview middle panel is a table with projects the current user has access to, as rows including the stats for each projects in columns. Selecting one project (click on project name) should open that projects "project page" with a left side panel with options "Setup", "Record Status Dashboard", and "Export". On the right-hand panel show the corresponding page (Setup, Record Status Dashboard, Export). Options on the left side panel should only appear if the user has permissions.
+
+## Role adjustment
+
+A projects role has permission groups for "data access" and "export". In an arm permissions are specific to each individual instrument and event. The user interface displays a "Define/Edit a roles" as a table (per arm). Each row of the table are the permissions for an instrument (event). Columns display radio buttons for data access and export. Additional permission are coded as checkboxes. a) delete a records instrument (delete the instruments field values), b) edit already collected surveys.
+
+┌────────────────────┬───────────────────┐
+│ Permissions arm_1  │ Permissions arm_2 │   
+├──────────────┬─────┴───────────────────┴───────────────────────┬────────────────────────────────────────┐
+│              │ data access                                     │ export                                 │
+│  instrument  ├────────┬──────┬──────┬────────────┬─────────────┼──────┬────────────┬─────────────┬──────┤
+│  (event)     │ no     │ read │ view │ delete     │ edit survey │ none │ de-        │ no-         │ full │
+│              │ access │ only │ edit │ [checkbox] │ [checkbox]  │      │ identified │ identifiers │      │
+├──────────────┼────────┼──────┼──────┼────────────┼─────────────┼──────┼────────────┼─────────────┼──────┤
+│ instrument 1 │ (O)    │ ( )  │ ( )  │    [ ]     │     [ ]     │ (0)  │ ( )        │ ( )         │ ( )  │
+│ (baseline)   │        │      │      │            │             │      │            │             │      │
+├──────────────┼────────┼──────┼──────┼────────────┼─────────────┼──────┼────────────┼─────────────┼──────┤
+│ instrument 1 │ ( )    │ (O)  │ ( )  │    [ ]     │     [ ]     │ ( )  │ ( )        │ (O)         │ ( )  │
+│ (followup)   │        │      │      │            │             │      │            │             │      │
+├──────────────┼────────┼──────┼──────┼────────────┼─────────────┼──────┼────────────┼─────────────┼──────┤
+│ instrument 2 │ ( )    │ ( )  │ (O)  │    [X]     │     [X]     │ ( )  │ ( )        │ ( )         │ (O)  │
+│ (baseline)   │        │      │      │            │             │      │            │             │      │
+├──────────────┼────────┼──────┼──────┼────────────┼─────────────┼──────┼────────────┼─────────────┼──────┤
+│ instrument 2 │ ( )    │ ( )  │ (O)  │    [X]     │     [X]     │ ( )  │ ( )        │ ( )         │ (O)  │
+│ (followup)   │        │      │      │            │             │      │            │             │      │
+└──────────────┴────────┴──────┴──────┴────────────┴─────────────┴──────┴────────────┴─────────────┴──────┘
