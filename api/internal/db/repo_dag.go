@@ -108,3 +108,32 @@ func (s *Store) CountRecordsByDAGGroup(ctx context.Context, projectID, groupID i
 	}
 	return n, nil
 }
+
+// ListDAGMembershipsByProject returns every data-access-group membership held by
+// the project's members (REQ-API-141): one read for a whole members listing, so
+// showing who holds which group costs one query instead of one per member
+// (Plan/Web_Implementation.md §7 rule 13). Group names are not joined — the
+// caller already has the project's groups from ListDAGGroups and pairs them by
+// id — and rows come back ordered by assignment then group, which is the order a
+// member row lists its groups in.
+func (s *Store) ListDAGMembershipsByProject(ctx context.Context, projectID int64) ([]DagMembership, error) {
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT m.id, m.assignment_id, m.group_id, m.is_active
+			FROM dag_memberships m
+			JOIN user_projects a ON a.id = m.assignment_id
+			WHERE a.project_id = ?
+			ORDER BY m.assignment_id, m.group_id`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DagMembership
+	for rows.Next() {
+		dm, err := scanDagMembership(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, dm)
+	}
+	return out, rows.Err()
+}

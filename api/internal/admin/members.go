@@ -25,13 +25,21 @@ func (h *Handler) registerMembers(mux *http.ServeMux) {
 // memberObject is the list representation: token_present reports existence
 // without revealing the value (REQ-API-005); role is null for a role-less
 // member, who then holds full permissions (REQ-AUTH-022).
+//
+// groups and active_group_id carry the member's data access groups (REQ-API-141)
+// in the same vocabulary as the REQ-API-089 body, so the members page renders a
+// row from this read and posts it back to that endpoint after one toggle rather
+// than rebuilding a second shape. An empty list is `[]`, never null: "holds no
+// group" is a value, not an absent field (REQ-AUTH-044).
 type memberObject struct {
-	UserID       int64   `json:"user_id"`
-	Email        string  `json:"email"`
-	DisplayName  string  `json:"display_name"`
-	Role         *string `json:"role"`
-	TokenPresent bool    `json:"token_present"`
-	Enabled      bool    `json:"enabled"`
+	UserID        int64    `json:"user_id"`
+	Email         string   `json:"email"`
+	DisplayName   string   `json:"display_name"`
+	Role          *string  `json:"role"`
+	TokenPresent  bool     `json:"token_present"`
+	Enabled       bool     `json:"enabled"`
+	Groups        []int64  `json:"groups"`
+	ActiveGroupID *int64   `json:"active_group_id"`
 }
 
 // memberWithToken is the add/rotation response — the only place the token
@@ -100,6 +108,14 @@ func (h *Handler) listMembers(w http.ResponseWriter, r *http.Request) {
 		errInternal(w)
 		return
 	}
+	// One read for every member's groups (REQ-API-141): the listing costs a query
+	// per page, not per row.
+	memberships, err := h.Store.ListDAGMembershipsByProject(ctx, projectID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	groups := dagGroupsByAssignment(memberships)
 	out := make([]memberObject, 0, len(assignments))
 	for _, a := range assignments {
 		u, err := h.Store.GetUser(ctx, a.UserID)
@@ -110,13 +126,47 @@ func (h *Handler) listMembers(w http.ResponseWriter, r *http.Request) {
 		if u == nil { // dangling membership — never happens under FK integrity
 			continue
 		}
+		set, held := groups[a.ID]
+		if !held {
+			// A member with no group is `[]` plus a null active group, not an absent
+			// field: "no group" means they see every record of the project (GD-10).
+			set = memberGroupSet{groups: []int64{}}
+		}
 		out = append(out, memberObject{
 			UserID: u.ID, Email: u.Email, DisplayName: u.DisplayName,
 			Role: roleName(roles, a.RoleID), TokenPresent: a.Token != "",
 			Enabled: u.Enabled,
+			Groups:  set.groups, ActiveGroupID: set.activeGroupID,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// memberGroupSet is one member's data access groups as §4.6 reports them
+// (REQ-API-141): the group ids they hold and which of them is active.
+type memberGroupSet struct {
+	groups        []int64
+	activeGroupID *int64
+}
+
+// dagGroupsByAssignment indexes a project's memberships by assignment id, from the
+// single project-wide read of REQ-API-141. Rows arrive ordered by assignment then
+// group, so each member's ids keep that order without a second sort.
+func dagGroupsByAssignment(memberships []db.DagMembership) map[int64]memberGroupSet {
+	out := make(map[int64]memberGroupSet, len(memberships))
+	for _, m := range memberships {
+		set, seen := out[m.AssignmentID]
+		if !seen {
+			set = memberGroupSet{groups: []int64{}}
+		}
+		set.groups = append(set.groups, m.GroupID)
+		if m.IsActive {
+			active := m.GroupID
+			set.activeGroupID = &active
+		}
+		out[m.AssignmentID] = set
+	}
+	return out
 }
 
 // --- PUT /api/v1/projects/{id}/users/{uid} (REQ-API-054/055) ---
@@ -308,9 +358,22 @@ func (h *Handler) addOrChangeRole(w http.ResponseWriter, ctx context.Context, ac
 			errInternal(w)
 			return
 		}
+		// The role mutation leaves the member's groups untouched, and the response says so
+		// with their real values rather than an empty list a client might post back and
+		// thereby clear (REQ-API-141).
+		mine, err := h.Store.ListDAGMembershipsByAssignment(ctx, a.ID)
+		if err != nil {
+			errInternal(w)
+			return
+		}
+		set, held := dagGroupsByAssignment(mine)[a.ID]
+		if !held {
+			set = memberGroupSet{groups: []int64{}}
+		}
 		writeJSON(w, http.StatusOK, memberObject{
 			UserID: target.ID, Email: target.Email, DisplayName: target.DisplayName,
 			Role: roleNameStr, TokenPresent: a.Token != "", Enabled: target.Enabled,
+			Groups: set.groups, ActiveGroupID: set.activeGroupID,
 		})
 		return
 	}
