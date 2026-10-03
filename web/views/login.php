@@ -31,8 +31,7 @@ use Clara\View;
         <input type="hidden" name="next" value="<?= View::e($next ?? '/') ?>">
 
         <fieldset class="mb-2">
-            <legend class="form-label h6 mb-1"><?= View::e($view->t('login.source')) ?></legend>
-            <p class="text-body-secondary small mt-0"><?= View::e($view->t('login.source_help')) ?></p>
+            <legend class="form-label h6 mb-1 visually-hidden"><?= View::e($view->t('login.source_help')) ?></legend>
             <?php
             // One tile per name, side by side (wrapping on narrow screens). Each tile is still
             // a real radio: the input is stretched invisibly over the tile inside its label,
