@@ -181,7 +181,7 @@ These are the ones most likely to be got wrong, gathered from the code-level fac
 
 ## 8. Testing and CI
 
-`ci/run.sh` is Go-only today; success criteria 2 and 3 need the web layer covered. Per `Technology_Stack_Design.md` §6 the normative coverage stays in Go, PHP gets a minimal stdlib harness, and the essential client-side components get Playwright browser tests (`REQ-TECH-028`, `e2e/`):
+`ci/run.sh` has covered all four layers since 2026-10-03, in the order `Technology_Stack_Design.md` §4 names them — Go vet and tests, the Fiona fixtures, `php -l` plus the `ASM-TECH-2` external-reference check, this harness, then the browser specs (it was Go-only before, which left success criteria 2 and 3 uncovered by the gate). Per `Technology_Stack_Design.md` §6 the normative coverage stays in Go, PHP gets a minimal stdlib harness, and the essential client-side components get Playwright browser tests (`REQ-TECH-028`, `e2e/`). The gate counts a skipped spec as uncovered rather than green, because `REQ-TECH-028` asks for these in CI; outside it the specs still skip themselves when no stack is running:
 
 - **Static:** `php -l` over `web/`; a grep asserting no external URL in any template or asset reference (`ASM-TECH-2`).
 - **Unit (no HTTP):** router dispatch — including both shapes of one route, HTML and `Accept: application/json`, and that a data response passes the same gate as its page (`REQ-UI-044`), CSRF accept/reject, session idle timeout, `Messages.php` code→string mapping, `Permissions.php` gating decisions against fixture payloads, i18n fallback.
