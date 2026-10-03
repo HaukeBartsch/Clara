@@ -147,7 +147,6 @@ final class AccountController extends Controller
             'error' => $error,
             'hasLocalCredential' => Session::hasLocalCredential(),
             'email' => Session::email(),
-            'sidebarProjects' => $this->visibleProjects(),
         ], [
             'titleKey' => '',
             'scripts' => ['/assets/app.js', '/assets/js/password.js'],

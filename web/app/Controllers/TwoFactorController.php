@@ -216,7 +216,6 @@ final class TwoFactorController extends Controller
             'error' => (string) ($view['error'] ?? ''),
             // The e-mail method is offered unless this very render learned it cannot be.
             'emailAvailable' => empty($view['emailUnavailable']),
-            'sidebarProjects' => $this->visibleProjects(),
         ], [
             'titleKey' => '',
             'scripts' => ['/assets/app.js', '/assets/js/two_factor.js'],

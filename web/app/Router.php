@@ -72,11 +72,22 @@ final class Router
         ['method' => 'GET', 'pattern' => '/', 'controller' => Controllers\DashboardController::class,
             'handler' => 'index', 'guard' => 'login', 'region' => 'projects'],
 
-        // The project workspace (§6.1). Its data region is the same summary the
-        // rendered page shows — records, instruments, fields, and the metadata
-        // block — and nothing more (REQ-UI-044).
+        // The project workspace (§6.1). The entry route resolves the first available
+        // section and answers 303 (REQ-UI-017); its data region is the same summary the
+        // Overview shows — records, instruments, fields, and the metadata block — so a
+        // data request gets the object rather than the redirect (REQ-UI-044).
         ['method' => 'GET', 'pattern' => '/projects/{id}', 'controller' => Controllers\ProjectController::class,
             'handler' => 'index', 'guard' => 'login', 'region' => 'project'],
+        ['method' => 'GET', 'pattern' => '/projects/{id}/overview', 'controller' => Controllers\ProjectController::class,
+            'handler' => 'overview', 'guard' => 'login'],
+
+        // The Control Panel (§5, REQ-UI-047): one is_admin route whose `?section=` picks the
+        // section shown in the right-hand panel, defaulting to the first available. Saving
+        // settings is its only mutation in this build; the other sections arrive with M3.
+        ['method' => 'GET', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
+            'handler' => 'index', 'guard' => 'admin'],
+        ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
+            'handler' => 'saveSettings', 'guard' => 'admin', 'action' => 'save_settings'],
 
         // Self-service account pages (§2.4 item 4): the second factor (§2.5) and the
         // local password (§2.6). Both live in the shell; both are mutations on their
