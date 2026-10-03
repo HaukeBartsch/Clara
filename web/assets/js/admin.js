@@ -7,6 +7,9 @@
 //    CSRF token rides with the confirm click like every other mutation (§3.3).
 // 2. Copy (§3.5): a button carrying data-clara-copy="<selector>" copies that element's value
 //    — the once-shown project token.
+// 3. Reopening (§6.7/§6.8): a server-rendered modal carrying data-clara-autoshow opens on load —
+//    the commit dialog after a refused commit, the breaking-change question after a save the
+//    API sent back for acknowledgement.
 
 import { el, ready, t } from "../app.js"
 
@@ -69,6 +72,10 @@ async function copyFrom(selector) {
 
 ready(() => {
   document.addEventListener("submit", askFirst, true)
+
+  for (const dialog of document.querySelectorAll(".modal[data-clara-autoshow]")) {
+    window.bootstrap.Modal.getOrCreateInstance(dialog).show()
+  }
 
   for (const button of document.querySelectorAll("[data-clara-copy]")) {
     const label = button.textContent

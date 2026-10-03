@@ -26,7 +26,7 @@ use Clara\Permissions;
 use Clara\Response;
 use Clara\Session;
 
-final class ProjectController extends Controller
+final class ProjectController extends ProjectPageController
 {
     /**
      * GET /projects/{id} — entering a project (§6.1, REQ-UI-017). Not a page of its own:
@@ -51,16 +51,27 @@ final class ProjectController extends Controller
     {
         $detail = $this->projectDetail();
         $projectId = $this->projectIdOf($detail);
-        $mode = $this->projectMode($projectId);
+        $state = $this->modeState($projectId);
+        $mode = $state['mode'];
 
         return $this->page('overview', [
             // The browser tab carries the project's own name — data, not a UI string, so it
             // is not translated (the shell falls back to the application name when empty).
             'pageTitle' => $this->projectName($detail),
+            'projectId' => $projectId,
             'metadata' => $this->metadata($detail),
             'summary' => $this->summary($detail),
             // The mode badge beside the project name (§6.6, REQ-UI-033); '' omits it.
             'mode' => $mode,
+            // The mode card (§6.6, REQ-UI-033): is_admin only — a project's own project_admin
+            // sees the badge and nothing else, so for everyone else this is null and the card
+            // is not emitted (REQ-UI-003).
+            'modeCard' => Session::isAdmin() && $mode !== '' ? [
+                'mode' => $mode,
+                'stagingOpen' => $state['staging_open'],
+                'transitions' => $state['staging_open'] ? [] : self::TRANSITIONS[$mode],
+                'setupUrl' => '/projects/' . $projectId . '/setup',
+            ] : null,
             // The header names the project while the user is inside it, and the name goes
             // back to this page (§2.4); the breadcrumb carries the same badge (§6.6).
             'brandProject' => $this->projectName($detail),
@@ -74,8 +85,67 @@ final class ProjectController extends Controller
             ],
         ], [
             'titleKey' => '',
-            'scripts' => ['/assets/app.js'],
+            'scripts' => ['/assets/app.js', '/assets/js/admin.js'],
+            'jsKeys' => ['admin.confirm.title', 'action.cancel', 'admin.confirm.ok', 'tfa.copied'],
         ]);
+    }
+
+    /**
+     * The transitions the mode card offers from each mode (§6.6, API §4.21) — and only those:
+     * development → analysis is never offered, analysis is entered from production alone.
+     */
+    public const TRANSITIONS = [
+        'development' => ['production'],
+        'production' => ['development', 'analysis'],
+        'analysis' => ['production', 'development'],
+    ];
+
+    /**
+     * POST /projects/{id}/overview?action=set_mode — `PUT …/mode` (is_admin, REQ-UI-033).
+     * Leaving development asks whether stored data is kept; deleting it needs the second,
+     * explicit confirmation the card carries (§6.6, §3.5), checked here as well so a form
+     * posted without it never reaches the API. A change while a staging set is open is the
+     * API's 409, shown per §3.4.
+     */
+    public function setMode(): Response
+    {
+        $projectId = $this->projectIdFromPath();
+        $back = Response::redirect('/projects/' . $projectId . '/overview');
+        $target = $this->request->field('mode');
+        if (!in_array($target, self::MODES, true)) {
+            $this->flashDanger($this->i18n->t('error.invalid_request'));
+
+            return $back;
+        }
+
+        $body = ['mode' => $target];
+        $current = $this->projectMode($projectId);
+        $deleting = false;
+        if ($current === 'development' && $target === 'production') {
+            $deleting = $this->request->field('keep_data') === '0';
+            if ($deleting && $this->request->field('confirm_delete') !== '1') {
+                $this->flashDanger($this->i18n->t('mode.delete_unconfirmed'));
+
+                return $back;
+            }
+            $body['keep_data'] = !$deleting;
+        }
+
+        try {
+            $answer = $this->api->put('/api/v1/projects/' . $projectId . '/mode', $body);
+        } catch (ApiException $e) {
+            $this->logger->info('project mode change rejected', ['code' => $e->code(), 'status' => $e->status()]);
+            $this->flashDanger(Messages::forApiException($this->i18n, $e));
+
+            return $back;
+        }
+
+        $label = $this->i18n->t('project.mode.' . $target);
+        $this->flashSuccess($deleting
+            ? $this->i18n->t('mode.changed_deleted', ['mode' => $label, 'count' => (string) (int) ($answer['records_deleted'] ?? 0)])
+            : $this->i18n->t('mode.changed', ['mode' => $label]));
+
+        return $back;
     }
 
     /**
@@ -91,58 +161,6 @@ final class ProjectController extends Controller
             'summary' => $this->summary($detail),
             'metadata' => $this->metadata($detail),
         ]);
-    }
-
-    // --- the read, once -------------------------------------------------------
-
-    /**
-     * The detail object of §4.5 for this route's project id. A non-numeric id names no
-     * project at all, and answering 404 here is what keeps the page from sending it to
-     * the API as a path segment (the API would read it as an unknown id anyway).
-     *
-     * @return array<string, mixed>
-     */
-    private function projectDetail(): array
-    {
-        $raw = $this->request->pathParam('id');
-        if (preg_match('/^\d{1,18}$/', $raw) !== 1) {
-            throw new ApiException('not_found', '', 404);
-        }
-
-        $detail = $this->api->get('/api/v1/projects/' . (int) $raw);
-
-        return is_array($detail) ? $detail : [];
-    }
-
-    /**
-     * The project's mode for the badge of §6.6 (REQ-UI-033): `GET …/mode`, readable by
-     * every member. The badge is information beside the name, not the page's content, so
-     * a refused or failed read — or a value outside the three modes of GD-20 — omits it
-     * ('') instead of costing the user the Overview.
-     */
-    private function projectMode(int $projectId): string
-    {
-        try {
-            $read = $this->api->get('/api/v1/projects/' . $projectId . '/mode');
-        } catch (ApiException $e) {
-            $this->logger->info('project mode read failed', ['code' => $e->code(), 'status' => $e->status()]);
-
-            return '';
-        }
-        $mode = is_array($read) ? (string) ($read['mode'] ?? '') : '';
-
-        return in_array($mode, ['development', 'production', 'analysis'], true) ? $mode : '';
-    }
-
-    /**
-     * The id to build the project's own routes from: the detail object's, falling back to
-     * the path parameter when a stubbed or partial read carries none.
-     *
-     * @param array<string, mixed> $detail
-     */
-    private function projectIdOf(array $detail): int
-    {
-        return (int) ($detail['id'] ?? $this->request->pathParam('id'));
     }
 
     /**
@@ -198,12 +216,6 @@ final class ProjectController extends Controller
         return $out;
     }
 
-    /** @param array<string, mixed> $detail */
-    private function projectName(array $detail): string
-    {
-        return (string) ($detail['project_name'] ?? '');
-    }
-
     // --- Project-scoped administration (§5.3/§5.4/§5.5, REQ-UI-013/014/015) -------------
 
     /** The data access levels of a role arm (REQ-AUTH-019), in rising order. */
@@ -220,24 +232,10 @@ final class ProjectController extends Controller
      */
     private function projectSection(array $detail, string $template, string $titleKey, array $data): Response
     {
-        $projectId = $this->projectIdOf($detail);
-
-        return $this->page($template, $data + [
-            'pageTitle' => $this->i18n->t($titleKey) . ' · ' . $this->projectName($detail),
-            'projectId' => $projectId,
-            'projectName' => $this->projectName($detail),
-            'brandProject' => $this->projectName($detail),
-            'brandProjectUrl' => '/projects/' . $projectId . '/overview',
-            'brandProjectMode' => $this->projectMode($projectId),
-            'nav' => [
-                'headingKey' => 'nav.project_sections',
-                'items' => Navigation::projectSections($projectId, Permissions::fromProjectDetail($detail)),
-            ],
-        ], [
-            'titleKey' => '',
+        return $this->renderSection($detail, $template, $titleKey, $data, [
             'scripts' => ['/assets/app.js', '/assets/js/admin.js'],
             'jsKeys' => ['admin.confirm.title', 'action.cancel', 'admin.confirm.ok', 'tfa.copied'],
-        ]);
+        ], $this->projectMode($this->projectIdOf($detail)));
     }
 
     /** One project-scoped mutation; a refusal is one flashed line (§3.4), then back (PRG). */
@@ -257,23 +255,6 @@ final class ProjectController extends Controller
         }
 
         return Response::redirect('/projects/' . $projectId . '/' . $section);
-    }
-
-    private function projectIdFromPath(): int
-    {
-        $raw = $this->request->pathParam('id');
-        if (preg_match('/^\d{1,18}$/', $raw) !== 1) {
-            throw new ApiException('not_found', '', 404);
-        }
-
-        return (int) $raw;
-    }
-
-    private function fieldId(string $name): int
-    {
-        $raw = $this->request->field($name);
-
-        return preg_match('/^\d{1,18}$/', $raw) === 1 ? (int) $raw : 0;
     }
 
     // Members and tokens (§5.3, is_admin) -----------------------------------------------

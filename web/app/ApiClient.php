@@ -71,10 +71,15 @@ final class ApiClient
         return $this->call('PUT', $path, $query, $body);
     }
 
-    /** @return array<mixed> */
-    public function delete(string $path, array $query = []): array
+    /**
+     * A DELETE, optionally with a body: an analysis-mode deletion is acknowledged by the
+     * same call returning with `acknowledge_breaking` in its body (API §4.21, REQ-API-111).
+     *
+     * @return array<mixed>
+     */
+    public function delete(string $path, array $query = [], ?array $body = null): array
     {
-        return $this->call('DELETE', $path, $query, null);
+        return $this->call('DELETE', $path, $query, $body);
     }
 
     /**
@@ -115,7 +120,11 @@ final class ApiClient
             $headers[] = 'X-Internal-User-Id: ' . $actor;
         }
 
-        $response = $this->transport->request($method, $url, $headers, $body === null ? null : (string) json_encode($body));
+        // Every API body is a JSON object (§4.1); PHP encodes an empty array as `[]`, which the
+        // API refuses as malformed — so an empty body goes out as `{}` (staging start, a dry run
+        // of the stored expression).
+        $encoded = $body === null ? null : ($body === [] ? '{}' : (string) json_encode($body));
+        $response = $this->transport->request($method, $url, $headers, $encoded);
         $status = $response['status'];
 
         if ($status === 0) {

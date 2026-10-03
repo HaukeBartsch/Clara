@@ -244,3 +244,33 @@ h1 .clara-mode-badge {
   font-size: 0.55em;
   vertical-align: middle;
 }
+
+/* --- expression editor (§7.3, REQ-UI-021/022) --- */
+
+/* The highlighted read-back under the text area. Colours are theme variables, so every
+   installed theme supplies its own (REQ-UI-040). */
+.clara-expr-preview {
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--bs-border-radius-sm);
+  background-color: var(--bs-tertiary-bg);
+}
+
+.clara-expr-preview:empty {
+  display: none;
+}
+
+.clara-tok-ref { color: var(--bs-primary-text-emphasis); font-weight: 600; }
+.clara-tok-str { color: var(--bs-success-text-emphasis); }
+.clara-tok-num { color: var(--bs-info-text-emphasis); }
+.clara-tok-op { color: var(--bs-danger-text-emphasis); font-weight: 600; }
+.clara-tok-fn { color: var(--bs-warning-text-emphasis); }
+.clara-tok-other { text-decoration: underline wavy var(--bs-danger); }
+
+/* The mapping matrix (§6.2 D): event columns stay narrow so a wide arm scrolls in its own
+   responsive wrapper instead of stretching the page. */
+.clara-mapping th.small {
+  min-width: 4rem;
+  white-space: nowrap;
+}

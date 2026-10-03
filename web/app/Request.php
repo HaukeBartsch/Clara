@@ -122,6 +122,61 @@ final class Request
         return $out;
     }
 
+    /**
+     * A body field posted as a list (`name[]=a&name[]=b`), scalars only — the choice rows
+     * of the field editor (§7.2). A scalar posted under the name reads as a one-item list.
+     *
+     * @return list<string>
+     */
+    public function fieldList(string $key): array
+    {
+        $value = $this->post[$key] ?? null;
+        if (is_scalar($value)) {
+            return [(string) $value];
+        }
+        if (!is_array($value)) {
+            return [];
+        }
+
+        return array_values(array_map('strval', array_filter($value, 'is_scalar')));
+    }
+
+    /**
+     * A body field posted as a map of lists (`name[key][]=value`) — the mapping matrix of
+     * the setup page (§6.2 D). Non-scalar leaves are dropped.
+     *
+     * @return array<string, list<string>>
+     */
+    public function fieldListMap(string $key): array
+    {
+        $value = $this->post[$key] ?? null;
+        if (!is_array($value)) {
+            return [];
+        }
+        $out = [];
+        foreach ($value as $k => $list) {
+            $out[(string) $k] = is_array($list)
+                ? array_values(array_map('strval', array_filter($list, 'is_scalar')))
+                : (is_scalar($list) ? [(string) $list] : []);
+        }
+
+        return $out;
+    }
+
+    /**
+     * The whole posted body except the CSRF token, as parsed — what a page replays when it
+     * resubmits the identical request with an acknowledgement added (§6.8, REQ-UI-037).
+     *
+     * @return array<string, mixed>
+     */
+    public function fields(): array
+    {
+        $fields = $this->post;
+        unset($fields['csrf_token']);
+
+        return $fields;
+    }
+
     /** True when the request carries a body field at all (e.g. an empty password). */
     public function has(string $key): bool
     {

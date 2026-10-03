@@ -305,10 +305,12 @@ describe('project page panel rules (§6.1, REQ-UI-003/017)', function (): void {
         $detail['permissions']['project_admin'] = true;
         $paths = array_column(Navigation::projectSections(3, Permissions::fromProjectDetail($detail)), 'path');
 
-        // Setup and Design are allowed for this project_admin and still absent: their pages
-        // arrive with M4, so a link would be a disabled control by another name. Members,
-        // Roles (is_admin) and Groups (data access) are built since M3.
-        assert_same(['/projects/3/overview', '/projects/3/members', '/projects/3/roles', '/projects/3/groups'], $paths);
+        // Record Status Dashboard and Export are allowed for this member and still absent:
+        // their pages arrive with M5/M6, so a link would be a disabled control by another
+        // name. Setup and Design (project_admin) are built since M4; Members, Roles
+        // (is_admin) and Groups (data access) since M3.
+        assert_same(['/projects/3/overview', '/projects/3/setup', '/projects/3/design',
+            '/projects/3/members', '/projects/3/roles', '/projects/3/groups'], $paths);
     });
 
     it('opens the first section after Overview, and Overview only as the fallback (REQ-UI-017)', function (): void {

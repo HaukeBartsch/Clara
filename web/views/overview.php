@@ -72,3 +72,56 @@ $labels = [
         <?php endforeach; ?>
     </tbody>
 </table>
+
+<?php if (($modeCard ?? null) !== null): ?>
+    <!-- Mode card (§6.6, REQ-UI-033): is_admin only, and only the allowed transitions.
+         Every change confirms first (§3.5); leaving development asks whether stored data is
+         kept, and deleting it takes a second, explicit confirmation. -->
+    <?php $cardBase = '/projects/' . (int) ($projectId ?? 0) . '/overview?action=set_mode'; ?>
+    <section class="card mt-4 clara-mode-card" aria-labelledby="mode-card-title">
+        <div class="card-body">
+            <h2 class="h6" id="mode-card-title"><?= View::e($view->t('mode.card_title')) ?></h2>
+            <p class="small text-body-secondary mb-2"><?= View::e($view->t('mode.current', ['mode' => $view->t('project.mode.' . $modeCard['mode'])])) ?></p>
+
+            <?php if ($modeCard['stagingOpen']): ?>
+                <!-- No transition while a staging set is open (§6.6): the card points at the
+                     banner instead, where the set is committed or discarded. -->
+                <p class="mb-0 small"><?= View::e($view->t('mode.staging_blocks')) ?>
+                    <a href="<?= View::e($modeCard['setupUrl']) ?>"><?= View::e($view->t('mode.to_staging')) ?></a></p>
+            <?php endif; ?>
+
+            <div class="d-flex flex-wrap gap-3 align-items-start">
+                <?php foreach ($modeCard['transitions'] as $target): ?>
+                    <?php $targetLabel = $view->t('project.mode.' . $target); ?>
+                    <?php if ($modeCard['mode'] === 'development' && $target === 'production'): ?>
+                        <form method="post" action="<?= View::e($cardBase) ?>"
+                              data-clara-confirm="<?= View::e($view->t('mode.confirm.keep', ['mode' => $targetLabel])) ?>">
+                            <?= $view->csrfField() ?>
+                            <input type="hidden" name="mode" value="production">
+                            <input type="hidden" name="keep_data" value="1">
+                            <button class="btn btn-sm btn-primary" type="submit"><?= View::e($view->t('mode.to_production_keep')) ?></button>
+                        </form>
+                        <form method="post" action="<?= View::e($cardBase) ?>" class="border border-danger-subtle rounded p-2"
+                              data-clara-confirm="<?= View::e($view->t('mode.confirm.delete')) ?>">
+                            <?= $view->csrfField() ?>
+                            <input type="hidden" name="mode" value="production">
+                            <input type="hidden" name="keep_data" value="0">
+                            <div class="form-check small mb-2">
+                                <input class="form-check-input" type="checkbox" id="mode-confirm-delete" name="confirm_delete" value="1" required>
+                                <label class="form-check-label" for="mode-confirm-delete"><?= View::e($view->t('mode.delete_ack')) ?></label>
+                            </div>
+                            <button class="btn btn-sm btn-outline-danger" type="submit"><?= View::e($view->t('mode.to_production_delete')) ?></button>
+                        </form>
+                    <?php else: ?>
+                        <form method="post" action="<?= View::e($cardBase) ?>"
+                              data-clara-confirm="<?= View::e($view->t($target === 'analysis' ? 'mode.confirm.analysis' : 'mode.confirm.keep', ['mode' => $targetLabel])) ?>">
+                            <?= $view->csrfField() ?>
+                            <input type="hidden" name="mode" value="<?= View::e($target) ?>">
+                            <button class="btn btn-sm btn-outline-primary" type="submit"><?= View::e($view->t('mode.to', ['mode' => $targetLabel])) ?></button>
+                        </form>
+                    <?php endif; ?>
+                <?php endforeach; ?>
+            </div>
+        </div>
+    </section>
+<?php endif; ?>

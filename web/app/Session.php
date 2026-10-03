@@ -413,6 +413,26 @@ final class Session
     }
 
     /**
+     * Holds one value for the next render only — the same one-shot discipline as the flash
+     * buffer, for what a page shows after a redirect besides a line of text: a calculation
+     * test result (§7.4), a breaking change waiting for its acknowledgement (§6.8), the
+     * commit dialog to reopen (§6.7). Nothing stashed here is a credential or a record value.
+     */
+    public static function stash(string $key, array $value): void
+    {
+        $_SESSION['_stash'][$key] = $value;
+    }
+
+    /** Takes a stashed value (and forgets it), or null when none was left. */
+    public static function take(string $key): ?array
+    {
+        $value = $_SESSION['_stash'][$key] ?? null;
+        unset($_SESSION['_stash'][$key]);
+
+        return is_array($value) ? $value : null;
+    }
+
+    /**
      * Follows an administrator-flag change on the signed-in account itself (§5.1): after a
      * self-revoke the cached flag (REQ-AUTH-009) would be stale while every API call
      * already refuses.
