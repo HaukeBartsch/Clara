@@ -77,8 +77,8 @@ There are no other browser-reachable routes. State-changing browser requests are
 A user who is neither an administrator nor a member of any project MUST be shown an information page, not an empty dashboard (REQ-UI-006, REQ-AUTH-028). Presentation:
 
 - Title: "No projects yet" (translated); a short explanation that access is granted when an administrator adds them to a project (or grants the administrator flag).
-- For `is_admin` users with no projects: the same page shows the administration entry points (create project — §5.2, manage users — §5.1) instead of the explanation.
-- The page renders as the single content panel of the project-overview shell (§2.4 A) — no left panel; for `is_admin` the header's Control Panel button is the only entry point (§2.4).
+- `is_admin` users never see this page: they see every project (REQ-API-049), so an empty list only means the installation has no projects yet, and the project overview (§4) renders with its empty table; the header's Control Panel button is the way to create one (§2.4, §5.2). Owner decision 2026-10-03.
+- The page renders as the single content panel of the project-overview shell (§2.4 A) — no left panel.
 
 ### 2.4 Application layout — three shells (master spec, "User interface details"; DEV-UI-14)
 
@@ -223,7 +223,7 @@ The start page after login (REQ-UI-009): **one content panel between header and 
 - One **table row** per visible project — `table-sm` (REQ-UI-032) — with the project name (its organization on a second line of the same cell) and the quick statistics **in columns**, exactly as returned (`record_count`, `instrument_count`, `field_count` — REQ-UI-009, REQ-API-049). The **project name is the link**: it opens that project's page (`/projects/{id}`, §6.1), which lands on its first available section.
 - **The header carries the [Control Panel] button for `is_admin` only** (REQ-UI-003/009) — the single entry point to §5, replacing the former dashboard `[Administration]` link and the Administration sidebar section.
 - **Data access groups** (REQ-UI-010): for a member with one or more assigned groups, the row shows the **currently active group** and a switch control listing the member's assigned groups. Switching `POST`s to the PHP route → `PUT /api/v1/projects/{id}/active-data-access-group` (REQ-API-090); the switch takes effect on the **next** data page load (the current page's data was already scoped). A member without any assignment sees no group control — they see all records of the project (GD-10).
-- No projects and not `is_admin` → the no-access page (§2.3).
+- No projects and not `is_admin` → the no-access page (§2.3). An `is_admin` user sees every project; with none in the installation the table shows one line saying so (§2.3).
 
 ## 5. Administration Interface — the Control Panel (`GET /admin`)
 

@@ -2,7 +2,8 @@
 // The Control Panel (§5, REQ-UI-047): one is_admin page whose left panel selects the
 // section and whose right-hand panel shows it; `?section=` behaves like `?action=` — an
 // allowlisted parameter resolved in PHP, unknown values falling back rather than failing.
-// Settings is the section this build serves (§5.8, REQ-UI-043).
+// Users, Projects, Audits, Translations (M3, m3_admin_test.php) and Settings (§5.8, REQ-UI-043)
+// are the sections this build serves.
 
 declare(strict_types=1);
 
@@ -37,15 +38,18 @@ describe('Control Panel (§5, REQ-UI-047)', function (): void {
     it('defaults to the first available section, and an unknown pick is not an error (§2.1)', function (): void {
         sign_in(['is_admin' => 1]);
         queue_shell();
-        api_route('/api/v1/settings', cp_settings());
+        api_route('/api/v1/users', [['id' => 1, 'email' => 'admin@example.org', 'display_name' => 'Admin',
+            'enabled' => true, 'is_admin' => true, 'auth_source' => 'local', 'status' => 'active', 'tfa_method' => 'off']]);
 
         $plain = router_for(http_request('GET', '/admin', browser_headers()))->dispatch();
         $unknown = router_for(http_request('GET', '/admin', browser_headers(), [], ['section' => 'nonsense']))->dispatch();
 
+        // Users is the first section of the panel (§5, REQ-UI-047).
         assert_same(200, $plain->status());
-        assert_contains('System settings', $plain->body());
+        assert_contains('admin@example.org', $plain->body());
+        assert_contains('action=create_user', $plain->body());
         assert_same(200, $unknown->status(), 'a section this build does not serve renders the first available one');
-        assert_contains('System settings', $unknown->body());
+        assert_contains('action=create_user', $unknown->body());
     });
 
     it('lists only the sections this build serves (§3.1)', function (): void {
@@ -53,13 +57,16 @@ describe('Control Panel (§5, REQ-UI-047)', function (): void {
         queue_shell();
         api_route('/api/v1/settings', cp_settings());
 
-        $response = router_for(http_request('GET', '/admin', browser_headers()))->dispatch();
+        $response = router_for(http_request('GET', '/admin', browser_headers(), [], ['section' => 'settings']))->dispatch();
 
-        assert_contains('section=settings', $response->body());
-        // Users, Projects, Audits and Translations arrive with M3; until then no link to
-        // them exists — a section entry that leads nowhere is a disabled control.
-        assert_not_contains('section=users', $response->body());
-        assert_not_contains('section=audits', $response->body());
+        // All five sections are built since M3, in the panel's canonical order (§5).
+        $body = $response->body();
+        $positions = array_map(static fn (string $s): int|false => strpos($body, 'href="/admin?section=' . $s . '"'),
+            ['users', 'projects', 'audits', 'translations', 'settings']);
+        assert_true(!in_array(false, $positions, true), 'every section has its panel entry');
+        $sorted = $positions;
+        sort($sorted);
+        assert_same($sorted, $positions, 'the entries keep the canonical order');
     });
 
     it('is closed to anyone who is not an administrator', function (): void {

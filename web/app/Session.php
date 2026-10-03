@@ -391,6 +391,37 @@ final class Session
         $_SESSION['_i18n_bundle'] = ['language' => $language, 'strings' => $strings];
     }
 
+    /**
+     * Holds a just-issued project token for exactly one render (§3.5, REQ-UI-013): the
+     * add/rotate POST redirects, and the page it lands on shows the value once. The value
+     * lives only in this session entry until that render takes it.
+     *
+     * @param array{token: string, email: string} $reveal
+     */
+    public static function stashReveal(array $reveal): void
+    {
+        $_SESSION['_reveal'] = $reveal;
+    }
+
+    /** @return array{token: string, email: string}|null */
+    public static function takeReveal(): ?array
+    {
+        $reveal = $_SESSION['_reveal'] ?? null;
+        unset($_SESSION['_reveal']);
+
+        return is_array($reveal) && isset($reveal['token']) ? $reveal : null;
+    }
+
+    /**
+     * Follows an administrator-flag change on the signed-in account itself (§5.1): after a
+     * self-revoke the cached flag (REQ-AUTH-009) would be stale while every API call
+     * already refuses.
+     */
+    public static function setAdmin(bool $isAdmin): void
+    {
+        $_SESSION['is_admin'] = $isAdmin ? 1 : 0;
+    }
+
     /** Queues one translated line for the next rendered page. */
     public static function flash(string $level, string $text): void
     {

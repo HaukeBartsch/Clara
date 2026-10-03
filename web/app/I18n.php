@@ -50,6 +50,17 @@ final class I18n
      *
      * @param array<string, string|int> $params
      */
+    /**
+     * The English catalog itself — the key universe the translations section edits
+     * (§5.7: "English array in code, DB overlay", Plan/Web_Implementation.md §5).
+     *
+     * @return array<string, string>
+     */
+    public function englishCatalog(): array
+    {
+        return $this->english;
+    }
+
     public function t(string $key, array $params = []): string
     {
         $text = $this->overlay[$key] ?? null;

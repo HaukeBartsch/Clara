@@ -20,9 +20,11 @@ declare(strict_types=1);
 namespace Clara\Controllers;
 
 use Clara\ApiException;
+use Clara\Messages;
 use Clara\Navigation;
 use Clara\Permissions;
 use Clara\Response;
+use Clara\Session;
 
 final class ProjectController extends Controller
 {
@@ -200,5 +202,238 @@ final class ProjectController extends Controller
     private function projectName(array $detail): string
     {
         return (string) ($detail['project_name'] ?? '');
+    }
+
+    // --- Project-scoped administration (§5.3/§5.4/§5.5, REQ-UI-013/014/015) -------------
+
+    /** The data access levels of a role arm (REQ-AUTH-019), in rising order. */
+    public const DATA_LEVELS = ['no_access', 'read_only', 'view_edit', 'delete', 'edit_survey_responses'];
+
+    /** The export levels of a role arm (REQ-API-075), in rising order. */
+    public const EXPORT_LEVELS = ['export_none', 'export_de_identified', 'export_no_identifiers', 'export_full'];
+
+    /**
+     * Renders one section of the project page: the same shell as Overview — left panel,
+     * breadcrumb with the mode badge (§6.1, §6.6) — around this section's template.
+     *
+     * @param array<string, mixed> $detail
+     */
+    private function projectSection(array $detail, string $template, string $titleKey, array $data): Response
+    {
+        $projectId = $this->projectIdOf($detail);
+
+        return $this->page($template, $data + [
+            'pageTitle' => $this->i18n->t($titleKey) . ' · ' . $this->projectName($detail),
+            'projectId' => $projectId,
+            'projectName' => $this->projectName($detail),
+            'brandProject' => $this->projectName($detail),
+            'brandProjectUrl' => '/projects/' . $projectId . '/overview',
+            'brandProjectMode' => $this->projectMode($projectId),
+            'nav' => [
+                'headingKey' => 'nav.project_sections',
+                'items' => Navigation::projectSections($projectId, Permissions::fromProjectDetail($detail)),
+            ],
+        ], [
+            'titleKey' => '',
+            'scripts' => ['/assets/app.js', '/assets/js/admin.js'],
+            'jsKeys' => ['admin.confirm.title', 'action.cancel', 'admin.confirm.ok', 'tfa.copied'],
+        ]);
+    }
+
+    /** One project-scoped mutation; a refusal is one flashed line (§3.4), then back (PRG). */
+    private function mutate(string $section, callable $call, string $successText): Response
+    {
+        $projectId = $this->projectIdFromPath();
+        try {
+            $call($projectId);
+        } catch (ApiException $e) {
+            $this->logger->info('project ' . $section . ' change rejected', ['code' => $e->code(), 'status' => $e->status()]);
+            $this->flashDanger(Messages::forApiException($this->i18n, $e));
+
+            return Response::redirect('/projects/' . $projectId . '/' . $section);
+        }
+        if ($successText !== '') {
+            $this->flashSuccess($successText);
+        }
+
+        return Response::redirect('/projects/' . $projectId . '/' . $section);
+    }
+
+    private function projectIdFromPath(): int
+    {
+        $raw = $this->request->pathParam('id');
+        if (preg_match('/^\d{1,18}$/', $raw) !== 1) {
+            throw new ApiException('not_found', '', 404);
+        }
+
+        return (int) $raw;
+    }
+
+    private function fieldId(string $name): int
+    {
+        $raw = $this->request->field($name);
+
+        return preg_match('/^\d{1,18}$/', $raw) === 1 ? (int) $raw : 0;
+    }
+
+    // Members and tokens (§5.3, is_admin) -----------------------------------------------
+
+    /** GET /projects/{id}/members — the member table, the add form, a just-issued token once. */
+    public function members(): Response
+    {
+        $detail = $this->projectDetail();
+        $projectId = $this->projectIdOf($detail);
+        $members = $this->api->get('/api/v1/projects/' . $projectId . '/users');
+        $members = is_array($members) ? array_values(array_filter($members, 'is_array')) : [];
+        $roles = $this->api->get('/api/v1/projects/' . $projectId . '/roles');
+        $accounts = $this->api->get('/api/v1/users');
+
+        // The add form offers enabled accounts that are not members yet.
+        $memberIds = array_map(static fn (array $m): int => (int) ($m['user_id'] ?? 0), $members);
+        $candidates = array_values(array_filter(
+            is_array($accounts) ? $accounts : [],
+            static fn ($a): bool => is_array($a) && !empty($a['enabled']) && !in_array((int) ($a['id'] ?? 0), $memberIds, true)
+        ));
+
+        return $this->projectSection($detail, 'project/members', 'members.title', [
+            'members' => $members,
+            'roles' => array_values(array_filter(is_array($roles) ? $roles : [], 'is_array')),
+            'candidates' => $candidates,
+            'reveal' => Session::takeReveal(),
+        ]);
+    }
+
+    public function addMember(): Response
+    {
+        $uid = $this->fieldId('user_id');
+        $role = $this->request->field('role');
+
+        return $this->memberWrite($uid, ['role' => $role === '' ? null : $role], 'members.added');
+    }
+
+    public function changeRole(): Response
+    {
+        $role = $this->request->field('role');
+
+        return $this->memberWrite($this->fieldId('user_id'), ['role' => $role === '' ? null : $role], 'members.role_changed');
+    }
+
+    public function rotateToken(): Response
+    {
+        return $this->memberWrite($this->fieldId('user_id'), ['rotate_token' => true], 'members.rotated');
+    }
+
+    public function removeMember(): Response
+    {
+        return $this->memberWrite($this->fieldId('user_id'), ['remove' => true], 'members.removed');
+    }
+
+    /**
+     * `PUT …/users/{uid}` with exactly one of role / rotate_token / remove (§4.6). A response
+     * that carries a token (add 201, rotate 200) is held for one render — shown once with a
+     * copy button and the "will not be shown again" warning (§3.5, REQ-UI-013).
+     */
+    private function memberWrite(int $uid, array $body, string $successKey): Response
+    {
+        $projectId = $this->projectIdFromPath();
+        $back = Response::redirect('/projects/' . $projectId . '/members');
+        try {
+            $answer = $this->api->put('/api/v1/projects/' . $projectId . '/users/' . $uid, $body);
+        } catch (ApiException $e) {
+            $this->logger->info('project members change rejected', ['code' => $e->code(), 'status' => $e->status()]);
+            $this->flashDanger(Messages::forApiException($this->i18n, $e));
+
+            return $back;
+        }
+
+        // The add form names the account only by id; the member object the API returns
+        // carries the address the confirmation line names (§3.4).
+        $email = is_array($answer) && is_string($answer['email'] ?? null) ? $answer['email'] : trim($this->request->field('email'));
+        $token = is_array($answer) && is_string($answer['token'] ?? null) ? $answer['token'] : '';
+        if ($token !== '') {
+            Session::stashReveal(['token' => $token, 'email' => $email]);
+        }
+        $this->flashSuccess($this->i18n->t($successKey, ['email' => $email]));
+
+        return $back;
+    }
+
+    // Role editor (§5.4, is_admin) ------------------------------------------------------
+
+    public function roles(): Response
+    {
+        $detail = $this->projectDetail();
+        $projectId = $this->projectIdOf($detail);
+        $roles = $this->api->get('/api/v1/projects/' . $projectId . '/roles');
+
+        return $this->projectSection($detail, 'project/roles', 'roles.title', [
+            'roles' => array_values(array_filter(is_array($roles) ? $roles : [], 'is_array')),
+            'arms' => array_values(array_filter(is_array($detail['arms'] ?? null) ? $detail['arms'] : [], 'is_array')),
+            'dataLevels' => self::DATA_LEVELS,
+            'exportLevels' => self::EXPORT_LEVELS,
+        ]);
+    }
+
+    public function createRole(): Response
+    {
+        $name = trim($this->request->field('name'));
+        $data = $this->request->fieldMap('data');
+        $export = $this->request->fieldMap('export');
+
+        // One block per arm; an arm left at its defaults is sent as no_access/export_none so
+        // nothing is granted implicitly (REQ-AUTH-019).
+        $arms = [];
+        foreach (array_unique(array_merge(array_keys($data), array_keys($export))) as $arm) {
+            if (preg_match('/^\d{1,4}$/', (string) $arm) !== 1) {
+                continue;
+            }
+            $arms[(string) $arm] = [
+                'data' => in_array($data[$arm] ?? '', self::DATA_LEVELS, true) ? $data[$arm] : 'no_access',
+                'export' => in_array($export[$arm] ?? '', self::EXPORT_LEVELS, true) ? $export[$arm] : 'export_none',
+            ];
+        }
+
+        return $this->mutate('roles', function (int $projectId) use ($name, $arms): void {
+            $this->api->post('/api/v1/projects/' . $projectId . '/roles', [
+                'name' => $name,
+                'project_admin' => $this->request->field('project_admin') === '1',
+                'arms' => (object) $arms,
+            ]);
+        }, $this->i18n->t('roles.created', ['name' => $name]));
+    }
+
+    // Data access groups (§5.5: read ≥ read_only, mutate project_admin) ------------------
+
+    public function groups(): Response
+    {
+        $detail = $this->projectDetail();
+        $projectId = $this->projectIdOf($detail);
+        $groups = $this->api->get('/api/v1/projects/' . $projectId . '/data-access-groups');
+
+        return $this->projectSection($detail, 'project/groups', 'groups.title', [
+            'groups' => array_values(array_filter(is_array($groups) ? $groups : [], 'is_array')),
+            // Hidden means not emitted (REQ-UI-003): only a project_admin (or is_admin) may
+            // create or delete; the API re-checks either way.
+            'canManage' => Permissions::fromProjectDetail($detail)->projectAdmin || Session::isAdmin(),
+        ]);
+    }
+
+    public function createGroup(): Response
+    {
+        $name = trim($this->request->field('name'));
+
+        return $this->mutate('groups', function (int $projectId) use ($name): void {
+            $this->api->post('/api/v1/projects/' . $projectId . '/data-access-groups', ['name' => $name]);
+        }, $this->i18n->t('groups.created', ['name' => $name]));
+    }
+
+    public function deleteGroup(): Response
+    {
+        $gid = $this->fieldId('group_id');
+        $name = trim($this->request->field('name'));
+
+        return $this->mutate('groups', function (int $projectId) use ($gid): void {
+            $this->api->delete('/api/v1/projects/' . $projectId . '/data-access-groups/' . $gid);
+        }, $this->i18n->t('groups.deleted', ['name' => $name]));
     }
 }

@@ -82,12 +82,57 @@ final class Router
             'handler' => 'overview', 'guard' => 'login'],
 
         // The Control Panel (§5, REQ-UI-047): one is_admin route whose `?section=` picks the
-        // section shown in the right-hand panel, defaulting to the first available. Saving
-        // settings is its only mutation in this build; the other sections arrive with M3.
+        // section shown in the right-hand panel, defaulting to the first available.
         ['method' => 'GET', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
             'handler' => 'index', 'guard' => 'admin'],
         ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
             'handler' => 'saveSettings', 'guard' => 'admin', 'action' => 'save_settings'],
+        // M3 (§5.1/§5.2/§5.7): every Control Panel mutation posts to /admin with its
+        // ?action=; the section to return to rides along as ?section=.
+        ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
+            'handler' => 'createUser', 'guard' => 'admin', 'action' => 'create_user'],
+        ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
+            'handler' => 'setUserEnabled', 'guard' => 'admin', 'action' => 'user_enabled'],
+        ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
+            'handler' => 'setUserValidity', 'guard' => 'admin', 'action' => 'user_validity'],
+        ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
+            'handler' => 'setUserPassword', 'guard' => 'admin', 'action' => 'user_password'],
+        ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
+            'handler' => 'inviteUser', 'guard' => 'admin', 'action' => 'user_invite'],
+        ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
+            'handler' => 'resetUserTfa', 'guard' => 'admin', 'action' => 'user_tfa_reset'],
+        ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
+            'handler' => 'setUserAdmin', 'guard' => 'admin', 'action' => 'user_admin'],
+        ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
+            'handler' => 'createProject', 'guard' => 'admin', 'action' => 'create_project'],
+        ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
+            'handler' => 'updateProject', 'guard' => 'admin', 'action' => 'update_project'],
+        ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
+            'handler' => 'saveTranslations', 'guard' => 'admin', 'action' => 'save_translations'],
+
+        // Project-scoped administration on the project page (§5.3/§5.4/§5.5, REQ-UI-047):
+        // Members and Roles are is_admin; Groups are readable by members with data access
+        // and changed by project_admin — the API decides both (REQ-AUTH-033).
+        ['method' => 'GET', 'pattern' => '/projects/{id}/members', 'controller' => Controllers\ProjectController::class,
+            'handler' => 'members', 'guard' => 'admin'],
+        ['method' => 'POST', 'pattern' => '/projects/{id}/members', 'controller' => Controllers\ProjectController::class,
+            'handler' => 'addMember', 'guard' => 'admin', 'action' => 'add_member'],
+        ['method' => 'POST', 'pattern' => '/projects/{id}/members', 'controller' => Controllers\ProjectController::class,
+            'handler' => 'changeRole', 'guard' => 'admin', 'action' => 'change_role'],
+        ['method' => 'POST', 'pattern' => '/projects/{id}/members', 'controller' => Controllers\ProjectController::class,
+            'handler' => 'rotateToken', 'guard' => 'admin', 'action' => 'rotate_token'],
+        ['method' => 'POST', 'pattern' => '/projects/{id}/members', 'controller' => Controllers\ProjectController::class,
+            'handler' => 'removeMember', 'guard' => 'admin', 'action' => 'remove_member'],
+        ['method' => 'GET', 'pattern' => '/projects/{id}/roles', 'controller' => Controllers\ProjectController::class,
+            'handler' => 'roles', 'guard' => 'admin'],
+        ['method' => 'POST', 'pattern' => '/projects/{id}/roles', 'controller' => Controllers\ProjectController::class,
+            'handler' => 'createRole', 'guard' => 'admin', 'action' => 'create_role'],
+        ['method' => 'GET', 'pattern' => '/projects/{id}/groups', 'controller' => Controllers\ProjectController::class,
+            'handler' => 'groups', 'guard' => 'login'],
+        ['method' => 'POST', 'pattern' => '/projects/{id}/groups', 'controller' => Controllers\ProjectController::class,
+            'handler' => 'createGroup', 'guard' => 'login', 'action' => 'create_group'],
+        ['method' => 'POST', 'pattern' => '/projects/{id}/groups', 'controller' => Controllers\ProjectController::class,
+            'handler' => 'deleteGroup', 'guard' => 'login', 'action' => 'delete_group'],
 
         // Self-service account pages (§2.4 item 4): the second factor (§2.5) and the
         // local password (§2.6). Both live in the shell; both are mutations on their
@@ -127,10 +172,12 @@ final class Router
 
         ['method' => 'POST', 'pattern' => '/logout', 'controller' => Controllers\AccountController::class,
             'handler' => 'logout', 'guard' => 'login'],
+        // Dedicated POST routes (§2.1: `POST /lang`, `POST /theme`) — the footer forms post to
+        // the bare path, so no ?action= is required (it was, and every switch answered 404).
         ['method' => 'POST', 'pattern' => '/lang', 'controller' => Controllers\AccountController::class,
-            'handler' => 'language', 'guard' => 'login', 'action' => 'language'],
+            'handler' => 'language', 'guard' => 'login'],
         ['method' => 'POST', 'pattern' => '/theme', 'controller' => Controllers\AccountController::class,
-            'handler' => 'theme', 'guard' => 'login', 'action' => 'theme'],
+            'handler' => 'theme', 'guard' => 'login'],
     ];
 
     public function __construct(

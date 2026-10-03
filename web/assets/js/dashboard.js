@@ -46,9 +46,9 @@ async function loadProjects() {
 
   try {
     const projects = await fetchJson("/")
-    // An empty list is the no-access page's job, and the server already rendered
-    // it when there was nothing to show; a client-side empty read says so too.
-    fill(body, projects.length ? projects.map(projectRow) : [notice(COLUMNS, t("no_access.title"))])
+    // Only an administrator reaches this page with an empty list (a member with no
+    // projects gets the no-access page, §2.3): an installation with no projects yet.
+    fill(body, projects.length ? projects.map(projectRow) : [notice(COLUMNS, t("dashboard.empty"))])
   } catch (error) {
     fill(body, [failedRow()])
   }

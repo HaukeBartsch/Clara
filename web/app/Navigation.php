@@ -22,10 +22,10 @@ final class Navigation
     public static function adminSections(): array
     {
         return [
-            ['key' => 'users', 'labelKey' => 'admin.section.users', 'built' => false],
-            ['key' => 'projects', 'labelKey' => 'admin.section.projects', 'built' => false],
-            ['key' => 'audits', 'labelKey' => 'admin.section.audits', 'built' => false],
-            ['key' => 'translations', 'labelKey' => 'admin.section.translations', 'built' => false],
+            ['key' => 'users', 'labelKey' => 'admin.section.users', 'built' => true],
+            ['key' => 'projects', 'labelKey' => 'admin.section.projects', 'built' => true],
+            ['key' => 'audits', 'labelKey' => 'admin.section.audits', 'built' => true],
+            ['key' => 'translations', 'labelKey' => 'admin.section.translations', 'built' => true],
             ['key' => 'settings', 'labelKey' => 'admin.section.settings', 'built' => true],
         ];
     }
@@ -88,11 +88,11 @@ final class Navigation
             ['key' => 'export', 'path' => $base . '/export', 'labelKey' => 'nav.export',
                 'allowed' => $permissions->canExportAny(), 'built' => false],
             ['key' => 'members', 'path' => $base . '/members', 'labelKey' => 'nav.members',
-                'allowed' => Session::isAdmin(), 'built' => false],
+                'allowed' => Session::isAdmin(), 'built' => true],
             ['key' => 'roles', 'path' => $base . '/roles', 'labelKey' => 'nav.roles',
-                'allowed' => Session::isAdmin(), 'built' => false],
+                'allowed' => Session::isAdmin(), 'built' => true],
             ['key' => 'groups', 'path' => $base . '/groups', 'labelKey' => 'nav.groups',
-                'allowed' => $seesData, 'built' => false],
+                'allowed' => $seesData, 'built' => true],
         ];
     }
 
@@ -120,13 +120,14 @@ final class Navigation
     /**
      * Where entering a project lands (REQ-UI-017): the first entry after Overview —
      * Setup for a member who may change the setup, Record Status Dashboard for one with
-     * data access — falling back to Overview when neither is available. Overview never
-     * wins by default; it is reached by its own entry.
+     * data access — falling back to Overview when neither is available. Only those two
+     * are landing candidates: Members, Roles or Groups also come after Overview in the
+     * panel, but the rule names Setup and Record Status Dashboard alone.
      */
     public static function defaultProjectSection(int $projectId, Permissions $permissions): string
     {
         foreach (self::projectSections($projectId, $permissions) as $section) {
-            if ($section['key'] !== 'overview') {
+            if (in_array($section['key'], ['setup', 'record_status'], true)) {
                 return $section['path'];
             }
         }

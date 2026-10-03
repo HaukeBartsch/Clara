@@ -100,6 +100,28 @@ final class Request
         return is_scalar($value) ? (string) $value : $default;
     }
 
+    /**
+     * A body field posted as a map (`name[key]=value`), scalars only — the translations
+     * form posts one entry per key (§5.7). Anything else in the map is dropped.
+     *
+     * @return array<string, string>
+     */
+    public function fieldMap(string $key): array
+    {
+        $value = $this->post[$key] ?? null;
+        if (!is_array($value)) {
+            return [];
+        }
+        $out = [];
+        foreach ($value as $k => $v) {
+            if (is_scalar($v)) {
+                $out[(string) $k] = (string) $v;
+            }
+        }
+
+        return $out;
+    }
+
     /** True when the request carries a body field at all (e.g. an empty password). */
     public function has(string $key): bool
     {

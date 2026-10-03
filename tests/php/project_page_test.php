@@ -301,14 +301,14 @@ describe('project page panel rules (§6.1, REQ-UI-003/017)', function (): void {
 
     it('keeps an unbuilt section out of the panel even when it is allowed (§3.1)', function (): void {
         sign_in(['is_admin' => 1]);
-        $paths = array_column(
-            Navigation::projectSections(3, Permissions::fromProjectDetail(project_home_detail())),
-            'path'
-        );
+        $detail = project_home_detail();
+        $detail['permissions']['project_admin'] = true;
+        $paths = array_column(Navigation::projectSections(3, Permissions::fromProjectDetail($detail)), 'path');
 
-        // Setup is allowed for this member and still absent: the page does not exist yet, so
-        // a link to it would be a disabled control by another name.
-        assert_same(['/projects/3/overview'], $paths);
+        // Setup and Design are allowed for this project_admin and still absent: their pages
+        // arrive with M4, so a link would be a disabled control by another name. Members,
+        // Roles (is_admin) and Groups (data access) are built since M3.
+        assert_same(['/projects/3/overview', '/projects/3/members', '/projects/3/roles', '/projects/3/groups'], $paths);
     });
 
     it('opens the first section after Overview, and Overview only as the fallback (REQ-UI-017)', function (): void {
