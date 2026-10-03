@@ -236,3 +236,11 @@
     transition: none;
   }
 }
+
+/* --- project-mode badge (§6.6, REQ-UI-033) --- */
+
+/* Beside a heading the badge stays label-sized instead of inheriting the heading's size. */
+h1 .clara-mode-badge {
+  font-size: 0.55em;
+  vertical-align: middle;
+}

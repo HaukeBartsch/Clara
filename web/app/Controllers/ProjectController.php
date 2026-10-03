@@ -49,6 +49,7 @@ final class ProjectController extends Controller
     {
         $detail = $this->projectDetail();
         $projectId = $this->projectIdOf($detail);
+        $mode = $this->projectMode($projectId);
 
         return $this->page('overview', [
             // The browser tab carries the project's own name — data, not a UI string, so it
@@ -56,10 +57,13 @@ final class ProjectController extends Controller
             'pageTitle' => $this->projectName($detail),
             'metadata' => $this->metadata($detail),
             'summary' => $this->summary($detail),
+            // The mode badge beside the project name (§6.6, REQ-UI-033); '' omits it.
+            'mode' => $mode,
             // The header names the project while the user is inside it, and the name goes
-            // back to this page (§2.4).
+            // back to this page (§2.4); the breadcrumb carries the same badge (§6.6).
             'brandProject' => $this->projectName($detail),
             'brandProjectUrl' => '/projects/' . $projectId . '/overview',
+            'brandProjectMode' => $mode,
             // The project's left panel (§6.1): every entry this build serves and this
             // member may use, in canonical order (REQ-UI-003).
             'nav' => [
@@ -106,6 +110,26 @@ final class ProjectController extends Controller
         $detail = $this->api->get('/api/v1/projects/' . (int) $raw);
 
         return is_array($detail) ? $detail : [];
+    }
+
+    /**
+     * The project's mode for the badge of §6.6 (REQ-UI-033): `GET …/mode`, readable by
+     * every member. The badge is information beside the name, not the page's content, so
+     * a refused or failed read — or a value outside the three modes of GD-20 — omits it
+     * ('') instead of costing the user the Overview.
+     */
+    private function projectMode(int $projectId): string
+    {
+        try {
+            $read = $this->api->get('/api/v1/projects/' . $projectId . '/mode');
+        } catch (ApiException $e) {
+            $this->logger->info('project mode read failed', ['code' => $e->code(), 'status' => $e->status()]);
+
+            return '';
+        }
+        $mode = is_array($read) ? (string) ($read['mode'] ?? '') : '';
+
+        return in_array($mode, ['development', 'production', 'analysis'], true) ? $mode : '';
     }
 
     /**

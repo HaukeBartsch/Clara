@@ -138,6 +138,10 @@ return [
     'project.summary.instruments' => 'Instruments',
     'project.summary.fields' => 'Fields',
     'project.metadata' => 'Project details',
+    // The project-mode badge (§6.6, REQ-UI-033, GD-20).
+    'project.mode.development' => 'Development',
+    'project.mode.production' => 'Production',
+    'project.mode.analysis' => 'Analysis',
     // The read-only metadata block; editing it is §5.2.
     'project.field.project_name' => 'Project name',
     'project.field.organization' => 'Organization',

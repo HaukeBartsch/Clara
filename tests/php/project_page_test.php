@@ -44,10 +44,15 @@ function project_home_detail(array $overrides = []): array
     ], $overrides);
 }
 
-/** Queues the one detail read an Overview render makes. */
-function queue_project_home(array $detail = []): void
+/**
+ * Queues the two reads an Overview render makes: the mode for the badge (§6.6) and the
+ * detail. The mode goes first — the fake transport answers the first fragment it finds in
+ * the URL, and `/api/v1/projects/3` is a prefix of `/api/v1/projects/3/mode`.
+ */
+function queue_project_home(array $detail = [], string $mode = 'development'): void
 {
     queue_shell();
+    api_route('/api/v1/projects/3/mode', ['mode' => $mode, 'staging_open' => false]);
     api_route('/api/v1/projects/3', $detail === [] ? project_home_detail() : $detail);
 }
 
@@ -84,7 +89,44 @@ describe('project page (§6.1, REQ-UI-017)', function (): void {
 
         router_for(http_request('GET', '/projects/3/overview', browser_headers()))->dispatch();
 
-        assert_same(1, api_calls_to('/api/v1/projects'), 'the detail read is the only projects call: no panel list any more');
+        // The detail read, plus the mode read the badge needs (§6.6) — and no list call.
+        assert_same(1, api_calls_to('/api/v1/projects/3/mode'), 'one mode read for the badge');
+        assert_same(2, api_calls_to('/api/v1/projects'), 'detail + mode are the only projects calls: no panel list any more');
+    });
+
+    it('shows the mode badge beside the project name and in the header breadcrumb (§6.6)', function (): void {
+        sign_in();
+        queue_project_home([], 'production');
+
+        $response = router_for(http_request('GET', '/projects/3/overview', browser_headers()))->dispatch();
+
+        assert_same(200, $response->status());
+        assert_same(2, substr_count($response->body(), 'data-mode="production"'), 'Overview heading + header breadcrumb');
+        assert_contains('>Production<', $response->body());
+    });
+
+    it('omits the badge, not the page, when the mode read is refused (§6.6)', function (): void {
+        sign_in();
+        queue_shell();
+        api_route('/api/v1/projects/3/mode', ['error' => 'forbidden', 'message' => '', 'status' => 403], 403);
+        api_route('/api/v1/projects/3', project_home_detail());
+
+        $response = router_for(http_request('GET', '/projects/3/overview', browser_headers()))->dispatch();
+
+        assert_same(200, $response->status());
+        assert_contains('8DISC', $response->body());
+        assert_not_contains('clara-mode-badge', $response->body());
+    });
+
+    it('renders no badge for a value outside the three modes of GD-20', function (): void {
+        sign_in();
+        queue_project_home([], 'archived');
+
+        $response = router_for(http_request('GET', '/projects/3/overview', browser_headers()))->dispatch();
+
+        assert_same(200, $response->status());
+        assert_not_contains('data-mode=', $response->body());
+        assert_not_contains('archived', $response->body());
     });
 
     it('renders the metadata block and drops the fields that hold nothing', function (): void {

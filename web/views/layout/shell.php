@@ -90,6 +90,10 @@ $controlPanel = $view->isAdmin() && Navigation::controlPanelExists();
             <?php else: ?>
                 <span class="text-body-secondary small"><?= View::e($brandProject) ?></span>
             <?php endif; ?>
+            <?php if (($brandProjectMode ?? '') !== ''): ?>
+                <!-- The same mode badge as on Overview, beside the name (§6.6). -->
+                <span class="ms-1 small"><?php $badgeMode = $brandProjectMode; require __DIR__ . '/../partials/mode-badge.php'; ?></span>
+            <?php endif; ?>
         <?php else: ?>
             <span class="d-none d-sm-inline text-body-secondary small"><?= View::e($view->t('app.tagline')) ?></span>
         <?php endif; ?>

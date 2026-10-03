@@ -8,8 +8,8 @@
  * metadata (that is §5.2 for `project_admin`, and offering it from the wrong page would be
  * a permission decision made in the wrong place).
  *
- * The mode badge of §6.6 lands here with the mode endpoints (REQ-UI-033); until that read
- * exists nothing is emitted for it, rather than a placeholder waiting for data.
+ * The mode badge of §6.6 sits beside the project name (REQ-UI-033), from `GET …/mode`; when
+ * that read is refused or fails, nothing is emitted for it rather than a placeholder.
  *
  * Timestamps and dates are printed as the API returned them: system values are UTC and
  * clinical dates are stored as entered, offsets included (Plan/Web_Implementation.md §7
@@ -39,7 +39,8 @@ $labels = [
     'participant_names' => 'project.field.participant_names',
 ];
 ?>
-<h1 class="h4 mb-3"><?= View::e($metadata['project_name'] ?? '') ?></h1>
+<h1 class="h4 mb-3"><?= View::e($metadata['project_name'] ?? '') ?>
+    <?php $badgeMode = $mode ?? ''; require __DIR__ . '/partials/mode-badge.php'; ?></h1>
 
 <!-- Summary (REQ-UI-017): the three counts, from the one detail read this page makes. -->
 <div class="row row-cols-1 row-cols-sm-3 g-2 mb-4 clara-summary">
