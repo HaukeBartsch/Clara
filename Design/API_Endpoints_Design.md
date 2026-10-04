@@ -166,7 +166,7 @@ An explicit `action=export` may accompany the call and changes nothing; a `data`
 #### 3.6.1 Rules
 
 - Filters `records[]`, `fields[]`, `forms[]`, `events[]` combine (intersection); with no filters, all records visible to the holder under the data-access-group rule are returned (REQ-API-024, REQ-AUTH-045, REQ-API-092).
-- Sensitivity per the token holder's export level for the arm(s) of the exported data (REQ-API-026): `export_full` → full dataset; `export_no_identifiers` → all identifier fields removed; `export_de_identified` → de-identified per `Data_Export_Anonymization_Requirements.md` (date shift per `Database_Schema_Design.md` §8, salt/range per `System_Configuration_Design.md` §3.6); `export_none` → 403 `Permission denied`.
+- Sensitivity per the token holder's export level **for the (instrument, event) pair of each exported column** (REQ-API-026): `export_full` → full dataset; `export_no_identifiers` → all identifier fields removed; `export_de_identified` → de-identified per `Data_Export_Anonymization_Requirements.md` (date shift per `Database_Schema_Design.md` §8, salt/range per `System_Configuration_Design.md` §3.6); a pair at `export_none` contributes **no columns** — the permitted pairs still export normally, and only a request with no permitted pair in scope is 403 `Permission denied` (REQ-AUTH-069).
 - `rawOrLabel=label` → choice labels for dropdown/radio fields (stored values remain codes, REQ-VAL-022); `rawOrLabelHeaders` controls field names the same way (REQ-API-027).
 - Rows carry the record identifier's value under its field name (GD-8), `redcap_event_name` per row (flat, projects with events), and empty strings for missing values (REQ-API-028).
 - Each instrument's field block ends with an `<instrument>_complete` column carrying that instrument's three-state completion for the row's position — `0` not complete, `1` in progress, `2` complete (REQ-API-134). The state is the record-status derivation of §4.13 (REQ-API-074): stored `finished` → `2`, else any value of that instrument at that position → `1`, else `0`; a survey-marked instrument always exports `2` (GD-9); a `finished` assignment on an unmapped (event, instrument) pair stays invisible until the pair is mapped back. The column belongs to whole-instrument exports — a full export or one filtered by `forms[]` carries it for every instrument that contributes at least one value column; a `fields[]`-filtered export omits it entirely (the web application exports whole instruments and gets the column; a field-list export returns exactly the requested fields). It keeps its raw name under `rawOrLabelHeaders` (it names no field), and appears in JSON as an ordinary key. Import does not accept it: a `<instrument>_complete` key remains an unknown field (§3.7).
@@ -258,7 +258,7 @@ The master spec's "Error messages by api" note shows one invalid value reported 
 
 ### 3.8 `content=record&action=delete` (GD-3, REQ-API-036)
 
-Requires data access ≥ `delete` on the record's arm. In analysis mode the call is rejected — 403 `Project in analysis mode` (GD-20, REQ-API-109). Removes the record's values — scoped by the supplied `records[]`/`events[]`/`fields[]`, or the whole record — and, when a record's last value is removed, the record itself. Audit: `record_deleted` **with the deleted values** (REQ-AUD-009, `Audit_Logging_Design.md` §3.2).
+Requires the **delete instrument values** right on every (instrument, event) pair whose values the call clears — all-or-nothing (REQ-API-036). In analysis mode the call is rejected — 403 `Project in analysis mode` (GD-20, REQ-API-109). Removes the record's values — scoped by the supplied `records[]`/`events[]`/`fields[]`, or the whole record — and, when a record's last value is removed, the record itself. Audit: `record_deleted` **with the deleted values** (REQ-AUD-009, `Audit_Logging_Design.md` §3.2).
 
 Request: `token=…&content=record&action=delete&records[0]=8DISC042` (optionally `events[]`/`fields[]` to scope).
 
@@ -458,14 +458,18 @@ The removed attributes — `end_provision`, the `option_*` flags, `agreed_to_end
   "instruments": [ { "id": 7, "name": "intake", "position": 1, "field_count": 24 } ],
   "permissions": {
     "project_admin": false,
-    "arms": [ { "arm_num": 1, "data_access_level": "view_edit", "export_level": "export_de_identified" } ]
+    "arms": [ { "arm_num": 1, "data_access_level": "view_edit", "export_level": "export_de_identified",
+                "delete_values": false, "edit_surveys": false } ],
+    "grants": [ { "unique_event_name": "baseline_arm_1", "instrument": "intake",
+                  "data_access_level": "read_only", "export_level": "export_none",
+                  "delete_values": false, "edit_surveys": false } ]
   }
 }
 ```
 
 `record_count` is the project's record total — the summary the project home shows alongside its structure counts (REQ-UI-017). It is the same number the `GET /api/v1/projects` rows carry, so one detail read answers a project page without the web layer listing every visible project to find one heading (`Plan/Web_Implementation.md` §7 rule 13); instrument and field counts come from `instruments[]` and its `field_count`s.
 
-`permissions` is the effective evaluation of `Authentication_Authorization_Design.md` §4.1 for the acting user — the same result the boundary applies to every call — surfaced so the PHP layer can gate rendering with the control absent from the DOM (`User_Interface_Design.md` §3.1, REQ-UI-003). Rules: one `arms[]` entry per arm of the project in the arm order of the `arms` list above; `is_admin` reports `edit_survey_responses` / `export_full` on every arm and `project_admin: true` (REQ-AUTH-023); a role-less member likewise (REQ-AUTH-022); an arm the user's role does not grant reports `no_access` / `export_none` (REQ-AUTH-019), so no arm is ever absent from the list and the caller never infers a level from a missing entry. The vocabulary is the §4.7 one (`no_access | read_only | view_edit | delete | edit_survey_responses`, `export_none | export_de_identified | export_no_identifiers | export_full`). This read authorizes nothing — it discloses only the caller's own levels, under the same visibility gate as the rest of the response (REQ-API-007), and every endpoint re-checks at call time (REQ-AUTH-033).
+`permissions` is the effective evaluation of `Authentication_Authorization_Design.md` §4.1 for the acting user — the same result the boundary applies to every call — surfaced so the PHP layer can gate rendering with the control absent from the DOM (`User_Interface_Design.md` §3.1, REQ-UI-003). Rules: one `arms[]` entry per arm of the project in the arm order of the `arms` list above, carrying that arm's **default**; one `grants[]` entry per (instrument, event) pair mapped in an arm the caller may see, carrying the levels and rights **as they resolve for that pair** — its own grant where it has one, the arm default otherwise (REQ-AUTH-069). `is_admin` reports full levels and both rights everywhere and `project_admin: true` (REQ-AUTH-023); a role-less member likewise (REQ-AUTH-022); an ungranted arm reports `no_access` / `export_none` (REQ-AUTH-019), so nothing is ever absent from either list and the caller never infers a level from a missing entry. `grants[]` grows with the design's instrument × event count — the same cardinality as the record status dashboard it gates — and stays in the arm-then-event order of §4.8/§4.9 so the web layer can walk it without sorting. The vocabulary is the §4.7 one (`no_access | read_only | view_edit`, `export_none | export_de_identified | export_no_identifiers | export_full`, plus the two booleans). This read authorizes nothing — it discloses only the caller's own levels, under the same visibility gate as the rest of the response (REQ-API-007), and every endpoint re-checks at call time (REQ-AUTH-033).
 
 **`PUT /api/v1/projects/{id}`** — `project_admin` (an `is_admin` user is covered by REQ-AUTH-023). Body: any subset of the `POST` metadata fields — omitted fields are unchanged (idempotent, REQ-API-042). A duplicate `project_name` → 409 `conflict`. 200 — the updated project object (same shape as `GET`, `permissions` included — REQ-API-126). Metadata changes are audit-logged with old and new values (`project_updated`, `Audit_Logging_Design.md` §3.3; REQ-API-052, REQ-API-043).
 
@@ -508,19 +512,24 @@ The value MUST NOT be logged (REQ-API-005). No audit event is written for the fe
 
 ### 4.7 Roles (REQ-API-056…057)
 
-Both endpoints require `is_admin`. Roles are project-scoped (REQ-AUTH-024) and not limited to preset examples (REQ-AUTH-020).
+All three endpoints require `is_admin`. Roles are project-scoped (REQ-AUTH-024) and not limited to preset examples (REQ-AUTH-020).
 
 **`GET /api/v1/projects/{id}/roles`** — 200 — the project's roles, possibly an empty array:
 
 ```json
 [ { "id": 9, "name": "data-entry", "project_admin": false,
-    "arms": { "1": { "data": "view_edit", "export": "export_full" },
-              "2": { "data": "no_access", "export": "export_none" } } } ]
+    "arms":   { "1": { "data": "view_edit", "export": "export_full" },
+                "2": { "data": "no_access", "export": "export_none" } },
+    "grants": [ { "event": "baseline_arm_1", "instrument": "intake",
+                  "data": "read_only", "export": "export_de_identified",
+                  "delete_values": false, "edit_surveys": true } ] } ]
 ```
 
-`data` levels: `no_access | read_only | view_edit | delete | edit_survey_responses`; `export` levels: `export_none | export_de_identified | export_no_identifiers | export_full` (REQ-DB-009; `Authentication_Authorization_Design.md` §4.1).
+`data` levels: `no_access | read_only | view_edit`; `export` levels: `export_none | export_de_identified | export_no_identifiers | export_full` (REQ-DB-009/040; `Authentication_Authorization_Design.md` §4.1). `arms` is the per-arm default and always carries an entry for every arm of the project; `grants` lists only the pairs whose grant differs from their arm default — a pair absent from it inherits (REQ-AUTH-069). The two rights are booleans, never levels (REQ-AUTH-070).
 
-**`POST /api/v1/projects/{id}/roles`** — body: the role object minus `id` (`name`, `project_admin`, `arms`); an arm absent from `arms` defaults to `no_access` / `export_none` (REQ-AUTH-019 — no implicit access). A duplicate name within the project → 409 `conflict`. 201 — the role object. Audit `role_created` (`Audit_Logging_Design.md` §3.4).
+**`POST /api/v1/projects/{id}/roles`** — body: the role object minus `id` (`name`, `project_admin`, `arms`, optional `grants`); an arm absent from `arms` defaults to `no_access` / `export_none` (REQ-AUTH-019 — no implicit access). A duplicate name within the project → 409 `conflict`. 201 — the role object. Audit `role_created` (`Audit_Logging_Design.md` §3.4).
+
+**`PUT /api/v1/projects/{id}/roles/{rid}`** — body: the same shape as `POST`, replacing the role's name, `project_admin`, arm defaults and grants in one transaction; a pair omitted from `grants` reverts to its arm default, and an `arms` map missing an arm sets that arm to `no_access` / `export_none` (REQ-API-143). Unknown `{rid}` → 404; duplicate name → 409; an `event`/`instrument` pair not mapped in the project → 400 naming it, nothing applied. 200 — the updated role object. Audit `role_updated` with the before/after permission set; members holding the role pick the change up on their next request without re-authentication (REQ-AUTH-033).
 
 ### 4.8 Arms (REQ-API-058…060)
 
@@ -713,7 +722,7 @@ The response MUST NOT contain field values (REQ-API-074). A record-status read i
 
 Known parameters validate strictly: `format`, `rawOrLabel`, or `rawOrLabelHeaders` outside their value sets, a multi-character `csvDelimiter`, or a non-numeric `arm` → 400 `invalid_request`; unknown parameter names stay accepted and ignored (REQ-API-017). A caller with no exportable arm — none by default, or any named arm `export_none` — gets 403 `forbidden`; a rejected call writes no audit entry (REQ-AUD-004).
 
-The response is streamed (REQ-TECH-011). Record selection follows the data-access-group rule (REQ-API-092). Sensitivity follows the acting user's export level per arm (the REQ-API-026 ladder — `export_full` → full dataset; `export_no_identifiers` → identifier fields removed; `export_de_identified` → de-identified per §3.6.1; `export_none` → 403 `forbidden`). **For an export spanning several arms the applied level is the lowest (most protective) level among those arms** — the minimum in the GD-2 ordering, so every row is delivered at a level no weaker than any arm allows (REQ-EXP-003, `Data_Export_Anonymization_Design.md` §4.3, decision D-4); `export_none` on any exported arm → 403 `forbidden`. The level recorded in the audit event and shown in the UI badge is exactly this applied minimum — never a higher level that some individual arm would have permitted.
+The response is streamed (REQ-TECH-011). Record selection follows the data-access-group rule (REQ-API-092). Sensitivity follows the acting user's export level **for the (instrument, event) pair of each exported column** (the REQ-API-026 ladder — `export_full` → full dataset; `export_no_identifiers` → identifier fields removed; `export_de_identified` → de-identified per §3.6.1; a pair at `export_none` contributes no columns). The single applied level of the old per-arm model is gone: an export spanning several arms or instruments applies several transformations side by side, one per column, and a stricter pair never weakens a more permissive one (REQ-EXP-003). Columns that belong to no pair — the record identifier (GD-8), `redcap_event_name`, repeat markers — follow the **most protective** export level among the pairs actually in scope, so nothing is delivered less protected than the weakest part of the request (D-4 revised). A request whose scope leaves no permitted pair is 403 `forbidden`. The audit event and the UI badge record that most protective level, plus the count of pairs dropped for want of a level — never a higher level some individual pair would have permitted.
 
 Every call is audit-logged as an `export` event with `surface: "ui"`, the project, and the sensitivity level (REQ-API-076, BR-007, `Audit_Logging_Design.md` §3.5).
 
@@ -757,17 +766,18 @@ Entries MAY carry the `token` column and payload values — the trail is the sol
 
 ### 4.17 Survey links (GD-9, REQ-API-082…085)
 
-**`GET /api/v1/projects/{id}/records/{record}/instruments/{iid}/survey-link`** — data access ≥ `view_edit` on the arm (GD-2) + record visibility (REQ-AUTH-045). The instrument MUST be survey-marked (`is_survey = 1`) — otherwise 400 `invalid_request`. 200 — the stable public link (URL carrying the link token; stable per (project, record, instrument) until revoked, `Database_Schema_Design.md` §8):
+**`GET /api/v1/projects/{id}/records/{record}/instruments/{iid}/survey-link?event={unique_event_name}`** — data access ≥ `view_edit` **on that pair** (REQ-AUTH-069) + record visibility (REQ-AUTH-045). The instrument MUST be survey-marked (`is_survey = 1`) and mapped to the event — otherwise 400 `invalid_request`. 200 — the stable public link (URL carrying the link token; stable per (project, record, instrument, event) until revoked, so an instrument mapped to three events has three distinct links, `Database_Schema_Design.md` §8):
 
 ```json
-{ "url": "https://csms.example.org/s/8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "revoked": false }
+{ "url": "https://csms.example.org/s/8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83",
+  "event": "baseline_arm_1", "revoked": false, "collected_at": null }
 ```
 
-Audit `survey_link_issued`.
+`collected_at` is `null` until the first response is saved through the link and never changes afterwards — it is what makes a response "collected" (REQ-DB-041, REQ-AUTH-071), so the record view can show *not yet collected / collected on …* without probing values. Audit `survey_link_issued`.
 
-**`DELETE /api/v1/projects/{id}/records/{record}/instruments/{iid}/survey-link`** — revokes the link token; the revocation takes effect immediately (REQ-AUTH-040). 204. Audit `survey_link_revoked`.
+**`DELETE /api/v1/projects/{id}/records/{record}/instruments/{iid}/survey-link?event={unique_event_name}`** — revokes the link token **of that pair**; the links of the same instrument at other events stay valid (REQ-API-082). The revocation takes effect immediately (REQ-AUTH-040). 204. Audit `survey_link_revoked`.
 
-The data-API behaviour of a link token is fixed by §3.10 (render and fill that (record, instrument) only); the public survey page is served by the PHP application — the browser MUST NOT call `/api/v1/*` from it (GD-1, REQ-API-084).
+The data-API behaviour of a link token is fixed by §3.10 (render and fill that (record, instrument, event) only); the public survey page is served by the PHP application — the browser MUST NOT call `/api/v1/*` from it (GD-1, REQ-API-084).
 
 ### 4.18 Data access groups (GD-10, REQ-API-086…094)
 
@@ -931,7 +941,7 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirement.m
 
 | Endpoints | Required permission |
 |---|------|
-| data API `/api/` | the token's levels per §3 (data/export level per arm; link tokens scoped per §3.10) |
+| data API `/api/` | the token's levels per §3 (data/export level per arm and per (instrument, event) pair; link tokens scoped per §3.10) |
 | `GET/POST /api/v1/users`, `PUT /api/v1/users/{id}` | `is_admin` (PUT also grants/revokes `is_admin`; the last enabled administrator cannot be revoked or disabled — REQ-API-136, REQ-AUTH-068) |
 | `POST /api/v1/users/{id}/invite` (§4.4, REQ-API-117) | `is_admin` |
 | `PUT /users/me/password` (§4.4, REQ-API-118) | any authenticated user (self, with local credential) |
@@ -941,7 +951,7 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirement.m
 | `GET /api/v1/projects` | project visibility (REQ-API-007) |
 | `GET /api/v1/projects/{id}` | data access ≥ `read_only` + visibility |
 | `PUT /api/v1/projects/{id}` | `project_admin` |
-| `GET/PUT …/users` (members), `GET/POST …/roles` | `is_admin` |
+| `GET/PUT …/users` (members), `GET/POST …/roles`, `PUT …/roles/{rid}` | `is_admin` |
 | `GET …/users/{uid}/token` | self-service: acting user is a member (REQ-API-102) |
 | arms, events, instruments, fields, mapping — mutations (POST/PUT/DELETE) | `project_admin` |
 | arms, events, instruments, fields, mapping — reads (GET) | data access ≥ `read_only` |
@@ -949,8 +959,8 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirement.m
 | `PUT …/records/{record}/events/{event}/instruments/{iid}/completion` | data access ≥ `view_edit` on the record's arm (+ record visibility) |
 | `POST …/fields/{fid}/test` | `project_admin` + record visibility |
 | `GET /api/v1/validationTypes` | any authenticated user |
-| `GET …/export` | export level per arm (GD-2; `export_none` → 403) |
-| survey links (issue/revoke, §4.17) | data access ≥ `view_edit` on the arm (+ record visibility) |
+| `GET …/export` | export level per (instrument, event) pair — unpermitted pairs contribute no columns; 403 only when no permitted pair is in scope |
+| survey links (issue/revoke, §4.17) | data access ≥ `view_edit` **on the pair** (+ record visibility) |
 | `GET …/data-access-groups` | data access ≥ `read_only` |
 | `POST/DELETE …/data-access-groups`, `PUT …/records/{record}/data-access-group` | `project_admin` |
 | `PUT …/users/{uid}/data-access-groups` | `is_admin` |

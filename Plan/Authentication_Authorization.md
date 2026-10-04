@@ -30,16 +30,17 @@ This document outlines the security model for the clinical study management syst
 ## Authorization
 - Model: Role-Based Access Control (RBAC); roles are per-project collections of permissions, created by an administrator with any name and any combination (REQ-AUTH-021).
 - One (external, OAuth or LDAP) role for general access to web-interface (no administration tools, no project access, info page only with instructions on how to apply)
-- Permissions are held **per arm** as two ordered levels (GD-2, REQ-AUTH-017/018):
-    - **data access level**: `no_access` < `read_only` < `view_edit` < `delete` < `edit_survey_responses`
+- Permissions are held **per arm as a default and per (instrument, event) pair as an override** (GD-2, REQ-AUTH-017/018/069):
+    - **data access level**: `no_access` < `read_only` < `view_edit`
     - **export level**: `export_none` < `export_de_identified` < `export_no_identifiers` < `export_full`
-  plus the project-level `project_admin` flag for study design and setup. An arm with no explicit grant means no access — never an implicit one.
-  The earlier flat permission set (`view`, `change`, `add`; `export all`, `export anonymized`, `export only non-sensitive data`) is **superseded** by these levels; there are four export levels, not three, and "non-sensitive" is not one of them (DEV-AUTH-5).
+    - two **rights**, independent of both ladders: **delete instrument values** and **edit collected surveys** (REQ-AUTH-070)
+  plus the project-level `project_admin` flag for study design and setup. An arm with no explicit grant means no access — never an implicit one; a pair with no grant of its own inherits its arm, and a pair created by a design change is materialized as `read_only` + `export_none` with both rights unset (REQ-AUTH-069).
+  The earlier flat permission set (`view`, `change`, `add`; `export all`, `export anonymized`, `export only non-sensitive data`) is **superseded** by these levels; there are four export levels, not three, and "non-sensitive" is not one of them (DEV-AUTH-5). `delete` and `edit_survey_responses` were rungs of the data access ladder until 2026-10-03 and are now the two rights.
 - Roles (suggested presets, not a fixed catalogue — REQ-AUTH-020):
-    - data-manager: per arm `delete` + `export_full`, plus `project_admin`.
-    - data-entry: per arm `view_edit` + `export_none`.
-    - controller: per arm `read_only` + `export_none`.
-    - Custom roles: any combination of the two levels per arm, optionally with `project_admin`.
+    - data-manager: `view_edit` + **delete instrument values** + `export_full`, plus `project_admin`.
+    - data-entry: `view_edit` + `export_none` on every pair, both rights unset.
+    - controller: `read_only` + `export_none` on every pair, both rights unset.
+    - Custom roles: any combination of the levels and rights per arm and pair, optionally with `project_admin`; naming a role is how a new one is created and the whole set stays editable afterwards (REQ-AUTH-021, REQ-API-143).
 - Data Access Groups (GD-10): a project MAY have groups; a member assigned to one or more has exactly one active and sees only that group's records, while a member with no group sees all of them. A record belongs to exactly one group or none, taken from its creator's active group.
 - Project Visibility: A project is visible to a user only if the user is in the administrator group or is a member of the project.
 - Role-less Members: All members of a project that are not assigned a project role have full permissions for this project only.

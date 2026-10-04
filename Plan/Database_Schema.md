@@ -58,14 +58,21 @@ A project role is a collection of permissions, defined per project (any name, an
 - role_name (String, e.g. data-manager, data-entry, controller)
 - project_admin (Boolean - may manage the project's structure and membership)
 
-#### 3a. Role-Arm Permissions
-Permissions are held **per arm** (GD-2), one row per (role, arm) — not a flat permission string:
+#### 3a. Role Permissions: arm default and pair grants
+Permissions are held at two granularities (GD-2, REQ-DB-009/040) — never as a flat permission string.
+
+`role_arms` — the arm default, one row per (role, arm):
 - role_id (Foreign Key)
 - arm_num (Integer)
-- data_access_level (String: no_access | read_only | view_edit | delete | edit_survey_responses)
+- data_access_level (String: no_access | read_only | view_edit)
 - export_level (String: export_none | export_de_identified | export_no_identifiers | export_full)
 
-An arm with no row means no access. The former flat set (`view`, `change`, `add`, `export all`, `export anonymized`) is superseded by these two ordered levels (REQ-AUTH-017/018, DEV-AUTH-5).
+`role_grants` — the per-pair override, one row per (role, event, instrument):
+- role_id, event_id, instrument_id (Foreign Keys, cascade with the design object)
+- data_access_level, export_level (as above)
+- delete_values (Boolean), edit_surveys (Boolean) — the two rights
+
+An arm with no row means no access; a pair with no row inherits its arm. A design change that adds an instrument, an event, or a mapping writes the new pairs into every role as `read_only` / `export_none` / both rights unset (REQ-AUTH-069). The former flat set (`view`, `change`, `add`, `export all`, `export anonymized`) is superseded by these levels (REQ-AUTH-017/018, DEV-AUTH-5), and `delete` / `edit_survey_responses` are now the two rights rather than levels (REQ-AUTH-070).
 
 ### 4. User-Project Assignments
 Maps users to projects, roles, and API tokens.

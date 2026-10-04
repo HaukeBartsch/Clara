@@ -26,13 +26,13 @@ Two surfaces, one pipeline (§4):
 
 | Surface | Entry | Level source |
 |---|---|---|
-| data API (Fiona and any external caller) | `POST /api/` `content=record` without `data` (REQ-API-012) | the token holder's export level for the arm of the exported data (REQ-API-026, GD-2) |
-| administration API (web UI) | `GET /api/v1/projects/{id}/export?format=csv\|json&arm=N&rawOrLabel=…&rawOrLabelHeaders=…&csvDelimiter=…` (REQ-API-075; full parameter table in `API_Endpoints_Design.md` §4.14) | the acting user's export level per arm (GD-2, REQ-API-075) |
+| data API (Fiona and any external caller) | `POST /api/` `content=record` without `data` (REQ-API-012) | the token holder's export level **for the (instrument, event) pair of each exported column** (REQ-API-026/075, GD-2, REQ-AUTH-069) |
+| administration API (web UI) | `GET /api/v1/projects/{id}/export?format=csv\|json&arm=N&rawOrLabel=…&rawOrLabelHeaders=…&csvDelimiter=…` (REQ-API-075; full parameter table in `API_Endpoints_Design.md` §4.14) | the acting user's export level **per (instrument, event) pair** — `arm=N` narrows the scope, never the sensitivity (GD-2, REQ-API-075) |
 
 Common to both (normative):
 
-- the applied level is the GD-2 ordering `export_none < export_de_identified < export_no_identifiers < export_full` (REQ-AUTH-017/018); `export_none` → 403 `Permission denied`, nothing is written to either audit table (REQ-AUD-004, `API_Endpoints_Design.md` §3.2);
-- multi-arm level resolution per §4.3;
+- the level is ordered on the GD-2 ladder `export_none < export_de_identified < export_no_identifiers < export_full` (REQ-AUTH-017/018) and applies **per (instrument, event) pair**: a pair at `export_none` contributes no columns, and a request whose scope holds no permitted pair at all is 403 `Permission denied` with nothing written to either audit table (REQ-AUD-004, `API_Endpoints_Design.md` §3.2);
+- per-pair level resolution per §4.3;
 - record scope per the data-access-group rule — the level governs the transformation, the group governs the records (REQ-API-092, REQ-AUTH-045);
 - streaming (REQ-TECH-011);
 - audit per §8.
@@ -92,15 +92,16 @@ This realizes REQ-AUTH-018 verbatim — `export_de_identified`: \"direct identif
 
 Removed means the column is absent from the output (no empty column); hashing and shifting replace values in place.
 
-### 4.3 Multi-arm level (normative)
+### 4.3 Per-pair level (normative)
 
-For an export spanning several arms, the applied level is the **lowest level in the GD-2 ordering among the arms of the exported data** — the most protective (D-4). Consequences:
+Each exported column carries the transformation of **its own (instrument, event) pair's** export level (REQ-EXP-003, REQ-AUTH-069). Consequences:
 
-- an arm at `export_none` among the exported arms → the whole call is rejected (403), because the minimum is `export_none`;
-- the `sensitivity` recorded in the audit event is exactly this applied level (`Audit_Logging_Design.md` §3.5 — the minimum of the set, i.e. the one actually applied to every row);
-- the UI sensitivity badge shows the same applied level (REQ-UI-020).
+- a pair at `export_none` contributes no columns and the rest of the request proceeds normally; the call is rejected 403 only when its scope holds no permitted pair at all, and that rejection writes nothing to either audit table (REQ-AUD-004);
+- a member holding `export_full` on one instrument and `export_de_identified` on another receives both forms in one file, each column transformed at its own level;
+- columns belonging to no pair — the record identifier (GD-8), `redcap_event_name`, the repeat markers — follow the **most protective** export level among the pairs actually in scope, so nothing leaves the system less protected than the weakest part of the request;
+- the `sensitivity` recorded in the audit event is that most protective level, together with the count of pairs dropped for want of a level (`Audit_Logging_Design.md` §3.5); the UI badge shows the same (REQ-UI-020).
 
-A caller with different levels on different arms therefore obtains the de-identified form of the union; per-arm higher sensitivity is obtained by separate exports per arm — on the administration surface via the `arm` parameter (`API_Endpoints_Design.md` §4.14), on the data API by exporting one event/arm at a time (REQ-EXP-003). The selector is what discharges that clause: without an arm restriction on the administration endpoint, a member holding `export_full` on arm 1 and `export_de_identified` on arm 2 could never obtain the arm-1 data at its own level.
+The cross-arm "lowest level wins" rule of the per-arm model is gone with the granularity change: it existed so that a member with mixed arm levels was not silently downgraded, and mixing now happens per column instead (D-4 revised 2026-10-03). The `arm` parameter of the administration endpoint (`API_Endpoints_Design.md` §4.14) stays as a scope selector, no longer as the escape hatch for a downgrade.
 
 ### 4.4 What the pipeline does not touch
 
@@ -135,7 +136,7 @@ Fixed by `Database_Schema_Design.md` §8 (normative) and `System_Configuration_D
 
 - `records[]`/`fields[]`/`forms[]`/`events[]` combine (intersection; REQ-API-024, `API_Endpoints_Design.md` §3.6.1); with no filters, all records visible to the holder are returned.
 - `filterLogic` filters which **records** are returned; it never changes the sensitivity level (`API_Endpoints_Design.md` §3.6.3; grammar per `Data_Validation_Design.md` §7, REQ-API-025).
-- A `fields[]` entry naming a column that the applied level removes (§4.2, steps 1/3) is silently absent from the output — the level governs the transformation, the filter governs the selection (REQ-API-092); a filter never escalates sensitivity.
+- A `fields[]` entry naming a column that **its pair's** level removes (§4.2, steps 1/3) is silently absent from the output — the level governs the transformation, the filter governs the selection (REQ-API-092); a filter never escalates sensitivity, and a filter expression naming a column of a pair the caller may not export MUST be rejected rather than evaluated against the stored value (the per-pair form of master-spec finding F6).
 - The data-access-group rule scopes the records (REQ-API-092, REQ-AUTH-045): a holder with an active group receives only that group's records; a holder without a group receives all records of the project.
 
 ## 7. End-of-Project Provision (BR-009)
@@ -197,7 +198,7 @@ No new variables — the canonical inventory is `System_Configuration_Design.md`
 | D-1 | field categories with the fail-safe property (§4.1): the record identifier (GD-8) and every `email`/`MRN` validation-type field is a direct identifier — removed at both non-full levels, flagged as personal or not |
 | D-2 | the fixed four-step pipeline (§4.2); \"removed\" = the column is absent from the output; personal fields are hashed, not removed |
 | D-3 | free text = `field_type = text`; gated by `export_approved` at `export_de_identified` (DEV-DB-2, plan \"free text … unless explicitly approved for export\") |
-| D-4 | multi-arm ⇒ the lowest level in the GD-2 ordering among the exported arms; `export_none` on any of them ⇒ 403 (§4.3) |
+| D-4 | export applies **per (instrument, event) pair** — each column at its own level, an unpermitted pair contributes no columns, 403 only when nothing in scope is permitted, and pair-less columns take the most protective level in scope (§4.3; revised 2026-10-03, previously "the lowest level among the exported arms") |
 | D-5 | the field hash is the full 64-character SHA-256 hex over salt, project, field, value — deterministic, untruncated, salted (§5.1) |
 | D-6 | the master spec's per-choice columns are realized by the matrix expansion of REQ-DB-014; no 1/0 coding unless the row choices are defined as 1/0 (§3.2) |
 | D-7 | the end provision is an explicit one-shot `is_admin` action, not a scheduled job (§7) |
@@ -255,7 +256,7 @@ No new variables — the canonical inventory is `System_Configuration_Design.md`
 | date shift "consistent for each patient" (plan; REQ-DB-023) | per-record persisted offset, reused on every export: §5.2 |
 | free text "excluded unless explicitly approved" (plan; REQ-DB-013) | `export_approved` gates free text at `export_de_identified`: §4.1, D-3 |
 | "end-provision execution" (charter in-scope, BR-009) | one-shot `is_admin` action, delete/anonymize, idempotent, audited: §7 |
-| plan's per-instrument access levels (Full/Anonymized/None) | superseded by the GD-2 per-arm export levels; per-field control is the `personal_information`/`export_approved` flags (charter: out of scope, deviation DEV-1) |
+| plan's per-instrument access levels (Full/Anonymized/None) | the GD-2 export levels sit on the (instrument, event) pair of a role grant, which is per-instrument control with the event added and one more level in the ladder (REQ-AUTH-017/069); per-field control stays with the `personal_information`/`export_approved` flags (deviation DEV-1 revised 2026-10-03) |
 | master-spec per-choice columns (`demo_habits__1/2`, 1/0) | matrix expansion (REQ-DB-014): §3.2, D-6 |
 
 ## 12. Open Items

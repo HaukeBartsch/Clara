@@ -54,7 +54,7 @@ Common conventions (REQ-UI-001…008), binding on every page:
 | `GET /projects/{id}/roles` | role editor (§5.4) | `is_admin` | `GET/POST …/roles` |
 | `GET /projects/{id}/groups` | data access groups (§5.5) | read: data access ≥ `read_only`; create/delete: `project_admin` | `GET/POST …/data-access-groups`, `DELETE …/data-access-groups/{gid}` |
 | `GET /projects/{id}/records/{record}` | data entry / record view (§8) | data access ≥ `read_only` (per-action levels per §8) | `GET …/instruments/{iid}/fields`, `GET …/records/{record}/history`, token fetch + data-API import/delete (`§8.6`) |
-| `GET /projects/{id}/export` | export (streams the response) | a non-`export_none` level per arm (REQ-UI-020) | `GET …/export` (streamed, REQ-TECH-011) |
+| `GET /projects/{id}/export` | export (streams the response) | a non-`export_none` level on at least one (instrument, event) pair (REQ-UI-020) | `GET …/export` (streamed, REQ-TECH-011) |
 | `GET /s/{link}` | public survey page (§8.8) | none — no session, outside the login (GD-9, DEV-UI-1) | data API `content=metadata` + a `data`-carrying `content=record` call with the link token (REQ-API-012, REQ-API-083) |
 
 There are no other browser-reachable routes. State-changing browser requests are `POST`s to the same routes with a `?action=<name>` parameter (or a dedicated `POST` route where noted); the table lists the read route each page is bound to. The Control Panel's `?section=<name>` (`§2.4`, REQ-UI-047) works the same way: an allowlisted query parameter resolved in PHP, never forwarded to the API as a path fragment, and unknown values render the first available section rather than an error. The JSON a page's client binds its data regions from (§3.7) is served by **that same route**, selected on `Accept: application/json` — no proxy route joins this set (REQ-UI-044); for `/admin` the region is the one belonging to the requested section, and `GET /projects/{id}` answers a data request with the project object instead of its redirect. The browser never sees `/api/v1/*` (REQ-UI-002).
@@ -277,14 +277,25 @@ Token values never appear in the table itself (`token_present` only, REQ-API-005
 
 ### 5.4 Role editor (`GET /projects/{id}/roles`, `is_admin`, REQ-UI-014)
 
-Data: `GET /api/v1/projects/{id}/roles`. A list of the project's roles (name, `project_admin`, per-arm levels) plus a **create** form:
+Data: `GET /api/v1/projects/{id}/roles` for the list, `POST …/roles` to create (REQ-API-057), `PUT …/roles/{rid}` to edit (REQ-API-143). One role at a time is on the form; the list above it links each role into the same form in edit mode. The master-spec mockup ("Role adjustment") governs the picture; the structure is:
 
-- `name` — unique within the project (409 on duplicate, §3.4); roles are not limited to presets (REQ-AUTH-020).
-- `project_admin` — checkbox (GD-2).
-- **Per arm** (one block per existing arm): a **data access level** select (`no_access | read_only | view_edit | delete | edit_survey_responses`) and an **export level** select (`export_none | export_de_identified | export_no_identifiers | export_full`); an arm left absent submits `no_access`/`export_none` (no implicit access, REQ-AUTH-019).
-- The three example presets (`data-manager`, `data-entry`, `controller`) MAY be offered as one-click **starting points** that pre-fill the form — they are never enforced (REQ-AUTH-020).
+**Role name** — text input, unique within the project (409 on duplicate, §3.4). Naming a new role is how it is created; roles are not limited to presets (REQ-AUTH-020). The three example names MAY be offered as one-click starting points that pre-fill the form (REQ-AUTH-020).
 
-Submit → `POST …/roles` (201) with the role object of `API_Endpoints_Design.md` §4.7.
+**`<h4>` · Permissions per instrument and event** — the body of the screen: a tab per arm (Bootstrap `nav-tabs`, the first arm active; a single-arm project renders no tab row), each tab holding one `<table class="table table-sm">` whose rows are that arm's mapped (instrument, event) pairs in design order — instrument first, then its events in the canonical order of GD-15. The header is two rows: `rowspan` for the pair column, then `colspan` groups **data access** and **export**, then the two unlabeled checkbox columns; both header rows stick to the top of the scroll container. Columns, left to right:
+
+| Column | Control | Values |
+|---|---|---|
+| instrument (event) | text | pair label, e.g. `instrument 2 (followup)` |
+| data access · no access / read only / view edit | radio group (`name="data[<arm>][<pair>]"`) | REQ-AUTH-018 |
+| delete values | checkbox | the **delete instrument values** right (REQ-AUTH-070) |
+| edit surveys | checkbox | the **edit collected surveys** right (REQ-AUTH-071) |
+| export · none / de-identified / no identifiers / full | radio group (`name="export[<arm>][<pair>]"`) | REQ-AUTH-018 |
+
+The radios and the checkboxes are independent — a row may hold `read_only` with both boxes ticked, and the API accepts it (REQ-AUTH-070); a checkbox on a `no_access` row does nothing and is therefore rendered `disabled` with a title saying so rather than being silently ignored (REQ-UI-003). A per-column bulk control in the second header row sets every row of the arm tab to that value, since a project's pair count is unbounded. Tabs are all submitted together — an unsaved change in a hidden tab marks the form dirty and the tab label carries the standard unsaved marker.
+
+**`<h4>` · Project administration** — the `project_admin` checkbox (GD-2). It sits below the table, not inside it: it is a project-scoped right, not a per-pair one. A further function group joins the screen as another `<h4>` section when it gains a requirement; nothing else belongs to a role.
+
+Submit → `POST …/roles` (201) or `PUT …/roles/{rid}` (200 with the updated object) carrying `{name, project_admin, arms: {arm_num: {data, export}}, grants: [{event, instrument, data, export, delete_values, edit_surveys}]}` — the role object of `API_Endpoints_Design.md` §4.7, which every pair omitted from the request reverts to its arm default (REQ-API-143).
 
 ### 5.5 Data access groups (`GET /projects/{id}/groups`, REQ-UI-015)
 
@@ -333,7 +344,7 @@ The project page is a left-panel shell (§2.4 B): its left panel lists the proje
 | **Setup** | `/projects/{id}/setup` (§6.2) | `project_admin` | i) setup the project; iii) create arms and events; iv) assign instruments to arms and events |
 | Design | `/projects/{id}/design` (§7.1) | `project_admin` | ii) design all instruments |
 | **Record Status Dashboard** | `/projects/{id}/record-status` (§6.3) | data access ≥ `read_only` | (participant overview) |
-| **Export** | `/projects/{id}/export` (§6.4) | a non-`export_none` level on the arm (REQ-API-075) | vi) export |
+| **Export** | `/projects/{id}/export` (§6.4) | a non-`export_none` level on at least one (instrument, event) pair (REQ-API-075, REQ-AUTH-069) | vi) export |
 | Members · Roles | `/projects/{id}/members` · `/roles` (§5.3 · §5.4) | `is_admin` | v) administer users in the project (match roles to permissions) |
 | Groups | `/projects/{id}/groups` (§5.5) | data access ≥ `read_only` (mutate: `project_admin`) | (record scope) |
 
@@ -380,7 +391,7 @@ Data: `GET …/record-status` (data access ≥ `read_only` + record visibility, 
 - **Values / headers** (REQ-EXP-010): a raw-vs-labels switch (`rawOrLabel`) and a header switch (`rawOrLabelHeaders`), mirroring the data API's axes — these are available on this surface too, not only on the data API. For CSV, an optional `csvDelimiter` (REQ-EXP-013).
 - **Sensitivity indicator**: a visible badge stating the level being applied for the selected arm(s) — `export_full` / `export_no_identifiers` / `export_de_identified` — so the user knows exactly what they are downloading (REQ-UI-020). For a multi-arm export the **lowest (most protective)** level among the selected arms is the one shown and the one applied (REQ-EXP-003, D-4) — never the highest any single arm would allow. The badge recomputes when the arm selection changes, so unchecking an arm visibly raises the stated level before the download starts.
 - The download **streams** (REQ-TECH-011); the PHP route proxies the streamed response, so large exports do not buffer.
-- Gating: present only when the member holds a non-`export_none` level on the arm (REQ-UI-017/020, REQ-API-075); `export_none` → the card is absent (REQ-UI-003).
+- Gating: present only when the member holds a non-`export_none` level on at least one (instrument, event) pair (REQ-UI-017/020, REQ-API-075); no exportable pair at all → the card is absent (REQ-UI-003), and a partly permitted scope is stated on the card rather than hidden (REQ-UI-020).
 - Every call is audit-logged with `surface:"ui"`, the project, and the sensitivity level (REQ-API-076, `Audit_Logging_Design.md` §3.5).
 
 ### 6.5 End-of-Project Provision (Overview card, `is_admin`, BR-009)
@@ -543,9 +554,9 @@ All successful imports are audit-logged with user, token, record, and changed fi
 
 Present per the member's levels (REQ-UI-003):
 
-- **Delete** (data access ≥ `delete` on the arm): delete the whole record or scoped values (by instrument/event), behind an explicit confirmation naming the scope (GD-3, REQ-API-036). PHP presents the member's token to the data API `content=record&action=delete` (same acquisition/stale handling as §8.6). Deletions are audit-logged **with the deleted values** (REQ-AUD-009).
+- **Delete** (**delete instrument values** on the pair; for a whole record, on every pair where it holds values): delete the whole record or scoped values (by instrument/event), behind an explicit confirmation naming the scope (GD-3, REQ-API-036). PHP presents the member's token to the data API `content=record&action=delete` (same acquisition/stale handling as §8.6). Deletions are audit-logged **with the deleted values** (REQ-AUD-009).
 - **Data access group** (record visibility, REQ-AUTH-045): show the record's current group; for `project_admin` — an assign/change control (group select incl. "none") → `PUT …/records/{record}/data-access-group` (REQ-API-091). Members who are not `project_admin` see the group read-only.
-- **Survey link** (survey-marked instruments, data access ≥ `view_edit` on the arm): **Copy link** → `GET …/instruments/{iid}/survey-link` — the stable URL in a read-only input + copy button (issued once per (record, instrument) until revoked, `Database_Schema_Design.md` §8); **Revoke link** → confirmation → `DELETE …/survey-link` (effective immediately, REQ-AUTH-040). Absent for non-survey instruments (REQ-AUTH-038).
+- **Survey link** (survey-marked instruments, data access ≥ `view_edit` on the pair): **Copy link** → `GET …/instruments/{iid}/survey-link` — the stable URL in a read-only input + copy button (issued once per (record, instrument) until revoked, `Database_Schema_Design.md` §8); **Revoke link** → confirmation → `DELETE …/survey-link` (effective immediately, REQ-AUTH-040). Absent for non-survey instruments (REQ-AUTH-038).
 
 ### 8.8 Public survey page (`GET /s/{link}`, GD-9, REQ-UI-028)
 

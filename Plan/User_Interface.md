@@ -23,7 +23,7 @@ A left panel appears only where it switches between sections. The **project over
 - A self-service account page lets each user enable TOTP (QR + manual key, confirm with one code, recovery codes shown once) or email, and disable it with a current code.
     - Projects: Create new projects (name, organization = main supporting institution, PI name and email, data manager, REK/IRB number, REK start/end dates, start/end dates, participant naming pattern) and edit project metadata. The option flags, the end provision, the end-user-contract confirmation, and an initial-events list are **absent from the form** (GD-17, REQ-UI-012); creation makes the project with arm 1 only, and events are added afterwards in the project's Setup page.
     - Assignment: Assign users to projects given a role (data-manager, data-entry, controller, or a custom role). Role-less members have full permissions.
-    - Roles: Create additional roles with a mixture of permissions.
+    - Roles: Create and edit roles — naming one creates it; the permission set is a per-arm table of (instrument, event) rows with data access and export radios plus the two right checkboxes, and the project-level rights in sections below (`User_Interface_Design.md` §5.4, REQ-UI-014).
 
 ### 3. Project Workspace
 - Purpose: Main hub for a specific study, shown when the user selects a project on the project overview. A left panel lists the project's functions and the right-hand panel shows the selected one (REQ-UI-017/046).

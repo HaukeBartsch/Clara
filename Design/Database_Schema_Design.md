@@ -104,14 +104,27 @@ CREATE TABLE IF NOT EXISTS roles (               -- REQ-DB-009 (GD-2)
     UNIQUE (project_id, role_name)
 );
 
-CREATE TABLE IF NOT EXISTS role_arms (           -- per-arm levels of a role (REQ-DB-009)
+CREATE TABLE IF NOT EXISTS role_arms (           -- per-arm DEFAULT of a role (REQ-DB-009)
     id               INTEGER PRIMARY KEY,
     role_id          INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
     arm_num          INTEGER NOT NULL,
-    data_access_level VARCHAR(32) NOT NULL,  -- no_access | read_only | view_edit | delete | edit_survey_responses
+    data_access_level VARCHAR(32) NOT NULL,  -- no_access | read_only | view_edit
     export_level     VARCHAR(32) NOT NULL,  -- export_none | export_de_identified | export_no_identifiers | export_full
     UNIQUE (role_id, arm_num)
 );
+
+CREATE TABLE IF NOT EXISTS role_grants (         -- per-pair override of a role (REQ-DB-040)
+    id                INTEGER PRIMARY KEY,
+    role_id           INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    event_id          INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    instrument_id     INTEGER NOT NULL REFERENCES instruments(id) ON DELETE CASCADE,
+    data_access_level VARCHAR(32) NOT NULL,  -- no_access | read_only | view_edit; absent row = the arm default
+    export_level      VARCHAR(32) NOT NULL,
+    delete_values     INTEGER NOT NULL DEFAULT 0,   -- right: clear this instrument's values (REQ-AUTH-018)
+    edit_surveys      INTEGER NOT NULL DEFAULT 0,   -- right: modify collected survey responses (REQ-AUTH-071)
+    UNIQUE (role_id, event_id, instrument_id)
+);                                             -- the event implies the arm; rows die with the design object,
+                                               -- so a re-created name inherits nothing (REQ-AUTH-069)
 
 CREATE TABLE IF NOT EXISTS user_projects (       -- REQ-DB-010
     id          INTEGER PRIMARY KEY,
@@ -320,16 +333,20 @@ CREATE TABLE IF NOT EXISTS anon_offsets (        -- REQ-DB-023 (GD-6, DEV-DB-3)
     PRIMARY KEY (project_id, record_id)
 );
 
-CREATE TABLE IF NOT EXISTS survey_links (        -- REQ-DB-027 (GD-9)
+CREATE TABLE IF NOT EXISTS survey_links (        -- REQ-DB-027/041 (GD-9)
     id            INTEGER PRIMARY KEY,
     project_id    INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     record_id     VARCHAR(255) NOT NULL,
     instrument_id INTEGER NOT NULL REFERENCES instruments(id) ON DELETE CASCADE,
+    event_id      INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,  -- one link per event the
+                                                           -- instrument is mapped to (REQ-AUTH-039)
     token         CHAR(36) NOT NULL UNIQUE,      -- opaque bearer, 128-bit random
     revoked       INTEGER NOT NULL DEFAULT 0,
+    collected_at  DATETIME,                      -- first save through the link; never overwritten —
+                                                           -- "collected" is this column, not a value probe (REQ-DB-041)
     created_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
     created_at    DATETIME NOT NULL,
-    UNIQUE (project_id, record_id, instrument_id)   -- stable per triple until revoked
+    UNIQUE (project_id, record_id, instrument_id, event_id)   -- stable per quadruple until revoked
 );
 
 CREATE TABLE IF NOT EXISTS dag_groups (          -- REQ-DB-028 (GD-10)
@@ -418,7 +435,8 @@ Reference scale (REQ-DB-025): 100 projects × 10,000 records × 200 fields × 10
 | REQ-VAL-030 (max length) | no application cap beyond storage — `LONGTEXT`/`TEXT` (§1, REQ-VAL-021 default) |
 | choices encoding | REDCap-style `code$label##code$label` (§1) |
 | REQ-DB-023 (date shift) | deterministic `offset_days` per (project, record) via salted SHA-256, persisted (§8); date part shifted, collection offset preserved |
-| role level enums | `no_access`/`read_only`/`view_edit`/`delete`/`edit_survey_responses`; `export_none`/`export_de_identified`/`export_no_identifiers`/`export_full` (§4, REQ-AUTH-017) |
+| role level enums | `no_access`/`read_only`/`view_edit`; `export_none`/`export_de_identified`/`export_no_identifiers`/`export_full` (§4, REQ-AUTH-017) — `delete` and `edit_survey_responses` are no longer levels of the ladder but the two boolean rights of a grant (REQ-AUTH-070) |
+| per-pair grants | `role_grants(role_id, event_id, instrument_id, …)` under `role_arms`; an absent row is the arm default, never a permission; a design change materializes new pairs as `read_only`/`export_none`/rights off (REQ-DB-040, REQ-AUTH-069) |
 | simplified `projects` (master spec "Details", GD-17) | `projects` keeps name, organization, PI, DM, REK, dates, naming pattern (§4); removed attributes are ordinary instrument data if wanted (REQ-DB-032) |
 | table-based authentication (master spec "Details", GD-18) | `users.password_hash` (nullable, bcrypt) + `auth_source = local` (§4); plaintext never stored |
 | account validity and inactivity (master spec "Details", GD-19) | `users.valid_until` (NULL = indefinite) + `users.last_login_at` (§4); auto-disable rule in `Authentication_Authorization_Design.md` §4.4 |

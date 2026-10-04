@@ -12,7 +12,7 @@
 |---|---|---|---|
 | browser (member) | PHP routes only (REQ-AUTH-010) | session cookie (§3) | the member's effective permissions |
 | PHP web application | `/api/v1/*` (internal path only) | `X-Internal-Service-Token` + `X-Internal-User-Id` (REQ-AUTH-011) | exactly the acting user's permissions — PHP adds none |
-| external data-API caller (Fiona/RIS) | `POST /api/` (public) | project token as `token` parameter (REQ-AUTH-031) | the token holder's per-arm levels (REQ-AUTH-033) |
+| external data-API caller (Fiona/RIS) | `POST /api/` (public) | project token as `token` parameter (REQ-AUTH-031) | the token holder's per-arm and per-pair levels (REQ-AUTH-033/069) |
 | survey respondent | PHP route `/s/{link}` (public, no session — GD-9) | opaque link token | fill-only on exactly one (record, survey instrument) (REQ-AUTH-039) |
 | IdP / LDAP | outbound from PHP | OAuth2 client secret / LDAP bind DN | identity assertion (email) |
 | local (table-based) account | PHP login form → API | email + password (verified against `users.password_hash`), plus the configured second factor when enrolled (GD-21, §2.7) | the account's normal permissions (GD-18, REQ-AUTH-050) |
@@ -208,24 +208,35 @@ The reference application's `AC.php` (master spec, "Details"; `assets/table_base
 
 ## 4. Authorization Evaluation (ASM-AUTH-5)
 
-A single explicit function in the Go API — no external policy engine. Inputs: subject, `is_admin`, role, arm, data access level, export level, active data access group (ASM-AUTH-5). Every decision is explicit and auditable (REQ-AUTH-019).
+A single explicit function in the Go API — no external policy engine. Inputs: subject, `is_admin`, role, arm, (instrument, event) pair, data access level, export level, the two rights, active data access group (ASM-AUTH-5). Every decision is explicit and auditable (REQ-AUTH-019).
 
 ### 4.1 Effective levels per (user, project)
+
+Levels resolve at **arm** granularity as a default and at **(instrument, event)** granularity where a grant exists (REQ-AUTH-069); the two rights ride on the same scope and are never implied by a level (REQ-AUTH-070).
 
 ```
 effective_levels(user, project):
   if user.is_admin:
-      every arm:  data = edit_survey_responses, export = export_full
-      project_admin = true                                        (REQ-AUTH-023)
+      every arm and every pair:
+          data = view_edit, export = export_full,
+          delete_values = true, edit_surveys = true                    (REQ-AUTH-023)
+      project_admin = true
   else if the assignment's role is set:
       for each arm a in arms(project):
-          data_level   = role.arms[a].data    or no_access        (REQ-AUTH-019 — no implicit access)
-          export_level = role.arms[a].export  or export_none
+          default[a] = { data   = role.arms[a].data    or no_access,     (REQ-AUTH-019)
+                         export = role.arms[a].export  or export_none,
+                         delete_values = false, edit_surveys = false }
+      for each mapped pair p of an arm the role grants on:
+          g = role.grants[p] or default[arm_of(p)]                       (REQ-AUTH-069)
+          if g.data == no_access:                                       (REQ-AUTH-070)
+              g.delete_values = g.edit_surveys = false      # denial wins over a right
       project_admin = role.project_admin
   else:   # member without a role
-      every arm:  data = edit_survey_responses, export = export_full
-      project_admin = true                                        (REQ-AUTH-022)
+      every arm and pair as for is_admin
+      project_admin = true                                              (REQ-AUTH-022)
 ```
+
+A design change that adds an instrument, an event, or a mapping materializes `role.grants[p]` for the new pairs of every role as `read_only` / `export_none` / both rights unset, so a new pair is never resolved by an implicit rule later (REQ-AUTH-069).
 
 Roles are project-scoped (REQ-AUTH-024); exactly one role per member, no union (REQ-AUTH-025); levels are read **at call time**, so role changes and user disabling take effect immediately without token refresh (REQ-AUTH-033, REQ-API-048).
 

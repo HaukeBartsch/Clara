@@ -31,7 +31,8 @@ Defines the persistent data model requirements. `Design/Database_Schema_Design.m
 | ID | Requirement |
 |---|------|
 | REQ-DB-008 | Store user accounts: email (unique), display name, enabled flag, authentication source (`oauth2`|`ldap`|`local`), the `is_admin` flag (GD-4), the UI language setting (default `en`, GD-12), the UI theme override `ui_theme` (nullable; one of the installed theme identifiers, or `NULL` = follow the installation default `UI_THEME` — GD-26, REQ-TECH-027, REQ-CFG-031), the local password hash (nullable; bcrypt; table-based authentication — GD-18), the account validity end date `valid_until` (nullable date; `NULL` = indefinite; set as days with `0` = indefinite — GD-19), and the last successful login `last_login_at` (nullable UTC timestamp; updated on every successful login — GD-19). |
-| REQ-DB-009 | Store project roles: role name (unique per project), project-scoped, with per-arm permission assignments — a data access level and an export level for each arm (GD-2) — plus the project-level `project_admin` flag; an arm not listed in a role defaults to `no_access` / `export_none`. The example presets `data-manager`, `data-entry`, `controller` MAY be seeded per project; a project MAY have zero roles (REQ-AUTH-020). |
+| REQ-DB-009 | Store project roles: role name (unique per project), project-scoped, with the **per-arm default** permission assignment — a data access level and an export level for each arm (GD-2) — plus the project-level `project_admin` flag; an arm not listed in a role defaults to `no_access` / `export_none`. The ordering that once ranked `delete` and `edit_survey_responses` above `view_edit` no longer holds (REQ-AUTH-070). The example presets `data-manager`, `data-entry`, `controller` MAY be seeded per project; a project MAY have zero roles (REQ-AUTH-020). |
+| REQ-DB-040 | Below the arm default, the store MUST hold the role's **per-(instrument, event) grant**: for each pair of the arm, its data access level, export level, and the two rights **delete instrument values** and **edit collected surveys** (REQ-AUTH-069). The pair MUST be addressed by stable identifiers with the grant removed by cascade when the instrument or the event goes away, so a re-created name inherits nothing. A pair with no stored grant resolves to the arm default at evaluation time — the absence of a row is not a permission (REQ-AUTH-019). |
 | REQ-DB-010 | Store user-project assignments: unique per (user, project), nullable role (role-less = full permissions for that project), and the project token (UUID) unique across the database. |
 
 ### 2.3 Project Structure
@@ -69,6 +70,7 @@ Defines the persistent data model requirements. `Design/Database_Schema_Design.m
 | ID | Requirement |
 |---|------|
 | REQ-DB-027 | Store survey link tokens: opaque unique token, project, record, survey instrument, created by, created at, and a revoked flag; the token is stable per (project, record, instrument) until revoked (GD-9, REQ-API-082/085). |
+| REQ-DB-041 | A survey link MUST also carry the **collection date** — the UTC timestamp of the first response saved through it, `NULL` while nothing has been collected. The API MUST stamp it on the first save and MUST NOT overwrite it on a later save, so "collected" (REQ-AUTH-071) is a stored fact rather than an inference from the presence of values, and clearing every value through the link leaves the response collected. |
 
 ### 2.7 Data Access Groups
 

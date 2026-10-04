@@ -32,13 +32,19 @@ These shape or block the work downstream. All five are closed (P0-a and P0-b on 
 
 ```json
 "permissions": { "project_admin": false,
-                 "arms": [ { "arm_num": 1, "data_access_level": "view_edit", "export_level": "export_de_identified" } ] }
+                 "arms":   [ { "arm_num": 1, "data_access_level": "view_edit", "export_level": "export_de_identified",
+                               "delete_values": false, "edit_surveys": false } ],
+                 "grants": [ { "unique_event_name": "baseline_arm_1", "instrument": "intake",
+                               "data_access_level": "read_only", "export_level": "export_none",
+                               "delete_values": false, "edit_surveys": false } ] }
 ```
+
+*Amended 2026-10-03:* the block gained the two rights and the `grants[]` list when permissions moved from arm to (instrument, event) pair (REQ-AUTH-069); the shape above is the current one.
 
 Specified as **REQ-API-126** (`Requirements/API_Endpoints_Requirement.md` §4.4; rationale recorded as DEV-API-18), documented in `Design/API_Endpoints_Design.md` §4.5, implemented in `api/internal/admin/projects.go` over the same `authz.Effective` result the boundary applies, covered by `TestProjectDetailCarriesEffectivePermissions`. What the web layer relies on:
 
-- one entry per project arm, always — an ungranted arm reports `no_access` / `export_none`, so a level is never inferred from a missing row (`REQ-AUTH-019`);
-- `is_admin` and role-less members see `edit_survey_responses` / `export_full` on every arm plus `project_admin: true` (`REQ-AUTH-023/022`) — no special-casing in PHP;
+- one entry per project arm, always, plus one `grants[]` entry per mapped (instrument, event) pair of a visible arm — an ungranted arm reports `no_access` / `export_none` and an ungranted pair reports its arm's default, so a level is never inferred from a missing row (`REQ-AUTH-019/069`). The list is the same cardinality as the record status dashboard it gates, and arrives in arm-then-event order so PHP walks it without sorting;
+- `is_admin` and role-less members see `view_edit` + both rights / `export_full` on every arm and pair plus `project_admin: true` (`REQ-AUTH-023/022`) — no special-casing in PHP;
 - the block is disclosed only past the same `read_only` + visibility gate as the rest of the read; a rejected read carries none at all (`REQ-API-007`);
 - it authorizes nothing — every endpoint re-checks at call time (`REQ-AUTH-033`).
 
@@ -125,7 +131,7 @@ No Composer dependency in phase 1: OAuth2 authorization-code + PKCE with `curl` 
 | `ApiClient` | Adds `X-Internal-Service-Token` + `X-Internal-User-Id` on every call; forwards the caller's address as `X-Real-IP` (`Technology_Stack_Design.md` §5, `REQ-API-125`). **Admin writes reject unknown attributes with 400** (`admin.go:435`) — send exactly the whitelisted names, per area. Data-API calls behave oppositely: unknown parameters are dropped. Maps `{error,message,status}` to an exception carrying the stable code for `Messages.php` |
 | `Session` | Keys and lifetimes exactly as `Authentication_Authorization_Design.md` §3; `session_regenerate_id(true)` on login and on TFA promotion; identity only — permissions never cached, project tokens excepted per the §8.6 cache rule |
 | `Auth` | `require_login()` as the FIONA `AC.php` pattern: first statement of every controller; expired session → redirect `/login`. `tfa_pending` is pre-authentication and must be rejected by every page guard |
-| `Permissions` | Reads the `permissions` block of the project detail read (REQ-API-126) once per request; exposes `canView/canEdit/canDelete/exportLevel/isProjectAdmin`. Templates call only this. Hidden means not emitted — no `disabled`, no 403 link (`REQ-UI-003`) |
+| `Permissions` | Reads the `permissions` block of the project detail read (REQ-API-126) once per request, indexed by pair; exposes `canView($event,$instrument)/canEdit($event,$instrument)/canDeleteValues($event,$instrument)/canEditSurveys($event,$instrument)/exportLevel($event,$instrument)/isProjectAdmin`, plus arm-level forms of the first two for project-wide controls. A predicate with no pair argument means "any pair" and must never stand in for a specific one when the template knows it (REQ-AUTH-069). Templates call only this. Hidden means not emitted — no `disabled`, no 403 link (`REQ-UI-003`) |
 | `View` / escaping | Escape every interpolation; the single exception is stored free-text allowlist HTML (§3.2). CSP on every response, `style-src 'self'` achievable if all styling goes through `app.css`/Bootstrap classes rather than inline `style=` attributes |
 | `I18n` | English array in code, DB overlay from `GET /api/v1/i18n/bundle`; a key that resolves to nothing renders English, never blank or raw (`REQ-UI-008`). JS-visible strings injected as one `<script type="application/json" data-i18n>` block (§9) — no data values in it. Cache the bundle per session and invalidate on `POST /lang` |
 | `Router` | The §2.1 route set, the `?action=` mutation convention, and **the one** page-vs-JSON dispatch (`REQ-UI-044`): after the guard and permission gate, before the controller, `Accept: application/json` selects the route's declared data region instead of its template. Controllers never test the request type themselves; a route with no declared region answers 406, not HTML |
@@ -165,7 +171,7 @@ These are the ones most likely to be got wrong, gathered from the code-level fac
 2. **Never call `GET …/instruments/{iid}/fields/order`.** It routes to the reorder handler and needs a body (`structure.go:42,45`). Field order comes from `GET …/fields`.
 3. **Negative provisional ids.** While a staging set is open, objects created in it carry negative ids and structure reads return the staged snapshot (`admin.go:156-165`) — forms and links must tolerate them.
 4. **Project creation already seeds arm 1 and a `baseline` event** (`projects.go`, HEAD). Do not create them from the UI; offer the link into setup instead (§5.2).
-5. **Roles are create-only** — there is no role update or delete endpoint, and no user delete (disable only). The UI must not offer either.
+5. **Roles are editable, not deletable** — `PUT /api/v1/projects/{id}/roles/{rid}` (REQ-API-143) replaces a role's name, arm defaults and pair grants in one call, so the roles screen is one form in create or edit mode (`User_Interface_Design.md` §5.4). There is still no role delete and no user delete (disable only), and the UI offers neither. Deleting a role would leave its members' `role_id` null, which reads as *full permissions* (`REQ-AUTH-022`) — a deletion endpoint must not be added without first closing that fail-open path (master-spec finding F20).
 6. **Login's 2FA responses are non-standard 401s** (`mfa_required` with `method`, `tfa_enrollment_required` with `user_id`) — branch on `error`, not on status alone; the enrollment wizard runs pre-session using that id as `X-Internal-User-Id`. A local challenge resumes with the P0-e handle and never with the password, and 401 `first_factor_expired` clears the pending state back to the credential form rather than showing a failure line.
 7. **Token cache discipline (§8.6).** Fetch the member's project token via `GET …/users/{uid}/token`, cache per (user, project) in the session, and on data-API **401 `Invalid token`** discard + refetch + retry exactly once; a 403 is a permission result and is never retried.
 8. **Submission policy (GD-14).** Send only fields carrying a value plus fields whose stored value the user removed (tracked client-side against the §8.3 prefill). An empty value that reaches the API clears the row (`REQ-VAL-024`).
