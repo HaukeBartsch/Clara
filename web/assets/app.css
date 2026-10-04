@@ -152,11 +152,12 @@
   gap: 0.5rem;
 }
 
+/* A tile is an 18rem Bootstrap card (card, card-img-top, card-body, card-text —
+   VISION_AND_REQUIREMENTS.md, "Adjust login screen"), wrapping in the flex row above. */
 .clara-source {
   position: relative;
-  flex: 1 1 0;
-  min-width: 6.5rem;
-  max-width: 9rem;
+  width: 18rem;
+  max-width: 100%;
   margin: 0;
 }
 
@@ -172,30 +173,24 @@
   z-index: 1;
 }
 
+/* The card class supplies the column layout, frame and background; Clara keeps the frame
+   two pixels wide so the hover and chosen states below read as a colour change. */
 .clara-source-tile {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  aspect-ratio: 1 / 1;
-  padding: 0.625rem;
-  border: 2px solid var(--bs-border-color);
-  border-radius: var(--bs-border-radius-lg);
-  background-color: var(--bs-body-bg);
-  color: var(--bs-body-color);
+  border-width: 2px;
   transition: opacity 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
+/* The picture band across the card top. The icons are small squares, so they are fitted
+   inside a fixed-height band instead of scaled to the full card width. */
 .clara-source-icon {
-  flex: 0 0 auto;
-  width: 1.75rem;
-  height: 1.75rem;
-  object-fit: cover;
-  border-radius: var(--bs-border-radius);
+  height: 6rem;
+  object-fit: contain;
+  background-color: var(--bs-tertiary-bg);
 }
 
 .clara-source-name {
-  min-width: 0;
-  font-size: 0.875rem;
+  display: block;
+  font-size: 1rem;
   font-weight: 500;
   line-height: 1.2;
   overflow-wrap: break-word;

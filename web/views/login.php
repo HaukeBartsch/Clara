@@ -33,11 +33,12 @@ use Clara\View;
         <fieldset class="mb-2">
             <legend class="form-label h6 mb-1 visually-hidden"><?= View::e($view->t('login.source_help')) ?></legend>
             <?php
-            // One tile per name, side by side (wrapping on narrow screens). Each tile is still
-            // a real radio: the input is stretched invisibly over the tile inside its label,
-            // so keyboard and screen reader behave as with a plain radio group. Once a name is
-            // chosen the container carries clara-sources-chosen and the other tiles grey out
-            // (app.css, "source tiles").
+            // One tile per name, each a Bootstrap card — hospital picture across the top, name
+            // as card text (VISION_AND_REQUIREMENTS.md, "Adjust login screen") — laid out side
+            // by side and wrapping on narrow screens. Each tile is still a real radio: the input
+            // is stretched invisibly over the tile inside its label, so keyboard and screen
+            // reader behave as with a plain radio group. Once a name is chosen the container
+            // carries clara-sources-chosen and the other tiles grey out (app.css, "source tiles").
             ?>
             <?php
             // One hospital picture per tile, picked at random on every render: the icon list is
@@ -55,12 +56,14 @@ use Clara\View;
                     <label class="clara-source" for="source-<?= $index ?>">
                         <input class="clara-source-input" type="radio" name="source" id="source-<?= $index ?>"
                                value="<?= View::e($source['name']) ?>"<?= $checked ? ' checked' : '' ?>>
-                        <span class="clara-source-tile">
+                        <span class="clara-source-tile card">
                             <?php if ($icons !== []): ?>
-                                <img class="clara-source-icon" alt="" aria-hidden="true" width="28" height="28"
+                                <img class="clara-source-icon card-img-top" alt="" aria-hidden="true"
                                      src="/assets/hospital_icons/<?= rawurlencode(basename($icons[$index % count($icons)])) ?>">
                             <?php endif; ?>
-                            <span class="clara-source-name"><?= View::e($source['name']) ?></span>
+                            <span class="card-body">
+                                <span class="clara-source-name card-text"><?= View::e($source['name']) ?></span>
+                            </span>
                         </span>
                     </label>
                 <?php endforeach; ?>
