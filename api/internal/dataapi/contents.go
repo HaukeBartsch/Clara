@@ -139,21 +139,25 @@ func (h *Handler) contentEvent(ctx context.Context, w http.ResponseWriter, enc s
 // metaRow is one content=metadata object (REQ-API-019); matrix rows are
 // ordinary field rows sharing matrix_group (REQ-DB-014).
 type metaRow struct {
-	FieldName        string `json:"field_name"`
-	FormName         string `json:"form_name"`
-	SectionHeader    string `json:"section_header"`
-	FieldType        string `json:"field_type"`
-	FieldLabel       string `json:"field_label"`
-	FieldNote        string `json:"field_note"`
-	ChoiceCodes      string `json:"choice_codes"`
-	ChoiceLabels     string `json:"choice_labels"`
-	ValidationType   string `json:"validation_type"`
-	ValidationMin    string `json:"validation_min"`
-	ValidationMax    string `json:"validation_max"`
-	RequiredField    string `json:"required_field"`
-	BranchingLogic   string `json:"branching_logic"`
-	MatrixGroupName  string `json:"matrix_group_name"`
-	RecordIdentifier string `json:"record_identifier"`
+	FieldName     string `json:"field_name"`
+	FormName      string `json:"form_name"`
+	SectionHeader string `json:"section_header"`
+	FieldType     string `json:"field_type"`
+	FieldLabel    string `json:"field_label"`
+	FieldNote     string `json:"field_note"`
+	// REDCap's combined column beside the split pair, so REDCap-keyed
+	// parsers find it (REQ-API-019): "code, label | …", or the calculation
+	// expression on a calculated field.
+	SelectChoicesOrCalculations string `json:"select_choices_or_calculations"`
+	ChoiceCodes                 string `json:"choice_codes"`
+	ChoiceLabels                string `json:"choice_labels"`
+	ValidationType              string `json:"validation_type"`
+	ValidationMin               string `json:"validation_min"`
+	ValidationMax               string `json:"validation_max"`
+	RequiredField               string `json:"required_field"`
+	BranchingLogic              string `json:"branching_logic"`
+	MatrixGroupName             string `json:"matrix_group_name"`
+	RecordIdentifier            string `json:"record_identifier"`
 	// This system's key beyond the REDCap shape (REQ-API-019): tolerated by
 	// naive parsers as an extra key, cf. REQ-API-018.
 	DirectIdentifier string `json:"direct_identifier"`
@@ -184,22 +188,29 @@ func (h *Handler) contentMetadata(ctx context.Context, w http.ResponseWriter, en
 		if wantForms != nil && !wantForms[form[f.InstrumentID]] {
 			continue
 		}
-		codes, labels := splitChoices(f.Choices.String)
+		codes, labels, combined := splitChoices(f.Choices.String)
+		// REDCap carries the calculation expression in the same key as the
+		// choices; a calculated field has none.
+		selOrCalc := combined
+		if f.FieldType == "calculated" {
+			selOrCalc = f.Calculation.String
+		}
 		rows = append(rows, metaRow{
-			FieldName:       f.FieldName,
-			FormName:        form[f.InstrumentID],
-			SectionHeader:   f.SectionHeader.String,
-			FieldType:       f.FieldType,
-			FieldLabel:      f.FieldLabel.String,
-			FieldNote:       f.FieldNote.String,
-			ChoiceCodes:     codes,
-			ChoiceLabels:    labels,
-			ValidationType:  f.ValidationType.String,
-			ValidationMin:   f.ValidationMin.String,
-			ValidationMax:   f.ValidationMax.String,
-			RequiredField:   yn(f.Required),
-			BranchingLogic:  f.BranchingLogic.String,
-			MatrixGroupName: f.MatrixGroup.String,
+			FieldName:                   f.FieldName,
+			FormName:                    form[f.InstrumentID],
+			SectionHeader:               f.SectionHeader.String,
+			FieldType:                   f.FieldType,
+			FieldLabel:                  f.FieldLabel.String,
+			FieldNote:                   f.FieldNote.String,
+			SelectChoicesOrCalculations: selOrCalc,
+			ChoiceCodes:                 codes,
+			ChoiceLabels:                labels,
+			ValidationType:              f.ValidationType.String,
+			ValidationMin:               f.ValidationMin.String,
+			ValidationMax:               f.ValidationMax.String,
+			RequiredField:               yn(f.Required),
+			BranchingLogic:              f.BranchingLogic.String,
+			MatrixGroupName:             f.MatrixGroup.String,
 			// GD-8: the record identifier is the first field of the
 			// first instrument (ListFields is in that order).
 			RecordIdentifier: yn(i == 0),
@@ -209,13 +220,14 @@ func (h *Handler) contentMetadata(ctx context.Context, w http.ResponseWriter, en
 	render(w, enc, p.Delimiter(), rows)
 }
 
-// splitChoices expands the stored code$label##code$label encoding into
-// the comma-joined choice_codes and choice_labels (§3.4).
-func splitChoices(s string) (codes, labels string) {
+// splitChoices expands the stored code$label##code$label encoding into the
+// comma-joined choice_codes and choice_labels plus REDCap's combined
+// "code, label | …" rendering (§3.4, REQ-API-019).
+func splitChoices(s string) (codes, labels, combined string) {
 	if s == "" {
-		return "", ""
+		return "", "", ""
 	}
-	c, l := []string{}, []string{}
+	c, l, joined := []string{}, []string{}, []string{}
 	for _, pair := range strings.Split(s, "##") {
 		if pair == "" {
 			continue
@@ -227,8 +239,9 @@ func splitChoices(s string) (codes, labels string) {
 		} else {
 			l = append(l, kv[0])
 		}
+		joined = append(joined, kv[0]+", "+l[len(l)-1])
 	}
-	return strings.Join(c, ","), strings.Join(l, ",")
+	return strings.Join(c, ","), strings.Join(l, ","), strings.Join(joined, " | ")
 }
 
 func yn(b bool) string {

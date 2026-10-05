@@ -748,6 +748,8 @@ A projects role has permission groups for "data access" and "export". In an arm 
 
 Define/Edit a role for your project with name like "data manager", "data-entry", "controller", etc.. 
 Each role stores permissions by arm like this:
+
+```
 ┌────────────────────┬───────────────────┐
 │ Permissions arm_1  │ Permissions arm_2 │   
 ├──────────────┬─────┴───────────────────┴───────────────────────┬────────────────────────────────────────┐
@@ -768,17 +770,13 @@ Each role stores permissions by arm like this:
 │ instrument 2 │ ( )    │ ( )  │ (O)  │    [X]     │     [X]     │ ( )  │ ( )        │ ( )         │ (O)  │
 │ (followup)   │        │      │      │            │             │      │            │             │      │
 └──────────────┴────────┴──────┴──────┴────────────┴─────────────┴──────┴────────────┴─────────────┴──────┘
-
-
-## Adjust login screen
-
-Style a clara-source-tile with bootstrap like this:
-
-```html
-<div class="card" style="width: 18rem;">
-  <img class="card-img-top" src="..." alt="Hospital 1 image">
-  <div class="card-body">
-    <p class="card-text">Hospital 1</p>
-  </div>
-</div>
 ```
+
+Survey links should also be keyed by events. For example an instrument enabled for several events will have a different survey link for each event.
+
+
+## Later: bcrypt password improvements
+
+The bcrypt algorithm requires a password with a maximum length (72b). Swtich to Argon2 with buildin libraries that do not have that limitation. Use for golang the official golang.org/x/crypto/argon2 package.
+
+Check if other functionality in the api/ (golang) can be implemented by using official packages.

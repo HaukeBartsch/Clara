@@ -50,19 +50,22 @@ func TestNextRecordName(t *testing.T) {
 
 // splitChoices expands the stored code$label##code$label encoding (§3.4).
 func TestSplitChoices(t *testing.T) {
-	codes, labels := splitChoices("1$Pending##2$Done##3$Cancelled")
+	codes, labels, combined := splitChoices("1$Pending##2$Done##3$Cancelled")
 	if codes != "1,2,3" {
 		t.Errorf("codes = %q, want %q", codes, "1,2,3")
 	}
 	if labels != "Pending,Done,Cancelled" {
 		t.Errorf("labels = %q, want %q", labels, "Pending,Done,Cancelled")
 	}
-	// A code with no label falls back to the code as its own label.
-	if c, l := splitChoices("9"); c != "9" || l != "9" {
-		t.Errorf("splitChoices(%q) = %q,%q, want 9,9", "9", c, l)
+	if combined != "1, Pending | 2, Done | 3, Cancelled" {
+		t.Errorf("combined = %q, want %q", combined, "1, Pending | 2, Done | 3, Cancelled")
 	}
-	if c, l := splitChoices(""); c != "" || l != "" {
-		t.Errorf("splitChoices(%q) = %q,%q, want empty", "", c, l)
+	// A code with no label falls back to the code as its own label.
+	if c, l, j := splitChoices("9"); c != "9" || l != "9" || j != "9, 9" {
+		t.Errorf("splitChoices(%q) = %q,%q,%q, want 9,9,\"9, 9\"", "9", c, l, j)
+	}
+	if c, l, j := splitChoices(""); c != "" || l != "" || j != "" {
+		t.Errorf("splitChoices(%q) = %q,%q,%q, want empty", "", c, l, j)
 	}
 }
 
@@ -276,11 +279,35 @@ func TestContentEvent(t *testing.T) {
 
 func TestContentMetadata(t *testing.T) {
 	h, full, _ := testHandler(t)
+
+	// A dropdown and a calculated field, so the REDCap combined key shows
+	// both of its renderings on the wire (REQ-API-019).
+	ctx := context.Background()
+	proj, err := h.Store.GetProjectByName(ctx, "proj-"+t.Name())
+	if err != nil {
+		t.Fatalf("GetProjectByName: %v", err)
+	}
+	ins, err := h.Store.ListInstruments(ctx, proj.ID)
+	if err != nil || len(ins) != 2 {
+		t.Fatalf("ListInstruments = %v (%v), want two instruments", ins, err)
+	}
+	add := func(f db.Field) {
+		// Second instrument, so the seeded intake order asserted below holds.
+		f.ProjectID, f.InstrumentID = proj.ID, ins[1].ID
+		if _, err := h.Store.AddField(ctx, &f); err != nil {
+			t.Fatalf("AddField %s: %v", f.FieldName, err)
+		}
+	}
+	add(db.Field{FieldName: "status", FieldType: "dropdown",
+		Choices: sql.NullString{String: "1$Pending##2$Done##3$Cancelled", Valid: true}})
+	add(db.Field{FieldName: "bmi", FieldType: "calculated",
+		Calculation: sql.NullString{String: "[weight] / ([height] / 100) ^ 2", Valid: true}})
+
 	code, body := do(t, h, url.Values{"token": {full}, "content": {"metadata"}, "format": {"json"}})
 	mustStatus(t, code, http.StatusOK, body)
 	out := decodeJSON(t, body)
-	if len(out) != 3 {
-		t.Fatalf("want 3 field rows, got %d", len(out))
+	if len(out) != 5 {
+		t.Fatalf("want 5 field rows, got %d", len(out))
 	}
 	// Instrument order, then position: intake{record_id, age}, visit{visit_flag}.
 	if out[0]["field_name"] != "record_id" || out[1]["field_name"] != "age" || out[2]["field_name"] != "visit_flag" {
@@ -298,13 +325,35 @@ func TestContentMetadata(t *testing.T) {
 		t.Errorf("non-first record_identifier = %v / %v, want empty",
 			out[1]["record_identifier"], out[2]["record_identifier"])
 	}
+	rows := map[string]map[string]any{}
 	for _, r := range out {
-		if r["field_type"] != "text" {
-			t.Errorf("field %v type = %v, want text", r["field_name"], r["field_type"])
-		}
+		name, _ := r["field_name"].(string)
+		rows[name] = r
 		if r["required_field"] != "" {
 			t.Errorf("field %v required_field = %v, want empty (none required)", r["field_name"], r["required_field"])
 		}
+	}
+	for _, name := range []string{"record_id", "age", "visit_flag"} {
+		if rows[name]["field_type"] != "text" {
+			t.Errorf("field %v type = %v, want text", name, rows[name]["field_type"])
+		}
+		// The combined key is present on every row, empty where there are
+		// neither choices nor a calculation.
+		if rows[name]["select_choices_or_calculations"] != "" {
+			t.Errorf("field %v select_choices_or_calculations = %v, want empty",
+				name, rows[name]["select_choices_or_calculations"])
+		}
+	}
+	// Choices render in REDCap's combined form beside the split pair.
+	if got := rows["status"]["select_choices_or_calculations"]; got != "1, Pending | 2, Done | 3, Cancelled" {
+		t.Errorf("status select_choices_or_calculations = %v", got)
+	}
+	if rows["status"]["choice_codes"] != "1,2,3" || rows["status"]["choice_labels"] != "Pending,Done,Cancelled" {
+		t.Errorf("status split pair = %v / %v", rows["status"]["choice_codes"], rows["status"]["choice_labels"])
+	}
+	// A calculated field carries its expression in the same key.
+	if got := rows["bmi"]["select_choices_or_calculations"]; got != "[weight] / ([height] / 100) ^ 2" {
+		t.Errorf("bmi select_choices_or_calculations = %v", got)
 	}
 }
 
