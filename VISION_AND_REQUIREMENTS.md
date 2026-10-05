@@ -777,6 +777,6 @@ Survey links should also be keyed by events. For example an instrument enabled f
 
 ## Later: bcrypt password improvements
 
-The bcrypt algorithm requires a password with a maximum length (72b). Swtich to Argon2 with buildin libraries that do not have that limitation. Use for golang the official golang.org/x/crypto/argon2 package.
+The bcrypt algorithm requires a password with a maximum length (72b). Switch to Argon2 with buildin libraries that do not have that limitation. Use for golang the official golang.org/x/crypto/argon2 package.
 
 Check if other functionality in the api/ (golang) can be implemented by using official packages.

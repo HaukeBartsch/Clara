@@ -1,0 +1,2137 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "CLARA API",
+    "version": "1.0.0",
+    "summary": "Clinical Logbook for Automated Research Assistance — REDCap API replacement",
+    "description": "Two surfaces (REQ-API-001): the REDCap-compatible data API at `POST /api/` (and `GET /api/`) with the caller token as the `token` parameter in the request body or query string (never an `Authorization` header, REQ-API-010), and the administration API under `/api/v1/`. The administration surface is reachable only from the trusted internal path (REQ-TECH-018): every request carries a valid `X-Internal-Service-Token` and — except for the pre-authentication endpoints of §4.3 — the authoritative `X-Internal-User-Id` of the acting user. The browser MUST NOT call `/api/v1/*` directly (GD-1).\n\nConventions (`Design/API_Endpoints_Design.md` §1): UTC and UTF-8; system timestamps are `YYYY-MM-DD HH:MM:SS` in UTC; absent optionals are `null`. Administration errors share the shape `{ \"error\": <stable code>, \"message\": <human-readable>, \"status\": <http status> }`; data-API errors are rendered in the requested response format (`json`: `{ \"error\": \"…\" }`, `csv`: a single line).\n\nThis document is hand-maintained (REQ-TECH-004, REQ-API-002) and served at `GET /openapi.json`; the interactive UI is the vendored Swagger UI bundle at `GET /docs`."
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "The Go API process. nginx routes only POST /api/ (plus the PHP application) publicly; /api/v1/* and the documentation endpoints stay off the public network (Technology_Stack_Design.md §5)."
+    }
+  ],
+  "tags": [
+    { "name": "Health", "description": "Liveness probe (REQ-API-003)." },
+    { "name": "Documentation", "description": "This document and the Swagger UI (REQ-API-002, REQ-TECH-004)." },
+    { "name": "Data API", "description": "REDCap-compatible surface at /api/ — one endpoint dispatched by the `content` parameter (REQ-API-009…039)." },
+    { "name": "Admin: Session", "description": "Login, logout and the pre-authentication password endpoints of Sequence H (§4.3)." },
+    { "name": "Admin: Users", "description": "User administration, invitations, password lifecycle and two-factor enrollment (§4.4)." },
+    { "name": "Admin: Projects", "description": "Project metadata, members, tokens and roles (§4.5–§4.7)." },
+    { "name": "Admin: Structure", "description": "Arms, events, instruments, fields and the instrument-event mapping (§4.8–§4.12)." },
+    { "name": "Admin: Records", "description": "Record status, completion, export, history, survey links and data access groups (§4.13–§4.18)." },
+    { "name": "Admin: Audit", "description": "Read-only audit log (REQ-API-077…078)." },
+    { "name": "Admin: i18n", "description": "Languages, translation bundles and personal appearance (§4.19)." },
+    { "name": "Admin: Modes & Staging", "description": "Project modes, end-of-project provision and the production staging set (§4.20–§4.21)." },
+    { "name": "Admin: Settings", "description": "System settings including the rate limiter (§4.22)." }
+  ],
+  "security": [
+    { "InternalServiceToken": [], "InternalUserId": [] }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "tags": ["Health"],
+        "operationId": "getHealth",
+        "summary": "Liveness probe (REQ-API-003)",
+        "description": "Unauthenticated; reports liveness without returning data. `503` with `status: degraded` when the bounded database check fails.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Alive and the database answers.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HealthStatus" }, "example": { "status": "ok", "db": "ok" } } }
+          },
+          "503": {
+            "description": "The database check failed.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HealthStatus" }, "example": { "status": "degraded", "db": "error" } } }
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "tags": ["Documentation"],
+        "operationId": "getOpenApiDocument",
+        "summary": "This OpenAPI 3.1 document (REQ-API-002)",
+        "description": "The hand-maintained specification covering both surfaces, served from the API binary.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The OpenAPI document.",
+            "content": { "application/json": { "schema": { "type": "object", "description": "An OpenAPI 3.1 specification document." } } }
+          }
+        }
+      }
+    },
+    "/docs": {
+      "get": {
+        "tags": ["Documentation"],
+        "operationId": "getDocsUi",
+        "summary": "Swagger UI (REQ-API-002, REQ-TECH-004)",
+        "description": "Interactive documentation from the vendored `swagger-ui-dist` bundle pointed at `/openapi.json`. Internal-only routing per Technology_Stack_Design.md §5.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The Swagger UI page.",
+            "content": { "text/html": { "schema": { "type": "string" } } }
+          }
+        }
+      }
+    },
+    "/api/": {
+      "post": {
+        "tags": ["Data API"],
+        "operationId": "dataApiPost",
+        "summary": "REDCap-compatible data API (REQ-API-009…039)",
+        "description": "One endpoint dispatched by the `content` parameter with an `application/x-www-form-urlencoded` body. With `content=record`, a call carrying `data` is an import, one without it an export; deletion needs `action=delete`. Unknown parameters are accepted and ignored, never rejected (REQ-API-017). The token is the `token` parameter — never read from an `Authorization` header (REQ-API-010). Survey-link tokens are accepted only for the calls that render and fill their (record, instrument) pair: `content=metadata` (that instrument only) and a record import scoped to that record and instrument; everything else is 403 `Permission denied` (§3.10, REQ-API-083).\n\nError bodies are rendered in the requested response format (§3.2): 401 `Invalid token`, 400 `Invalid content`, 403 `Permission denied`, 403 `Project in analysis mode` for writes to an analysis-mode project, 429 `Rate limit exceeded` (with `Retry-After`).",
+        "security": [],
+        "parameters": [
+          { "name": "Accept", "in": "header", "required": false, "schema": { "type": "string" }, "description": "text/csv is the REDCap default rendering; application/json selects JSON." }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": { "$ref": "#/components/schemas/DataApiRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The result of the requested `content`. The JSON shape depends on `content` — see the examples. Record imports answer per-row result rows (or `{\"count\": N}` with `returnContent=count`, REQ-API-142); validation failures are per-record, not request-level (REQ-API-034).",
+            "content": {
+              "application/json": {
+                "schema": { "type": "array", "items": { "type": "object", "additionalProperties": { "type": "string" } }, "description": "Result rows; `generateNextRecordName` answers a single object and `returnContent=count` answers `{\"count\": N}`." },
+                "examples": {
+                  "project": {
+                    "summary": "content=project (REQ-API-018)",
+                    "value": [{ "project_id": "33", "project_name": "8DISC", "project_title": "8DISC study", "project_description": "", "project_pi_name": "Ansgar Espeland", "project_pi_email": "ansgar.espeland@example.org", "project_rek_number": "REK-2026/123", "project_rek_start_date": "2026-01-01", "project_rek_end_date": "2028-01-01", "project_start_date": "2026-01-01", "project_end_date": "2028-01-01", "project_end_provision": "", "project_organizational": "NAT EU", "project_creation_time": "2026-01-01 09:00:00", "project_pat_import_folder": "", "surveys_enabled": "0", "randomization_enabled": "0" }]
+                  },
+                  "metadata": {
+                    "summary": "content=metadata (REQ-API-019)",
+                    "value": [{ "field_name": "record_id", "form_name": "intake", "section_header": "", "field_type": "text", "field_label": "Record ID", "field_note": "", "select_choices_or_calculations": "", "choice_codes": "", "choice_labels": "", "validation_type": "", "validation_min": "", "validation_max": "", "required_field": "Y", "branching_logic": "", "matrix_group_name": "", "record_identifier": "Y", "direct_identifier": "Y" }]
+                  },
+                  "event": {
+                    "summary": "content=event (REQ-API-020, canonical per-arm order GD-15)",
+                    "value": [{ "event_name": "baseline", "arm_num": "1", "unique_event_name": "baseline_arm_1", "event_id": "4" }]
+                  },
+                  "formEventMapping": {
+                    "summary": "content=formEventMapping (REQ-API-021)",
+                    "value": [{ "form_name": "intake", "event_name": "baseline", "arm_num": "1", "unique_event_name": "baseline_arm_1", "form_event_mapping": "1" }]
+                  },
+                  "exportFieldNames": {
+                    "summary": "content=exportFieldNames (REQ-API-022)",
+                    "value": [{ "field_name": "record_id", "form_name": "intake" }]
+                  },
+                  "generateNextRecordName": {
+                    "summary": "content=generateNextRecordName (REQ-API-023)",
+                    "value": { "next_record_name": "8DISC042" }
+                  },
+                  "recordExportFlat": {
+                    "summary": "content=record export, type=flat (REQ-API-028; normative)",
+                    "value": [{ "record_id": "8DISC042", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "", "redcap_repeat_instance": "", "age": "42", "status": "2", "notes": "", "intake_complete": "1" }]
+                  },
+                  "importResultRows": {
+                    "summary": "content=record import — result rows (REQ-API-034; import_record_id 1 added, 2 updated, 0 validation error)",
+                    "value": [
+                      { "record_id": "8DISC042", "form_name": "intake", "import_record_id": "2", "import_form_name": "intake" },
+                      { "record_id": "8DISC043", "form_name": "intake", "import_record_id": "0", "import_form_name": "Validation error: age: TYPE_INVALID — value \"abc\" is not a valid integer; status: CHOICE_INVALID — value \"9\" is not a choice of \"status\"" }
+                    ]
+                  },
+                  "importCount": {
+                    "summary": "content=record import with returnContent=count (REQ-API-142)",
+                    "value": { "count": 86 }
+                  },
+                  "deleteResult": {
+                    "summary": "content=record&action=delete (REQ-API-036)",
+                    "value": [{ "record_id": "8DISC042", "form_name": "", "deleted": "1" }]
+                  }
+                }
+              },
+              "text/csv": {
+                "schema": { "type": "string", "description": "The same result as CSV — the REDCap default when neither `format` nor `returnFormat` says otherwise. Streamed, quoted per standard CSV rules, honoring `csvDelimiter` (REQ-API-029)." }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/DataApiInvalidContent" },
+          "401": { "$ref": "#/components/responses/DataApiInvalidToken" },
+          "403": { "$ref": "#/components/responses/DataApiForbidden" },
+          "429": { "$ref": "#/components/responses/DataApiRateLimited" }
+        }
+      },
+      "get": {
+        "tags": ["Data API"],
+        "operationId": "dataApiGet",
+        "summary": "REDCap-compatible data API via query string (REQ-API-009)",
+        "description": "`GET /api/` with the same parameters in the query string MUST also work. Behaviour, responses and errors are identical to `POST /api/`.",
+        "security": [],
+        "parameters": [
+          { "name": "token", "in": "query", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Project API token or survey-link token (§3.10)." },
+          { "name": "content", "in": "query", "required": true, "schema": { "$ref": "#/components/schemas/ContentValue" } },
+          { "name": "action", "in": "query", "required": false, "schema": { "type": "string", "enum": ["export", "import", "delete"] }, "description": "Only `delete` dispatches; `export`/`import` are accepted and never override the `data` rule (REQ-API-012)." },
+          { "name": "format", "in": "query", "required": false, "schema": { "type": "string", "enum": ["json", "csv"], "default": "csv" } },
+          { "name": "returnFormat", "in": "query", "required": false, "schema": { "type": "string", "enum": ["json", "csv"] }, "description": "Takes precedence over `format` for the response encoding (REQ-API-013)." },
+          { "name": "type", "in": "query", "required": false, "schema": { "type": "string", "enum": ["flat", "wide"], "default": "wide" }, "description": "`flat` is normative — one row per (record, event); `wide` is the simplified compatibility mode (§3.6.2, DEV-API-1)." },
+          { "name": "csvDelimiter", "in": "query", "required": false, "schema": { "type": "string", "default": "," }, "description": "Single character; empty value = comma (REQ-API-029)." },
+          { "name": "records", "in": "query", "required": false, "schema": { "type": "array", "items": { "type": "string" } }, "style": "form", "explode": true, "description": "Repeated values or the REDCap indexed syntax `records[0]=…` (REQ-API-015)." },
+          { "name": "fields", "in": "query", "required": false, "schema": { "type": "array", "items": { "type": "string" } }, "style": "form", "explode": true },
+          { "name": "forms", "in": "query", "required": false, "schema": { "type": "array", "items": { "type": "string" } }, "style": "form", "explode": true },
+          { "name": "events", "in": "query", "required": false, "schema": { "type": "array", "items": { "type": "string" } }, "style": "form", "explode": true },
+          { "name": "filterLogic", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Branching-logic expression filtering which records are returned; never changes the sensitivity level (REQ-API-025, §3.6.3)." },
+          { "name": "rawOrLabel", "in": "query", "required": false, "schema": { "type": "string", "enum": ["raw", "label"], "default": "raw" } },
+          { "name": "rawOrLabelHeaders", "in": "query", "required": false, "schema": { "type": "string", "enum": ["raw", "label", "both"], "default": "raw" } }
+        ],
+        "responses": {
+          "200": { "$ref": "#/paths/~1api~1/post/responses/200" },
+          "400": { "$ref": "#/components/responses/DataApiInvalidContent" },
+          "401": { "$ref": "#/components/responses/DataApiInvalidToken" },
+          "403": { "$ref": "#/components/responses/DataApiForbidden" },
+          "429": { "$ref": "#/components/responses/DataApiRateLimited" }
+        }
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "tags": ["Admin: Session"],
+        "operationId": "authLogin",
+        "summary": "Login (§4.3, REQ-API-044/045)",
+        "description": "Called by the PHP application after successful OAuth2/LDAP authentication, or with `source: \"local\"` and the password for table-based login (GD-18). Exempt from `X-Internal-User-Id` (DEV-API-16); it still requires the service token. The API reports success and audit-logs it but MUST NOT create or store a session (GD-1).\n\nProcessing order: local credential check (or an unexpired `first_factor` handle standing in for the hash check where a second factor guards the account, REQ-API-131) → account-active rule (`account_expired` / `account_disabled`) → two-factor gate (`mfa_required`, `bad_mfa_code`, `tfa_enrollment_required`) → bootstrap-admin promotion → `auth_source`/`last_login_at` update → audit `login_success`.",
+        "security": [ { "InternalServiceToken": [] } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoginRequest" }, "examples": {
+          "oauth2": { "value": { "email": "user@example.org", "source": "oauth2", "provider": "https://idp.example.org" } },
+          "local": { "value": { "email": "user@example.org", "source": "local", "password": "***" } },
+          "local_mfa": { "value": { "email": "user@example.org", "source": "local", "password": "***", "mfa_code": "492817" } },
+          "handle_mfa": { "summary": "Second call of a two-factor challenge with the handle from verify-password (REQ-API-131)", "value": { "email": "user@example.org", "source": "local", "first_factor": "eyJ2IjoiZmYxIiw…", "mfa_code": "492817" } },
+          "race": { "summary": "Finalizing call of a failed named-source credential race (DEV-API-5 detail)", "value": { "email": "user@example.org", "source": "ldap", "provider": "ldap-1", "source_name": "Hospital 2", "attempts": { "local": "bad_password", "ldap-2": "unreachable" } } }
+        } } } },
+        "responses": {
+          "200": {
+            "description": "The user object (REQ-API-045).",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } }
+          },
+          "401": {
+            "description": "`account_not_found` — no user row for the email (REQ-AUTH-006); `bad_password` — no stored hash or mismatch (the two are not distinguished, GD-18); `mfa_required` `{\"error\":\"mfa_required\",\"method\":\"totp|email\"}`; `bad_mfa_code`; `tfa_enrollment_required` `{\"error\":\"tfa_enrollment_required\",\"user_id\":<id>}` under `AUTH_REQUIRE_2FA`; `first_factor_expired` (REQ-API-131). All audit `login_failure` where applicable.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } }
+          },
+          "403": { "$ref": "#/components/responses/AdminForbidden", "description": "`account_disabled` (including auto-disable by the inactivity rule) or `account_expired` (`valid_until` passed) — REQ-AUTH-052/053." },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/api/v1/auth/verify-password": {
+      "post": {
+        "tags": ["Admin: Session"],
+        "operationId": "authVerifyPassword",
+        "summary": "Side-effect-free password verify for the named-source credential race (§4.3, REQ-API-123, DEV-API-17)",
+        "description": "Runs the login endpoint's hash check and account-active rule only — no `last_login_at`/`auth_source` write, no audit event, no user object; login finalizes exactly once through `/api/v1/auth/login`. Pre-authentication: service token only. For an account a second factor still guards, the `ok` answer carries the `first_factor` handle (5 minutes, bound to one user id) that the challenge's second login call presents in place of the password (REQ-API-131).",
+        "security": [ { "InternalServiceToken": [] } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["email", "password"], "additionalProperties": false, "properties": { "email": { "type": "string", "format": "email" }, "password": { "type": "string", "writeOnly": true } } } } } },
+        "responses": {
+          "200": {
+            "description": "`status` ∈ `ok | bad_password | account_disabled | account_expired`. `first_factor` and `expires_in` appear only on `ok` for an account a second factor still guards.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/VerifyPasswordResponse" }, "examples": {
+              "ok_mfa": { "value": { "status": "ok", "first_factor": "eyJ2IjoiZmYxIiw…", "expires_in": 300 } },
+              "ok_plain": { "value": { "status": "ok" } }
+            } } }
+          },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "tags": ["Admin: Session"],
+        "operationId": "authLogout",
+        "summary": "Logout — records the audit event (REQ-AUTH-008)",
+        "description": "Records the `logout` audit event. Destruction of the PHP session remains the PHP layer's responsibility, performed after this call (GD-1).",
+        "responses": {
+          "200": { "description": "The logout was recorded.", "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string", "const": "ok" } } }, "example": { "status": "ok" } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" }
+        }
+      }
+    },
+    "/api/v1/auth/password-reset/request": {
+      "post": {
+        "tags": ["Admin: Session"],
+        "operationId": "passwordResetRequest",
+        "summary": "Request a password-reset link (Sequence H, REQ-API-119)",
+        "description": "Pre-authentication: service token only (DEV-API-16). Always 202 with an identical body — whether or not a matching active local account exists (no enumeration, REQ-AUTH-062). When one does, emails the set-password link with a single-use `reset` token. Rate-limited per address and IP (default 3/15 min/address). Audit `password_reset_requested` (address + IP, never the token).",
+        "security": [ { "InternalServiceToken": [] } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["email"], "additionalProperties": false, "properties": { "email": { "type": "string", "format": "email" } } } } } },
+        "responses": {
+          "202": { "description": "Accepted — identical body regardless of account existence.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OkResponse" } } } },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/api/v1/auth/password-reset/complete": {
+      "post": {
+        "tags": ["Admin: Session"],
+        "operationId": "passwordResetComplete",
+        "summary": "Set the new password with a reset token (REQ-API-120)",
+        "description": "Pre-authentication: service token only. Constant-time hash verification, purpose `reset`, expiry, single use; success stores the bcrypt hash, consumes the token, invalidates all outstanding tokens of the account and audits `password_reset_completed`. No temporary password exists (REQ-AUTH-062). Any failure — unknown, expired, consumed or wrong-purpose token — answers the generic 401 `invalid_setup_token` (causes are not distinguished).",
+        "security": [ { "InternalServiceToken": [] } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["token", "password"], "additionalProperties": false, "properties": { "token": { "type": "string" }, "password": { "type": "string", "writeOnly": true } } } } } },
+        "responses": {
+          "200": { "description": "The password was set.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OkResponse" } } } },
+          "401": { "description": "`invalid_setup_token` — generic for every failure cause.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } } },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/api/v1/auth/invite/complete": {
+      "post": {
+        "tags": ["Admin: Session"],
+        "operationId": "inviteComplete",
+        "summary": "Accept an invitation — set the invited user's own password (REQ-API-121)",
+        "description": "Pre-authentication: service token only. As `/api/v1/auth/password-reset/complete` for purpose `invite`; audits `invite_accepted`; generic 401 `invalid_setup_token` on any failure. Login afterwards runs the full second-factor gate (REQ-AUTH-060).",
+        "security": [ { "InternalServiceToken": [] } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["token", "password"], "additionalProperties": false, "properties": { "token": { "type": "string" }, "password": { "type": "string", "writeOnly": true } } } } } },
+        "responses": {
+          "200": { "description": "The invitation was accepted.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OkResponse" } } } },
+          "401": { "description": "`invalid_setup_token` — generic for every failure cause.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } } },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/api/v1/users": {
+      "get": {
+        "tags": ["Admin: Users"],
+        "operationId": "listUsers",
+        "summary": "List users (REQ-API-046)",
+        "description": "Requires `is_admin`; a call by a non-admin is rejected (403 `forbidden`).",
+        "responses": {
+          "200": { "description": "All user accounts.", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/User" } } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
+        }
+      },
+      "post": {
+        "tags": ["Admin: Users"],
+        "operationId": "createUser",
+        "summary": "Create or re-enable a user (REQ-API-047)",
+        "description": "Requires `is_admin`. A new account → 201; a disabled account with the same email is re-enabled → 200 (re-enabling resets the inactivity clock, REQ-AUTH-053). The optional password is stored only as a bcrypt hash (REQ-AUTH-050), never returned or logged. Audit `user_created` (`re_enabled` flag, `valid_until`).",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateUserRequest" } } } },
+        "responses": {
+          "200": { "description": "A disabled account with this email was re-enabled.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } } },
+          "201": { "description": "The account was created.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
+        }
+      }
+    },
+    "/api/v1/users/{id}": {
+      "put": {
+        "tags": ["Admin: Users"],
+        "operationId": "updateUser",
+        "summary": "Update a user (REQ-API-047/048, REQ-AUTH-068)",
+        "description": "Requires `is_admin`; idempotent (REQ-API-042). Any change that would leave zero enabled administrators (an `is_admin` revocation, a disabling, or both in one call) is rejected 409 `conflict` with nothing written and no audit entry (REQ-API-136). `valid_days` re-sets `valid_until` (`0` → indefinite); `password` set/resets the local hash and an empty string clears it. Disabling a user denies the effective permissions of that user's API tokens at call time (REQ-AUTH-033). Audit `user_updated` with the changed attributes.",
+        "parameters": [ { "$ref": "#/components/parameters/UserId" } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateUserRequest" } } } },
+        "responses": {
+          "200": { "description": "The updated user object.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/users/{id}/invite": {
+      "post": {
+        "tags": ["Admin: Users"],
+        "operationId": "inviteUser",
+        "summary": "Send an invitation email (REQ-API-117)",
+        "description": "Requires `is_admin`. Sends the invitation email with a single-use `invite` token to the account's address; a re-invite replaces any outstanding invite token (the old link dies). The token value is never in the response. 409 `smtp_not_configured` without a relay (the admin then sets the password directly). Audit `user_invited`.",
+        "parameters": [ { "$ref": "#/components/parameters/UserId" } ],
+        "responses": {
+          "200": { "description": "The invitation was sent.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OkResponse" } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "description": "`smtp_not_configured` — no SMTP relay is configured.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } } }
+        }
+      }
+    },
+    "/api/v1/users/me/password": {
+      "put": {
+        "tags": ["Admin: Users"],
+        "operationId": "changeMyPassword",
+        "summary": "Change my own password (REQ-API-118)",
+        "description": "Self-service. The current password is verified against `password_hash` first (failure → 401 `bad_password`, audit-logged, counted toward the REQ-AUTH-035 lockout), then the new bcrypt hash is stored. Accounts without a local credential → 409 `no_local_credential`. Sessions are not revoked (DEV-AUTH-13). Audit `password_changed`.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["current_password", "new_password"], "additionalProperties": false, "properties": { "current_password": { "type": "string", "writeOnly": true }, "new_password": { "type": "string", "writeOnly": true } } } } } },
+        "responses": {
+          "200": { "description": "The password was changed.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OkResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "description": "`bad_password` — the current password did not verify.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } } },
+          "409": { "description": "`no_local_credential` — the account has no local password.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } } }
+        }
+      }
+    },
+    "/api/v1/users/me/tfa": {
+      "get": {
+        "tags": ["Admin: Users"],
+        "operationId": "getMyTfa",
+        "summary": "My two-factor state (GD-21, REQ-API-115)",
+        "description": "Self-service; also valid in the pending-first-factor context under a mandate. Never returns the secret or a code.",
+        "responses": {
+          "200": { "description": "The current method and enrollment time.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TfaState" } } } }
+        }
+      }
+    },
+    "/api/v1/users/me/tfa/totp/enroll": {
+      "post": {
+        "tags": ["Admin: Users"],
+        "operationId": "enrollTotp",
+        "summary": "Start TOTP enrollment (REQ-AUTH-056)",
+        "description": "Returns the shared secret and its `otpauth://` URI — shown once; pending until confirmed.",
+        "responses": {
+          "200": { "description": "The pending TOTP secret.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TotpEnrollment" } } } }
+        }
+      }
+    },
+    "/api/v1/users/me/tfa/totp/confirm": {
+      "post": {
+        "tags": ["Admin: Users"],
+        "operationId": "confirmTotp",
+        "summary": "Confirm TOTP enrollment (REQ-AUTH-056)",
+        "description": "A valid current RFC 6238 code activates `totp` and returns the recovery codes exactly once; a wrong code → 400 `bad_code`. Audit `tfa_enrolled`.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TfaCodeRequest" } } } },
+        "responses": {
+          "200": { "description": "`totp` is active; recovery codes are returned once.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TfaRecoveryCodes" } } } },
+          "400": { "description": "`bad_code` — the code did not verify.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } } }
+        }
+      }
+    },
+    "/api/v1/users/me/tfa/email/start": {
+      "post": {
+        "tags": ["Admin: Users"],
+        "operationId": "startEmailFactor",
+        "summary": "Send the email-factor confirmation code (REQ-AUTH-057)",
+        "description": "Sends a confirmation code to the account address via the SMTP relay; rate-limited per account.",
+        "responses": {
+          "200": { "description": "The code was sent.", "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string", "const": "sent" } } } } } },
+          "409": { "description": "`smtp_not_configured` — no SMTP relay is configured.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } } }
+        }
+      }
+    },
+    "/api/v1/users/me/tfa/email/confirm": {
+      "post": {
+        "tags": ["Admin: Users"],
+        "operationId": "confirmEmailFactor",
+        "summary": "Confirm the email factor (REQ-AUTH-057)",
+        "description": "Activates `email`, returns the recovery codes once. Audit `tfa_enrolled`.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TfaCodeRequest" } } } },
+        "responses": {
+          "200": { "description": "`email` is active; recovery codes are returned once.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TfaRecoveryCodes" } } } },
+          "400": { "description": "`bad_code` — the code did not verify.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } } }
+        }
+      }
+    },
+    "/api/v1/users/me/tfa/disable": {
+      "post": {
+        "tags": ["Admin: Users"],
+        "operationId": "disableTfa",
+        "summary": "Disable my second factor (GD-21)",
+        "description": "Requires a valid current code or recovery code; sets the method to `off` and clears secret/codes. Audit `tfa_disabled`.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TfaCodeRequest" } } } },
+        "responses": {
+          "200": { "description": "The second factor is off.", "content": { "application/json": { "schema": { "type": "object", "properties": { "method": { "type": "string", "const": "off" } } } } } },
+          "400": { "description": "`bad_code` — the code did not verify.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } } }
+        }
+      }
+    },
+    "/api/v1/users/{id}/tfa/reset": {
+      "post": {
+        "tags": ["Admin: Users"],
+        "operationId": "resetUserTfa",
+        "summary": "Reset a user's second factor (REQ-API-116)",
+        "description": "Requires `is_admin`. Deletes the account's `user_two_factor` row back to `off` (lost device/email). No endpoint ever returns a secret, pending code, or recovery code outside its single enrollment/activation response. Audit `tfa_reset`.",
+        "parameters": [ { "$ref": "#/components/parameters/UserId" } ],
+        "responses": {
+          "200": { "description": "The factor was reset to `off`.", "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string", "const": "ok" } } } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/projects": {
+      "get": {
+        "tags": ["Admin: Projects"],
+        "operationId": "listProjects",
+        "summary": "List visible projects (REQ-API-049)",
+        "description": "Project visibility only (`is_admin` or member, REQ-AUTH-026); projects outside the acting user's visibility do not appear (REQ-API-007).",
+        "responses": {
+          "200": { "description": "Dashboard summaries of every visible project.", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/ProjectSummary" } } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" }
+        }
+      },
+      "post": {
+        "tags": ["Admin: Projects"],
+        "operationId": "createProject",
+        "summary": "Create a project (REQ-API-050/052)",
+        "description": "Requires `is_admin`. Creation is single-arm (REQ-DB-011, DEV-API-4): the API creates arm 1 only, together with its first event `baseline` (`unique_event_name = baseline_arm_1`, timepoint `period = 0`) and one instrument `instrument`. The removed attributes (`end_provision`, the `option_*` flags, `agreed_to_end_user_contract`, `event_names`) are rejected as unknown attributes (400 `invalid_request`). A duplicate `project_name` → 409. Audit `project_created`.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProjectCreate" } } } },
+        "responses": {
+          "201": { "description": "The created project (`id` + the supplied fields + `creation_time`).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProjectDetail" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}": {
+      "get": {
+        "tags": ["Admin: Projects"],
+        "operationId": "getProject",
+        "summary": "Project detail (REQ-API-051, REQ-API-126)",
+        "description": "Data access ≥ `read_only` + project visibility. Full metadata plus structure plus the acting user's effective permissions — the same result the boundary applies to every call, surfaced so the PHP layer can gate rendering with the control absent from the DOM. Nothing is ever absent from `permissions.arms[]`/`grants[]`; the caller never infers a level from a missing entry (REQ-AUTH-069). This read authorizes nothing; every endpoint re-checks at call time (REQ-AUTH-033).",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "responses": {
+          "200": { "description": "Metadata + structure + effective permissions.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProjectDetail" } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "put": {
+        "tags": ["Admin: Projects"],
+        "operationId": "updateProject",
+        "summary": "Update project metadata (REQ-API-052)",
+        "description": "`project_admin` (an `is_admin` user is covered by REQ-AUTH-023). Body: any subset of the creation metadata fields — omitted fields are unchanged (idempotent, REQ-API-042). A duplicate `project_name` → 409. Metadata changes are audit-logged with old and new values (`project_updated`).",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProjectUpdate" } } } },
+        "responses": {
+          "200": { "description": "The updated project object (same shape as GET, `permissions` included).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProjectDetail" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/users": {
+      "get": {
+        "tags": ["Admin: Projects"],
+        "operationId": "listMembers",
+        "summary": "List project members (REQ-API-053)",
+        "description": "Requires `is_admin`. `role` is `null` for a role-less member (full permissions, REQ-AUTH-022); `token_present` reports existence without revealing the value (REQ-API-005).",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "responses": {
+          "200": { "description": "The project's members.", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Member" } } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/users/{uid}": {
+      "put": {
+        "tags": ["Admin: Projects"],
+        "operationId": "putMember",
+        "summary": "Add, change role, rotate token or remove a member (REQ-API-054/055)",
+        "description": "Requires `is_admin`. The single mutation point for membership, keyed on the body: `{\"role\": \"data-entry\"}` adds (201, with the new token returned once); `{\"role\": null}` makes the member role-less; `{\"rotate_token\": true}` rotates — the previous token is invalid immediately; `{\"remove\": true}` removes the member and invalidates the token. Audit `membership_changed` plus `token_issued`/`token_rotated`/`token_revoked`. The token value never appears in logs or audit details.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/UserIdPath" } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MemberMutation" }, "examples": {
+          "add": { "value": { "role": "data-entry" } },
+          "role_less": { "value": { "role": null } },
+          "rotate": { "value": { "rotate_token": true } },
+          "remove": { "value": { "remove": true } }
+        } } } },
+        "responses": {
+          "200": { "description": "Role change (member object), rotation (member object with the new token) or removal (`{\"ok\": true}`).", "content": { "application/json": { "schema": { "oneOf": [ { "$ref": "#/components/schemas/MemberWithToken" }, { "$ref": "#/components/schemas/OkResponse" } ] } } } },
+          "201": { "description": "The member was added — the member object with the new token, returned once for display (REQ-API-055).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MemberWithToken" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/users/{uid}/token": {
+      "get": {
+        "tags": ["Admin: Projects"],
+        "operationId": "fetchOwnToken",
+        "summary": "Fetch my own project token (REQ-API-102)",
+        "description": "Self-service: `{uid}` MUST equal the acting user and the acting user MUST be a member; any other case is a uniform 403 `forbidden` (never disclosed as missing, REQ-API-007). The value MUST NOT be logged. No audit event for the fetch itself — it is credential plumbing.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/UserIdPath" } ],
+        "responses": {
+          "200": { "description": "The member's API token.", "content": { "application/json": { "schema": { "type": "object", "required": ["token"], "properties": { "token": { "type": "string", "format": "uuid" } } } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/roles": {
+      "get": {
+        "tags": ["Admin: Projects"],
+        "operationId": "listRoles",
+        "summary": "List project roles (REQ-API-056)",
+        "description": "Requires `is_admin`. Roles are project-scoped (REQ-AUTH-024) and not limited to preset examples (REQ-AUTH-020). `arms` always carries an entry for every arm; `grants` lists only the (instrument, event) pairs whose grant differs from their arm default (REQ-AUTH-069).",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "responses": {
+          "200": { "description": "The project's roles, possibly empty.", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Role" } } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "post": {
+        "tags": ["Admin: Projects"],
+        "operationId": "createRole",
+        "summary": "Create a role (REQ-API-057)",
+        "description": "Requires `is_admin`. Body is the role object minus `id`; an arm absent from `arms` defaults to `no_access` / `export_none` (REQ-AUTH-019 — no implicit access). A duplicate name within the project → 409. Audit `role_created`.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RoleInput" } } } },
+        "responses": {
+          "201": { "description": "The created role object.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Role" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/roles/{rid}": {
+      "put": {
+        "tags": ["Admin: Projects"],
+        "operationId": "updateRole",
+        "summary": "Replace a role (REQ-API-143)",
+        "description": "Requires `is_admin`. Body is the same shape as POST, replacing name, `project_admin`, arm defaults and grants in one transaction; a pair omitted from `grants` reverts to its arm default, and an `arms` map missing an arm sets that arm to `no_access` / `export_none`. Unknown `{rid}` → 404; duplicate name → 409; an unmapped `event`/`instrument` pair → 400 naming it, nothing applied. Members holding the role pick the change up on their next request without re-authentication (REQ-AUTH-033). Audit `role_updated` with the before/after permission set.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" }, { "name": "rid", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64" }, "description": "Role id." } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RoleInput" } } } },
+        "responses": {
+          "200": { "description": "The updated role object.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Role" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/arms": {
+      "get": {
+        "tags": ["Admin: Structure"],
+        "operationId": "listArms",
+        "summary": "List arms with their events (REQ-API-058)",
+        "description": "Data access ≥ `read_only`. Events are in the canonical per-arm order (GD-15); `period` is `null` when the event has no timepoint.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "responses": {
+          "200": { "description": "The project's arms, each carrying its events.", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/ArmWithEvents" } } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "post": {
+        "tags": ["Admin: Structure"],
+        "operationId": "createArm",
+        "summary": "Create an arm (REQ-API-059)",
+        "description": "`project_admin`. `arm_num` is the next 1-based number (a duplicate → 409 `conflict`). Audit `arm_created`.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" } } } } } },
+        "responses": {
+          "201": { "description": "The created arm.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ArmWithEvents" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/arms/{id}": {
+      "delete": {
+        "tags": ["Admin: Structure"],
+        "operationId": "deleteArm",
+        "summary": "Delete an arm — or reset the last one (REQ-API-060, REQ-API-128)",
+        "description": "`project_admin`; the path follows the master plan verbatim (ASM-API-1). An arm that still has events or data → 409 `conflict` (DEV-API-6) — unless it is the project's last remaining arm: that one cannot go either, and the call instead renames it to `arm_1`, keeping its id, `arm_num` and events. The answer is then 200 with the renamed arm object. Audit `arm_deleted`, or `arm_updated` with `last_arm_reset` on the rename.",
+        "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64" }, "description": "Arm id." } ],
+        "responses": {
+          "200": { "description": "The last remaining arm was renamed to `arm_1`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ArmWithEvents" } } } },
+          "204": { "description": "The arm was deleted." },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/arms/order": {
+      "put": {
+        "tags": ["Admin: Structure"],
+        "operationId": "orderArms",
+        "summary": "Re-order arms (REQ-API-129)",
+        "description": "`project_admin`; idempotent. The full list of the project's arm ids; a partial or foreign list → 400. Writes `position` only — every arm keeps its id and `arm_num`, `unique_event_name` values and stored data are untouched. Audit `arm_reordered`.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["order"], "properties": { "order": { "type": "array", "items": { "type": "integer", "format": "int64" }, "description": "The full ordered list of the project's arm ids." } } } } } },
+        "responses": {
+          "200": { "description": "The order was applied.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OkResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/events": {
+      "get": {
+        "tags": ["Admin: Structure"],
+        "operationId": "listEvents",
+        "summary": "List all events of all arms (REQ-API-061)",
+        "description": "Data access ≥ `read_only`. Canonical per-arm order (GD-15): events with a `period` ascending by period (ties by position), then events with `period = null` ascending by position.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "responses": {
+          "200": { "description": "All events in canonical per-arm order.", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Event" } } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "post": {
+        "tags": ["Admin: Structure"],
+        "operationId": "createEvent",
+        "summary": "Create an event (REQ-API-062)",
+        "description": "`project_admin`. The API derives `unique_event_name = <label>_arm_<n>` (REQ-DB-011); a duplicate label within the same arm → 409; the new event takes `position` = end of the arm's list. `period` optional — `null`/absent = no timepoint (GD-15). Audit `event_created`.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventInput" }, "example": { "arm_num": 1, "event_name": "follow_up", "period": 90, "safe_region_start": -2, "safe_region_end": 3 } } } },
+        "responses": {
+          "201": { "description": "The created event.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Event" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/events/{id}": {
+      "put": {
+        "tags": ["Admin: Structure"],
+        "operationId": "updateEvent",
+        "summary": "Update an event (REQ-API-063)",
+        "description": "`project_admin` (path verbatim, ASM-API-1); idempotent. Any subset of `{event_name, period, safe_region_start, safe_region_end}` — `period: null` clears the timepoint (the event becomes user-orderable, GD-15). A label change re-derives `unique_event_name`; a collision → 409. An event that already holds data keeps its values — the rename updates the stored `unique_event_name` key in the same transaction (ASM-API-4). Audit `event_updated` with old and new values.",
+        "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64" }, "description": "Event id." } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventUpdate" } } } },
+        "responses": {
+          "200": { "description": "The updated event.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Event" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      },
+      "delete": {
+        "tags": ["Admin: Structure"],
+        "operationId": "deleteEvent",
+        "summary": "Delete an event — or reset the last one (REQ-API-063, REQ-API-133)",
+        "description": "`project_admin`. Removes the event together with its instrument–event mapping pairs; values keyed on the event's `unique_event_name` become unreachable, so the change is breaking in analysis mode (§4.21). A project always keeps at least one event: deleting the last remaining event instead resets it to the plain baseline state — renamed to `baseline`, `period` reset to 0, safe region cleared — answering 200 with the renamed event object. Audit `event_deleted`, or `event_updated` with `last_event_reset`.",
+        "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64" }, "description": "Event id." } ],
+        "responses": {
+          "200": { "description": "The last remaining event was reset to the baseline state.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Event" } } } },
+          "204": { "description": "The event was deleted." },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/events/order": {
+      "put": {
+        "tags": ["Admin: Structure"],
+        "operationId": "orderEvents",
+        "summary": "Re-order an arm's events (REQ-API-103)",
+        "description": "`project_admin`; idempotent. The full ordered list of the supplied arm's event ids (a partial list → 400). Writes `position` (1…n); the canonical order of GD-15 then governs the display. Audit `event_reordered` with the new order.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["arm_num", "order"], "properties": { "arm_num": { "type": "integer" }, "order": { "type": "array", "items": { "type": "integer", "format": "int64" }, "description": "The full ordered list of the arm's event ids." } } }, "example": { "arm_num": 1, "order": [9, 4, 7] } } } },
+        "responses": {
+          "200": { "description": "The order was applied.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OkResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/instruments": {
+      "get": {
+        "tags": ["Admin: Structure"],
+        "operationId": "listInstruments",
+        "summary": "List instruments (REQ-API-064)",
+        "description": "Data access ≥ `read_only`.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "responses": {
+          "200": { "description": "The project's instruments in position order.", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Instrument" } } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "post": {
+        "tags": ["Admin: Structure"],
+        "operationId": "createInstrument",
+        "summary": "Create an instrument (REQ-API-065)",
+        "description": "`project_admin`. The name is unique within the project (REQ-DB-013; a duplicate → 409). `position` = end of list. Audit `instrument_created`.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" } } } } } },
+        "responses": {
+          "201": { "description": "The created instrument.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Instrument" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/instruments/order": {
+      "put": {
+        "tags": ["Admin: Structure"],
+        "operationId": "orderInstruments",
+        "summary": "Re-order instruments (REQ-API-066)",
+        "description": "`project_admin`; idempotent. The full ordered list of the project's instrument ids (a partial list → 400). The GD-8 record-identifier invariant MUST hold after reordering — a violation → 400 `invalid_request`. Audit `instrument_reordered`.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["order"], "properties": { "order": { "type": "array", "items": { "type": "integer", "format": "int64" } } }, "example": { "order": [7, 12, 3] } } } } },
+        "responses": {
+          "200": { "description": "The order was applied.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OkResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/instruments/{iid}": {
+      "put": {
+        "tags": ["Admin: Structure"],
+        "operationId": "updateInstrument",
+        "summary": "Update an instrument (REQ-API-101, REQ-API-130)",
+        "description": "`project_admin`; idempotent. Any subset of `{name, is_survey, branching_logic}`. A rename keeps the name unique — a collision → 409, an empty or non-string name → 400 `validation_error`. The rename is a label: stored values are keyed by field name and event, so nothing is rewritten. An invalid branching expression is rejected at design time → 400 `validation_error` (REQ-VAL-029). Audit `instrument_updated` with old and new values.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/InstrumentId" } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "minProperties": 1, "additionalProperties": false, "properties": { "name": { "type": "string" }, "is_survey": { "type": "boolean" }, "branching_logic": { "type": "string" } } }, "example": { "branching_logic": "[baseline][consent]=\"1\"" } } } },
+        "responses": {
+          "200": { "description": "The updated instrument.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Instrument" } } } },
+          "400": { "description": "`validation_error` — ill-formed expression (REQ-VAL-029) or an empty/non-string name; `invalid_request` for other malformed bodies.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      },
+      "delete": {
+        "tags": ["Admin: Structure"],
+        "operationId": "deleteInstrument",
+        "summary": "Delete an instrument — or reset the last one (REQ-API-066, REQ-API-127)",
+        "description": "`project_admin`. Removes the instrument together with its fields, their stored values (same transaction) and its mapping pairs; losing recorded values makes the change breaking in analysis mode (§4.21). An expression that survives the change naming a doomed field → 409 `conflict`. A project always keeps at least one instrument: deleting the last remaining one only deletes its fields and renames the shell to `instrument` — id, position, survey flag and branching logic stay — answering 200 with the object. Audit `instrument_deleted` with the removed field and value counts, or `instrument_updated` with `last_instrument_reset`.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/InstrumentId" } ],
+        "responses": {
+          "200": { "description": "The last remaining instrument was reset — fields deleted, shell renamed to `instrument`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Instrument" } } } },
+          "204": { "description": "The instrument was deleted." },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/instruments/{iid}/fields": {
+      "get": {
+        "tags": ["Admin: Structure"],
+        "operationId": "listFields",
+        "summary": "List an instrument's fields (REQ-API-067)",
+        "description": "Data access ≥ `read_only`. The instrument's fields in position order, with all data-dictionary attributes (REQ-DB-013).",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/InstrumentId" } ],
+        "responses": {
+          "200": { "description": "The field definitions.", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Field" } } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "post": {
+        "tags": ["Admin: Structure"],
+        "operationId": "createField",
+        "summary": "Create a field (REQ-API-068)",
+        "description": "`project_admin`. Body is the field object minus `id`/`position` (appended at the end of the list). The field name is lower-case alphanumeric + underscore, unique within the project (duplicate → 409); names longer than 26 characters are accepted. `validation_type` must be empty, a built-in structured type, or an existing `validation_types` name (anything else → 400 `validation_error`, REQ-VAL-010/042); `direct_identifier` defaults to `1` for `email`, `MRN`, `international phone` or `national phone` (REQ-EXP-020). `calculation` is only allowed with `field_type = calculated`; expressions are validated at design time (REQ-VAL-029/033/034). Audit `field_created`.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/InstrumentId" } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FieldInput" } } } },
+        "responses": {
+          "201": { "description": "The created field.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Field" } } } },
+          "400": { "description": "`validation_error` — expression, validation type or name problem; `invalid_request` for a malformed body.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/instruments/{iid}/fields/bulk": {
+      "post": {
+        "tags": ["Admin: Structure"],
+        "operationId": "createFieldsBulk",
+        "summary": "Create fields in one all-or-nothing batch (REQ-API-132)",
+        "description": "`project_admin`. A non-empty array of field objects exactly as accepted by the single-field POST; unknown attributes anywhere, an empty or missing array, or an entry without `field_name`/`field_type` → 400. All entries are validated against one shared dictionary view — a name used twice inside the batch collides on its second occurrence (→ 409), and a calculated entry may reference an earlier entry of the same call. Any rejected entry creates nothing. `acknowledge_breaking` (analysis mode) is read from the top level of the body. Audit `field_created` per field, in the same transaction.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/InstrumentId" } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FieldBulkRequest" }, "example": { "fields": [ { "field_name": "a", "field_type": "text" }, { "field_name": "total", "field_type": "calculated", "calculation": "[baseline_arm_1][a] * 2" } ] } } } },
+        "responses": {
+          "201": { "description": "The created field objects, in request order.", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Field" } } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/instruments/{iid}/fields/order": {
+      "put": {
+        "tags": ["Admin: Structure"],
+        "operationId": "orderFields",
+        "summary": "Re-order an instrument's fields (REQ-API-071)",
+        "description": "`project_admin`; idempotent. The full ordered list of the instrument's field ids (a partial list → 400). The GD-8 record-identifier invariant MUST hold after reordering — a violation → 400 `invalid_request`. Audit `field_reordered`.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/InstrumentId" } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["order"], "properties": { "order": { "type": "array", "items": { "type": "integer", "format": "int64" } } }, "example": { "order": [11, 12, 15] } } } } },
+        "responses": {
+          "200": { "description": "The order was applied.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OkResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/instruments/{iid}/fields/{fid}": {
+      "put": {
+        "tags": ["Admin: Structure"],
+        "operationId": "updateField",
+        "summary": "Update a field (REQ-API-069)",
+        "description": "`project_admin`; idempotent. Any subset of the attributes — including a `field_name` rename (stored values renamed in the same transaction, REQ-VAL-014), the `calculation` expression, the `branching_logic` expression, and the `direct_identifier` flag. A change to a calculated field's expression triggers recomputation of all project records in the same transaction (REQ-VAL-037). Audit `field_updated` with old and new values.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/InstrumentId" }, { "$ref": "#/components/parameters/FieldId" } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FieldUpdate" } } } },
+        "responses": {
+          "200": { "description": "The updated field.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Field" } } } },
+          "400": { "description": "`validation_error` — expression, validation type or name problem; `invalid_request` for a malformed body.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      },
+      "delete": {
+        "tags": ["Admin: Structure"],
+        "operationId": "deleteField",
+        "summary": "Delete a field (REQ-API-070)",
+        "description": "`project_admin`. The field's stored values are removed in the same transaction (DEV-API-5); a field referenced by an active expression → 409 `conflict` (§4.2). Audit `field_deleted` with the count of removed values.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/InstrumentId" }, { "$ref": "#/components/parameters/FieldId" } ],
+        "responses": {
+          "204": { "description": "The field and its stored values were removed." },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/validationTypes": {
+      "get": {
+        "tags": ["Admin: Structure"],
+        "operationId": "listValidationTypes",
+        "summary": "List assignable validation types (REQ-API-104)",
+        "description": "Any authenticated user; read-only. The four built-in structured types plus every `validation_types` row. The pattern is included for advisory client-side hints only — server-side validation remains authoritative (REQ-VAL-002). Registry entries are added by inserting a database row; there is no write endpoint in phase 1.",
+        "responses": {
+          "200": { "description": "The assignable types.", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/ValidationType" } } } } }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/records/{record}/fields/{fid}/test": {
+      "post": {
+        "tags": ["Admin: Structure"],
+        "operationId": "testFieldExpression",
+        "summary": "Test a calculation expression against a record (REQ-API-096)",
+        "description": "`project_admin` + record visibility under the data-access-group rule (REQ-AUTH-045). Optionally supplies a draft `expression`; omitted = the field's stored expression. The call MUST NOT store or modify anything — it is the designer's test action. Each evaluation problem carries an explicit flag (REQ-VAL-038): `missing_value | non_numeric_operand | division_by_zero`.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/RecordId" }, { "$ref": "#/components/parameters/FieldId" } ],
+        "requestBody": { "required": false, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "properties": { "expression": { "type": "string", "description": "Draft expression; omitted = the field's stored expression." } } }, "example": { "expression": "[baseline][a] + [baseline][b] * 2" } } } },
+        "responses": {
+          "200": { "description": "The evaluation result with explicit problem flags.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExpressionTestResult" }, "examples": {
+            "ok": { "value": { "value": "9", "problems": [] } },
+            "problems": { "value": { "value": "", "problems": [ { "operand": "[baseline][c]", "problem": "division_by_zero" }, { "operand": "[baseline][d]", "problem": "missing_value" } ] } }
+          } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/instrument-event-mapping": {
+      "get": {
+        "tags": ["Admin: Structure"],
+        "operationId": "getInstrumentEventMapping",
+        "summary": "Read the instrument × event matrix (REQ-API-072)",
+        "description": "Data access ≥ `read_only`. Each array lists the events an instrument is mapped to; an empty array = mapped to no event.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "responses": {
+          "200": { "description": "The matrix per arm.", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/ArmMapping" } }, "example": [ { "arm_num": 1, "mapping": { "intake": ["baseline_arm_1", "follow_up_arm_1"], "scores": ["baseline_arm_1"] } } ] } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "put": {
+        "tags": ["Admin: Structure"],
+        "operationId": "putInstrumentEventMapping",
+        "summary": "Replace one arm's mapping (REQ-API-073)",
+        "description": "`project_admin`; idempotent. The full matrix for the supplied arm, replacing that arm's mapping (an unknown instrument or event name → 400). Unmapping never deletes anything: the pair's `data` and `instrument_completion` rows stay in place and become visible again when the pair is mapped back — non-breaking in every mode (§4.21). Audit `mapping_updated`.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ArmMapping" } } } },
+        "responses": {
+          "200": { "description": "The mapping was replaced.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OkResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/record-status": {
+      "get": {
+        "tags": ["Admin: Records"],
+        "operationId": "getRecordStatus",
+        "summary": "Record status dashboard (REQ-API-074)",
+        "description": "Data access ≥ `read_only` + record visibility (REQ-AUTH-045). All visible records, with their instruments per event in the instrument order of each arm and a three-state completion state per (record, event, instrument): only `finished` is stored; `no_data`/`some_data` are computed per row. A survey-marked instrument always reports `finished` (GD-9). The response MUST NOT contain field values; a record-status read is not a record view.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "responses": {
+          "200": { "description": "The status grid.", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/RecordStatus" } }, "example": [ { "record_id": "8DISC042", "events": [ { "unique_event_name": "baseline_arm_1", "instruments": [ { "name": "intake", "state": "finished" }, { "name": "scores", "state": "some_data" }, { "name": "labs", "state": "no_data" } ] } ] } ] } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/records/{record}/events/{event}/instruments/{iid}/completion": {
+      "put": {
+        "tags": ["Admin: Records"],
+        "operationId": "putInstrumentCompletion",
+        "summary": "Set or clear instrument completion (REQ-API-110)",
+        "description": "Data access ≥ `view_edit` on the record's arm (+ record visibility); idempotent. A workflow annotation, not data entry — writes no field value and is not subject to analysis-mode write rules. Unknown record/event/instrument → 404; an unmapped pair → 409; a survey-marked instrument → 409 (its `finished` state is automatic). Audit `instrument_completed` / `instrument_uncompleted`.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/RecordId" }, { "$ref": "#/components/parameters/EventName" }, { "$ref": "#/components/parameters/InstrumentId" } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["state"], "additionalProperties": false, "properties": { "state": { "type": "string", "enum": ["finished", "unfinished"], "description": "`finished` sets the marker; `unfinished` clears it back to the derived no_data/some_data." } } } } } },
+        "responses": {
+          "200": { "description": "The resulting stored state.", "content": { "application/json": { "schema": { "type": "object", "required": ["state"], "properties": { "state": { "type": "string", "const": "finished" } } } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/export": {
+      "get": {
+        "tags": ["Admin: Records"],
+        "operationId": "exportProject",
+        "summary": "UI export of project data (REQ-API-075/076)",
+        "description": "The response is streamed (REQ-TECH-011). Record selection follows the data-access-group rule; sensitivity follows the acting user's export level for the (instrument, event) pair of each exported column (the REQ-API-026 ladder) — an `export_none` pair contributes no columns and a request with no permitted pair in scope is 403. Columns belonging to no pair follow the most protective level among the pairs in scope. Known parameters validate strictly; unknown parameter names stay accepted and ignored (REQ-API-017). Every call is audit-logged as an `export` event with `surface: \"ui\"`, the project, and the sensitivity level; a rejected call writes no audit entry.",
+        "parameters": [
+          { "$ref": "#/components/parameters/ProjectId" },
+          { "name": "format", "in": "query", "required": false, "schema": { "type": "string", "enum": ["csv", "json"], "default": "csv" } },
+          { "name": "arm", "in": "query", "required": false, "schema": { "type": "array", "items": { "type": "integer" } }, "style": "form", "explode": true, "description": "Repeatable (`arm=1&arm=3`) — restricts the export to those arms (REQ-EXP-003). An arm the caller cannot export → 403; an unknown arm number → 404." },
+          { "name": "rawOrLabel", "in": "query", "required": false, "schema": { "type": "string", "enum": ["raw", "label"], "default": "raw" } },
+          { "name": "rawOrLabelHeaders", "in": "query", "required": false, "schema": { "type": "string", "enum": ["raw", "label", "both"], "default": "raw" } },
+          { "name": "csvDelimiter", "in": "query", "required": false, "schema": { "type": "string", "default": "," }, "description": "Single character; empty value = comma (REQ-EXP-013). CSV only." }
+        ],
+        "responses": {
+          "200": {
+            "description": "The exported dataset, streamed.",
+            "content": {
+              "text/csv": { "schema": { "type": "string" } },
+              "application/json": { "schema": { "type": "array", "items": { "type": "object", "additionalProperties": { "type": "string" } } } }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/audit": {
+      "get": {
+        "tags": ["Admin: Audit"],
+        "operationId": "listAudit",
+        "summary": "Read the audit log (REQ-API-077/078)",
+        "description": "`is_admin` only; any other acting user gets the uniform 403 (ASM-API-2, finding F2). Reverse chronological. Entries MAY carry the `token` column and payload values — the trail is the sole sanctioned carrier (REQ-AUD-007). The endpoint is read-only: no endpoint exists that writes, updates, or deletes audit data (REQ-DB-024).",
+        "parameters": [
+          { "name": "type", "in": "query", "required": false, "schema": { "type": "string", "enum": ["events", "views"], "default": "events" }, "description": "Selects `audit_events` or `audit_record_views`." },
+          { "name": "project", "in": "query", "required": false, "schema": { "type": "integer", "format": "int64" }, "description": "Project id filter." },
+          { "name": "user", "in": "query", "required": false, "schema": { "type": "integer", "format": "int64" }, "description": "User id filter." },
+          { "name": "event_type", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Event code filter." },
+          { "name": "from", "in": "query", "required": false, "schema": { "type": "string" }, "description": "UTC date range start (inclusive)." },
+          { "name": "to", "in": "query", "required": false, "schema": { "type": "string" }, "description": "UTC date range end (inclusive)." },
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/Cursor" }
+        ],
+        "responses": {
+          "200": { "description": "One page of audit entries, newest first.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuditPage" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/records/{record}/history": {
+      "get": {
+        "tags": ["Admin: Records"],
+        "operationId": "getRecordHistory",
+        "summary": "Per-field history of one record (REQ-API-079…081, REQ-API-137)",
+        "description": "Data access ≥ `read_only` on the record's arm + project visibility + record visibility. Chronological by default (`order=chrono`), transparent across the yearly rollover; `order=newest` serves the same entries reverse-chronologically with the cursor paging backwards (DEV-API-23) — the read direction the data entry form uses to derive current values. For `create`, `old` is `null`; for `delete`, `new` is `null` and the `old` values are the deleted values (REQ-AUD-009). Read-only with respect to the audit trail.",
+        "parameters": [
+          { "$ref": "#/components/parameters/ProjectId" },
+          { "$ref": "#/components/parameters/RecordId" },
+          { "name": "instrument", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Filter by instrument (REQ-API-080)." },
+          { "name": "event", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Filter by `unique_event_name`." },
+          { "name": "field", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Filter by field name." },
+          { "name": "order", "in": "query", "required": false, "schema": { "type": "string", "enum": ["chrono", "newest"], "default": "chrono" }, "description": "Any other value → 400 `invalid_request` (REQ-API-137)." },
+          { "$ref": "#/components/parameters/Limit" },
+          { "$ref": "#/components/parameters/Cursor" }
+        ],
+        "responses": {
+          "200": { "description": "One page of history entries.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HistoryPage" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/records/{record}/instruments/{iid}/survey-link": {
+      "get": {
+        "tags": ["Admin: Records"],
+        "operationId": "getSurveyLink",
+        "summary": "Issue / read the survey link of a pair (REQ-API-082, GD-9)",
+        "description": "Data access ≥ `view_edit` on that pair (REQ-AUTH-069) + record visibility. The instrument MUST be survey-marked and mapped to the event — otherwise 400. The link is stable per (project, record, instrument, event) until revoked; an instrument mapped to three events has three distinct links. `collected_at` is `null` until the first response is saved through the link and never changes afterwards. Audit `survey_link_issued`.",
+        "parameters": [
+          { "$ref": "#/components/parameters/ProjectId" },
+          { "$ref": "#/components/parameters/RecordId" },
+          { "$ref": "#/components/parameters/InstrumentId" },
+          { "$ref": "#/components/parameters/EventQuery" }
+        ],
+        "responses": {
+          "200": { "description": "The stable public link.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SurveyLink" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "delete": {
+        "tags": ["Admin: Records"],
+        "operationId": "deleteSurveyLink",
+        "summary": "Revoke the survey link of a pair (REQ-API-082)",
+        "description": "Revokes the link token of that pair; links of the same instrument at other events stay valid. The revocation takes effect immediately (REQ-AUTH-040). Audit `survey_link_revoked`.",
+        "parameters": [
+          { "$ref": "#/components/parameters/ProjectId" },
+          { "$ref": "#/components/parameters/RecordId" },
+          { "$ref": "#/components/parameters/InstrumentId" },
+          { "$ref": "#/components/parameters/EventQuery" }
+        ],
+        "responses": {
+          "204": { "description": "The link was revoked." },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/data-access-groups": {
+      "get": {
+        "tags": ["Admin: Records"],
+        "operationId": "listDataAccessGroups",
+        "summary": "List data access groups (REQ-API-086)",
+        "description": "Data access ≥ `read_only`.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "responses": {
+          "200": { "description": "The project's groups, possibly empty.", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Dag" } }, "example": [ { "id": 3, "name": "Center A" } ] } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "post": {
+        "tags": ["Admin: Records"],
+        "operationId": "createDataAccessGroup",
+        "summary": "Create a data access group (REQ-API-087)",
+        "description": "`project_admin` (an `is_admin` user is covered, REQ-AUTH-023). The name is unique within the project (REQ-AUTH-043; a duplicate → 409). Audit `dag_created`.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" } } } } } },
+        "responses": {
+          "201": { "description": "The created group.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Dag" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/data-access-groups/{gid}": {
+      "delete": {
+        "tags": ["Admin: Records"],
+        "operationId": "deleteDataAccessGroup",
+        "summary": "Delete a data access group (REQ-API-088)",
+        "description": "`project_admin`. Removes the group and its member assignments; while records are still assigned → 409 `conflict` (ASM-AUTH-4; a rejected call writes no audit entry). Audit `dag_deleted`.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" }, { "name": "gid", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64" }, "description": "Data access group id." } ],
+        "responses": {
+          "204": { "description": "The group was deleted." },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/users/{uid}/data-access-groups": {
+      "put": {
+        "tags": ["Admin: Records"],
+        "operationId": "putMemberDataAccessGroups",
+        "summary": "Set a member's group assignments (REQ-API-089)",
+        "description": "`is_admin` (REQ-AUTH-044). Exactly one active group when `groups` is non-empty (otherwise 400); an empty list clears. Audit `dag_membership_changed`.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/UserIdPath" } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["groups"], "properties": { "groups": { "type": "array", "items": { "type": "integer", "format": "int64" } }, "active_group_id": { "type": ["integer", "null"], "format": "int64" } } }, "example": { "groups": [3, 7], "active_group_id": 3 } } } },
+        "responses": {
+          "200": { "description": "The assignments were applied.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OkResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/active-data-access-group": {
+      "put": {
+        "tags": ["Admin: Records"],
+        "operationId": "putActiveDataAccessGroup",
+        "summary": "Switch my active group (REQ-API-090)",
+        "description": "Self-service for the acting member (who holds a non-empty assignment). The group MUST be one of the member's assigned groups (otherwise 400). The switch takes effect immediately (REQ-AUTH-046). Audit `dag_active_switched`.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["group_id"], "properties": { "group_id": { "type": "integer", "format": "int64" } } }, "example": { "group_id": 7 } } } },
+        "responses": {
+          "200": { "description": "The active group was switched.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OkResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/records/{record}/data-access-group": {
+      "put": {
+        "tags": ["Admin: Records"],
+        "operationId": "putRecordDataAccessGroup",
+        "summary": "Assign a record to a group (REQ-API-091)",
+        "description": "`project_admin` (REQ-AUTH-048); the record MUST be visible to the acting user (REQ-AUTH-045). `{\"group_id\": null}` unassigns. Group scope and export transformation are orthogonal (REQ-API-092). Audit `dag_record_assigned`.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/RecordId" } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["group_id"], "properties": { "group_id": { "type": ["integer", "null"], "format": "int64" } } }, "example": { "group_id": 3 } } } },
+        "responses": {
+          "200": { "description": "The assignment was applied.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OkResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/i18n/languages": {
+      "get": {
+        "tags": ["Admin: i18n"],
+        "operationId": "listLanguages",
+        "summary": "List enabled languages (REQ-API-097)",
+        "description": "Any authenticated user.",
+        "responses": {
+          "200": { "description": "The enabled languages.", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Language" } }, "example": [ { "code": "en", "display_name": "English" }, { "code": "nb", "display_name": "Norsk bokmål" } ] } } }
+        }
+      }
+    },
+    "/api/v1/i18n/bundle": {
+      "get": {
+        "tags": ["Admin: i18n"],
+        "operationId": "getI18nBundle",
+        "summary": "One language's translation bundle (REQ-API-124)",
+        "description": "Any authenticated user. The render-time read for the PHP shell: a flat key→text map overlaid on the English strings the application carries (English is the source of truth and lives in the PHP layer — REQ-DB-031); a key absent from the map renders in English. Without `language`, the acting user's stored UI language is served (default `en`). An unknown or disabled language → 400.",
+        "parameters": [ { "name": "language", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Language code; omitted = the acting user's stored UI language." } ],
+        "responses": {
+          "200": { "description": "The bundle.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/I18nBundle" }, "example": { "language": "nb", "strings": { "ui.dashboard.title": "Oversikt" } } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
+    "/api/v1/i18n/strings": {
+      "get": {
+        "tags": ["Admin: i18n"],
+        "operationId": "listI18nStrings",
+        "summary": "Translation keys with the current translation (REQ-API-099)",
+        "description": "`is_admin`. A missing key falls back to English (REQ-DB-031).",
+        "parameters": [ { "name": "language", "in": "query", "required": false, "schema": { "type": "string" } } ],
+        "responses": {
+          "200": { "description": "The keys with text and missing flag.", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/TranslationEntry" } }, "example": [ { "key": "ui.dashboard.title", "text": "Oppsummering", "missing": false }, { "key": "ui.record.history", "text": "", "missing": true } ] } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
+        }
+      },
+      "put": {
+        "tags": ["Admin: i18n"],
+        "operationId": "putI18nStrings",
+        "summary": "Upsert translations (REQ-API-100)",
+        "description": "`is_admin`. An empty `text` removes the translation (fallback to English, REQ-DB-031). Audit `i18n_updated` per changed key.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["language", "entries"], "properties": { "language": { "type": "string" }, "entries": { "type": "array", "items": { "type": "object", "required": ["key", "text"], "properties": { "key": { "type": "string" }, "text": { "type": "string" } } } } } }, "example": { "language": "nb", "entries": [ { "key": "ui.dashboard.title", "text": "Oppsummering" } ] } } } },
+        "responses": {
+          "200": { "description": "The upsert was applied.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OkResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
+        }
+      }
+    },
+    "/api/v1/users/me/ui-language": {
+      "put": {
+        "tags": ["Admin: i18n"],
+        "operationId": "putMyUiLanguage",
+        "summary": "Set my UI language (REQ-API-098)",
+        "description": "Any authenticated user acting on themselves. The language MUST be enabled (otherwise 400); the default is `en`. The setting persists across sessions (REQ-DB-008).",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["language"], "properties": { "language": { "type": "string" } } }, "example": { "language": "nb" } } } },
+        "responses": {
+          "200": { "description": "The user object.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
+    "/api/v1/users/me/ui-theme": {
+      "put": {
+        "tags": ["Admin: i18n"],
+        "operationId": "putMyUiTheme",
+        "summary": "Set my UI theme (GD-26, REQ-API-122)",
+        "description": "Any authenticated user acting on themselves. The value MUST name an installed theme (`bootstrap` | `darkly` | `yeti`, REQ-TECH-027), or `null` to clear the personal override and follow the installation default `UI_THEME` (REQ-CFG-031); an unknown identifier → 400. The API stores the value and never serves CSS.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["theme"], "properties": { "theme": { "type": ["string", "null"], "enum": ["bootstrap", "darkly", "yeti", null] } } }, "example": { "theme": "darkly" } } } },
+        "responses": {
+          "200": { "description": "The user object.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/end-provision": {
+      "post": {
+        "tags": ["Admin: Modes & Staging"],
+        "operationId": "endProvision",
+        "summary": "Execute the end-of-project provision (BR-009)",
+        "description": "`is_admin`. One-shot — a second execution for the same project → 409 (the idempotency state is the `project_ended` audit event). Atomic: the audit row and the data change are written by the same-transaction writer. `delete` removes the project's stored record data (EAV rows, `record_entities`, `survey_links`, `anon_offsets`) keeping metadata, structure, roles/memberships/tokens and the audit trail; `anonymize` applies the `export_de_identified` pipeline in place — irreversible.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["provision"], "properties": { "provision": { "type": "string", "enum": ["delete", "anonymize"] } } } } } },
+        "responses": {
+          "200": { "description": "The counts the execution changed.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EndProvisionResult" }, "example": { "provision": "delete", "records_affected": 42, "values_affected": 1287 } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/mode": {
+      "get": {
+        "tags": ["Admin: Modes & Staging"],
+        "operationId": "getProjectMode",
+        "summary": "Read the project mode (REQ-API-105)",
+        "description": "Data access ≥ `read_only` + project visibility.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "responses": {
+          "200": { "description": "The mode and whether a staging set is open.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ModeState" }, "example": { "mode": "production", "staging_open": true } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "put": {
+        "tags": ["Admin: Modes & Staging"],
+        "operationId": "putProjectMode",
+        "summary": "Change the project mode (GD-20, REQ-API-105…107)",
+        "description": "`is_admin` alone — the project's own `project_admin` gets a 403 (GD-20, 2026-09-27); idempotent. Allowed transitions: development→production (`keep_data` required — `false` deletes the record data with the end-provision `delete` scope), production→development, production→analysis, analysis→production, analysis→development. Any other pair (including development→analysis) → 409. No mode change while a staging set is open — every transition is rejected until the set is committed or discarded. Audit `project_mode_changed` with old/new mode and the `keep_data` decision.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["mode"], "properties": { "mode": { "type": "string", "enum": ["development", "production", "analysis"] }, "keep_data": { "type": "boolean", "description": "Required on development→production; missing → 400." } } }, "example": { "mode": "production", "keep_data": true } } } },
+        "responses": {
+          "200": { "description": "The new mode (`records_deleted` set only for the delete-on-transition case).", "content": { "application/json": { "schema": { "type": "object", "required": ["mode"], "properties": { "mode": { "type": "string", "enum": ["development", "production", "analysis"] }, "records_deleted": { "type": "integer" } } } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/staging": {
+      "post": {
+        "tags": ["Admin: Modes & Staging"],
+        "operationId": "startStaging",
+        "summary": "Open a staging set (REQ-API-106)",
+        "description": "`project_admin`; production mode only (409 otherwise); a second set while one is open → 409. Snapshots the live design — structure endpoints then read and write the staged design for `project_admin` users while every data-facing endpoint keeps serving the active design until commit. Audit `staging_started`.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "responses": {
+          "201": { "description": "The staging set was opened.", "content": { "application/json": { "schema": { "type": "object", "required": ["opened_at", "opened_by"], "properties": { "opened_at": { "$ref": "#/components/schemas/Timestamp" }, "opened_by": { "type": "integer", "format": "int64" } } } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      },
+      "get": {
+        "tags": ["Admin: Modes & Staging"],
+        "operationId": "getStaging",
+        "summary": "Staging state plus the staged diff (REQ-API-106)",
+        "description": "`project_admin`. The diff is computed against the active design and classifies each change breaking / non-breaking per the normative table of §4.21.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "responses": {
+          "200": { "description": "The state and diff.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StagingState" }, "example": { "open": true, "opened_at": "2026-09-25 08:00:00", "opened_by": 3, "changes": [ { "kind": "field_added", "object": "intake.age_at_entry", "breaking": false }, { "kind": "field_deleted", "object": "intake.old_score", "breaking": true, "reason": "deleting a field makes its stored values inaccessible" } ] } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/staging/commit": {
+      "post": {
+        "tags": ["Admin: Modes & Staging"],
+        "operationId": "commitStaging",
+        "summary": "Commit the staging set (REQ-API-107/108)",
+        "description": "`project_admin`. If the staged diff contains breaking changes and `acknowledge_breaking` is not `true` → 409 listing them. On success the snapshot is applied to the live structure tables in one transaction (the whole set activates at once, GD-20) and the staging row is removed. A commit does not recompute calculated values (owner decision 2026-09-29). Audit `staging_committed`.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "requestBody": { "required": false, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "properties": { "acknowledge_breaking": { "type": "boolean" } } } } } },
+        "responses": {
+          "200": { "description": "The applied counts.", "content": { "application/json": { "schema": { "type": "object", "required": ["applied"], "properties": { "applied": { "type": "object", "properties": { "instruments": { "type": "integer" }, "fields": { "type": "integer" }, "events": { "type": "integer" }, "mapping_pairs": { "type": "integer" } } } } }, "example": { "applied": { "instruments": 2, "fields": 5, "events": 1, "mapping_pairs": 3 } } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "409": { "description": "The diff contains breaking changes and `acknowledge_breaking` was not supplied — the response lists them.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } } }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/staging/discard": {
+      "post": {
+        "tags": ["Admin: Modes & Staging"],
+        "operationId": "discardStaging",
+        "summary": "Discard the staging set (REQ-API-106)",
+        "description": "`project_admin`. The staging row is removed without applying. Audit `staging_discarded`.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "responses": {
+          "204": { "description": "The staging set was discarded." },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
+        }
+      }
+    },
+    "/api/v1/settings": {
+      "get": {
+        "tags": ["Admin: Settings"],
+        "operationId": "getSettings",
+        "summary": "Read the system settings (REQ-API-112)",
+        "description": "`is_admin`. The effective values: the stored row when present, the seeded default otherwise. The rate limiter reads them per request, so an applied change takes effect on the next request without a restart.",
+        "responses": {
+          "200": { "description": "The settings.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Settings" }, "example": { "rate_limit_enabled": false, "rate_limit_rpm": 600, "rate_limit_block_minutes": 10 } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
+        }
+      },
+      "put": {
+        "tags": ["Admin: Settings"],
+        "operationId": "putSettings",
+        "summary": "Update the system settings (REQ-API-112/113)",
+        "description": "`is_admin`; any subset of the fields (idempotent). Validation: `rate_limit_enabled` a boolean; `rate_limit_rpm` an integer ≥ 1; `rate_limit_block_minutes` an integer 1–1440 — else 400; unknown attributes → 400. Audit `settings_updated` with the old and new value of each changed key; a PUT that changes nothing writes no entry.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SettingsUpdate" } } } },
+        "responses": {
+          "200": { "description": "The full settings object after the update.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Settings" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "InternalServiceToken": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Internal-Service-Token",
+        "description": "The shared service secret (REQ-AUTH-011/012): compared in constant time, never logged, enforced regardless of any other configuration (REQ-CFG-023). Missing or invalid → 401 `service_token_invalid` + audit `admin_rejected`. Configured per System_Configuration_Design.md §3.3."
+      },
+      "InternalUserId": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Internal-User-Id",
+        "description": "The acting user's id — authoritative for authorization (REQ-AUTH-013): the API applies that user's effective levels; the PHP layer adds none. Unknown or disabled user → 403 + audit `admin_rejected`. Set by the trusted PHP layer only; the proxy strips it from every externally-originated request."
+      }
+    },
+    "parameters": {
+      "ProjectId": { "name": "id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64" }, "description": "Project id." },
+      "UserId": { "name": "id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64" }, "description": "User id." },
+      "UserIdPath": { "name": "uid", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64" }, "description": "User id of the project member." },
+      "InstrumentId": { "name": "iid", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64" }, "description": "Instrument id." },
+      "FieldId": { "name": "fid", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64" }, "description": "Field id." },
+      "RecordId": { "name": "record", "in": "path", "required": true, "schema": { "type": "string" }, "description": "The record identifier's value (GD-8)." },
+      "EventName": { "name": "event", "in": "path", "required": true, "schema": { "type": "string" }, "description": "`unique_event_name`." },
+      "EventQuery": { "name": "event", "in": "query", "required": true, "schema": { "type": "string" }, "description": "`unique_event_name` of the (instrument, event) pair." },
+      "Limit": { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 }, "description": "Page size (default 50, max 200 — §1)." },
+      "Cursor": { "name": "cursor", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Opaque cursor encoding the last-seen (created_at, id); from the previous page's `next_cursor`." }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "`invalid_request` — malformed JSON body or a missing/invalid attribute (§4.2).",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } }
+      },
+      "UnauthorizedServiceToken": {
+        "description": "`service_token_invalid` — missing/invalid X-Internal-Service-Token (audit `admin_rejected`).",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } }
+      },
+      "AdminForbidden": {
+        "description": "`forbidden` — insufficient permission, or a project/record outside the acting user's visibility (uniform, never disclosed as missing — REQ-API-007); unknown/disabled acting user (audit `admin_rejected`).",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } }
+      },
+      "NotFound": {
+        "description": "`not_found` — an unknown path resource (user, project, arm, event, instrument, field, or group).",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } }
+      },
+      "Conflict": {
+        "description": "`conflict` — a state violation (§4.2): duplicate name, deletion that would strand data or leave zero enabled administrators, an expression-referenced delete, a mode transition outside the allowed set, staging conflicts, unacknowledged breaking changes.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } }
+      },
+      "RateLimited": {
+        "description": "429 — the per-source-IP budget is exceeded; `Retry-After` names the remaining whole seconds of the blockout (REQ-API-038/113, §3.9).",
+        "headers": { "Retry-After": { "schema": { "type": "integer" }, "description": "Remaining whole seconds of the blockout, rounded up." } },
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" }, "example": { "error": "rate_limited", "message": "Rate limit exceeded", "status": 429 } } }
+      },
+      "DataApiInvalidContent": {
+        "description": "Unknown/missing `content`, or `record` without a supported `action` — §3.2.",
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/DataApiError" }, "example": { "error": "Invalid content" } },
+          "text/csv": { "schema": { "type": "string" }, "example": "Invalid content" }
+        }
+      },
+      "DataApiInvalidToken": {
+        "description": "Missing/invalid token — the same body whether or not the token exists (REQ-AUTH-032).",
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/DataApiError" }, "example": { "error": "Invalid token" } },
+          "text/csv": { "schema": { "type": "string" }, "example": "Invalid token" }
+        }
+      },
+      "DataApiForbidden": {
+        "description": "`Permission denied` — insufficient permission (incl. export_none, read-only import); `Project in analysis mode` for writes to an analysis-mode project (GD-20, REQ-API-109).",
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/DataApiError" }, "example": { "error": "Permission denied" } },
+          "text/csv": { "schema": { "type": "string" }, "example": "Permission denied" }
+        }
+      },
+      "DataApiRateLimited": {
+        "description": "Rate limit exceeded (when enabled) — with `Retry-After` (§3.9).",
+        "headers": { "Retry-After": { "schema": { "type": "integer" }, "description": "Remaining whole seconds of the blockout, rounded up." } },
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/DataApiError" }, "example": { "error": "Rate limit exceeded" } },
+          "text/csv": { "schema": { "type": "string" }, "example": "Rate limit exceeded" }
+        }
+      }
+    },
+    "schemas": {
+      "Timestamp": {
+        "type": "string",
+        "description": "System timestamp in UTC, `YYYY-MM-DD HH:MM:SS` (§1).",
+        "example": "2026-09-18 14:02:11"
+      },
+      "HealthStatus": {
+        "type": "object",
+        "required": ["status", "db"],
+        "properties": {
+          "status": { "type": "string", "enum": ["ok", "degraded"] },
+          "db": { "type": "string", "enum": ["ok", "error"] }
+        }
+      },
+      "AdminError": {
+        "type": "object",
+        "required": ["error", "message", "status"],
+        "description": "The administration error shape (§4.2): `error` is a stable machine code callers may branch on; `message` is human-readable and never leaks internal details (REQ-API-006).",
+        "properties": {
+          "error": { "type": "string", "description": "Stable machine code: invalid_request, validation_error, service_token_invalid, account_not_found, bad_password, invalid_setup_token, forbidden, account_disabled, account_expired, not_found, conflict, internal." },
+          "message": { "type": "string" },
+          "status": { "type": "integer", "description": "The HTTP status, mirrored in the body." }
+        },
+        "example": { "error": "conflict", "message": "project name '8DISC' already exists", "status": 409 }
+      },
+      "DataApiError": {
+        "type": "object",
+        "required": ["error"],
+        "description": "The data-API error body in JSON rendering (§3.2); with `returnFormat` csv (the default) the same text is a single CSV line.",
+        "properties": { "error": { "type": "string" } }
+      },
+      "OkResponse": {
+        "type": "object",
+        "required": ["ok"],
+        "properties": { "ok": { "type": "boolean", "const": true } },
+        "example": { "ok": true }
+      },
+      "DataApiRequest": {
+        "type": "object",
+        "description": "The common data-API parameters (§3.1), `application/x-www-form-urlencoded`. Unknown parameters are accepted and ignored, never rejected (REQ-API-017). Indexed array syntax (`records[0]=…`) and repeated single values are both accepted (REQ-API-015).",
+        "required": ["token", "content"],
+        "additionalProperties": true,
+        "properties": {
+          "token": { "type": "string", "description": "UUID project API token or survey-link token (§3.10). Body or query; never read from an Authorization header (REQ-API-010, REQ-AUTH-031)." },
+          "content": { "$ref": "#/components/schemas/ContentValue" },
+          "action": { "type": "string", "enum": ["export", "import", "delete"], "description": "With `content=record` only. `export`/`import` are accepted and never override the `data` rule; `delete` is the only action that dispatches; any other value → REDCap-style error (REQ-API-012, DEV-API-24)." },
+          "format": { "type": "string", "enum": ["json", "csv"], "default": "csv" },
+          "returnFormat": { "type": "string", "enum": ["json", "csv"], "description": "A present returnFormat takes precedence for the response encoding (REQ-API-013)." },
+          "type": { "type": "string", "enum": ["flat", "wide"], "default": "wide", "description": "`flat` is normative — one row per (record, event); `wide` is the simplified compatibility mode of §3.6.2 (DEV-API-1)." },
+          "csvDelimiter": { "type": "string", "maxLength": 1, "default": ",", "description": "Single character; empty value = comma (REQ-API-029)." },
+          "records": { "type": "array", "items": { "type": "string" }, "description": "Sent as `records[0]=…` or repeated `records=…`." },
+          "fields": { "type": "array", "items": { "type": "string" } },
+          "forms": { "type": "array", "items": { "type": "string" } },
+          "events": { "type": "array", "items": { "type": "string" } },
+          "filterLogic": { "type": "string", "description": "Branching-logic expression (§3.6.3, Data_Validation_Design.md §7) filtering which records are returned; export only (REQ-API-025); never changes the sensitivity level." },
+          "rawOrLabel": { "type": "string", "enum": ["raw", "label"], "default": "raw", "description": "Choice fields as codes or labels (REQ-API-027)." },
+          "rawOrLabelHeaders": { "type": "string", "enum": ["raw", "label", "both"], "default": "raw", "description": "`both` renders each header as `<Field Label> (field_name)` (REQ-API-027)." },
+          "data": { "type": "string", "description": "Import rows in either REDCap encoding (§3.7.1): the indexed form parameters `data[i][key]=…`, or a single `data` parameter holding a JSON array of record objects (DEV-API-24). Its presence makes the call an import (REQ-API-012, REQ-API-031). Indexed parameters win when both encodings are present." },
+          "returnContent": { "type": "string", "description": "With a record import: `count` answers `{\"count\": N}` for the rows applied; anything else keeps the §3.7.2 result rows (REQ-API-142)." },
+          "tz": { "type": "string", "description": "IANA timezone name or ±HH:MM offset — timezone of collection for the call's date/date-time values; default APP_TIMEZONE (import only, GD-16, REQ-VAL-041)." },
+          "overwriteBehavior": { "type": "string", "description": "Accepted and ignored (REQ-API-017): import always upserts." },
+          "forceAutoNumber": { "type": "string", "description": "Accepted and ignored (REQ-API-017)." },
+          "exportCheckboxLabel": { "type": "string", "description": "Accepted and ignored (REQ-API-016, DEV-API-2)." },
+          "exportSurveyFields": { "type": "string", "description": "Accepted and ignored (REQ-API-016)." },
+          "exportDataAccessGroups": { "type": "string", "description": "Accepted and ignored (REQ-API-016)." }
+        }
+      },
+      "ContentValue": {
+        "type": "string",
+        "enum": ["project", "metadata", "event", "formEventMapping", "exportFieldNames", "generateNextRecordName", "record"],
+        "description": "The dispatcher of the data API (REQ-API-012). With `content=record`: a call carrying `data` is an import, one without it an export; deletion needs `action=delete`."
+      },
+      "User": {
+        "type": "object",
+        "description": "The user object (§4.3), returned by login and every user endpoint.",
+        "required": ["id", "email", "display_name", "enabled", "is_admin", "auth_source", "ui_language", "status", "tfa_method"],
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "email": { "type": "string", "format": "email" },
+          "display_name": { "type": "string" },
+          "enabled": { "type": "boolean" },
+          "is_admin": { "type": "boolean" },
+          "auth_source": { "type": ["string", "null"], "description": "The source the account last authenticated through (REQ-AUTH-005)." },
+          "ui_language": { "type": "string", "description": "Stored UI language, default `en` (REQ-DB-008)." },
+          "ui_theme": { "type": ["string", "null"], "description": "`null` when the account follows the installation default theme UI_THEME (GD-26)." },
+          "last_login_at": { "type": ["string", "null"], "description": "`null` when the account has never logged in." },
+          "valid_until": { "type": ["string", "null"], "description": "`null` when indefinite (REQ-AUTH-052)." },
+          "status": { "type": "string", "enum": ["active", "disabled", "expired", "auto_disabled"], "description": "Derived (GD-19, REQ-AUTH-052/053)." },
+          "tfa_method": { "type": "string", "enum": ["off", "totp", "email"], "description": "GD-21, REQ-API-116." }
+        },
+        "example": { "id": 3, "email": "user@example.org", "display_name": "User", "enabled": true, "is_admin": true, "auth_source": "oauth2", "ui_language": "en", "ui_theme": null, "last_login_at": "2026-09-20 08:14:05", "valid_until": null, "status": "active", "tfa_method": "off" }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": ["email", "source"],
+        "additionalProperties": false,
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "source": { "type": "string", "enum": ["oauth2", "ldap", "local"] },
+          "provider": { "type": "string", "description": "The identity provider (or LDAP source id) the PHP layer authenticated against." },
+          "password": { "type": "string", "writeOnly": true, "description": "Local login only; never logged (REQ-AUTH-036). Ignored on a race-finalizing call (REQ-API-135)." },
+          "mfa_code": { "type": "string", "description": "The second factor for the two-factor gate (GD-21)." },
+          "first_factor": { "type": "string", "description": "The handle from verify-password standing in for `password` on the second call of a two-factor challenge (REQ-API-131, DEV-API-19)." },
+          "source_name": { "type": "string", "description": "The authentication-source name the user selected; recorded in login audit details, never affects identity resolution or authorization (REQ-AUTH-067)." },
+          "attempts": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Per-source outcomes of a failed named-source credential race (source-id → outcome, e.g. bad_password, unreachable); MUST never contain credentials (REQ-AUTH-036). Such a call reports a failure and authenticates nothing (REQ-API-135)." }
+        }
+      },
+      "VerifyPasswordResponse": {
+        "type": "object",
+        "required": ["status"],
+        "properties": {
+          "status": { "type": "string", "enum": ["ok", "bad_password", "account_disabled", "account_expired"] },
+          "first_factor": { "type": "string", "description": "Only on `ok` for an account a second factor still guards: stateless handle bound to one user id, signed with a key derived from INTERNAL_SERVICE_TOKEN (REQ-API-131)." },
+          "expires_in": { "type": "integer", "description": "Handle lifetime in seconds (5 minutes)." }
+        }
+      },
+      "CreateUserRequest": {
+        "type": "object",
+        "required": ["email"],
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "display_name": { "type": "string" },
+          "valid_days": { "type": "integer", "minimum": 0, "description": "≥ 0; `0` = indefinite (REQ-AUTH-052)." },
+          "password": { "type": "string", "writeOnly": true, "description": "Optional — stored only as a bcrypt hash (REQ-AUTH-050), never returned or logged." }
+        }
+      },
+      "UpdateUserRequest": {
+        "type": "object",
+        "minProperties": 1,
+        "description": "Any subset; idempotent (REQ-API-042). Any change leaving zero enabled administrators → 409 (REQ-AUTH-068, REQ-API-136).",
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "is_admin": { "type": "boolean" },
+          "valid_days": { "type": "integer", "minimum": 0, "description": "Re-sets valid_until; `0` → NULL = indefinite." },
+          "password": { "type": "string", "writeOnly": true, "description": "Set/reset the local hash; an empty string clears it (REQ-AUTH-036)." }
+        }
+      },
+      "TfaState": {
+        "type": "object",
+        "required": ["method"],
+        "properties": {
+          "method": { "type": "string", "enum": ["off", "totp", "email"] },
+          "enrolled_at": { "type": ["string", "null"] }
+        }
+      },
+      "TotpEnrollment": {
+        "type": "object",
+        "required": ["secret", "otpauth_uri"],
+        "properties": {
+          "secret": { "type": "string", "description": "Base32 shared secret — shown once, pending until confirmed (REQ-AUTH-056)." },
+          "otpauth_uri": { "type": "string", "description": "otpauth://totp/… for the authenticator app." }
+        }
+      },
+      "TfaCodeRequest": {
+        "type": "object",
+        "required": ["code"],
+        "properties": { "code": { "type": "string", "description": "A current RFC 6238 code, an emailed confirmation code, or a recovery code (disable)." } }
+      },
+      "TfaRecoveryCodes": {
+        "type": "object",
+        "required": ["method", "recovery_codes"],
+        "properties": {
+          "method": { "type": "string", "enum": ["totp", "email"] },
+          "recovery_codes": { "type": "array", "items": { "type": "string" }, "description": "Returned exactly once at activation." }
+        }
+      },
+      "Member": {
+        "type": "object",
+        "required": ["user_id", "email", "display_name", "role", "token_present", "enabled"],
+        "properties": {
+          "user_id": { "type": "integer", "format": "int64" },
+          "email": { "type": "string", "format": "email" },
+          "display_name": { "type": "string" },
+          "role": { "type": ["string", "null"], "description": "`null` for a role-less member (full permissions, REQ-AUTH-022)." },
+          "token_present": { "type": "boolean", "description": "Existence without revealing the value (REQ-API-005)." },
+          "enabled": { "type": "boolean" },
+          "groups": { "type": "array", "items": { "type": "integer", "format": "int64" }, "description": "Assigned data access group ids." },
+          "active_group_id": { "type": ["integer", "null"], "format": "int64" }
+        },
+        "example": { "user_id": 3, "email": "user@example.org", "display_name": "User", "role": "data-entry", "token_present": true, "enabled": true }
+      },
+      "MemberWithToken": {
+        "type": "object",
+        "required": ["user_id", "email", "display_name", "role", "token"],
+        "description": "The token value appears only in the add/rotation response — never in logs (REQ-API-005) and never in audit details.",
+        "properties": {
+          "user_id": { "type": "integer", "format": "int64" },
+          "email": { "type": "string", "format": "email" },
+          "display_name": { "type": "string" },
+          "role": { "type": ["string", "null"] },
+          "token": { "type": "string", "format": "uuid" }
+        },
+        "example": { "user_id": 3, "email": "user@example.org", "display_name": "User", "role": "data-entry", "token": "8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83" }
+      },
+      "MemberMutation": {
+        "type": "object",
+        "description": "The single mutation point for membership (REQ-API-054): add (`role`), change role (`role`, `null` = role-less), rotate the token (`rotate_token`), remove (`remove`).",
+        "properties": {
+          "role": { "type": ["string", "null"], "description": "Role name; null or omitted = role-less (full permissions, REQ-AUTH-022)." },
+          "rotate_token": { "type": "boolean" },
+          "remove": { "type": "boolean" }
+        }
+      },
+      "Role": {
+        "type": "object",
+        "required": ["id", "name", "project_admin", "arms"],
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "name": { "type": "string" },
+          "project_admin": { "type": "boolean" },
+          "arms": { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/RoleArmLevels" }, "description": "Per-arm default; keys are arm numbers as strings; every arm of the project appears (REQ-AUTH-019)." },
+          "grants": { "type": "array", "items": { "$ref": "#/components/schemas/RoleGrant" }, "description": "Only the (instrument, event) pairs whose grant differs from their arm default (REQ-AUTH-069)." }
+        }
+      },
+      "RoleArmLevels": {
+        "type": "object",
+        "required": ["data", "export"],
+        "properties": {
+          "data": { "$ref": "#/components/schemas/DataAccessLevel" },
+          "export": { "$ref": "#/components/schemas/ExportLevel" }
+        }
+      },
+      "RoleGrant": {
+        "type": "object",
+        "required": ["event", "instrument", "data", "export", "delete_values", "edit_surveys"],
+        "properties": {
+          "event": { "type": "string", "description": "`unique_event_name`." },
+          "instrument": { "type": "string" },
+          "data": { "$ref": "#/components/schemas/DataAccessLevel" },
+          "export": { "$ref": "#/components/schemas/ExportLevel" },
+          "delete_values": { "type": "boolean", "description": "The delete-instrument-values right — a boolean, never a level (REQ-AUTH-070)." },
+          "edit_surveys": { "type": "boolean" }
+        }
+      },
+      "RoleInput": {
+        "type": "object",
+        "required": ["name", "project_admin", "arms"],
+        "description": "The role object minus `id` (POST and PUT — REQ-API-143). An arm absent from `arms` defaults to no_access / export_none.",
+        "properties": {
+          "name": { "type": "string" },
+          "project_admin": { "type": "boolean" },
+          "arms": { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/RoleArmLevels" } },
+          "grants": { "type": "array", "items": { "$ref": "#/components/schemas/RoleGrant" } }
+        },
+        "example": { "name": "data-entry", "project_admin": false, "arms": { "1": { "data": "view_edit", "export": "export_full" } } }
+      },
+      "DataAccessLevel": { "type": "string", "enum": ["no_access", "read_only", "view_edit"] },
+      "ExportLevel": { "type": "string", "enum": ["export_none", "export_de_identified", "export_no_identifiers", "export_full"] },
+      "ProjectSummary": {
+        "type": "object",
+        "required": ["id", "project_name", "record_count"],
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "project_name": { "type": "string" },
+          "organization": { "type": "string" },
+          "record_count": { "type": "integer" },
+          "instrument_count": { "type": "integer" },
+          "field_count": { "type": "integer" }
+        },
+        "example": { "id": 33, "project_name": "8DISC", "organization": "NAT EU", "record_count": 42, "instrument_count": 5, "field_count": 128 }
+      },
+      "ProjectCreate": {
+        "type": "object",
+        "required": ["project_name"],
+        "description": "The creation fields of the simplified `projects` (GD-17, REQ-DB-006). The removed attributes (`end_provision`, `option_*`, `agreed_to_end_user_contract`, `event_names`) are rejected as unknown attributes (400, REQ-API-052).",
+        "additionalProperties": false,
+        "properties": {
+          "project_name": { "type": "string" },
+          "organization": { "type": "string" },
+          "pi_name": { "type": "string" },
+          "pi_email": { "type": "string" },
+          "dm_name": { "type": "string" },
+          "dm_email": { "type": "string" },
+          "rek_number": { "type": "string" },
+          "rek_start_date": { "type": "string", "description": "YYYY-MM-DD." },
+          "rek_end_date": { "type": "string", "description": "YYYY-MM-DD." },
+          "start_date": { "type": "string", "description": "YYYY-MM-DD." },
+          "end_date": { "type": "string", "description": "YYYY-MM-DD." },
+          "participant_names": { "type": "string", "description": "The record-naming pattern (REQ-DB-007), e.g. `8DISC[0-9][0-9][0-9]`." }
+        }
+      },
+      "ProjectUpdate": {
+        "type": "object",
+        "description": "Any subset of the creation metadata fields — omitted fields are unchanged (idempotent, REQ-API-042).",
+        "additionalProperties": false,
+        "properties": {
+          "project_name": { "type": "string" },
+          "organization": { "type": "string" },
+          "pi_name": { "type": "string" },
+          "pi_email": { "type": "string" },
+          "dm_name": { "type": "string" },
+          "dm_email": { "type": "string" },
+          "rek_number": { "type": "string" },
+          "rek_start_date": { "type": "string" },
+          "rek_end_date": { "type": "string" },
+          "start_date": { "type": "string" },
+          "end_date": { "type": "string" },
+          "participant_names": { "type": "string" }
+        }
+      },
+      "ProjectDetail": {
+        "type": "object",
+        "description": "Full metadata plus structure plus the acting user's effective permissions (REQ-API-126).",
+        "required": ["id", "project_name"],
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "project_name": { "type": "string" },
+          "organization": { "type": "string" },
+          "pi_name": { "type": "string" },
+          "pi_email": { "type": "string" },
+          "dm_name": { "type": "string" },
+          "dm_email": { "type": "string" },
+          "rek_number": { "type": "string" },
+          "rek_start_date": { "type": ["string", "null"] },
+          "rek_end_date": { "type": ["string", "null"] },
+          "start_date": { "type": ["string", "null"] },
+          "end_date": { "type": ["string", "null"] },
+          "participant_names": { "type": "string" },
+          "creation_time": { "$ref": "#/components/schemas/Timestamp" },
+          "record_count": { "type": "integer", "description": "The project's record total (REQ-UI-017)." },
+          "arms": { "type": "array", "items": { "$ref": "#/components/schemas/ArmWithEvents" } },
+          "instruments": { "type": "array", "items": { "$ref": "#/components/schemas/Instrument" } },
+          "permissions": { "$ref": "#/components/schemas/EffectivePermissions" }
+        }
+      },
+      "EffectivePermissions": {
+        "type": "object",
+        "description": "The effective evaluation of Authentication_Authorization_Design.md §4.1 for the acting user — one `arms[]` entry per arm carrying that arm's default, one `grants[]` entry per mapped (instrument, event) pair as it resolves for that caller; nothing is ever absent from either list (REQ-AUTH-069).",
+        "required": ["project_admin", "arms", "grants"],
+        "properties": {
+          "project_admin": { "type": "boolean" },
+          "arms": { "type": "array", "items": { "type": "object", "required": ["arm_num", "data_access_level", "export_level"], "properties": { "arm_num": { "type": "integer" }, "data_access_level": { "$ref": "#/components/schemas/DataAccessLevel" }, "export_level": { "$ref": "#/components/schemas/ExportLevel" }, "delete_values": { "type": "boolean" }, "edit_surveys": { "type": "boolean" } } } },
+          "grants": { "type": "array", "items": { "type": "object", "required": ["unique_event_name", "instrument", "data_access_level", "export_level"], "properties": { "unique_event_name": { "type": "string" }, "instrument": { "type": "string" }, "data_access_level": { "$ref": "#/components/schemas/DataAccessLevel" }, "export_level": { "$ref": "#/components/schemas/ExportLevel" }, "delete_values": { "type": "boolean" }, "edit_surveys": { "type": "boolean" } } } }
+        }
+      },
+      "ArmWithEvents": {
+        "type": "object",
+        "required": ["id", "arm_num", "name"],
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "arm_num": { "type": "integer" },
+          "name": { "type": "string" },
+          "events": { "type": "array", "items": { "$ref": "#/components/schemas/Event" }, "description": "Canonical per-arm order (GD-15)." }
+        }
+      },
+      "Event": {
+        "type": "object",
+        "required": ["id", "arm_num", "event_name", "unique_event_name"],
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "arm_num": { "type": "integer" },
+          "event_name": { "type": "string" },
+          "unique_event_name": { "type": "string", "description": "`<label>_arm_<n>` (REQ-DB-011)." },
+          "period": { "type": ["integer", "null"], "description": "Timepoint — days after baseline; `null` = no timepoint (GD-15)." },
+          "safe_region_start": { "type": ["integer", "null"] },
+          "safe_region_end": { "type": ["integer", "null"] },
+          "position": { "type": "integer" }
+        },
+        "example": { "id": 4, "arm_num": 1, "event_name": "baseline", "unique_event_name": "baseline_arm_1", "period": 0, "safe_region_start": null, "safe_region_end": null, "position": 1 }
+      },
+      "EventInput": {
+        "type": "object",
+        "required": ["arm_num", "event_name"],
+        "properties": {
+          "arm_num": { "type": "integer" },
+          "event_name": { "type": "string" },
+          "period": { "type": ["integer", "null"], "description": "Optional — null/absent = no timepoint." },
+          "safe_region_start": { "type": ["integer", "null"] },
+          "safe_region_end": { "type": ["integer", "null"] }
+        }
+      },
+      "EventUpdate": {
+        "type": "object",
+        "minProperties": 1,
+        "description": "Any subset; `period: null` clears the timepoint (GD-15). A label change re-derives unique_event_name — a collision → 409.",
+        "properties": {
+          "event_name": { "type": "string" },
+          "period": { "type": ["integer", "null"] },
+          "safe_region_start": { "type": ["integer", "null"] },
+          "safe_region_end": { "type": ["integer", "null"] }
+        }
+      },
+      "Instrument": {
+        "type": "object",
+        "required": ["id", "name", "position"],
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "name": { "type": "string" },
+          "position": { "type": "integer" },
+          "field_count": { "type": "integer" },
+          "is_survey": { "type": "boolean", "description": "Survey-marked instruments always report `finished` completion (GD-9)." },
+          "branching_logic": { "type": "string" }
+        },
+        "example": { "id": 7, "name": "intake", "position": 1, "field_count": 24, "is_survey": false, "branching_logic": "" }
+      },
+      "Field": {
+        "type": "object",
+        "required": ["id", "field_name", "field_type", "position"],
+        "description": "A data-dictionary entry (REQ-DB-013).",
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "field_name": { "type": "string", "description": "Lower-case alphanumeric + underscore, unique within the project." },
+          "field_label": { "type": "string" },
+          "field_type": { "type": "string", "description": "text, notes, dropdown, radio, checkbox, matrix, calculated, date fields, …" },
+          "section_header": { "type": "string" },
+          "choices": { "type": "string", "description": "Stored `code$label##code$label` encoding for choice fields." },
+          "field_note": { "type": "string" },
+          "validation_type": { "type": "string", "description": "Empty, a built-in structured type, or a validation_types registry name (REQ-VAL-010/042)." },
+          "validation_format": { "type": ["string", "null"] },
+          "validation_min": { "type": ["string", "null"] },
+          "validation_max": { "type": ["string", "null"] },
+          "required": { "type": "boolean" },
+          "branching_logic": { "type": "string" },
+          "calculation": { "type": "string", "description": "Only with field_type = calculated (REQ-VAL-033/034)." },
+          "matrix_group": { "type": "string" },
+          "personal_information": { "type": "boolean" },
+          "direct_identifier": { "type": "boolean", "description": "Defaults to true for email, MRN, international phone, national phone (REQ-EXP-020)." },
+          "position": { "type": "integer" }
+        },
+        "example": { "id": 11, "field_name": "age", "field_label": "Age", "field_type": "text", "section_header": "", "choices": "", "field_note": "", "validation_type": "integer", "validation_format": null, "validation_min": "18", "validation_max": "99", "required": false, "branching_logic": "", "calculation": "", "matrix_group": "", "personal_information": false, "direct_identifier": false, "position": 2 }
+      },
+      "FieldInput": {
+        "type": "object",
+        "required": ["field_name", "field_type"],
+        "description": "The field object minus `id`/`position` (appended at the end of the list).",
+        "properties": {
+          "field_name": { "type": "string" },
+          "field_label": { "type": "string" },
+          "field_type": { "type": "string" },
+          "section_header": { "type": "string" },
+          "choices": { "type": "string" },
+          "field_note": { "type": "string" },
+          "validation_type": { "type": "string" },
+          "validation_format": { "type": ["string", "null"] },
+          "validation_min": { "type": ["string", "null"] },
+          "validation_max": { "type": ["string", "null"] },
+          "required": { "type": "boolean" },
+          "branching_logic": { "type": "string" },
+          "calculation": { "type": "string" },
+          "matrix_group": { "type": "string" },
+          "personal_information": { "type": "boolean" },
+          "direct_identifier": { "type": "boolean" }
+        }
+      },
+      "FieldUpdate": {
+        "type": "object",
+        "minProperties": 1,
+        "description": "Any subset of the attributes — including a field_name rename (stored values renamed in the same transaction, REQ-VAL-014), the calculation expression (triggers recomputation, REQ-VAL-037), the branching logic and the direct_identifier flag.",
+        "properties": {
+          "field_name": { "type": "string" },
+          "field_label": { "type": "string" },
+          "field_type": { "type": "string" },
+          "section_header": { "type": "string" },
+          "choices": { "type": "string" },
+          "field_note": { "type": "string" },
+          "validation_type": { "type": "string" },
+          "validation_format": { "type": ["string", "null"] },
+          "validation_min": { "type": ["string", "null"] },
+          "validation_max": { "type": ["string", "null"] },
+          "required": { "type": "boolean" },
+          "branching_logic": { "type": "string" },
+          "calculation": { "type": "string" },
+          "matrix_group": { "type": "string" },
+          "personal_information": { "type": "boolean" },
+          "direct_identifier": { "type": "boolean" },
+          "acknowledge_breaking": { "type": "boolean", "description": "Analysis mode only (REQ-API-111): re-send after a 409 naming the breaking change." }
+        }
+      },
+      "FieldBulkRequest": {
+        "type": "object",
+        "required": ["fields"],
+        "properties": {
+          "fields": { "type": "array", "minItems": 1, "items": { "$ref": "#/components/schemas/FieldInput" } },
+          "acknowledge_breaking": { "type": "boolean", "description": "Read from the top level of the body (analysis mode, REQ-API-111)." }
+        }
+      },
+      "ValidationType": {
+        "type": "object",
+        "required": ["name", "builtin"],
+        "properties": {
+          "name": { "type": "string" },
+          "regex": { "type": "string", "description": "Advisory client-side hint only — server-side validation remains authoritative (REQ-VAL-002)." },
+          "builtin": { "type": "boolean" }
+        }
+      },
+      "ExpressionTestResult": {
+        "type": "object",
+        "required": ["value", "problems"],
+        "properties": {
+          "value": { "type": "string" },
+          "problems": { "type": "array", "items": { "type": "object", "required": ["operand", "problem"], "properties": { "operand": { "type": "string" }, "problem": { "type": "string", "enum": ["missing_value", "non_numeric_operand", "division_by_zero"] } } } }
+        }
+      },
+      "ArmMapping": {
+        "type": "object",
+        "required": ["arm_num", "mapping"],
+        "properties": {
+          "arm_num": { "type": "integer" },
+          "mapping": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } }, "description": "instrument name → the unique_event_names it is mapped to; an empty array = mapped to no event." }
+        }
+      },
+      "RecordStatus": {
+        "type": "object",
+        "required": ["record_id", "events"],
+        "properties": {
+          "record_id": { "type": "string" },
+          "events": { "type": "array", "items": { "type": "object", "required": ["unique_event_name", "instruments"], "properties": { "unique_event_name": { "type": "string" }, "instruments": { "type": "array", "items": { "type": "object", "required": ["name", "state"], "properties": { "name": { "type": "string" }, "state": { "type": "string", "enum": ["no_data", "some_data", "finished"] } } } } } } }
+        }
+      },
+      "AuditPage": {
+        "type": "object",
+        "required": ["entries", "next_cursor"],
+        "properties": {
+          "entries": { "type": "array", "items": { "type": "object", "required": ["id", "created_at", "source", "event_type"], "properties": { "id": { "type": "integer", "format": "int64" }, "created_at": { "$ref": "#/components/schemas/Timestamp" }, "source": { "type": "string", "enum": ["ui", "api"] }, "project_id": { "type": ["integer", "null"], "format": "int64" }, "user_id": { "type": ["integer", "null"], "format": "int64" }, "email": { "type": ["string", "null"] }, "event_type": { "type": "string" }, "details": { "type": "object", "description": "Entries MAY carry the token column and payload values — the trail is the sole sanctioned carrier (REQ-AUD-007)." } } } },
+          "next_cursor": { "type": ["string", "null"], "description": "`null` when exhausted (§1)." }
+        }
+      },
+      "HistoryPage": {
+        "type": "object",
+        "required": ["entries", "next_cursor"],
+        "properties": {
+          "entries": { "type": "array", "items": { "type": "object", "required": ["created_at", "action"], "properties": { "created_at": { "$ref": "#/components/schemas/Timestamp" }, "user_id": { "type": ["integer", "null"], "format": "int64" }, "user_display_name": { "type": ["string", "null"] }, "action": { "type": "string", "enum": ["create", "update", "delete"] }, "instrument": { "type": ["string", "null"] }, "event": { "type": ["string", "null"] }, "fields": { "type": "array", "items": { "type": "object", "required": ["field"], "properties": { "field": { "type": "string" }, "old": { "type": ["string", "null"], "description": "`null` for create." }, "new": { "type": ["string", "null"], "description": "`null` for delete — the `old` values are the deleted values (REQ-AUD-009)." } } } } } } },
+          "next_cursor": { "type": ["string", "null"] }
+        },
+        "example": { "entries": [ { "created_at": "2026-09-18 14:02:11", "user_id": 3, "user_display_name": "User", "action": "update", "instrument": "intake", "event": "baseline_arm_1", "fields": [ { "field": "age", "old": "41", "new": "42" } ] } ], "next_cursor": null }
+      },
+      "SurveyLink": {
+        "type": "object",
+        "required": ["url", "event", "revoked"],
+        "properties": {
+          "url": { "type": "string", "description": "The stable public link carrying the link token — stable per (project, record, instrument, event) until revoked." },
+          "event": { "type": "string" },
+          "revoked": { "type": "boolean" },
+          "collected_at": { "type": ["string", "null"], "description": "`null` until the first response is saved through the link, then never changes (REQ-DB-041, REQ-AUTH-071)." }
+        },
+        "example": { "url": "https://csms.example.org/s/8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "event": "baseline_arm_1", "revoked": false, "collected_at": null }
+      },
+      "Dag": {
+        "type": "object",
+        "required": ["id", "name"],
+        "properties": { "id": { "type": "integer", "format": "int64" }, "name": { "type": "string" } }
+      },
+      "Language": {
+        "type": "object",
+        "required": ["code", "display_name"],
+        "properties": { "code": { "type": "string" }, "display_name": { "type": "string" } }
+      },
+      "I18nBundle": {
+        "type": "object",
+        "required": ["language", "strings"],
+        "properties": {
+          "language": { "type": "string" },
+          "strings": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Flat key→text map; a missing key renders in English (REQ-DB-031)." }
+        }
+      },
+      "TranslationEntry": {
+        "type": "object",
+        "required": ["key", "text", "missing"],
+        "properties": { "key": { "type": "string" }, "text": { "type": "string" }, "missing": { "type": "boolean" } }
+      },
+      "EndProvisionResult": {
+        "type": "object",
+        "required": ["provision", "records_affected", "values_affected"],
+        "properties": {
+          "provision": { "type": "string", "enum": ["delete", "anonymize"] },
+          "records_affected": { "type": "integer" },
+          "values_affected": { "type": "integer" }
+        }
+      },
+      "ModeState": {
+        "type": "object",
+        "required": ["mode", "staging_open"],
+        "properties": {
+          "mode": { "type": "string", "enum": ["development", "production", "analysis"] },
+          "staging_open": { "type": "boolean" }
+        }
+      },
+      "StagingState": {
+        "type": "object",
+        "required": ["open"],
+        "properties": {
+          "open": { "type": "boolean" },
+          "opened_at": { "type": ["string", "null"] },
+          "opened_by": { "type": ["integer", "null"], "format": "int64" },
+          "changes": { "type": "array", "items": { "type": "object", "required": ["kind", "object", "breaking"], "properties": { "kind": { "type": "string", "description": "e.g. field_added, field_deleted, mapping_changed." }, "object": { "type": "string", "description": "e.g. intake.age_at_entry." }, "breaking": { "type": "boolean", "description": "Classification per the normative table of §4.21." }, "reason": { "type": ["string", "null"] } } } }
+        }
+      },
+      "Settings": {
+        "type": "object",
+        "required": ["rate_limit_enabled", "rate_limit_rpm", "rate_limit_block_minutes"],
+        "properties": {
+          "rate_limit_enabled": { "type": "boolean" },
+          "rate_limit_rpm": { "type": "integer", "minimum": 1, "description": "Requests per rolling minute per source IP (default 600)." },
+          "rate_limit_block_minutes": { "type": "integer", "minimum": 1, "maximum": 1440, "description": "Blockout after exceeding the budget (default 10; REQ-API-113)." }
+        }
+      },
+      "SettingsUpdate": {
+        "type": "object",
+        "minProperties": 1,
+        "additionalProperties": false,
+        "properties": {
+          "rate_limit_enabled": { "type": "boolean" },
+          "rate_limit_rpm": { "type": "integer", "minimum": 1 },
+          "rate_limit_block_minutes": { "type": "integer", "minimum": 1, "maximum": 1440 }
+        }
+      }
+    }
+  }
+}
