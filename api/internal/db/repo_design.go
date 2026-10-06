@@ -469,10 +469,99 @@ func (s *Store) SetInstrumentEventsForArm(ctx context.Context, projectID, armID 
 			return err
 		}
 	}
+	if err := s.MaterializePairGrantsTx(ctx, tx, projectID); err != nil {
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
 	s.BumpStructureCache()
+	return nil
+}
+
+// MaterializePairGrantsTx records an explicit grant for every mapped pair of
+// the project that has none, so a pair created by a design change never
+// resolves by an implicit rule afterwards (REQ-AUTH-069). New pairs land at
+// read_only / export_none with neither right — the reading the revised GD-2
+// gives a role for data it was not designed around. A role whose arm default is
+// no_access gets no_access rather than read_only: materialization records the
+// new pair, it never grants access nobody had (REQ-AUTH-019). Idempotent — an
+// existing grant is left exactly as it is, so a later design change cannot undo
+// an administrator's edit.
+func (s *Store) MaterializePairGrantsTx(ctx context.Context, tx *sql.Tx, projectID int64) error {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT r.id, ie.event_id, ie.instrument_id, COALESCE(ra.data_access_level, 'no_access')
+		 FROM roles r
+		 JOIN events e ON e.project_id = r.project_id
+		 JOIN arms a ON a.id = e.arm_id
+		 JOIN instrument_events ie ON ie.event_id = e.id
+		 LEFT JOIN role_arms ra ON ra.role_id = r.id AND ra.arm_num = a.arm_num
+		 WHERE r.project_id = ?`, projectID)
+	if err != nil {
+		return err
+	}
+	type candidate struct {
+		roleID, eventID, instrumentID int64
+		armData                       string
+	}
+	var want []candidate
+	for rows.Next() {
+		var c candidate
+		if err := rows.Scan(&c.roleID, &c.eventID, &c.instrumentID, &c.armData); err != nil {
+			rows.Close()
+			return err
+		}
+		want = append(want, c)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	type grantKey struct {
+		roleID int64
+		pair   [2]int64 // {event_id, instrument_id}
+	}
+	filled := map[grantKey]bool{} // (role, event, instrument) already granted
+	grants, err := tx.QueryContext(ctx,
+		`SELECT g.role_id, g.event_id, g.instrument_id
+		 FROM role_grants g JOIN roles r ON r.id = g.role_id WHERE r.project_id = ?`, projectID)
+	if err != nil {
+		return err
+	}
+	for grants.Next() {
+		var (
+			roleID, eventID, instrumentID int64
+		)
+		if err := grants.Scan(&roleID, &eventID, &instrumentID); err != nil {
+			grants.Close()
+			return err
+		}
+		filled[grantKey{roleID, [2]int64{eventID, instrumentID}}] = true
+	}
+	if err := grants.Err(); err != nil {
+		grants.Close()
+		return err
+	}
+	grants.Close()
+
+	for _, c := range want {
+		if filled[grantKey{c.roleID, [2]int64{c.eventID, c.instrumentID}}] {
+			continue
+		}
+		data := "read_only"
+		if c.armData == "no_access" {
+			data = "no_access"
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO role_grants (role_id, event_id, instrument_id, data_access_level,
+			                          export_level, delete_values, edit_surveys)
+			 VALUES (?, ?, ?, ?, 'export_none', 0, 0)`,
+			c.roleID, c.eventID, c.instrumentID, data); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -1020,37 +1109,42 @@ func (s *Store) DeleteAnonOffset(ctx context.Context, projectID int64, recordID 
 	return err
 }
 
-// --- survey_links (REQ-DB-027, GD-9) ---
+// --- survey_links (REQ-DB-027/041, GD-9) ---
 
-const surveyLinkColumns = `id, project_id, record_id, instrument_id, token, revoked, created_by, created_at`
+const surveyLinkColumns = `id, project_id, record_id, instrument_id, event_id, token, revoked, collected_at, created_by, created_at`
 
 func scanSurveyLink(row interface{ Scan(dest ...any) error }) (SurveyLink, error) {
 	var (
-		sl      SurveyLink
-		revoked int
-		created any
+		sl        SurveyLink
+		revoked   int
+		created   any
+		collected any
 	)
-	err := row.Scan(&sl.ID, &sl.ProjectID, &sl.RecordID, &sl.InstrumentID, &sl.Token,
-		&revoked, &sl.CreatedBy, &created)
+	err := row.Scan(&sl.ID, &sl.ProjectID, &sl.RecordID, &sl.InstrumentID, &sl.EventID,
+		&sl.Token, &revoked, &collected, &sl.CreatedBy, &created)
 	if err != nil {
 		return sl, err
 	}
 	sl.Revoked = revoked != 0
+	if v, ok := datetimeString(collected); ok {
+		sl.CollectedAt = sql.NullString{String: v, Valid: true}
+	}
 	if v, ok := datetimeString(created); ok {
 		sl.CreatedAt = v
 	}
 	return sl, nil
 }
 
-// CreateSurveyLink inserts a stable public fill token (REQ-DB-027, GD-9).
+// CreateSurveyLink inserts a stable public fill token for one
+// (record, instrument, event) quadruple (REQ-DB-027/041, GD-9).
 func (s *Store) CreateSurveyLink(ctx context.Context, sl *SurveyLink) (int64, error) {
 	sl.Token = newToken()
 	sl.CreatedAt = nowUTC()
 	res, err := s.DB.ExecContext(ctx,
-		`INSERT INTO survey_links (project_id, record_id, instrument_id, token, revoked, created_by, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		sl.ProjectID, sl.RecordID, sl.InstrumentID, sl.Token, boolToInt(sl.Revoked),
-		nullInt64(sl.CreatedBy), sl.CreatedAt)
+		`INSERT INTO survey_links (project_id, record_id, instrument_id, event_id, token, revoked, collected_at, created_by, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+		sl.ProjectID, sl.RecordID, sl.InstrumentID, sl.EventID, sl.Token,
+		boolToInt(sl.Revoked), nullInt64(sl.CreatedBy), sl.CreatedAt)
 	if err != nil {
 		return 0, err
 	}
@@ -1075,11 +1169,16 @@ func (s *Store) GetSurveyLinkByToken(ctx context.Context, token string) (*Survey
 	return &sl, nil
 }
 
-// GetSurveyLink returns the survey link for a (project, record, instrument) tuple.
-func (s *Store) GetSurveyLink(ctx context.Context, projectID int64, recordID string, instrumentID int64) (*SurveyLink, error) {
+// GetSurveyLink returns the survey link of one (record, instrument, event)
+// quadruple — the same instrument at another event is a different link
+// (REQ-AUTH-039). A project without events has no quadruple to look up and no
+// link at all (DEV-DB-14).
+func (s *Store) GetSurveyLink(ctx context.Context, projectID int64, recordID string,
+	instrumentID, eventID int64) (*SurveyLink, error) {
+	args := []any{projectID, recordID, instrumentID, eventID}
 	row := s.DB.QueryRowContext(ctx,
-		`SELECT `+surveyLinkColumns+` FROM survey_links WHERE project_id = ? AND record_id = ? AND instrument_id = ?`,
-		projectID, recordID, instrumentID)
+		`SELECT `+surveyLinkColumns+` FROM survey_links
+		 WHERE project_id = ? AND record_id = ? AND instrument_id = ? AND event_id = ?`, args...)
 	sl, err := scanSurveyLink(row)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -1109,20 +1208,22 @@ func (s *Store) ListSurveyLinks(ctx context.Context, projectID int64) ([]SurveyL
 	return out, rows.Err()
 }
 
-// RevokeSurveyLink invalidates a survey link (REQ-DB-027).
-func (s *Store) RevokeSurveyLink(ctx context.Context, projectID int64, recordID string, instrumentID int64) error {
+// RevokeSurveyLink invalidates one quadruple's link (REQ-DB-027, REQ-API-085).
+func (s *Store) RevokeSurveyLink(ctx context.Context, projectID int64, recordID string,
+	instrumentID, eventID int64) error {
+	args := []any{projectID, recordID, instrumentID, eventID}
 	_, err := s.DB.ExecContext(ctx,
 		`UPDATE survey_links SET revoked = 1
-		 WHERE project_id = ? AND record_id = ? AND instrument_id = ?`,
-		projectID, recordID, instrumentID)
+		 WHERE project_id = ? AND record_id = ? AND instrument_id = ? AND event_id = ?`, args...)
 	return err
 }
 
-// DeleteSurveyLink removes a survey link entirely (REQ-DB-027).
-func (s *Store) DeleteSurveyLink(ctx context.Context, projectID int64, recordID string, instrumentID int64) error {
+// DeleteSurveyLink removes one quadruple's link entirely (REQ-DB-027).
+func (s *Store) DeleteSurveyLink(ctx context.Context, projectID int64, recordID string,
+	instrumentID, eventID int64) error {
 	_, err := s.DB.ExecContext(ctx,
-		`DELETE FROM survey_links WHERE project_id = ? AND record_id = ? AND instrument_id = ?`,
-		projectID, recordID, instrumentID)
+		`DELETE FROM survey_links WHERE project_id = ? AND record_id = ? AND instrument_id = ? AND event_id = ?`,
+		projectID, recordID, instrumentID, eventID)
 	return err
 }
 

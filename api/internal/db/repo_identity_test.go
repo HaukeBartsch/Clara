@@ -361,7 +361,7 @@ func TestRoles(t *testing.T) {
 		[]RoleArm{
 			{ArmNum: 1, DataAccessLevel: "view_edit", ExportLevel: "export_full"},
 			{ArmNum: 2, DataAccessLevel: "no_access", ExportLevel: "export_none"},
-		})
+		}, nil)
 	if err != nil {
 		t.Fatalf("CreateRole: %v", err)
 	}
@@ -415,7 +415,7 @@ func TestRoles(t *testing.T) {
 
 	// Roles are project-scoped: the same name in another project is fine.
 	pid2 := seedProject(t, s, ctx)
-	rid2, err := s.CreateRole(ctx, &Role{ProjectID: pid2, RoleName: "data-entry"}, nil)
+	rid2, err := s.CreateRole(ctx, &Role{ProjectID: pid2, RoleName: "data-entry"}, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateRole (other project): %v", err)
 	}
@@ -431,7 +431,7 @@ func TestRoles(t *testing.T) {
 	}
 
 	// Duplicate name within one project must fail (unique constraint).
-	if _, err := s.CreateRole(ctx, &Role{ProjectID: pid, RoleName: "data-entry"}, nil); err == nil {
+	if _, err := s.CreateRole(ctx, &Role{ProjectID: pid, RoleName: "data-entry"}, nil, nil); err == nil {
 		t.Error("duplicate role name accepted, want conflict")
 	}
 }
@@ -443,7 +443,7 @@ func TestAssignments(t *testing.T) {
 	uid := seedUser(t, s, ctx, "bob@example.org")
 	other := seedUser(t, s, ctx, "carol@example.org")
 
-	rid, err := s.CreateRole(ctx, &Role{ProjectID: pid, RoleName: "entry"}, nil)
+	rid, err := s.CreateRole(ctx, &Role{ProjectID: pid, RoleName: "entry"}, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateRole: %v", err)
 	}

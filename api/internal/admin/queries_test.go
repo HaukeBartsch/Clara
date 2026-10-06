@@ -193,7 +193,7 @@ func TestRecordStatus(t *testing.T) {
 
 	// Member whose role grants no data access on any arm: 403 (GD-2).
 	roleID, err := e.Store.CreateRole(ctx, &db.Role{ProjectID: projectID, RoleName: "watcher"},
-		[]db.RoleArm{{ArmNum: 1, DataAccessLevel: "no_access", ExportLevel: "export_none"}})
+		[]db.RoleArm{{ArmNum: 1, DataAccessLevel: "no_access", ExportLevel: "export_none"}}, nil)
 	if err != nil {
 		t.Fatalf("CreateRole: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestRecordStatus(t *testing.T) {
 	// A read_only member sees the dashboard.
 	reader := e.mustUser("read@example.org")
 	readRole, err := e.Store.CreateRole(ctx, &db.Role{ProjectID: projectID, RoleName: "reader"},
-		[]db.RoleArm{{ArmNum: 1, DataAccessLevel: "read_only", ExportLevel: "export_none"}})
+		[]db.RoleArm{{ArmNum: 1, DataAccessLevel: "read_only", ExportLevel: "export_none"}}, nil)
 	if err != nil {
 		t.Fatalf("CreateRole: %v", err)
 	}
@@ -688,7 +688,7 @@ func TestRecordHistoryVisibility(t *testing.T) {
 	// Member with read_only on arm 2 only: visible and allowed (AnyData), but
 	// the entries belong to arm 1 — omitted from the response (GD-2).
 	roleID, err := e.Store.CreateRole(ctx, &db.Role{ProjectID: projectID, RoleName: "arm2-reader"},
-		[]db.RoleArm{{ArmNum: 2, DataAccessLevel: "read_only", ExportLevel: "export_none"}})
+		[]db.RoleArm{{ArmNum: 2, DataAccessLevel: "read_only", ExportLevel: "export_none"}}, nil)
 	if err != nil {
 		t.Fatalf("CreateRole: %v", err)
 	}

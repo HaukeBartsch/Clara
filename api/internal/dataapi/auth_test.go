@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"csms/api/internal/authz"
 	"csms/api/internal/db"
 )
 
@@ -46,57 +47,62 @@ func TestAccountActive(t *testing.T) {
 	}
 }
 
-// dataRank maps the stored data-access-level strings to their ascending
-// privilege rank (REQ-DB-009).
+// DataRank orders the revised ladder (REQ-DB-009 as amended 2026-10-03): it ends
+// at view_edit, and the two rungs that used to sit above it rank as view_edit —
+// their extra privilege is an explicit right on a grant now (REQ-AUTH-018/070).
 func TestDataRank(t *testing.T) {
 	cases := []struct {
 		level string
 		want  int
 	}{
-		{"read_only", lvlReadOnly},
-		{"view_edit", lvlViewEdit},
-		{"delete", lvlDelete},
-		{"edit_survey_responses", lvlEditSurveyResponses},
-		{"", lvlNoAccess},
-		{"garbage", lvlNoAccess},
+		{"read_only", authz.RankReadOnly},
+		{"view_edit", authz.RankViewEdit},
+		{"delete", authz.RankViewEdit},                // retired rung, ranked as view_edit
+		{"edit_survey_responses", authz.RankViewEdit}, // retired rung, ranked as view_edit
+		{"", authz.RankNoAccess},
+		{"garbage", authz.RankNoAccess},
 	}
 	for _, tc := range cases {
-		if got := dataRank(tc.level); got != tc.want {
-			t.Errorf("dataRank(%q) = %d, want %d", tc.level, got, tc.want)
+		if got := authz.DataRank(tc.level); got != tc.want {
+			t.Errorf("DataRank(%q) = %d, want %d", tc.level, got, tc.want)
 		}
 	}
-	// Ranks must be strictly ordered so the min-rank comparisons hold.
-	if !(lvlNoAccess < lvlReadOnly && lvlReadOnly < lvlViewEdit &&
-		lvlViewEdit < lvlDelete && lvlDelete < lvlEditSurveyResponses) {
+	if !(authz.RankNoAccess < authz.RankReadOnly && authz.RankReadOnly < authz.RankViewEdit) {
 		t.Errorf("data-level ranks are not in ascending order")
 	}
 }
 
-// hasData reports whether the holder reaches minRank on at least one arm; an
-// administrator always passes (REQ-AUTH-023).
+// hasData reports whether the holder reaches minRank on any arm default or pair
+// grant. What is_admin and a role-less member hold is already in their Levels
+// (REQ-AUTH-022/023), so the subject carries no special case for either.
 func TestHasData(t *testing.T) {
-	admin := &subject{User: &db.User{IsAdmin: true}}
-	if !admin.hasData(lvlEditSurveyResponses) {
-		t.Errorf("admin must reach every data level")
+	full := &subject{User: &db.User{}, Levels: &authz.Levels{
+		Data: map[int]string{1: "view_edit"}, Unrestricted: true,
+	}}
+	if !full.hasData(authz.RankViewEdit) {
+		t.Errorf("an unrestricted member must reach every data level")
 	}
 
-	ro := &subject{
-		User:       &db.User{IsAdmin: false},
-		dataLevels: map[int]int{1: lvlReadOnly},
-	}
-	if !ro.hasData(lvlReadOnly) {
+	ro := &subject{User: &db.User{}, Levels: &authz.Levels{Data: map[int]string{1: "read_only"}}}
+	if !ro.hasData(authz.RankReadOnly) {
 		t.Errorf("read_only holder should reach read_only")
 	}
-	if ro.hasData(lvlViewEdit) {
+	if ro.hasData(authz.RankViewEdit) {
 		t.Errorf("read_only holder must not reach view_edit")
 	}
 
-	// A higher level on a different arm still satisfies a lower min-rank.
-	multi := &subject{
-		User:       &db.User{IsAdmin: false},
-		dataLevels: map[int]int{1: lvlNoAccess, 2: lvlDelete},
+	// A pair grant reaching higher than every arm default counts (REQ-AUTH-069).
+	pairOnly := &subject{User: &db.User{}, Levels: &authz.Levels{
+		Data:  map[int]string{1: "read_only"},
+		Pairs: map[authz.Pair]authz.PairLevels{{EventID: 7, InstrumentID: 3}: {Data: "view_edit"}},
+	}}
+	if !pairOnly.hasData(authz.RankViewEdit) {
+		t.Errorf("a view_edit pair grant must reach view_edit where every arm is read_only")
 	}
-	if !multi.hasData(lvlViewEdit) {
-		t.Errorf("delete holder on arm 2 should reach view_edit")
+
+	// A survey link holds no data level at all (REQ-AUTH-039).
+	link := &subject{Link: &db.SurveyLink{}, Levels: &authz.Levels{Data: map[int]string{1: "view_edit"}}}
+	if link.hasData(authz.RankReadOnly) {
+		t.Errorf("a survey link must hold no data level")
 	}
 }

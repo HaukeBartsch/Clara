@@ -218,10 +218,14 @@ final class ProjectController extends ProjectPageController
 
     // --- Project-scoped administration (§5.3/§5.4/§5.5, REQ-UI-013/014/015) -------------
 
-    /** The data access levels of a role arm (REQ-AUTH-019), in rising order. */
-    public const DATA_LEVELS = ['no_access', 'read_only', 'view_edit', 'delete', 'edit_survey_responses'];
+    /**
+     * The data access levels of a role grant (REQ-AUTH-019), in rising order. The ladder ends
+     * at `view_edit`: deleting values and editing collected surveys are two independent rights
+     * of a pair, never rungs above it (REQ-AUTH-070).
+     */
+    public const DATA_LEVELS = ['no_access', 'read_only', 'view_edit'];
 
-    /** The export levels of a role arm (REQ-API-075), in rising order. */
+    /** The export levels of a role grant (REQ-API-075/026), in rising order. */
     public const EXPORT_LEVELS = ['export_none', 'export_de_identified', 'export_no_identifiers', 'export_full'];
 
     /**
@@ -229,11 +233,13 @@ final class ProjectController extends ProjectPageController
      * breadcrumb with the mode badge (§6.1, §6.6) — around this section's template.
      *
      * @param array<string, mixed> $detail
+     * @param list<string> $extraScripts this section's own script, after the shared two
      */
-    private function projectSection(array $detail, string $template, string $titleKey, array $data): Response
+    private function projectSection(array $detail, string $template, string $titleKey, array $data,
+        array $extraScripts = []): Response
     {
         return $this->renderSection($detail, $template, $titleKey, $data, [
-            'scripts' => ['/assets/app.js', '/assets/js/admin.js'],
+            'scripts' => array_merge(['/assets/app.js', '/assets/js/admin.js'], $extraScripts),
             'jsKeys' => ['admin.confirm.title', 'action.cancel', 'admin.confirm.ok', 'tfa.copied'],
         ], $this->projectMode($this->projectIdOf($detail)));
     }
@@ -345,42 +351,172 @@ final class ProjectController extends ProjectPageController
     {
         $detail = $this->projectDetail();
         $projectId = $this->projectIdOf($detail);
-        $roles = $this->api->get('/api/v1/projects/' . $projectId . '/roles');
+        $roles = array_values(array_filter(
+            $this->api->get('/api/v1/projects/' . $projectId . '/roles'), 'is_array'));
+
+        // One role at a time is on the form; the list links each role into it (REQ-UI-014).
+        $editing = null;
+        foreach ($roles as $role) {
+            if ((int) ($role['id'] ?? 0) === (int) $this->request->query('role')) {
+                $editing = $role;
+                break;
+            }
+        }
 
         return $this->projectSection($detail, 'project/roles', 'roles.title', [
-            'roles' => array_values(array_filter(is_array($roles) ? $roles : [], 'is_array')),
+            'roles' => $roles,
             'arms' => array_values(array_filter(is_array($detail['arms'] ?? null) ? $detail['arms'] : [], 'is_array')),
+            // The matrix's rows: every mapped (instrument, event) pair of the arm.
+            'pairs' => self::pairRows($detail, $this->instrumentEventMap($projectId)),
+            'editing' => $editing,
             'dataLevels' => self::DATA_LEVELS,
             'exportLevels' => self::EXPORT_LEVELS,
-        ]);
+        ], ['/assets/js/roles.js']);
     }
 
-    public function createRole(): Response
+    /**
+     * `GET …/instrument-event-mapping` as arm_num → instrument name → mapped event names.
+     *
+     * @return array<int, array<string, list<string>>>
+     */
+    private function instrumentEventMap(int $projectId): array
     {
-        $name = trim($this->request->field('name'));
-        $data = $this->request->fieldMap('data');
-        $export = $this->request->fieldMap('export');
-
-        // One block per arm; an arm left at its defaults is sent as no_access/export_none so
-        // nothing is granted implicitly (REQ-AUTH-019).
-        $arms = [];
-        foreach (array_unique(array_merge(array_keys($data), array_keys($export))) as $arm) {
-            if (preg_match('/^\d{1,4}$/', (string) $arm) !== 1) {
+        $out = [];
+        foreach ($this->api->get('/api/v1/projects/' . $projectId . '/instrument-event-mapping') as $arm) {
+            if (!is_array($arm)) {
                 continue;
             }
-            $arms[(string) $arm] = [
-                'data' => in_array($data[$arm] ?? '', self::DATA_LEVELS, true) ? $data[$arm] : 'no_access',
-                'export' => in_array($export[$arm] ?? '', self::EXPORT_LEVELS, true) ? $export[$arm] : 'export_none',
+            $byInstrument = [];
+            foreach ((is_array($arm['mapping'] ?? null) ? $arm['mapping'] : []) as $name => $events) {
+                $byInstrument[(string) $name] = is_array($events) ? array_values(array_map('strval', $events)) : [];
+            }
+            $out[(int) ($arm['arm_num'] ?? 0)] = $byInstrument;
+        }
+
+        return $out;
+    }
+
+    /**
+     * The matrix rows per arm: the project's instruments in position order, each with the
+     * events it is mapped to in the canonical order of GD-15 — the design order the master
+     * spec's "Role adjustment" picture shows (REQ-UI-014). A pair exists only when both of
+     * its objects do, so nothing here has to guess at a removed instrument.
+     *
+     * @param array<string, mixed>                    $detail the project detail (arms, instruments)
+     * @param array<int, array<string, list<string>>> $mapping
+     * @return array<int, list<array{event: string, instrument: string}>>
+     */
+    private static function pairRows(array $detail, array $mapping): array
+    {
+        $instruments = [];
+        foreach ((is_array($detail['instruments'] ?? null) ? $detail['instruments'] : []) as $instrument) {
+            if (is_array($instrument) && ($instrument['name'] ?? '') !== '') {
+                $instruments[] = [(string) $instrument['name'], (int) ($instrument['position'] ?? 0)];
+            }
+        }
+        usort($instruments, static fn (array $a, array $b): int => [$a[1], $a[0]] <=> [$b[1], $b[0]]);
+
+        $rows = [];
+        foreach ((is_array($detail['arms'] ?? null) ? $detail['arms'] : []) as $arm) {
+            if (!is_array($arm)) {
+                continue;
+            }
+            $armNum = (int) ($arm['arm_num'] ?? 0);
+            $events = [];
+            foreach ((is_array($arm['events'] ?? null) ? $arm['events'] : []) as $event) {
+                if (is_array($event) && ($event['unique_event_name'] ?? '') !== '') {
+                    $events[] = (string) $event['unique_event_name'];
+                }
+            }
+            foreach ($instruments as [$name, $_]) {
+                foreach ($events as $event) {
+                    if (in_array($event, $mapping[$armNum][$name] ?? [], true)) {
+                        $rows[$armNum][] = ['event' => $event, 'instrument' => $name];
+                    }
+                }
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Submits the editor: `POST …/roles` for a new role, `PUT …/roles/{rid}` for the one on the
+     * form (REQ-API-057/143). The body is the §4.7 role object — arm defaults plus one grant
+     * per row of the matrix; a pair no row names reverts to its arm default (REQ-API-143).
+     */
+    public function saveRole(): Response
+    {
+        $projectId = $this->projectIdFromPath();
+        $name = trim($this->request->field('name'));
+        $roleId = (int) $this->request->field('role_id');
+
+        // Every row posts its pair key, so a checkbox left out reads as unset rather than as a
+        // missing value; the key carries arm, instrument and event in one flat map entry.
+        $data = $this->request->fieldMap('data');
+        $export = $this->request->fieldMap('export');
+        $deleteValues = $this->request->fieldMap('delete_values');
+        $editSurveys = $this->request->fieldMap('edit_surveys');
+        $armData = $this->request->fieldMap('arm_data');
+        $armExport = $this->request->fieldMap('arm_export');
+
+        $arms = [];
+        foreach ($armData as $armNum => $level) {
+            if (preg_match('/^\d{1,4}$/', (string) $armNum) !== 1) {
+                continue;
+            }
+            $arms[(string) $armNum] = [
+                'data' => in_array($level, self::DATA_LEVELS, true) ? $level : 'no_access',
+                'export' => in_array($armExport[$armNum] ?? '', self::EXPORT_LEVELS, true)
+                    ? $armExport[$armNum] : 'export_none',
             ];
         }
 
-        return $this->mutate('roles', function (int $projectId) use ($name, $arms): void {
-            $this->api->post('/api/v1/projects/' . $projectId . '/roles', [
-                'name' => $name,
-                'project_admin' => $this->request->field('project_admin') === '1',
-                'arms' => (object) $arms,
-            ]);
-        }, $this->i18n->t('roles.created', ['name' => $name]));
+        $grants = [];
+        foreach ($this->request->fieldList('pair') as $key) {
+            $parts = explode('|', $key);
+            if (count($parts) !== 3) {
+                continue;
+            }
+            [$armNum, $instrument, $event] = $parts;
+            if ($instrument === '' || $event === '') {
+                continue;
+            }
+            $grants[] = [
+                'event' => $event,
+                'instrument' => $instrument,
+                'data' => in_array($data[$key] ?? '', self::DATA_LEVELS, true) ? $data[$key] : 'no_access',
+                'export' => in_array($export[$key] ?? '', self::EXPORT_LEVELS, true)
+                    ? $export[$key] : 'export_none',
+                'delete_values' => ($deleteValues[$key] ?? '') === '1',
+                'edit_surveys' => ($editSurveys[$key] ?? '') === '1',
+            ];
+        }
+
+        $body = [
+            'name' => $name,
+            'project_admin' => $this->request->field('project_admin') === '1',
+            'arms' => (object) $arms,
+            'grants' => $grants,
+        ];
+
+        try {
+            if ($roleId > 0) {
+                $this->api->put('/api/v1/projects/' . $projectId . '/roles/' . $roleId, $body);
+            } else {
+                $this->api->post('/api/v1/projects/' . $projectId . '/roles', $body);
+            }
+        } catch (ApiException $e) {
+            $this->logger->info('role change rejected', ['code' => $e->code(), 'status' => $e->status()]);
+            $this->flashDanger(Messages::forApiException($this->i18n, $e));
+
+            return Response::redirect('/projects/' . $projectId . '/roles'
+                . ($roleId > 0 ? '?role=' . $roleId : ''));
+        }
+
+        $this->flashSuccess($this->i18n->t($roleId > 0 ? 'roles.saved' : 'roles.created', ['name' => $name]));
+
+        return Response::redirect('/projects/' . $projectId . '/roles');
     }
 
     // Data access groups (§5.5: read ≥ read_only, mutate project_admin) ------------------

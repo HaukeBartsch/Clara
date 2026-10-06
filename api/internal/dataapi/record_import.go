@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"csms/api/internal/audit"
+	"csms/api/internal/authz"
 	"csms/api/internal/db"
 	"csms/api/internal/validate"
 )
@@ -282,15 +283,31 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 					"' conflicts with redcap_event_name '" + alias + "'")
 			}
 		}
-		arm, ok := d.eventArm[event]
-		if !ok {
+		if _, ok := d.eventArm[event]; !ok {
 			return fail(eventKey + ": CONTENT_INVALID — unknown event '" + event + "'")
 		}
-		// A survey link carries no arm grant at all: §3.10 admits it for its
-		// own (record, instrument) whatever arm the event belongs to.
-		if !sub.isLink() && !sub.User.IsAdmin && sub.dataLevels[arm] < lvlViewEdit {
-			// A permission mismatch is request-level, not a data row.
-			return importRow{}, errForbiddenRequest
+		// A survey link carries no grant at all: §3.10 admits it for its own
+		// (record, instrument, event) whatever the pair says — and only for that
+		// event, since a link of an instrument mapped to three events is three
+		// distinct links (REQ-AUTH-039).
+		if sub.isLink() {
+			if sub.Link.EventID != d.eventIDOf(event) {
+				return importRow{}, errForbiddenRequest
+			}
+		} else {
+			// Pair gate (REQ-AUTH-069): every field this row carries must be
+			// editable at its own (instrument, event) pair, not merely at the
+			// arm of the event it names. Editing a survey that has already been
+			// collected needs the edit_surveys right on that pair as well
+			// (REQ-AUTH-071) — checked where the link's collection stamp is read.
+			for name := range row {
+				if _, known := d.byName[name]; !known {
+					continue // not a field: the record identifier or a framing key
+				}
+				if authz.DataRank(d.pairAccess(sub, event, name).Data) < lvlViewEdit {
+					return importRow{}, errForbiddenRequest
+				}
+			}
 		}
 	}
 

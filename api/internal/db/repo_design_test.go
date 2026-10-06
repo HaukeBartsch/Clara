@@ -86,9 +86,22 @@ func TestSurveyLinkRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddInstrument: %v", err)
 	}
+	// ...and an event, because a link is keyed by (record, instrument, event)
+	// and a project without events holds none (REQ-AUTH-039, DEV-DB-14).
+	armID, err := s.AddArm(ctx, &Arm{ProjectID: pid, ArmNum: 1})
+	if err != nil {
+		t.Fatalf("AddArm: %v", err)
+	}
+	eventID, err := s.AddEvent(ctx, &Event{
+		ProjectID: pid, ArmID: armID, EventName: "baseline", UniqueEventName: "baseline_arm_1",
+	})
+	if err != nil {
+		t.Fatalf("AddEvent: %v", err)
+	}
 
-	// A survey link for (project, record, instrument) that is already revoked.
-	link := &SurveyLink{ProjectID: pid, RecordID: "REC-01", InstrumentID: insID, Revoked: true}
+	// A survey link for (project, record, instrument, event) that is revoked.
+	link := &SurveyLink{ProjectID: pid, RecordID: "REC-01", InstrumentID: insID,
+		EventID: eventID, Revoked: true}
 	if _, err := s.CreateSurveyLink(ctx, link); err != nil {
 		t.Fatalf("CreateSurveyLink: %v", err)
 	}
@@ -110,7 +123,7 @@ func TestSurveyLinkRoundTrip(t *testing.T) {
 		t.Errorf("CreatedAt = empty, want a normalized timestamp")
 	}
 
-	byTuple, err := s.GetSurveyLink(ctx, pid, "REC-01", insID)
+	byTuple, err := s.GetSurveyLink(ctx, pid, "REC-01", insID, eventID)
 	if err != nil {
 		t.Fatalf("GetSurveyLink: %v", err)
 	}

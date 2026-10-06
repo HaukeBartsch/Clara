@@ -74,7 +74,7 @@ func TestModeReadGating(t *testing.T) {
 		t.Errorf("non-member status = %d, want 403", rec.Code)
 	}
 	roleID, err := e.Store.CreateRole(ctx, &db.Role{ProjectID: pid, RoleName: "viewer"},
-		[]db.RoleArm{{ArmNum: 1, DataAccessLevel: "read_only", ExportLevel: "export_none"}})
+		[]db.RoleArm{{ArmNum: 1, DataAccessLevel: "read_only", ExportLevel: "export_none"}}, nil)
 	if err != nil {
 		t.Fatalf("CreateRole: %v", err)
 	}

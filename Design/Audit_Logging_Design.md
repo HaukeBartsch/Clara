@@ -103,7 +103,8 @@ Field renames are `field_updated` with `"changes":{"name":{"old":"…","new":"�
 | `token_issued` | first issuance via REQ-API-054 (REQ-AUTH-030) | `{"member_email":"…"}` — the token value is never in `details` (REQ-API-005) |
 | `token_rotated` | REQ-API-055 | `{"member_email":"…"}` |
 | `token_revoked` | member removal or explicit revocation (REQ-AUTH-030) | `{"member_email":"…","reason":"member_removed or explicit"}` |
-| `role_created` | REQ-API-057 | `{"name":"data-manager","project_admin":1,"arms":{"1":{"data":"delete","export":"export_full"},"2":{"data":"view_edit","export":"export_none"}}}` |
+| `role_created` | REQ-API-057 | `{"name":"data-manager","project_admin":1,"arms":{"1":{"data":"view_edit","export":"export_full"},"2":{"data":"view_edit","export":"export_none"}},"grants":[{"event":"v1_arm_1","instrument":"intake","data":"view_edit","export":"export_de_identified","delete_values":true,"edit_surveys":false}]}` — the permission set as supplied: arm defaults plus the named pair grants (REQ-AUTH-069/070) |
+| `role_updated` | REQ-API-143 | `{"role_id":7,"name":"data-manager","before":{"arms":{…},"grants":[…]},"after":{…}}` — one entry per applied edit, the whole permission set on each side so a reviewer never reconstructs it from deltas; names, levels and rights only, never record values (REQ-AUD-012) |
 | `i18n_updated` | REQ-API-100 | `{"language":"nb","key":"ui.dashboard.title","action":"set or removed"}` |
 | `settings_updated` | `PUT /api/v1/settings` changes at least one key (REQ-API-112, REQ-AUD-027) | `{"changes":{"rate_limit_rpm":{"old":"600","new":"300"},"rate_limit_enabled":{"old":"false","new":"true"}}}` — same old/new shape as `project_updated`; a PUT that changes nothing writes no entry (REQ-AUD-004) |
 

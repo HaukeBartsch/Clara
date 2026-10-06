@@ -61,8 +61,10 @@ test.describe("administration surface (M3)", () => {
     // Add a role (project page → Roles).
     await page.locator("#clara-nav").getByRole("link", { name: "Roles" }).click()
     await page.fill("#role-name", roleName)
-    await page.selectOption("#data-1", "view_edit")
-    await page.locator('form[action*="action=create_role"] button[type="submit"]').click()
+    // The arm default its pairs inherit; a fresh project has no events yet, so the matrix has
+    // no rows here (DEV-DB-14) and design.spec.ts covers the mapped case.
+    await page.selectOption("#arm-data-1", "view_edit")
+    await page.locator('form[action*="action=save_role"] button[type="submit"]').click()
     await expect(page.locator("table.clara-roles")).toContainText(roleName)
 
     // Add the member with that role: the token is shown exactly once (§3.5).

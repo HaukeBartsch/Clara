@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"csms/api/internal/authz"
 	"csms/api/internal/db"
 )
 
@@ -13,76 +14,34 @@ import (
 // cannot probe for valid ones (REQ-AUTH-032, REQ-API-011).
 var errInvalidToken = errors.New("invalid token")
 
-// Data-level ranks, in ascending privilege (REQ-DB-009).
+// The two ladders, re-exported from authz so this package reads the same way as
+// the administration API does. They are aliases and nothing else: one ranking
+// exists, in authz (REQ-DB-009 as revised, REQ-AUTH-017) — a second copy here is
+// what let the two surfaces disagree once before.
 const (
-	lvlNoAccess = iota
-	lvlReadOnly
-	lvlViewEdit
-	lvlDelete
-	lvlEditSurveyResponses
+	lvlReadOnly = authz.RankReadOnly
+	lvlViewEdit = authz.RankViewEdit
+
+	expNone          = authz.RankExportNone
+	expDeIdentified  = authz.RankExportDeIdentified
+	expNoIdentifiers = authz.RankExportNoIdentifiers
+	expFull          = authz.RankExportFull
 )
 
-func dataRank(level string) int {
-	switch level {
-	case "read_only":
-		return lvlReadOnly
-	case "view_edit":
-		return lvlViewEdit
-	case "delete":
-		return lvlDelete
-	case "edit_survey_responses":
-		return lvlEditSurveyResponses
-	default:
-		return lvlNoAccess
-	}
-}
+// exportName is authz's, aliased for the audit details of this surface.
+var exportName = authz.ExportName
 
-// Export-level ranks, in ascending privilege (GD-2, REQ-AUTH-017).
-const (
-	expNone = iota
-	expDeIdentified
-	expNoIdentifiers
-	expFull
-)
-
-func exportRank(level string) int {
-	switch level {
-	case "export_de_identified":
-		return expDeIdentified
-	case "export_no_identifiers":
-		return expNoIdentifiers
-	case "export_full":
-		return expFull
-	default:
-		return expNone
-	}
-}
-
-func exportName(rank int) string {
-	switch rank {
-	case expDeIdentified:
-		return "export_de_identified"
-	case expNoIdentifiers:
-		return "export_no_identifiers"
-	case expFull:
-		return "export_full"
-	default:
-		return "export_none"
-	}
-}
-
-// subject is the authenticated data-API caller: the token's
-// (user, project) plus the effective per-arm data and export levels
-// (Authentication_Authorization_Design.md §4.1). A survey-link caller has
-// Link and Instrument set and no account at all — User and Assignment are
-// nil there (§3.10), so nothing may dereference them.
+// subject is the authenticated data-API caller: the token's (user, project)
+// plus the effective levels resolved once by authz (§4.1) — arm defaults and
+// the per-(instrument, event) grants on top of them (REQ-AUTH-069). A
+// survey-link caller has Link and Instrument set and no account at all — User
+// and Assignment are nil there (§3.10), so nothing may dereference them, and
+// Levels stays empty: a link holds no permissions of its own.
 type subject struct {
-	Assignment   *db.Assignment
-	User         *db.User
-	Project      *db.Project
-	projectAdmin bool
-	dataLevels   map[int]int // arm_num -> data level rank
-	exportLevels map[int]int // arm_num -> export level rank (GD-2)
+	Assignment *db.Assignment
+	User       *db.User
+	Project    *db.Project
+	Levels     *authz.Levels
 
 	Link       *db.SurveyLink // set only for a survey-link token (§3.10)
 	Instrument string         // the link's instrument name
@@ -109,42 +68,79 @@ func (s *subject) actorEmail() string {
 	return s.User.Email
 }
 
-// appliedExportLevel is the lowest export level among the given arms —
-// the most protective, per Data_Export_Anonymization_Design.md §4.3. An
-// empty arm list means the project has no arms to check; the holder's
-// highest level applies (a role-less member or administrator holds full).
+// hasData reports whether the holder reaches minRank somewhere — on an arm
+// default or on any pair grant. An administrator holds every level on every
+// arm and pair (REQ-AUTH-023) and a role-less member everything else
+// (REQ-AUTH-022), both of which authz already folded into Levels; a survey
+// link holds no data level at all, since what it may do is fixed per call by
+// API_Endpoints_Design.md §3.10 rather than by a grant.
+func (s *subject) hasData(minRank int) bool {
+	if s.isLink() {
+		return false
+	}
+	return s.Levels.AnyData(minRank)
+}
+
+// pairAt resolves one (instrument, event) pair's access — the unit every
+// data-API decision is made at since GD-2 was revised (REQ-AUTH-069). armNum is
+// the arm of the event, used only when the pair carries no grant of its own;
+// pass 0 where the project has no events at all, which leaves the caller with
+// the arm-default reading the row-level checks apply.
+func (s *subject) pairAt(eventID, instrumentID int64, armNum int) authz.PairLevels {
+	if s.isLink() {
+		return authz.PairLevels{}
+	}
+	return s.Levels.PairOrArmDefault(eventID, instrumentID, armNum)
+}
+
+// appliedExportLevel is the lowest export level among the given arms — the most
+// protective reading of a mixed request. An empty arm list means the project has
+// no arms to check, so the holder's highest level applies (a role-less member or
+// an administrator holds full).
+//
+// OUTSTANDING (§4.3 of Data_Export_Anonymization_Design.md, revised 2026-10-03):
+// sensitivity is now held per (instrument, event) pair, so the normative shape is
+// one file carrying export_full for one instrument next to hashed columns for
+// another, with a pair at export_none contributing no columns instead of failing
+// the call. Until that lands in the exporter, every column of the response is
+// rendered at the strictest level in scope and an unpermitted arm still answers
+// 403 — stricter than entitled, never looser.
 func (s *subject) appliedExportLevel(arms []int) int {
 	if len(arms) == 0 {
 		best := expNone
-		for _, r := range s.exportLevels {
-			if r > best {
-				best = r
+		for _, r := range s.Levels.Export {
+			if r2 := authz.ExportRank(r); r2 > best {
+				best = r2
 			}
+		}
+		if s.Levels.Unrestricted {
+			return expFull
 		}
 		return best
 	}
 	best := expFull
 	for _, a := range arms {
-		if r := s.exportLevels[a]; r < best {
+		if r := authz.ExportRank(s.Levels.Export[a]); r < best {
 			best = r
 		}
 	}
 	return best
 }
 
-// hasData reports whether the holder reaches minRank on at least one arm.
-// An administrator holds every level on every arm (REQ-AUTH-023). A survey
-// link holds no data level at all: what it may do is fixed per call by
-// API_Endpoints_Design.md §3.10, never by an arm grant.
-func (s *subject) hasData(minRank int) bool {
+// canDeleteValues reports whether the holder may clear stored values anywhere in
+// the project at all. The right is held per (instrument, event) pair
+// (REQ-AUTH-018), so this is only the cheap upfront no — the per-record gate of
+// §3.8 decides each record on its own populated pairs, all of them or none
+// (REQ-API-036).
+func (s *subject) canDeleteValues() bool {
 	if s.isLink() {
 		return false
 	}
-	if s.User.IsAdmin {
+	if s.Levels.Unrestricted {
 		return true
 	}
-	for _, r := range s.dataLevels {
-		if r >= minRank {
+	for _, g := range s.Levels.Pairs {
+		if g.DeleteValues {
 			return true
 		}
 	}
@@ -179,58 +175,23 @@ func (h *Handler) resolveToken(ctx context.Context, token string) (*subject, err
 	if err != nil || p == nil {
 		return nil, errInvalidToken
 	}
-	arms, err := h.Store.ListArms(ctx, p.ID)
+	// Effective levels from the assignment this lookup already produced — one
+	// resolution of §4.1 for both surfaces, arm defaults and pair grants alike
+	// (REQ-AUTH-069). A role that vanished resolves to no access, not to the
+	// full rights of a role-less member.
+	lv, err := authz.EffectiveForAssignment(ctx, h.Store, u, p.ID, a)
 	if err != nil {
 		return nil, err
 	}
-
-	sub := &subject{
-		Assignment:   a,
-		User:         u,
-		Project:      p,
-		dataLevels:   map[int]int{},
-		exportLevels: map[int]int{},
-	}
-	// Effective levels (Authentication_Authorization_Design.md §4.1):
-	// an administrator or a role-less member holds full permissions on
-	// every arm (REQ-AUTH-023, REQ-AUTH-022); otherwise the role's
-	// per-arm rows with no implicit access (REQ-AUTH-019).
-	full := u.IsAdmin || !a.RoleID.Valid
-	for _, arm := range arms {
-		if full {
-			sub.dataLevels[arm.ArmNum] = lvlEditSurveyResponses
-			sub.exportLevels[arm.ArmNum] = expFull
-		} else {
-			sub.dataLevels[arm.ArmNum] = lvlNoAccess
-			sub.exportLevels[arm.ArmNum] = expNone
-		}
-	}
-	if full {
-		sub.projectAdmin = true
-	} else if a.RoleID.Valid {
-		role, err := h.Store.GetRole(ctx, a.RoleID.Int64)
-		if err != nil || role == nil {
-			return nil, errInvalidToken
-		}
-		sub.projectAdmin = role.ProjectAdmin
-		ra, err := h.Store.ListRoleArms(ctx, role.ID)
-		if err != nil {
-			return nil, err
-		}
-		for _, l := range ra {
-			sub.dataLevels[l.ArmNum] = dataRank(l.DataAccessLevel)
-			sub.exportLevels[l.ArmNum] = exportRank(l.ExportLevel)
-		}
-	}
-	return sub, nil
+	return &subject{Assignment: a, User: u, Project: p, Levels: lv}, nil
 }
 
 // resolveSurveyLink admits a survey-link token (API_Endpoints_Design.md
 // §3.10): one indexed lookup on survey_links.token, the revocation check
 // (a revoked link is rejected on every call, REQ-AUTH-040), and the
-// project and instrument the link names. The level maps stay empty — a link
-// holds no arm permissions; the dispatcher grants the two calls of §3.10
-// and nothing else (REQ-API-083, REQ-AUTH-039).
+// project, instrument and event the link names. Levels stay empty — a link
+// holds no permissions; the dispatcher grants the two calls of §3.10 and
+// nothing else (REQ-API-083, REQ-AUTH-039).
 func (h *Handler) resolveSurveyLink(ctx context.Context, token string) (*subject, error) {
 	link, err := h.Store.GetSurveyLinkByToken(ctx, token)
 	if err != nil || link == nil || link.Revoked {
@@ -245,11 +206,10 @@ func (h *Handler) resolveSurveyLink(ctx context.Context, token string) (*subject
 		return nil, errInvalidToken
 	}
 	return &subject{
-		Project:      p,
-		Link:         link,
-		Instrument:   ins.Name,
-		dataLevels:   map[int]int{},
-		exportLevels: map[int]int{},
+		Project:    p,
+		Link:       link,
+		Instrument: ins.Name,
+		Levels:     &authz.Levels{Data: map[int]string{}, Export: map[int]string{}, Pairs: map[authz.Pair]authz.PairLevels{}},
 	}, nil
 }
 

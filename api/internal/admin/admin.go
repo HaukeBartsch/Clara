@@ -216,12 +216,13 @@ func (h *Handler) requireData(w http.ResponseWriter, r *http.Request, lv *authz.
 	return true
 }
 
-// Data level rank constants re-exported for area files.
+// Data level rank constants re-exported for area files — the values are
+// authz's, so no second ladder can drift here (REQ-DB-009 as revised). The
+// ladder ends at view_edit: delete and survey editing are rights of a grant
+// (REQ-AUTH-018/070), tested through authz.PairLevels.
 const (
-	LvlReadOnly   = 1
-	LvlViewEdit   = 2
-	LvlDelete     = 3
-	LvlEditSurvey = 4
+	LvlReadOnly = authz.RankReadOnly
+	LvlViewEdit = authz.RankViewEdit
 )
 
 // --- pagination (§1 convention) ---

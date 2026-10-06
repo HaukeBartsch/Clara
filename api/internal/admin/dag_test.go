@@ -104,7 +104,7 @@ func newDAGFixture(t *testing.T, e *env) dagFixture {
 	e.mustRecord(f.projectID, "R2") // unassigned
 
 	readRole, err := e.Store.CreateRole(ctx, &db.Role{ProjectID: f.projectID, RoleName: "reader"},
-		[]db.RoleArm{{ArmNum: 1, DataAccessLevel: "read_only", ExportLevel: "export_none"}})
+		[]db.RoleArm{{ArmNum: 1, DataAccessLevel: "read_only", ExportLevel: "export_none"}}, nil)
 	if err != nil {
 		t.Fatalf("CreateRole: %v", err)
 	}

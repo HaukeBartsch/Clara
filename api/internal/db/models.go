@@ -57,13 +57,29 @@ type Role struct {
 	ProjectAdmin bool
 }
 
-// RoleArm is one per-arm level of a role (REQ-DB-009).
+// RoleArm is one per-arm DEFAULT of a role — the level a pair in that arm
+// inherits unless the role grants it explicitly (REQ-DB-009 as revised,
+// REQ-AUTH-069).
 type RoleArm struct {
 	ID              int64
 	RoleID          int64
 	ArmNum          int
-	DataAccessLevel string // no_access | read_only | view_edit | delete | edit_survey_responses
+	DataAccessLevel string // no_access | read_only | view_edit
 	ExportLevel     string // export_none | export_de_identified | export_no_identifiers | export_full
+}
+
+// RoleGrant is one per-(instrument, event) override of a role's arm default
+// (REQ-DB-040). The two rights exist only here: no data-access level implies
+// either of them, and a `no_access` grant clears both (REQ-AUTH-070).
+type RoleGrant struct {
+	ID              int64
+	RoleID          int64
+	EventID         int64
+	InstrumentID    int64
+	DataAccessLevel string // no_access | read_only | view_edit
+	ExportLevel     string
+	DeleteValues    bool // right: clear this pair's stored values (REQ-AUTH-018)
+	EditSurveys     bool // right: modify a collected survey of this pair (REQ-AUTH-071)
 }
 
 // Assignment links a user to a project with a role and a token (REQ-DB-010, GD-5).
@@ -174,8 +190,10 @@ type SurveyLink struct {
 	ProjectID    int64
 	RecordID     string
 	InstrumentID int64
+	EventID      int64 // one link per event the instrument is mapped to (REQ-AUTH-039); a project without events has no links (DEV-DB-14)
 	Token        string
 	Revoked      bool
+	CollectedAt  sql.NullString // first save through the link; never overwritten (REQ-DB-041)
 	CreatedBy    sql.NullInt64
 	CreatedAt    string
 }

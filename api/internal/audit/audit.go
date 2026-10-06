@@ -73,6 +73,7 @@ const (
 	TokenRotated      = "token_rotated"
 	TokenRevoked      = "token_revoked"
 	RoleCreated       = "role_created"
+	RoleUpdated       = "role_updated" // REQ-API-143: before/after permission set, never values
 	I18nUpdated       = "i18n_updated"
 	SettingsUpdated   = "settings_updated" // REQ-AUD-027, REQ-API-112
 

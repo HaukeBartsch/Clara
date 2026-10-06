@@ -12,9 +12,22 @@ import (
 
 // --- §4.17 survey links (REQ-API-082…085) ---
 
-func surveyLinkPath(projectID int64, record string, instrumentID int64) string {
+// surveyLinkPath builds the §4.17 path. The event is part of a link's identity,
+// so it travels on every call: one instrument mapped to several events has one
+// distinct link each (REQ-AUTH-039, REQ-API-082).
+func surveyLinkPath(projectID int64, record string, instrumentID int64, eventName string) string {
 	return "/api/v1/projects/" + itoa(projectID) + "/records/" + record +
-		"/instruments/" + itoa(instrumentID) + "/survey-link"
+		"/instruments/" + itoa(instrumentID) + "/survey-link?event=" + eventName
+}
+
+// surveyEventID resolves the fixture's event, which a stored link is keyed by.
+func surveyEventID(t *testing.T, e *env, projectID int64) int64 {
+	t.Helper()
+	ev, err := e.Store.GetEventByUniqueName(context.Background(), projectID, "v1_arm_1")
+	if err != nil || ev == nil {
+		t.Fatalf("GetEventByUniqueName(v1_arm_1): %v", err)
+	}
+	return ev.ID
 }
 
 // surveyFixture is a one-arm project with a survey instrument and a plain one,
@@ -75,7 +88,7 @@ func TestSurveyLinkLifecycle(t *testing.T) {
 	e := newEnv(t)
 	admin := e.mustAdmin("admin@example.org")
 	f := newSurveyFixture(t, e)
-	path := surveyLinkPath(f.projectID, "R1", f.survey)
+	path := surveyLinkPath(f.projectID, "R1", f.survey, "v1_arm_1")
 
 	rec := e.do("GET", path, nil, admin)
 	if rec.Code != http.StatusOK {
@@ -91,7 +104,8 @@ func TestSurveyLinkLifecycle(t *testing.T) {
 		t.Errorf("token %q is not a link token", token)
 	}
 	// The stored row carries the same token and belongs to the triple.
-	stored, err := e.Store.GetSurveyLink(context.Background(), f.projectID, "R1", f.survey)
+	stored, err := e.Store.GetSurveyLink(context.Background(), f.projectID, "R1", f.survey,
+		surveyEventID(t, e, f.projectID))
 	if err != nil || stored == nil {
 		t.Fatalf("GetSurveyLink: %v", err)
 	}
@@ -114,7 +128,8 @@ func TestSurveyLinkLifecycle(t *testing.T) {
 	if rec := e.do("DELETE", path, nil, admin); rec.Code != http.StatusNoContent {
 		t.Fatalf("revoke: got %d %s", rec.Code, rec.Body.String())
 	}
-	stored, _ = e.Store.GetSurveyLink(context.Background(), f.projectID, "R1", f.survey)
+	stored, _ = e.Store.GetSurveyLink(context.Background(), f.projectID, "R1", f.survey,
+		surveyEventID(t, e, f.projectID))
 	if stored != nil && !stored.Revoked {
 		t.Errorf("link still live after revoke")
 	}
@@ -148,40 +163,40 @@ func TestSurveyLinkRejections(t *testing.T) {
 	f := newSurveyFixture(t, e)
 
 	// A data-collection instrument takes no survey link → 400 invalid_request.
-	if rec := e.do("GET", surveyLinkPath(f.projectID, "R1", f.plain), nil, admin); rec.Code != http.StatusBadRequest {
+	if rec := e.do("GET", surveyLinkPath(f.projectID, "R1", f.plain, "v1_arm_1"), nil, admin); rec.Code != http.StatusBadRequest {
 		t.Errorf("non-survey instrument: got %d %s, want 400", rec.Code, rec.Body.String())
 	}
 	// Unknown record / instrument → 404; another project's instrument → 404.
-	if rec := e.do("GET", surveyLinkPath(f.projectID, "NOPE", f.survey), nil, admin); rec.Code != http.StatusNotFound {
+	if rec := e.do("GET", surveyLinkPath(f.projectID, "NOPE", f.survey, "v1_arm_1"), nil, admin); rec.Code != http.StatusNotFound {
 		t.Errorf("unknown record: got %d, want 404", rec.Code)
 	}
-	if rec := e.do("GET", surveyLinkPath(f.projectID, "R1", 999999), nil, admin); rec.Code != http.StatusNotFound {
+	if rec := e.do("GET", surveyLinkPath(f.projectID, "R1", 999999, "v1_arm_1"), nil, admin); rec.Code != http.StatusNotFound {
 		t.Errorf("unknown instrument: got %d, want 404", rec.Code)
 	}
 	// Revoking a link that was never issued → 404.
-	if rec := e.do("DELETE", surveyLinkPath(f.projectID, "R1", f.survey), nil, admin); rec.Code != http.StatusNotFound {
+	if rec := e.do("DELETE", surveyLinkPath(f.projectID, "R1", f.survey, "v1_arm_1"), nil, admin); rec.Code != http.StatusNotFound {
 		t.Errorf("revoke with no link: got %d, want 404", rec.Code)
 	}
 
 	// Permission: read_only may not issue; view_edit may.
 	readRole, err := e.Store.CreateRole(ctx, &db.Role{ProjectID: f.projectID, RoleName: "reader"},
-		[]db.RoleArm{{ArmNum: 1, DataAccessLevel: "read_only", ExportLevel: "export_none"}})
+		[]db.RoleArm{{ArmNum: 1, DataAccessLevel: "read_only", ExportLevel: "export_none"}}, nil)
 	if err != nil {
 		t.Fatalf("CreateRole: %v", err)
 	}
 	reader := e.mustUser("reader@example.org")
 	e.mustMemberWithRole(f.projectID, reader, readRole)
-	if rec := e.do("GET", surveyLinkPath(f.projectID, "R1", f.survey), nil, reader); rec.Code != http.StatusForbidden {
+	if rec := e.do("GET", surveyLinkPath(f.projectID, "R1", f.survey, "v1_arm_1"), nil, reader); rec.Code != http.StatusForbidden {
 		t.Errorf("read_only issuing a link: got %d, want 403", rec.Code)
 	}
 	editRole, err := e.Store.CreateRole(ctx, &db.Role{ProjectID: f.projectID, RoleName: "editor"},
-		[]db.RoleArm{{ArmNum: 1, DataAccessLevel: "view_edit", ExportLevel: "export_none"}})
+		[]db.RoleArm{{ArmNum: 1, DataAccessLevel: "view_edit", ExportLevel: "export_none"}}, nil)
 	if err != nil {
 		t.Fatalf("CreateRole: %v", err)
 	}
 	editor := e.mustUser("editor@example.org")
 	e.mustMemberWithRole(f.projectID, editor, editRole)
-	if rec := e.do("GET", surveyLinkPath(f.projectID, "R1", f.survey), nil, editor); rec.Code != http.StatusOK {
+	if rec := e.do("GET", surveyLinkPath(f.projectID, "R1", f.survey, "v1_arm_1"), nil, editor); rec.Code != http.StatusOK {
 		t.Errorf("view_edit issuing a link: got %d %s, want 200", rec.Code, rec.Body.String())
 	}
 
@@ -200,7 +215,7 @@ func TestSurveyLinkRejections(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("AddDAGMembership: %v", err)
 	}
-	if rec := e.do("GET", surveyLinkPath(f.projectID, "R1", f.survey), nil, editor); rec.Code != http.StatusForbidden {
+	if rec := e.do("GET", surveyLinkPath(f.projectID, "R1", f.survey, "v1_arm_1"), nil, editor); rec.Code != http.StatusForbidden {
 		t.Errorf("grouped member, foreign record: got %d, want 403", rec.Code)
 	}
 }

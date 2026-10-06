@@ -60,8 +60,10 @@ abstract class DataEntryController extends ProjectPageController
     /**
      * The arms the member may read, each with its events in canonical order (GD-15) and, per
      * event, the instruments mapped to it in instrument order (REQ-API-074's column order).
-     * An arm without read access is not listed at all (GD-2); an event with no instrument is
-     * kept — it simply has nothing to enter.
+     * Read access is a pair's own (REQ-AUTH-069): an instrument whose pair the member may not
+     * read is absent rather than disabled (REQ-UI-003), and an arm is listed when its default
+     * reads something or one pair in it does. An event with no instrument is kept — it simply
+     * has nothing to enter.
      *
      * @param array<string, mixed>              $detail
      * @param array<int, array<string, list<string>>> $mapping
@@ -76,9 +78,9 @@ abstract class DataEntryController extends ProjectPageController
                 continue;
             }
             $armNum = (int) ($arm['arm_num'] ?? 0);
-            if (!$permissions->canView($armNum)) {
-                continue;
-            }
+            // The arm's default still decides a project without events, whose
+            // pairs the response does not list at all (DEV-DB-14).
+            $readable = $permissions->canView($armNum);
             $events = [];
             foreach ((is_array($arm['events'] ?? null) ? $arm['events'] : []) as $event) {
                 if (!is_array($event)) {
@@ -87,15 +89,26 @@ abstract class DataEntryController extends ProjectPageController
                 $uen = (string) ($event['unique_event_name'] ?? '');
                 $mapped = [];
                 foreach ($instruments as $instrument) {
-                    if (in_array($uen, $mapping[$armNum][(string) ($instrument['name'] ?? '')] ?? [], true)) {
-                        $mapped[] = $instrument;
+                    $name = (string) ($instrument['name'] ?? '');
+                    if (!in_array($uen, $mapping[$armNum][$name] ?? [], true)) {
+                        continue;
                     }
+                    if (!$permissions->canViewPair($uen, $name, $armNum)) {
+                        continue;
+                    }
+                    $mapped[] = $instrument;
+                }
+                if ($mapped !== []) {
+                    $readable = true;
                 }
                 $events[] = [
                     'unique_event_name' => $uen,
                     'event_name' => (string) ($event['event_name'] ?? $uen),
                     'instruments' => $mapped,
                 ];
+            }
+            if (!$readable) {
+                continue;
             }
             $arms[] = ['arm_num' => $armNum, 'name' => (string) ($arm['name'] ?? ''), 'events' => $events];
         }

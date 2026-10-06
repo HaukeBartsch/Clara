@@ -155,7 +155,7 @@ func testHandler(t *testing.T) (h *Handler, full, readonly string) {
 	if err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	roRole, err := s.CreateRole(ctx, &db.Role{ProjectID: pid, RoleName: "reader"}, []db.RoleArm{{ArmNum: 1, DataAccessLevel: "read_only"}})
+	roRole, err := s.CreateRole(ctx, &db.Role{ProjectID: pid, RoleName: "reader"}, []db.RoleArm{{ArmNum: 1, DataAccessLevel: "read_only"}}, nil)
 	if err != nil {
 		t.Fatalf("CreateRole: %v", err)
 	}

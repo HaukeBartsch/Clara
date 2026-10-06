@@ -117,7 +117,31 @@ func newRecordFixture(t *testing.T) *recordFixture {
 	}
 	mkRole := func(name, data, export string) int64 {
 		id, err := s.CreateRole(ctx, &db.Role{ProjectID: pid, RoleName: name},
-			[]db.RoleArm{{ArmNum: 1, DataAccessLevel: data, ExportLevel: export}})
+			[]db.RoleArm{{ArmNum: 1, DataAccessLevel: data, ExportLevel: export}}, nil)
+		if err != nil {
+			t.Fatalf("seed CreateRole %s: %v", name, err)
+		}
+		return id
+	}
+
+	// mkRoleWithRights is mkRole plus the two rights on every mapped pair: they
+	// are held per (instrument, event) and implied by no level, so a holder has
+	// to be named for each pair it may act on (REQ-AUTH-018).
+	mkRoleWithRights := func(name, data, export string, deleteValues, editSurveys bool) int64 {
+		pairs, err := s.ListInstrumentEvents(ctx, pid)
+		if err != nil {
+			t.Fatalf("seed ListInstrumentEvents: %v", err)
+		}
+		grants := make([]db.RoleGrant, 0, len(pairs))
+		for _, p := range pairs {
+			grants = append(grants, db.RoleGrant{
+				EventID: p.EventID, InstrumentID: p.InstrumentID,
+				DataAccessLevel: data, ExportLevel: export,
+				DeleteValues: deleteValues, EditSurveys: editSurveys,
+			})
+		}
+		id, err := s.CreateRole(ctx, &db.Role{ProjectID: pid, RoleName: name},
+			[]db.RoleArm{{ArmNum: 1, DataAccessLevel: data, ExportLevel: export}}, grants)
 		if err != nil {
 			t.Fatalf("seed CreateRole %s: %v", name, err)
 		}
@@ -128,7 +152,10 @@ func newRecordFixture(t *testing.T) *recordFixture {
 	mkToken(mkUser("de@example.org", false), "tok-de", mkRole("reader-de", "read_only", "export_de_identified"))
 	mkToken(mkUser("none@example.org", false), "tok-none", mkRole("reader-none", "read_only", "export_none"))
 	editorAssignment := mkToken(mkUser("edit@example.org", false), "tok-edit", mkRole("editor", "view_edit", "export_full"))
-	mkToken(mkUser("del@example.org", false), "tok-del", mkRole("deleter", "delete", "export_full"))
+	// The delete right is not a level any more: view_edit plus the right on the
+	// pairs, which is what the retired "delete" level stood for (GD-2).
+	mkToken(mkUser("del@example.org", false), "tok-del",
+		mkRoleWithRights("deleter", "view_edit", "export_full", true, false))
 	_ = editorAssignment
 
 	dv := func(record, event, field, value string) {

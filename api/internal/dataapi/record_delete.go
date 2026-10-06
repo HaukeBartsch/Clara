@@ -38,7 +38,9 @@ func (h *Handler) contentRecordDelete(w http.ResponseWriter, r *http.Request, en
 		writeError(w, enc, http.StatusForbidden, "Project in analysis mode")
 		return
 	}
-	if !sub.hasData(lvlDelete) {
+	if !sub.canDeleteValues() {
+		// No pair of this project carries the delete right (REQ-AUTH-018); the
+		// per-record gate below could not pass either.
 		writeError(w, enc, http.StatusForbidden, "Permission denied")
 		return
 	}
@@ -82,8 +84,9 @@ func (h *Handler) contentRecordDelete(w http.ResponseWriter, r *http.Request, en
 			h.storeError(w, enc)
 			return
 		}
-		// Arm gate: every event holding this record's data must be at the
-		// holder's delete level; otherwise nothing of the record is touched.
+		// Pair gate: every (instrument, event) pair holding this record's data
+		// must carry the delete right; otherwise nothing of the record is
+		// touched — all of it or none (REQ-API-036, REQ-AUTH-018).
 		dvs, err := h.Store.ListDataValuesByRecordTx(ctx, tx, sub.Project.ID, recordID)
 		if err != nil {
 			tx.Rollback()
@@ -92,8 +95,7 @@ func (h *Handler) contentRecordDelete(w http.ResponseWriter, r *http.Request, en
 		}
 		gated := false
 		for _, dv := range dvs {
-			if arm, ok := d.eventArm[dv.UniqueEventName]; ok &&
-				!sub.User.IsAdmin && sub.dataLevels[arm] < lvlDelete {
+			if !d.pairAccess(sub, dv.UniqueEventName, dv.FieldName).DeleteValues {
 				gated = true
 			}
 		}

@@ -90,25 +90,53 @@ type projectInstrumentObject struct {
 // (REQ-API-126): the acting user's levels as authz.Effective computes them for
 // every call, surfaced so the web layer can gate rendering with forbidden
 // controls absent from the DOM (User_Interface_Design.md §3.1, REQ-UI-003).
-// It authorizes nothing — each endpoint re-checks at call time (REQ-AUTH-033).
+// Arms carry the defaults, grants one entry per mapped (instrument, event) pair
+// as it resolves (REQ-AUTH-069). It authorizes nothing — each endpoint re-checks
+// at call time (REQ-AUTH-033).
 type projectPermissions struct {
-	ProjectAdmin bool                    `json:"project_admin"`
-	Arms         []projectArmPermissions `json:"arms"`
+	ProjectAdmin bool                     `json:"project_admin"`
+	Arms         []projectArmPermissions  `json:"arms"`
+	Grants       []projectPairPermissions `json:"grants"`
 }
 
-// projectArmPermissions is one arm's grant. Every arm of the project gets an
+// projectArmPermissions is one arm's default. Every arm of the project gets an
 // entry — an ungranted arm reports no_access/export_none (REQ-AUTH-019) rather
 // than being absent, so a caller never infers a level from a missing row.
 type projectArmPermissions struct {
 	ArmNum          int    `json:"arm_num"`
 	DataAccessLevel string `json:"data_access_level"`
 	ExportLevel     string `json:"export_level"`
+	DeleteValues    bool   `json:"delete_values"`
+	EditSurveys     bool   `json:"edit_surveys"`
 }
 
-// buildProjectPermissions maps the resolved levels onto the project's arms in
-// the arm order of the detail response (REQ-API-126).
-func buildProjectPermissions(arms []db.Arm, lv *authz.Levels) projectPermissions {
-	p := projectPermissions{ProjectAdmin: lv.ProjectAdmin, Arms: make([]projectArmPermissions, 0, len(arms))}
+// projectPairPermissions is one mapped (instrument, event) pair as it resolves
+// for the caller: its own grant where the role carries one, the arm default
+// otherwise (REQ-AUTH-069). Names rather than ids — the web layer walks this
+// beside the design listing, which speaks the same names.
+type projectPairPermissions struct {
+	UniqueEventName string `json:"unique_event_name"`
+	Instrument      string `json:"instrument"`
+	DataAccessLevel string `json:"data_access_level"`
+	ExportLevel     string `json:"export_level"`
+	DeleteValues    bool   `json:"delete_values"`
+	EditSurveys     bool   `json:"edit_surveys"`
+}
+
+// buildProjectPermissions maps the resolved levels onto the project's arms and
+// onto every mapped pair, in the arm-then-event order of §4.9 with instruments
+// in their own position order, so the web layer renders without sorting
+// (REQ-API-126). An arm default carries neither right: a right belongs to a pair
+// or it does not exist (REQ-AUTH-070), and only an unrestricted subject —
+// is_admin or a role-less member — holds it everywhere (REQ-AUTH-023/022).
+func buildProjectPermissions(arms []db.Arm, eventsByArm map[int][]EventObject,
+	instruments []db.Instrument, mapped map[[2]int64]bool, lv *authz.Levels) projectPermissions {
+
+	p := projectPermissions{
+		ProjectAdmin: lv.ProjectAdmin,
+		Arms:         make([]projectArmPermissions, 0, len(arms)),
+		Grants:       make([]projectPairPermissions, 0, len(mapped)),
+	}
 	for _, a := range arms {
 		data, export := lv.DataFor(a.ArmNum), lv.ExportFor(a.ArmNum)
 		if data == "" { // arm created after the levels were resolved
@@ -116,7 +144,24 @@ func buildProjectPermissions(arms []db.Arm, lv *authz.Levels) projectPermissions
 		}
 		p.Arms = append(p.Arms, projectArmPermissions{
 			ArmNum: a.ArmNum, DataAccessLevel: data, ExportLevel: export,
+			DeleteValues: lv.Unrestricted, EditSurveys: lv.Unrestricted,
 		})
+		for _, e := range eventsByArm[a.ArmNum] {
+			for _, i := range instruments {
+				if !mapped[pairKeyOf(e.ID, i.ID)] {
+					continue // not part of the design: nothing to report
+				}
+				g := lv.PairOrArmDefault(e.ID, i.ID, a.ArmNum)
+				if g.Data == "" {
+					g.Data, g.Export = "no_access", "export_none"
+				}
+				p.Grants = append(p.Grants, projectPairPermissions{
+					UniqueEventName: e.UniqueEventName, Instrument: i.Name,
+					DataAccessLevel: g.Data, ExportLevel: g.Export,
+					DeleteValues: g.DeleteValues, EditSurveys: g.EditSurveys,
+				})
+			}
+		}
 	}
 	return p
 }
@@ -135,7 +180,22 @@ func (h *Handler) buildProjectDetail(ctx context.Context, p *db.Project, lv *aut
 	if err != nil {
 		return d, err
 	}
-	d.Permissions = buildProjectPermissions(arms, lv)
+	// The permission block needs the design as well: one entry per mapped pair
+	// (REQ-API-126), so the instrument list and the mapping are read first.
+	instruments, err := h.Store.ListInstruments(ctx, p.ID)
+	if err != nil {
+		return d, err
+	}
+	pairs, err := h.Store.ListInstrumentEvents(ctx, p.ID)
+	if err != nil {
+		return d, err
+	}
+	mappedPairs := make(map[[2]int64]bool, len(pairs))
+	for _, mp := range pairs {
+		mappedPairs[pairKeyOf(mp.EventID, mp.InstrumentID)] = true
+	}
+
+	d.Permissions = buildProjectPermissions(arms, eventsByArm, instruments, mappedPairs, lv)
 	d.Arms = make([]projectArmObject, 0, len(arms))
 	for _, a := range arms {
 		events := eventsByArm[a.ArmNum]
@@ -145,10 +205,6 @@ func (h *Handler) buildProjectDetail(ctx context.Context, p *db.Project, lv *aut
 		d.Arms = append(d.Arms, projectArmObject{
 			ArmNum: a.ArmNum, Name: NullStrPtr(a.Name), Events: events,
 		})
-	}
-	instruments, err := h.Store.ListInstruments(ctx, p.ID)
-	if err != nil {
-		return d, err
 	}
 	fields, err := h.Store.ListFields(ctx, p.ID)
 	if err != nil {

@@ -26,6 +26,35 @@ use Clara\Session;
 
 final class RecordStatusController extends DataEntryController
 {
+    /**
+     * Arm numbers the acting user may enter data in — by the arm's default or by a pair
+     * grant inside it (REQ-AUTH-069).
+     *
+     * @param array<int, array<string, list<string>>> $mapping
+     * @return list<int>
+     */
+    private static function editableArmNumbers(Permissions $permissions, array $mapping): array
+    {
+        $rank = Permissions::dataRank('view_edit');
+        $out = [];
+        foreach ($mapping as $arm => $byInstrument) {
+            if ($permissions->canEdit((int) $arm)) {
+                $out[] = (int) $arm;
+                continue;
+            }
+            foreach ($byInstrument as $name => $events) {
+                foreach ($events as $event) {
+                    if ($permissions->reachesPairData((string) $event, (string) $name, (int) $arm, $rank)) {
+                        $out[] = (int) $arm;
+                        continue 2;
+                    }
+                }
+            }
+        }
+
+        return $out;
+    }
+
     /** GET /projects/{id}/record-status */
     public function index(): Response
     {
@@ -34,10 +63,14 @@ final class RecordStatusController extends DataEntryController
         $projectId = $this->projectIdOf($detail);
         $mode = $this->projectMode($projectId);
 
-        $arms = self::structure($detail, $permissions, $this->mapping($projectId),
+        $mapping = $this->mapping($projectId);
+        $arms = self::structure($detail, $permissions, $mapping,
             self::byPosition(is_array($detail['instruments'] ?? null) ? $detail['instruments'] : []));
-        $editableArms = array_values(array_filter($arms, static fn (array $arm): bool =>
-            $permissions->canEdit($arm['arm_num'])));
+        // Entry is held per (instrument, event), so an arm offers a new participant when its
+        // default reaches view_edit or one pair in it does (REQ-AUTH-069).
+        $editable = self::editableArmNumbers($permissions, $mapping);
+        $editableArms = array_values(array_filter($arms,
+            static fn (array $arm): bool => in_array($arm['arm_num'], $editable, true)));
 
         $proposed = Session::take('new_record');
 

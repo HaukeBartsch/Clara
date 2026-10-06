@@ -231,9 +231,12 @@ func normalizeAuthSource(s string) string {
 	}
 }
 
-// --- roles (REQ-DB-009) ---
+// --- roles (REQ-DB-009/040) ---
 
-func (s *Store) CreateRole(ctx context.Context, r *Role, arms []RoleArm) (int64, error) {
+// CreateRole inserts a role with its per-arm defaults and its per-pair grants
+// in one transaction, so a role never exists with half of its permission set
+// (REQ-AUTH-069).
+func (s *Store) CreateRole(ctx context.Context, r *Role, arms []RoleArm, grants []RoleGrant) (int64, error) {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -249,19 +252,69 @@ func (s *Store) CreateRole(ctx context.Context, r *Role, arms []RoleArm) (int64,
 	if err != nil {
 		return 0, err
 	}
-	for i := range arms {
-		a := arms[i]
-		a.RoleID = id
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO role_arms (role_id, arm_num, data_access_level, export_level) VALUES (?, ?, ?, ?)`,
-			a.RoleID, a.ArmNum, a.DataAccessLevel, a.ExportLevel); err != nil {
-			return 0, err
-		}
+	r.ID = id
+	if err := s.replaceRolePermissionsTx(ctx, tx, r, arms, grants); err != nil {
+		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
 	return id, nil
+}
+
+// UpdateRole replaces a role's name, project_admin flag, arm defaults and pair
+// grants in one transaction (REQ-API-143): the PUT of §4.7 is a whole-object
+// replace, so a pair absent from grants reverts to its arm default by having
+// its row deleted, not by being rewritten.
+func (s *Store) UpdateRole(ctx context.Context, r *Role, arms []RoleArm, grants []RoleGrant) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE roles SET role_name = ?, project_admin = ? WHERE id = ?`,
+		r.RoleName, boolToInt(r.ProjectAdmin), r.ID); err != nil {
+		return err
+	}
+	if err := s.replaceRolePermissionsTx(ctx, tx, r, arms, grants); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// replaceRolePermissionsTx rewrites both grant tables of the role from the
+// supplied sets (complete after the caller's merge, REQ-AUTH-069). The cascades
+// from roles/events/instruments also remove a pair's row when the design object
+// goes away, so a re-created name inherits nothing (REQ-AUTH-069).
+func (s *Store) replaceRolePermissionsTx(ctx context.Context, tx *sql.Tx, r *Role,
+	arms []RoleArm, grants []RoleGrant) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM role_arms WHERE role_id = ?`, r.ID); err != nil {
+		return err
+	}
+	for i := range arms {
+		a := arms[i]
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO role_arms (role_id, arm_num, data_access_level, export_level) VALUES (?, ?, ?, ?)`,
+			r.ID, a.ArmNum, a.DataAccessLevel, a.ExportLevel); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM role_grants WHERE role_id = ?`, r.ID); err != nil {
+		return err
+	}
+	for i := range grants {
+		g := grants[i]
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO role_grants (role_id, event_id, instrument_id, data_access_level,
+			                         export_level, delete_values, edit_surveys)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			r.ID, g.EventID, g.InstrumentID, g.DataAccessLevel, g.ExportLevel,
+			boolToInt(g.DeleteValues), boolToInt(g.EditSurveys)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 const roleColumns = `id, project_id, role_name, project_admin`
@@ -325,8 +378,7 @@ func (s *Store) ListRoles(ctx context.Context, projectID int64) ([]Role, error) 
 
 const roleArmColumns = `id, role_id, arm_num, data_access_level, export_level`
 
-// ListRoleArms returns the per-arm levels of a role in arm order
-// (REQ-DB-009).
+// ListRoleArms returns the per-arm defaults of a role in arm order (REQ-DB-009).
 func (s *Store) ListRoleArms(ctx context.Context, roleID int64) ([]RoleArm, error) {
 	rows, err := s.DB.QueryContext(ctx,
 		`SELECT `+roleArmColumns+` FROM role_arms WHERE role_id = ? ORDER BY arm_num`, roleID)
@@ -341,6 +393,36 @@ func (s *Store) ListRoleArms(ctx context.Context, roleID int64) ([]RoleArm, erro
 			return nil, err
 		}
 		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+const roleGrantColumns = `id, role_id, event_id, instrument_id, data_access_level, export_level, delete_values, edit_surveys`
+
+// ListRoleGrants returns the per-pair overrides of a role in (event,
+// instrument) order (REQ-DB-040). Only overridden pairs appear — an absent row
+// is the arm default, never a permission (REQ-AUTH-069).
+func (s *Store) ListRoleGrants(ctx context.Context, roleID int64) ([]RoleGrant, error) {
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT `+roleGrantColumns+` FROM role_grants WHERE role_id = ?
+		 ORDER BY event_id, instrument_id`, roleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RoleGrant
+	for rows.Next() {
+		var (
+			g           RoleGrant
+			deleteValue int
+			editSurvey  int
+		)
+		if err := rows.Scan(&g.ID, &g.RoleID, &g.EventID, &g.InstrumentID,
+			&g.DataAccessLevel, &g.ExportLevel, &deleteValue, &editSurvey); err != nil {
+			return nil, err
+		}
+		g.DeleteValues, g.EditSurveys = deleteValue != 0, editSurvey != 0
+		out = append(out, g)
 	}
 	return out, rows.Err()
 }

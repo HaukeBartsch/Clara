@@ -17,7 +17,7 @@
  *
  * Reads: $record, $exists, $recordUrl, $statusUrl, $arms, $armNum, $event, $instrument,
  * $items, $identifier, $prefill, $draft, $errors, $states, $state, $analysis, $canEdit,
- * $canDelete, $isSurvey, $canLink, $link, $groups, $patterns, $formats, $clientContext.
+ * $deleteScopes, $isSurvey, $canLink, $link, $groups, $patterns, $formats, $clientContext.
  */
 
 use Clara\DataEntry;
@@ -395,14 +395,13 @@ $fieldAttrs = static function (array $field, ?string $staticValue = null) use ($
     </section>
 <?php endif; ?>
 
-<?php if ($canDelete): ?>
+<?php if ($deleteScopes !== []): ?>
     <!-- Delete (§8.7, GD-3): three scopes, each confirmed with its consequence named (§3.5). -->
     <section class="card card-body mb-3 border-danger-subtle clara-record-delete" aria-labelledby="record-delete-title">
         <h2 class="h6" id="record-delete-title"><?= View::e($view->t('record.delete.title')) ?></h2>
         <div class="d-flex flex-wrap gap-2">
             <?php
-            $scopes = $instrument !== null ? ['instrument', 'event', 'record'] : ['event', 'record'];
-            foreach ($scopes as $scope):
+            foreach ($deleteScopes as $scope):
                 $confirm = $view->t('record.delete.confirm.' . $scope, ['record' => $record, 'event' => (string) ($event['event_name'] ?? $uen), 'instrument' => $instrumentName]);
             ?>
                 <form method="post" action="<?= View::e($act('delete')) ?>" data-clara-confirm="<?= View::e($confirm) ?>">

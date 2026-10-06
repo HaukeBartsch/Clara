@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"csms/api/internal/audit"
+	"csms/api/internal/authz"
 	"csms/api/internal/db"
 	"csms/api/internal/validate"
 )
@@ -90,6 +91,34 @@ func (d *projectDict) valueFieldsByInstrument() map[int64]map[string]bool {
 		set[f.FieldName] = true
 	}
 	return out
+}
+
+// eventIDOf maps a unique event name back to its id. The empty name — how a
+// project without events stores its values — has no id, so it resolves to 0 and
+// then to its arm default; such a project holds no survey link and no pair grant
+// of its own (DEV-DB-14).
+func (d *projectDict) eventIDOf(eventName string) int64 {
+	if eventName == "" {
+		return 0
+	}
+	for _, e := range d.events {
+		if e.UniqueEventName == eventName {
+			return e.EventID
+		}
+	}
+	return 0
+}
+
+// pairAccess resolves the grant scope of one stored value: its instrument and
+// the event it is stored under, falling back to that event's arm default when the
+// pair carries no grant of its own (REQ-AUTH-069). This is where a data row meets
+// the unit permissions are held at since GD-2 was revised.
+func (d *projectDict) pairAccess(sub *subject, eventName, fieldName string) authz.PairLevels {
+	var instrID int64
+	if f, ok := d.byName[fieldName]; ok {
+		instrID = f.InstrumentID
+	}
+	return sub.pairAt(d.eventIDOf(eventName), instrID, d.eventArm[eventName])
 }
 
 // eventsForInstrument returns the candidate events the instrument is mapped

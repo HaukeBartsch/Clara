@@ -394,6 +394,7 @@ INSERT INTO system_settings (key, value) SELECT 'rate_limit_block_minutes', '10'
 Notes:
 - **Date-shift algorithm (REQ-DB-023):** on first anonymized export of a record, `offset_days = SHA-256(project_id || ':' || record_id || ':' || anon_salt) mod 365` (salt from configuration, `REQ-CFG-*`), stored in `anon_offsets`; every date/date-time value in that record's export is then shifted by exactly `offset_days` — consistent across time and across export levels (GD-6). The shift applies to the **date part** of the canonical value; the collection offset (`±HH:MM`, GD-16, REQ-VAL-041) is preserved
 - `survey_links.token` is the public bearer (128-bit random, REQ-AUTH-039); revocation is the `revoked` flag (REQ-API-085)
+- **Events are a precondition (DEV-DB-14):** `role_grants` and `survey_links` key on `events(id)`, so a project without events has no pairs at all — it keeps its arm defaults for reading and entering values, holds no survey link, and expresses neither right (REQ-AUTH-070). Migration 0011 drops links whose instrument maps to no event rather than storing unkeyable rows; creating the role permission assignment precedes holding a survey (REQ-API-143)
 - "Exactly one active group" per assignment is enforced in the API's transaction (portable partial unique indexes don't exist on MariaDB before 10.5); deleting a group with assigned records is rejected by the API (REQ-API-088)
 
 ## 9. Indexes and Capacity (REQ-DB-017, REQ-DB-025/026)

@@ -237,7 +237,7 @@ func TestPutCompletionPermissions(t *testing.T) {
 	path := completionPath(f.projectID, "R1", "v1_arm_1", f.intake)
 
 	readRole, err := e.Store.CreateRole(ctx, &db.Role{ProjectID: f.projectID, RoleName: "reader"},
-		[]db.RoleArm{{ArmNum: 1, DataAccessLevel: "read_only", ExportLevel: "export_none"}})
+		[]db.RoleArm{{ArmNum: 1, DataAccessLevel: "read_only", ExportLevel: "export_none"}}, nil)
 	if err != nil {
 		t.Fatalf("CreateRole: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestPutCompletionPermissions(t *testing.T) {
 	}
 
 	editRole, err := e.Store.CreateRole(ctx, &db.Role{ProjectID: f.projectID, RoleName: "editor"},
-		[]db.RoleArm{{ArmNum: 1, DataAccessLevel: "view_edit", ExportLevel: "export_none"}})
+		[]db.RoleArm{{ArmNum: 1, DataAccessLevel: "view_edit", ExportLevel: "export_none"}}, nil)
 	if err != nil {
 		t.Fatalf("CreateRole: %v", err)
 	}

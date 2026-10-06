@@ -27,7 +27,13 @@ func surveyLinkFixture(t *testing.T) (*recordFixture, *db.SurveyLink) {
 	if err != nil || ins == nil {
 		t.Fatalf("GetInstrumentByName(demo): %v", err)
 	}
-	link := &db.SurveyLink{ProjectID: f.pid, RecordID: "8DISC001", InstrumentID: ins.ID}
+	// The link is keyed by (record, instrument, event): one instrument mapped to
+	// several events has one distinct link each (REQ-AUTH-039).
+	ev, err := f.s.GetEventByUniqueName(ctx, f.pid, "baseline_arm_1")
+	if err != nil || ev == nil {
+		t.Fatalf("GetEventByUniqueName(baseline_arm_1): %v", err)
+	}
+	link := &db.SurveyLink{ProjectID: f.pid, RecordID: "8DISC001", InstrumentID: ins.ID, EventID: ev.ID}
 	if _, err := f.s.CreateSurveyLink(ctx, link); err != nil {
 		t.Fatalf("CreateSurveyLink: %v", err)
 	}
@@ -268,7 +274,7 @@ func TestSurveyLinkRevokedRejectedOnBothCalls(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if err := f.s.RevokeSurveyLink(ctx, f.pid, "8DISC001", link.InstrumentID); err != nil {
+	if err := f.s.RevokeSurveyLink(ctx, f.pid, "8DISC001", link.InstrumentID, link.EventID); err != nil {
 		t.Fatalf("RevokeSurveyLink: %v", err)
 	}
 
@@ -325,7 +331,11 @@ func TestSurveyLinkNewRecordHasNoAuthor(t *testing.T) {
 	if err != nil || ins == nil {
 		t.Fatalf("GetInstrumentByName(demo): %v", err)
 	}
-	link := &db.SurveyLink{ProjectID: f.pid, RecordID: "8DISC077", InstrumentID: ins.ID}
+	ev, err := f.s.GetEventByUniqueName(ctx, f.pid, "baseline_arm_1")
+	if err != nil || ev == nil {
+		t.Fatalf("GetEventByUniqueName(baseline_arm_1): %v", err)
+	}
+	link := &db.SurveyLink{ProjectID: f.pid, RecordID: "8DISC077", InstrumentID: ins.ID, EventID: ev.ID}
 	if _, err := f.s.CreateSurveyLink(ctx, link); err != nil {
 		t.Fatalf("CreateSurveyLink: %v", err)
 	}

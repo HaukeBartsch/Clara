@@ -255,15 +255,16 @@ final class RecordController extends DataEntryController
     }
 
     /**
-     * POST …?action=survey_link — the stable public link of a (record, survey instrument)
-     * (§8.7, REQ-API-082): issued on first request, the same URL afterwards. Fetching it is a
-     * write on the API side (issue + audit), so the browser asks with a POST and the URL is
-     * shown on the next render, once, in a read-only field with a copy button.
+     * POST …?action=survey_link — the stable public link of a (record, survey instrument, event)
+     * (§8.7, REQ-API-082): issued on first request, the same URL afterwards. The event travels as
+     * the `event` parameter, because an instrument mapped to three events holds three links.
+     * Fetching it is a write on the API side (issue + audit), so the browser asks with a POST and
+     * the URL is shown on the next render, once, in a read-only field with a copy button.
      */
     public function surveyLink(): Response
     {
-        return $this->linkCall(function (int $projectId, string $record, int $iid): void {
-            $answer = $this->api->get($this->linkPath($projectId, $record, $iid));
+        return $this->linkCall(function (int $projectId, string $record, int $iid, string $event): void {
+            $answer = $this->api->get($this->linkPath($projectId, $record, $iid), ['event' => $event]);
             $url = is_string($answer['url'] ?? null) ? $answer['url'] : '';
             Session::stash('survey_link', ['record' => $record, 'iid' => $iid, 'url' => $url]);
         }, '');
@@ -272,8 +273,8 @@ final class RecordController extends DataEntryController
     /** POST …?action=revoke_link — `DELETE …/survey-link`, effective immediately (REQ-AUTH-040). */
     public function revokeLink(): Response
     {
-        return $this->linkCall(function (int $projectId, string $record, int $iid): void {
-            $this->api->delete($this->linkPath($projectId, $record, $iid));
+        return $this->linkCall(function (int $projectId, string $record, int $iid, string $event): void {
+            $this->api->delete($this->linkPath($projectId, $record, $iid), ['event' => $event]);
         }, 'record.survey.revoked');
     }
 
@@ -296,7 +297,8 @@ final class RecordController extends DataEntryController
         $mode = $this->projectMode($projectId);
 
         $instruments = self::byPosition(self::listOf($this->api->get($base . '/instruments')));
-        $arms = self::structure($detail, $permissions, $this->mapping($projectId), $instruments);
+        $mapping = $this->mapping($projectId);
+        $arms = self::structure($detail, $permissions, $mapping, $instruments);
         [$armNum, $event, $instrument] = $this->selection($arms);
         $status = $this->recordStates($projectId, $record);
         $exists = $status !== null;
@@ -343,7 +345,10 @@ final class RecordController extends DataEntryController
         }
 
         $analysis = $mode === 'analysis';
-        $canEdit = !$analysis && $instrument !== null && $permissions->canEdit($armNum);
+        // Entry is decided on the selected pair, not on the arm (REQ-AUTH-069).
+        $instrumentName = (string) ($instrument['name'] ?? '');
+        $canEdit = !$analysis && $instrument !== null
+            && $permissions->canEditPair($uen, $instrumentName, $armNum);
         $isSurvey = $instrument !== null && !empty($instrument['is_survey']);
         $iid = (int) ($instrument['id'] ?? 0);
         $link = Session::take('survey_link');
@@ -366,10 +371,13 @@ final class RecordController extends DataEntryController
             'state' => $status[$uen . '|' . ($instrument['name'] ?? '')] ?? 'no_data',
             'analysis' => $analysis,
             'canEdit' => $canEdit,
-            'canDelete' => !$analysis && $exists && $permissions->canDelete($armNum),
+            // Which of the three delete scopes this user may carry out (REQ-API-036/070).
+            'deleteScopes' => !$analysis && $exists
+                ? self::deleteScopes($permissions, $mapping, $armNum, $uen, $instrumentName) : [],
             'isSurvey' => $isSurvey,
             // Survey-link actions: survey-marked instruments, data access ≥ view_edit (§8.7).
-            'canLink' => $isSurvey && $exists && $permissions->canEdit($armNum),
+            // Issuing a link needs data access ≥ view_edit on this pair (REQ-API-082).
+            'canLink' => $isSurvey && $exists && $permissions->canEditPair($uen, $instrumentName, $armNum),
             'link' => $link !== null && ($link['record'] ?? '') === $record && (int) ($link['iid'] ?? 0) === $iid ? (string) ($link['url'] ?? '') : '',
             'groups' => $permissions->projectAdmin && $exists ? self::listOf($this->api->get($base . '/data-access-groups')) : null,
             'patterns' => $this->patternsFor($fields),
@@ -382,6 +390,53 @@ final class RecordController extends DataEntryController
                     Navigation::projectSections($projectId, $permissions)),
             ],
         ], ['scripts' => self::SCRIPTS, 'jsKeys' => self::JS_KEYS], $mode);
+    }
+
+    /**
+     * The delete scopes the acting user really holds: the API removes an event's or a
+     * record's values only when **every** pair in scope carries the delete right
+     * (REQ-API-036/070), so a control that would come back 403 is absent rather than
+     * offered (REQ-UI-003). The instrument scope names exactly one pair; the wider ones
+     * walk the unfiltered mapping, because values may exist on a pair this member cannot
+     * read — and those hold the whole delete back.
+     *
+     * @param array<int, array<string, list<string>>> $mapping arm_num => instrument => events
+     * @return list<string> any subset of instrument / event / record, in that order
+     */
+    private static function deleteScopes(Permissions $permissions, array $mapping,
+        int $armNum, string $uen, string $instrumentName): array
+    {
+        if ($instrumentName !== '' && $permissions->canDeleteValues($uen, $instrumentName, $armNum)) {
+            $scopes = ['instrument'];
+        } else {
+            $scopes = [];
+        }
+
+        $eventPairs = 0;
+        $eventHeld = true;
+        $projectPairs = 0;
+        $projectHeld = true;
+        foreach ($mapping as $arm => $byInstrument) {
+            foreach ($byInstrument as $name => $events) {
+                foreach ($events as $event) {
+                    $held = $permissions->canDeleteValues((string) $event, (string) $name, (int) $arm);
+                    $projectPairs++;
+                    $projectHeld = $projectHeld && $held;
+                    if ((string) $event === $uen) {
+                        $eventPairs++;
+                        $eventHeld = $eventHeld && $held;
+                    }
+                }
+            }
+        }
+        if ($eventPairs > 0 && $eventHeld) {
+            $scopes[] = 'event';
+        }
+        if ($projectPairs > 0 && $projectHeld) {
+            $scopes[] = 'record';
+        }
+
+        return $scopes;
     }
 
     /**
@@ -574,11 +629,12 @@ final class RecordController extends DataEntryController
         $projectId = $this->projectIdFromPath();
         $record = $this->recordFromPath();
         $iid = $this->objectId('iid');
+        $event = $this->request->field('event');
         $back = Response::redirect(self::recordUrl($projectId, $record,
-            $this->request->field('event'), $this->request->field('instrument')));
+            $event, $this->request->field('instrument')));
 
         try {
-            $call($projectId, $record, $iid);
+            $call($projectId, $record, $iid, $event);
         } catch (ApiException $e) {
             $this->logger->info('survey link call rejected', ['code' => $e->code(), 'status' => $e->status()]);
             $this->flashDanger(Messages::forApiException($this->i18n, $e));

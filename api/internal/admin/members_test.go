@@ -18,7 +18,7 @@ func mustRole(t *testing.T, e *env, projectID int64, name string) int64 {
 	t.Helper()
 	id, err := e.Store.CreateRole(context.Background(), &db.Role{
 		ProjectID: projectID, RoleName: name,
-	}, nil)
+	}, nil, nil)
 	if err != nil {
 		t.Fatalf("CreateRole: %v", err)
 	}

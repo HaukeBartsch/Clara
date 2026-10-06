@@ -62,7 +62,7 @@ func TestMigrateCreatesSchema(t *testing.T) {
 
 	// Every core table must exist.
 	want := []string{
-		"projects", "users", "roles", "role_arms", "user_projects", "arms",
+		"projects", "users", "roles", "role_arms", "role_grants", "user_projects", "arms",
 		"events", "instruments", "instrument_events", "fields",
 		"calculated_dependencies", "data", "record_entities", "dag_groups",
 		"dag_memberships", "anon_offsets", "survey_links", "languages",

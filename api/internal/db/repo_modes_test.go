@@ -94,9 +94,10 @@ func seedRecordedProject(t *testing.T, s *Store, ctx context.Context, tag string
 	if err != nil {
 		t.Fatalf("AddArm: %v", err)
 	}
-	if _, err := s.AddEvent(ctx, &Event{
+	eventID, err := s.AddEvent(ctx, &Event{
 		ProjectID: pid, ArmID: armID, EventName: "baseline", UniqueEventName: "baseline_arm_1",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("AddEvent: %v", err)
 	}
 	instrumentID, err := s.AddInstrument(ctx, &Instrument{ProjectID: pid, Name: "intake"})
@@ -121,7 +122,8 @@ func seedRecordedProject(t *testing.T, s *Store, ctx context.Context, tag string
 			t.Fatalf("CreateAnonOffset %s: %v", id, err)
 		}
 	}
-	link := &SurveyLink{ProjectID: pid, RecordID: "R001", InstrumentID: instrumentID}
+	// A survey link is keyed by (record, instrument, event) (REQ-AUTH-039).
+	link := &SurveyLink{ProjectID: pid, RecordID: "R001", InstrumentID: instrumentID, EventID: eventID}
 	if _, err := s.CreateSurveyLink(ctx, link); err != nil {
 		t.Fatalf("CreateSurveyLink: %v", err)
 	}

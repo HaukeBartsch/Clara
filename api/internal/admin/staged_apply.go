@@ -62,6 +62,12 @@ func (h *Handler) applyStagedDesignTx(
 	if err := a.mapping(active, staged); err != nil {
 		return a.applied, err
 	}
+	// Pairs this commit brought into existence get an explicit grant in every
+	// role of the project — read_only / export_none, no rights — so none of
+	// them is ever resolved by an implicit rule afterwards (REQ-AUTH-069).
+	if err := h.Store.MaterializePairGrantsTx(ctx, tx, projectID); err != nil {
+		return a.applied, err
+	}
 	return a.applied, nil
 }
 

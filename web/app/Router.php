@@ -216,7 +216,7 @@ final class Router
         ['method' => 'GET', 'pattern' => '/projects/{id}/roles', 'controller' => Controllers\ProjectController::class,
             'handler' => 'roles', 'guard' => 'admin'],
         ['method' => 'POST', 'pattern' => '/projects/{id}/roles', 'controller' => Controllers\ProjectController::class,
-            'handler' => 'createRole', 'guard' => 'admin', 'action' => 'create_role'],
+            'handler' => 'saveRole', 'guard' => 'admin', 'action' => 'save_role'],
         ['method' => 'GET', 'pattern' => '/projects/{id}/groups', 'controller' => Controllers\ProjectController::class,
             'handler' => 'groups', 'guard' => 'login'],
         ['method' => 'POST', 'pattern' => '/projects/{id}/groups', 'controller' => Controllers\ProjectController::class,

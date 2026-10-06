@@ -251,7 +251,7 @@ func TestProjectGetAccessRules(t *testing.T) {
 
 	ctx := context.Background()
 	roleID, err := e.Store.CreateRole(ctx, &db.Role{ProjectID: pid, RoleName: "observer"},
-		[]db.RoleArm{{ArmNum: 1, DataAccessLevel: "no_access", ExportLevel: "export_none"}})
+		[]db.RoleArm{{ArmNum: 1, DataAccessLevel: "no_access", ExportLevel: "export_none"}}, nil)
 	if err != nil {
 		t.Fatalf("CreateRole: %v", err)
 	}
@@ -331,7 +331,7 @@ func TestProjectUpdateGuards(t *testing.T) {
 	}
 
 	roleID, err := e.Store.CreateRole(ctx, &db.Role{ProjectID: p1, RoleName: "worker"},
-		[]db.RoleArm{{ArmNum: 1, DataAccessLevel: "view_edit", ExportLevel: "export_none"}})
+		[]db.RoleArm{{ArmNum: 1, DataAccessLevel: "view_edit", ExportLevel: "export_none"}}, nil)
 	if err != nil {
 		t.Fatalf("CreateRole: %v", err)
 	}
@@ -388,8 +388,8 @@ func TestProjectDetailCarriesEffectivePermissions(t *testing.T) {
 	}
 	full := func() map[int][2]string {
 		return map[int][2]string{
-			1: {"edit_survey_responses", "export_full"},
-			2: {"edit_survey_responses", "export_full"},
+			1: {"view_edit", "export_full"},
+			2: {"view_edit", "export_full"},
 		}
 	}
 
@@ -454,6 +454,116 @@ func TestProjectDetailCarriesEffectivePermissions(t *testing.T) {
 		}
 		if contains(rec.Body.String(), "permissions") {
 			t.Errorf("%s: rejected read leaked permissions: %s", actor.Email, rec.Body.String())
+		}
+	}
+}
+
+// TestProjectDetailCarriesPairGrants pins permissions.grants[] of §4.5: one
+// entry per mapped (instrument, event) pair as it resolves for the caller — its
+// own grant where the role names one, the arm default otherwise — in the
+// arm-then-event order of the design listing (REQ-API-126, REQ-AUTH-069), and
+// the two rights where they are actually held (REQ-AUTH-070).
+func TestProjectDetailCarriesPairGrants(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	admin := e.mustAdmin("admin@example.org")
+	projectID := e.mustProject("PAIRWISE")
+	armID := e.mustArm(projectID, 1)
+	v1 := e.mustEvent(projectID, armID, "Visit 1", "v1_arm_1")
+	addInstrument := func(name string, position int) int64 {
+		e.t.Helper()
+		id, err := e.Store.AddInstrument(ctx, &db.Instrument{
+			ProjectID: projectID, Name: name, Position: position,
+		})
+		if err != nil {
+			e.t.Fatalf("AddInstrument %s: %v", name, err)
+		}
+		return id
+	}
+	intake := addInstrument("intake", 1)
+	feedback := addInstrument("feedback", 2)
+	e.mustMap(projectID, armID,
+		db.InstrumentEvent{InstrumentID: intake, EventID: v1},
+		db.InstrumentEvent{InstrumentID: feedback, EventID: v1},
+	)
+	roleID, err := e.Store.CreateRole(ctx, &db.Role{ProjectID: projectID, RoleName: "entry"},
+		[]db.RoleArm{{ArmNum: 1, DataAccessLevel: "read_only", ExportLevel: "export_full"}}, nil)
+	if err != nil {
+		t.Fatalf("CreateRole: %v", err)
+	}
+	entry := e.mustUser("entry@example.org")
+	e.mustMemberWithRole(projectID, entry, roleID)
+
+	detail := func(actor *db.User) projectPermissions {
+		t.Helper()
+		rec := e.do("GET", "/api/v1/projects/"+itoa(projectID), nil, actor)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("get detail: %d %s", rec.Code, rec.Body.String())
+		}
+		var d projectDetail
+		e.decode(rec, &d)
+		return d.Permissions
+	}
+
+	// Nothing named by the role yet: every pair reports the arm default, and an
+	// arm default carries neither right (REQ-AUTH-070). The order is the design's
+	// own — arm, then event, then instrument position.
+	before := detail(entry)
+	if len(before.Grants) != 2 {
+		t.Fatalf("grants = %+v, want one row per mapped pair", before.Grants)
+	}
+	if before.Grants[0].Instrument != "intake" || before.Grants[1].Instrument != "feedback" {
+		t.Errorf("grant order = %s, %s, want intake then feedback",
+			before.Grants[0].Instrument, before.Grants[1].Instrument)
+	}
+	for _, g := range before.Grants {
+		if g.UniqueEventName != "v1_arm_1" || g.DataAccessLevel != "read_only" ||
+			g.ExportLevel != "export_full" || g.DeleteValues || g.EditSurveys {
+			t.Errorf("inherited pair = %+v, want the arm default with neither right", g)
+		}
+	}
+
+	// Name one pair: its levels and rights resolve there and nowhere else.
+	rec := e.do("PUT", "/api/v1/projects/"+itoa(projectID)+"/roles/"+itoa(roleID), map[string]any{
+		"name": "entry",
+		"arms": map[string]any{"1": map[string]string{"data": "read_only", "export": "export_full"}},
+		"grants": []map[string]any{{
+			"event": "v1_arm_1", "instrument": "intake",
+			"data": "view_edit", "export": "export_de_identified",
+			"delete_values": true, "edit_surveys": false,
+		}},
+	}, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update role: %d %s", rec.Code, rec.Body.String())
+	}
+
+	var named, other projectPairPermissions
+	for _, g := range detail(entry).Grants {
+		if g.Instrument == "intake" {
+			named = g
+		} else {
+			other = g
+		}
+	}
+	if named.DataAccessLevel != "view_edit" || named.ExportLevel != "export_de_identified" ||
+		!named.DeleteValues || named.EditSurveys {
+		t.Errorf("granted pair = %+v, want the grant's levels with delete_values", named)
+	}
+	if other.DataAccessLevel != "read_only" || other.ExportLevel != "export_full" ||
+		other.DeleteValues || other.EditSurveys {
+		t.Errorf("neighbouring pair = %+v, want the untouched arm default", other)
+	}
+
+	// is_admin holds both rights on every arm and every pair (REQ-AUTH-023).
+	full := detail(admin)
+	for _, a := range full.Arms {
+		if !a.DeleteValues || !a.EditSurveys {
+			t.Errorf("admin arm = %+v, want both rights on the default", a)
+		}
+	}
+	for _, g := range full.Grants {
+		if !g.DeleteValues || !g.EditSurveys {
+			t.Errorf("admin pair = %+v, want both rights", g)
 		}
 	}
 }

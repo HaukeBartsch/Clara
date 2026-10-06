@@ -10,7 +10,7 @@ relevance into five categories. A code appears under every category that applies
 - **scalability** — graceful growth in data volume, users and projects: storage model, partitioning and rollover, avoiding full rewrites, concurrency.
 - **resilience** — correct behavior under failure and protection of data integrity: transactions and atomicity, idempotence, immutability, health checks, enforced invariants.
 
-Totals across all documents: security 356, performance 25, workflow 273, scalability 62, resilience 122 (codes may carry more than one category).
+Totals across all documents: security 357, performance 25, workflow 274, scalability 62, resilience 122 (codes may carry more than one category).
 
 | Requirements document | Relevance | Codes |
 |---|---|---|
@@ -37,9 +37,9 @@ Totals across all documents: security 356, performance 25, workflow 273, scalabi
 | `Requirements/Data_Validation_Requirements.md` | workflow | REQ-VAL-003, REQ-VAL-010, REQ-VAL-011, REQ-VAL-012, REQ-VAL-013, REQ-VAL-015, REQ-VAL-016, REQ-VAL-017, REQ-VAL-018, REQ-VAL-019, REQ-VAL-020, REQ-VAL-021, REQ-VAL-022, REQ-VAL-023, REQ-VAL-024, REQ-VAL-025, REQ-VAL-026, REQ-VAL-028, REQ-VAL-029, REQ-VAL-033, REQ-VAL-034, REQ-VAL-035, REQ-VAL-036, REQ-VAL-039, REQ-VAL-040, REQ-VAL-041, REQ-VAL-042, REQ-VAL-043, ASM-VAL-1, ASM-VAL-2, ASM-VAL-3, ASM-VAL-5, ASM-VAL-6, DEV-VAL-2, DEV-VAL-5, DEV-VAL-6, DEV-VAL-8, DEV-VAL-9, DEV-VAL-10, DEV-VAL-11 |
 | `Requirements/Data_Validation_Requirements.md` | scalability | REQ-VAL-037, REQ-VAL-042, ASM-VAL-4, DEV-VAL-6, DEV-VAL-11 |
 | `Requirements/Data_Validation_Requirements.md` | resilience | REQ-VAL-001, REQ-VAL-002, REQ-VAL-005, REQ-VAL-006, REQ-VAL-007, REQ-VAL-008, REQ-VAL-009, REQ-VAL-012, REQ-VAL-014, REQ-VAL-015, REQ-VAL-016, REQ-VAL-017, REQ-VAL-018, REQ-VAL-019, REQ-VAL-022, REQ-VAL-023, REQ-VAL-024, REQ-VAL-025, REQ-VAL-026, REQ-VAL-027, REQ-VAL-029, REQ-VAL-034, REQ-VAL-035, REQ-VAL-036, REQ-VAL-037, REQ-VAL-038, REQ-VAL-039, REQ-VAL-041, ASM-VAL-1, ASM-VAL-4, ASM-VAL-6, DEV-VAL-1, DEV-VAL-2, DEV-VAL-3, DEV-VAL-4, DEV-VAL-10 |
-| `Requirements/Database_Schema_Requirements.md` | security | REQ-DB-008, REQ-DB-009, REQ-DB-010, REQ-DB-013, REQ-DB-021, REQ-DB-023, REQ-DB-024, REQ-DB-027, REQ-DB-028, REQ-DB-029, REQ-DB-037, REQ-DB-038, REQ-DB-039, REQ-DB-040, REQ-DB-041, DEV-DB-1, DEV-DB-2, DEV-DB-3, DEV-DB-4, DEV-DB-6, DEV-DB-8, DEV-DB-12 |
+| `Requirements/Database_Schema_Requirements.md` | security | REQ-DB-008, REQ-DB-009, REQ-DB-010, REQ-DB-013, REQ-DB-021, REQ-DB-023, REQ-DB-024, REQ-DB-027, REQ-DB-028, REQ-DB-029, REQ-DB-037, REQ-DB-038, REQ-DB-039, REQ-DB-040, REQ-DB-041, DEV-DB-1, DEV-DB-2, DEV-DB-3, DEV-DB-4, DEV-DB-6, DEV-DB-8, DEV-DB-12, DEV-DB-14 |
 | `Requirements/Database_Schema_Requirements.md` | performance | REQ-DB-004, REQ-DB-017, REQ-DB-025, REQ-DB-030, DEV-DB-12 |
-| `Requirements/Database_Schema_Requirements.md` | workflow | REQ-DB-006, REQ-DB-007, REQ-DB-008, REQ-DB-011, REQ-DB-012, REQ-DB-013, REQ-DB-027, REQ-DB-031, REQ-DB-034, REQ-DB-035, REQ-DB-036, DEV-DB-7, DEV-DB-9, DEV-DB-10, DEV-DB-13 |
+| `Requirements/Database_Schema_Requirements.md` | workflow | REQ-DB-006, REQ-DB-007, REQ-DB-008, REQ-DB-011, REQ-DB-012, REQ-DB-013, REQ-DB-027, REQ-DB-031, REQ-DB-034, REQ-DB-035, REQ-DB-036, DEV-DB-7, DEV-DB-9, DEV-DB-10, DEV-DB-13, DEV-DB-14 |
 | `Requirements/Database_Schema_Requirements.md` | scalability | REQ-DB-001, REQ-DB-002, REQ-DB-014, REQ-DB-015, REQ-DB-018, REQ-DB-019, REQ-DB-022, REQ-DB-025, REQ-DB-026, REQ-DB-029, REQ-DB-031, REQ-DB-032, REQ-DB-033, REQ-DB-037, REQ-DB-040, ASM-DB-1, ASM-DB-2, DEV-DB-5, DEV-DB-8, DEV-DB-10, DEV-DB-11 |
 | `Requirements/Database_Schema_Requirements.md` | resilience | REQ-DB-003, REQ-DB-004, REQ-DB-005, REQ-DB-016, REQ-DB-020, REQ-DB-024, REQ-DB-026, REQ-DB-030, REQ-DB-033, REQ-DB-035, REQ-DB-036, DEV-DB-9 |
 | `Requirements/Project_Charter_Requirements.md` | security | BR-001, BR-002, BR-006, BR-007, BR-008, BR-009, BR-010, BR-011, BR-012, BR-014, GD-1, GD-2, GD-3, GD-4, GD-5, GD-9, GD-10, GD-18, GD-19, GD-21, GD-22, GD-23, GD-25, GD-26 |

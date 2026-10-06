@@ -127,7 +127,7 @@ func (f *exportFixture) member(t *testing.T, email string, roleID int64) *db.Use
 func (f *exportFixture) role(t *testing.T, name string, arms ...db.RoleArm) int64 {
 	t.Helper()
 	id, err := f.e.Store.CreateRole(context.Background(),
-		&db.Role{ProjectID: f.pid, RoleName: name}, arms)
+		&db.Role{ProjectID: f.pid, RoleName: name}, arms, nil)
 	if err != nil {
 		t.Fatalf("CreateRole: %v", err)
 	}
