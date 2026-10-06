@@ -21,6 +21,7 @@ namespace Clara\Controllers;
 
 use Clara\ApiException;
 use Clara\DataEntry;
+use Clara\Permissions;
 use Clara\Response;
 use Clara\Session;
 

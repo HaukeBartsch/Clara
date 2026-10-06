@@ -26,6 +26,7 @@ use Clara\ApiException;
 use Clara\DataEntry;
 use Clara\Messages;
 use Clara\Navigation;
+use Clara\Permissions;
 use Clara\Response;
 use Clara\Session;
 

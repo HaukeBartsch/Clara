@@ -335,15 +335,38 @@ describe('project page — Members (§5.3, REQ-UI-013)', function (): void {
 });
 
 describe('project page — Roles (§5.4, REQ-UI-014)', function (): void {
-    it('creates with name, project_admin and one level pair per arm', function (): void {
+    it('creates a role from arm defaults plus one grant per matrix row, then edits it (REQ-API-057/143)', function (): void {
         sign_in(['is_admin' => 1]);
         m3_queue_project();
         api_route('/api/v1/projects/3/roles', ['id' => 1, 'name' => 'data-entry'], 201);
 
-        m3_post('/projects/3/roles', ['name' => 'data-entry', 'data' => ['1' => 'view_edit'], 'export' => ['1' => 'bogus']], 'create_role');
+        // The editor posts the arm default and, per matrix row, its pair key with the row's
+        // levels and the two right checkboxes; an unknown level falls back to the lowest.
+        $pair = '1|intake|baseline_arm_1';
+        $form = [
+            'name' => 'data-entry',
+            'arm_data' => ['1' => 'read_only'], 'arm_export' => ['1' => 'bogus'],
+            'pair' => [$pair],
+            'data' => [$pair => 'view_edit'], 'export' => [$pair => 'export_de_identified'],
+            'delete_values' => [$pair => '1'],
+        ];
+        m3_post('/projects/3/roles', $form, 'save_role');
 
-        assert_same(['name' => 'data-entry', 'project_admin' => false,
-            'arms' => ['1' => ['data' => 'view_edit', 'export' => 'export_none']]], api_request_body('/api/v1/projects/3/roles'));
+        $want = ['name' => 'data-entry', 'project_admin' => false,
+            'arms' => ['1' => ['data' => 'read_only', 'export' => 'export_none']],
+            'grants' => [['event' => 'baseline_arm_1', 'instrument' => 'intake', 'data' => 'view_edit',
+                'export' => 'export_de_identified', 'delete_values' => true, 'edit_surveys' => false]]];
+        assert_same(['POST /api/v1/projects/3/roles'], m3_calls('/api/v1/projects/3/roles'));
+        assert_same($want, api_request_body('/api/v1/projects/3/roles'));
+
+        // The role on the form is replaced as a whole — same body, PUT to its id (REQ-API-143).
+        resetApi();
+        m3_queue_project();
+        api_route('/api/v1/projects/3/roles/1', $want + ['id' => 1]);
+        m3_post('/projects/3/roles', $form + ['role_id' => '1', 'project_admin' => '1'], 'save_role');
+
+        assert_same(['PUT /api/v1/projects/3/roles/1'], m3_calls('/api/v1/projects/3/roles'));
+        assert_same(array_replace($want, ['project_admin' => true]), api_request_body('/api/v1/projects/3/roles/1'));
     });
 });
 

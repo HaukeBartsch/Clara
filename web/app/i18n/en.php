@@ -307,6 +307,8 @@ return [
     'roles.bulk' => 'Set every row of this arm to {value}',
     'roles.bulk_all' => 'Set every row of this arm',
     'roles.right_denied' => 'No access: this right has no effect',
+    'roles.delete_values' => 'Delete instrument values',
+    'roles.edit_surveys' => 'Edit collected surveys',
     'form.unsaved' => 'unsaved',
     'roles.level.no_access' => 'No access',
     'roles.level.read_only' => 'Read only',

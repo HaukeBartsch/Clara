@@ -12,8 +12,19 @@ use Clara\DataEntry;
 
 const M5_CSRF = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
-function m5_detail(string $level = 'view_edit', bool $projectAdmin = false): array
+/**
+ * The project read with its permissions block as the API sends it (REQ-API-126): the arm
+ * default plus every mapped (instrument, event) pair resolved — here all at `$level`, with the
+ * two rights (delete instrument values, edit collected surveys) when `$rights` (REQ-AUTH-069/070).
+ */
+function m5_detail(string $level = 'view_edit', bool $projectAdmin = false, bool $rights = false): array
 {
+    $grants = [];
+    foreach ([['baseline_arm_1', 'intake'], ['follow_up_arm_1', 'intake'], ['baseline_arm_1', 'scores']] as [$event, $instrument]) {
+        $grants[] = ['unique_event_name' => $event, 'instrument' => $instrument, 'data_access_level' => $level,
+            'export_level' => 'export_none', 'delete_values' => $rights, 'edit_surveys' => $rights];
+    }
+
     return [
         'id' => 3, 'project_name' => '8DISC', 'organization' => 'NAT EU', 'record_count' => 1,
         'arms' => [['arm_num' => 1, 'name' => null, 'events' => [
@@ -25,7 +36,9 @@ function m5_detail(string $level = 'view_edit', bool $projectAdmin = false): arr
             ['id' => 12, 'name' => 'scores', 'position' => 2, 'field_count' => 1],
         ],
         'permissions' => ['project_admin' => $projectAdmin,
-            'arms' => [['arm_num' => 1, 'data_access_level' => $level, 'export_level' => 'export_none']]],
+            'arms' => [['arm_num' => 1, 'data_access_level' => $level, 'export_level' => 'export_none',
+                'delete_values' => $rights, 'edit_surveys' => $rights]],
+            'grants' => $grants],
     ];
 }
 
@@ -70,7 +83,7 @@ function m5_entry(string $action, string $event, array $fields, string $at = '20
 }
 
 /** Every read the two pages make, in fake-transport match order (specific before prefix). */
-function m5_queue(string $level = 'view_edit', string $mode = 'development', bool $projectAdmin = false, ?array $status = null, ?array $history = null): void
+function m5_queue(string $level = 'view_edit', string $mode = 'development', bool $projectAdmin = false, ?array $status = null, ?array $history = null, bool $rights = false): void
 {
     queue_shell();
     api_route('/api/v1/projects/3/mode', ['mode' => $mode, 'staging_open' => false]);
@@ -95,7 +108,7 @@ function m5_queue(string $level = 'view_edit', string $mode = 'development', boo
     ]);
     api_route('/api/v1/projects/3/data-access-groups', [['id' => 5, 'name' => 'Center <A>']]);
     api_route('/api/v1/projects/3/users/7/token', ['token' => 'tok-1']);
-    api_route('/api/v1/projects/3', m5_detail($level, $projectAdmin));
+    api_route('/api/v1/projects/3', m5_detail($level, $projectAdmin, $rights));
 }
 
 function m5_get(string $path, array $query = [], ?array $headers = null): \Clara\Response
@@ -226,7 +239,7 @@ describe('Record Status Dashboard (§6.3, REQ-UI-019)', function (): void {
         assert_not_contains('action=new_record', m5_get('/projects/3/record-status')->body());
 
         resetApi();
-        m5_queue('delete', 'analysis');
+        m5_queue('view_edit', 'analysis', rights: true);
         assert_not_contains('action=new_record', m5_get('/projects/3/record-status')->body());
     });
 
@@ -339,7 +352,7 @@ describe('record view (§8, REQ-UI-025…027)', function (): void {
 
     it('closes data entry in analysis mode, project_admin included (REQ-UI-035)', function (): void {
         sign_in();
-        m5_queue('edit_survey_responses', 'analysis', true);
+        m5_queue('view_edit', 'analysis', true, rights: true);
 
         $body = m5_get('/projects/3/records/8DISC001')->body();
 
@@ -362,7 +375,7 @@ describe('record view (§8, REQ-UI-025…027)', function (): void {
 
     it('offers the record actions by level: delete, group to project_admin, survey link', function (): void {
         sign_in();
-        m5_queue('delete', 'development', true);
+        m5_queue('view_edit', 'development', true, rights: true);
 
         $body = m5_get('/projects/3/records/8DISC001', ['event' => 'baseline_arm_1', 'instrument' => 'scores'])->body();
 
@@ -495,7 +508,7 @@ describe('saving and deleting (§8.6, §8.7)', function (): void {
 
     it('deletes one instrument\'s values but keeps the record identifier (§8.7)', function (): void {
         sign_in(['csrf_token' => M5_CSRF]);
-        m5_queue('delete');
+        m5_queue('view_edit', rights: true);
         api_route('data:action=delete', [['record_id' => '8DISC001', 'form_name' => '', 'deleted' => 3]]);
 
         $response = m5_post('/projects/3/records/8DISC001',
@@ -510,7 +523,7 @@ describe('saving and deleting (§8.6, §8.7)', function (): void {
 
     it('deletes the whole record and returns to the dashboard', function (): void {
         sign_in(['csrf_token' => M5_CSRF]);
-        m5_queue('delete');
+        m5_queue('view_edit', rights: true);
         api_route('data:action=delete', [['record_id' => '8DISC001', 'form_name' => '', 'deleted' => 9]]);
 
         $response = m5_post('/projects/3/records/8DISC001', ['scope' => 'record'], 'delete');
