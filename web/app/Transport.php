@@ -21,4 +21,19 @@ interface Transport
      * @return array{status: int, body: string}
      */
     public function request(string $method, string $url, array $headers, ?string $body): array;
+
+    /**
+     * Performs one exchange whose body is handed on while it arrives instead of being
+     * collected — the export download (REQ-TECH-011: no full materialization in memory).
+     *
+     * `$onStart(int $status, array $headers): bool` runs once, before the first body byte,
+     * with the status and the response headers (names lower-cased). Returning true streams
+     * the body through `$onChunk(string $chunk)`; returning false buffers it instead — that
+     * is how an error body still reaches the caller to be read. A transport failure is a
+     * zero status, as for request(); `complete` is false when a started stream broke off.
+     *
+     * @param list<string> $headers "Name: value" lines
+     * @return array{status: int, body: string, streamed: bool, complete: bool}
+     */
+    public function stream(string $method, string $url, array $headers, callable $onStart, callable $onChunk): array;
 }

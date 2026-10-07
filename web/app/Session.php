@@ -285,6 +285,19 @@ final class Session
             : (string) ($_SESSION['auth_source_name'] ?? ''));
     }
 
+    /**
+     * Writes the session and releases its lock before a long response. PHP holds the session
+     * file locked for the whole request, so a download streaming for minutes would otherwise
+     * block every other page the same user opens meanwhile. Nothing written to the session
+     * after this persists.
+     */
+    public static function close(): void
+    {
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
+    }
+
     /** Destroys the session and its cookie (Sequence D step 4). */
     public static function destroy(): void
     {

@@ -93,6 +93,130 @@ final class ApiClient
     }
 
     /**
+     * A GET whose response body is passed to `$onChunk` as it arrives rather than collected
+     * — the project export (REQ-TECH-011, `User_Interface_Design.md` §6.4). `$onStart` runs
+     * once a 2xx status is known, before the first body byte, and receives the response
+     * headers (names lower-cased); nothing has been handed on before it returns.
+     *
+     * A failure before streaming starts throws the API's error as an ApiException, exactly
+     * like get(). A list value in `$query` is sent as a repeated parameter (`arm=1&arm=3`,
+     * API §4.14), which is how the API reads it. Once the stream has started there is no
+     * way left to report a failure to the browser; a transfer that breaks off is logged.
+     *
+     * @param array<string, scalar|list<scalar>> $query
+     * @param callable(int, array<string, string>): void $onStart
+     * @param callable(string): void $onChunk
+     */
+    public function stream(string $path, array $query, callable $onStart, callable $onChunk): void
+    {
+        $url = $this->config->apiBaseUrl . $path;
+        $encoded = self::queryString($query);
+        if ($encoded !== '') {
+            $url .= '?' . $encoded;
+        }
+
+        $response = $this->transport->stream('GET', $url, $this->boundaryHeaders('*/*'),
+            static function (int $status, array $headers) use ($onStart): bool {
+                if ($status < 200 || $status >= 300) {
+                    return false; // keep the error body to read it below
+                }
+                $onStart($status, $headers);
+
+                return true;
+            },
+            $onChunk
+        );
+
+        if ($response['streamed']) {
+            if (!$response['complete']) {
+                $this->logger->error('api stream broke off', ['path' => $path, 'status' => $response['status']]);
+            }
+
+            return;
+        }
+        if ($response['status'] === 0) {
+            $this->logger->error('api unreachable', ['method' => 'GET', 'path' => $path]);
+
+            throw new ApiException('internal', 'the API is not reachable', 502);
+        }
+
+        $decoded = json_decode($response['body'], true);
+        if (!is_array($decoded) || !isset($decoded['error'])) {
+            $this->logger->error('api returned an unreadable error', [
+                'method' => 'GET', 'path' => $path, 'status' => $response['status'],
+            ]);
+            $decoded = ['error' => 'internal', 'message' => ''];
+        }
+        $this->noteOperatorFailure($decoded, 'GET', $path);
+
+        throw ApiException::fromBody($decoded, $response['status']);
+    }
+
+    /**
+     * The query string with list values repeated under their own name (`arm=1&arm=3`) rather
+     * than PHP's bracket form, RFC 3986 encoded.
+     *
+     * @param array<string, scalar|list<scalar>> $query
+     */
+    public static function queryString(array $query): string
+    {
+        $parts = [];
+        foreach ($query as $name => $value) {
+            foreach (is_array($value) ? $value : [$value] as $item) {
+                $parts[] = rawurlencode((string) $name) . '=' . rawurlencode((string) $item);
+            }
+        }
+
+        return implode('&', $parts);
+    }
+
+    /**
+     * A refused service token is never the user's doing: the web layer and the API disagree on
+     * INTERNAL_SERVICE_TOKEN. The user sees the generic line, and the operator is told in the
+     * log (User_Interface_Design.md §3.4) — at error level, naming the variable, never its value.
+     *
+     * @param array<mixed> $decoded
+     */
+    private function noteOperatorFailure(array $decoded, string $method, string $path): void
+    {
+        if (($decoded['error'] ?? '') === 'service_token_invalid') {
+            $this->logger->error('the API refused the service token — check INTERNAL_SERVICE_TOKEN on both components', [
+                'method' => $method,
+                'path' => $path,
+            ]);
+        }
+    }
+
+    /**
+     * The headers every call carries across the internal boundary: the service token, the
+     * caller's address (REQ-API-125) and — when one is authenticated — the acting user.
+     *
+     * @return list<string>
+     */
+    private function boundaryHeaders(string $accept): array
+    {
+        $headers = [
+            'Accept: ' . $accept,
+            'X-Internal-Service-Token: ' . $this->config->internalServiceToken,
+            // Overwritten by nginx for externally-originated requests; forwarded
+            // verbatim from the browser-facing request here (REQ-API-125).
+            'X-Real-IP: ' . $this->request->clientIp(),
+        ];
+
+        // The acting user, when one is authenticated. Pre-authentication calls
+        // (login, verify-password, the password-reset trio) are the API's own
+        // exception set and carry no user header (DEV-API-16). A wizard call
+        // made inside a tfa_pending state names the identity whose first factor
+        // PHP has verified — that is the override, not a session (§2.7).
+        $actor = $this->actorOverride ?? (Session::isAuthenticated() ? Session::userId() : null);
+        if ($actor !== null) {
+            $headers[] = 'X-Internal-User-Id: ' . $actor;
+        }
+
+        return $headers;
+    }
+
+    /**
      * Performs one call and decodes the envelope. Any status ≥ 400 becomes an
      * ApiException carrying the API's stable error code, so callers branch on
      * `code()` — the status alone is not enough (login's two-factor states are
@@ -109,25 +233,9 @@ final class ApiClient
             $url .= (str_contains($url, '?') ? '&' : '?') . http_build_query($query);
         }
 
-        $headers = [
-            'Accept: application/json',
-            'X-Internal-Service-Token: ' . $this->config->internalServiceToken,
-            // Overwritten by nginx for externally-originated requests; forwarded
-            // verbatim from the browser-facing request here (REQ-API-125).
-            'X-Real-IP: ' . $this->request->clientIp(),
-        ];
+        $headers = $this->boundaryHeaders('application/json');
         if ($body !== null) {
             $headers[] = 'Content-Type: application/json';
-        }
-
-        // The acting user, when one is authenticated. Pre-authentication calls
-        // (login, verify-password, the password-reset trio) are the API's own
-        // exception set and carry no user header (DEV-API-16). A wizard call
-        // made inside a tfa_pending state names the identity whose first factor
-        // PHP has verified — that is the override, not a session (§2.7).
-        $actor = $this->actorOverride ?? (Session::isAuthenticated() ? Session::userId() : null);
-        if ($actor !== null) {
-            $headers[] = 'X-Internal-User-Id: ' . $actor;
         }
 
         // Every API body is a JSON object (§4.1); PHP encodes an empty array as `[]`, which the
@@ -161,6 +269,7 @@ final class ApiClient
                 ]);
                 $decoded = ['error' => 'internal', 'message' => ''];
             }
+            $this->noteOperatorFailure($decoded, $method, $path);
 
             throw ApiException::fromBody($decoded, $status);
         }

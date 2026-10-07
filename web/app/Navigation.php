@@ -86,7 +86,7 @@ final class Navigation
             ['key' => 'record_status', 'path' => $base . '/record-status', 'labelKey' => 'nav.record_status',
                 'allowed' => $seesData, 'built' => true],
             ['key' => 'export', 'path' => $base . '/export', 'labelKey' => 'nav.export',
-                'allowed' => $permissions->canExportAny(), 'built' => false],
+                'allowed' => $permissions->canExportAny(), 'built' => true],
             ['key' => 'members', 'path' => $base . '/members', 'labelKey' => 'nav.members',
                 'allowed' => Session::isAdmin(), 'built' => true],
             ['key' => 'roles', 'path' => $base . '/roles', 'labelKey' => 'nav.roles',

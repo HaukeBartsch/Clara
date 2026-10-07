@@ -170,10 +170,10 @@ function resetApi(): void
  * page happens to make first. Queued responses are used in order and the last one
  * repeats, which is what a page that reads the same endpoint twice expects.
  */
-function api_route(string $fragment, mixed $body, int $status = 200): void
+function api_route(string $fragment, mixed $body, int $status = 200, array $headers = []): void
 {
     $encoded = is_string($body) ? $body : (string) json_encode($body);
-    $GLOBALS['api_routes'][$fragment][] = ['status' => $status, 'body' => $encoded];
+    $GLOBALS['api_routes'][$fragment][] = ['status' => $status, 'body' => $encoded, 'headers' => $headers];
 }
 
 /** The two reads an authenticated page render spends before its own data. */
@@ -201,6 +201,30 @@ function queue_sidebar_projects(?array $projects = null): void
 
 final class FakeTransport implements Transport
 {
+    /** Bodies of streamed responses are handed on in pieces of this size. */
+    public const STREAM_CHUNK = 7;
+
+    /**
+     * The queued response of request(), handed on through the callbacks the way a real
+     * transfer arrives: headers first, then the body in small pieces — or, when $onStart
+     * declines (an error status), buffered and returned.
+     */
+    public function stream(string $method, string $url, array $headers, callable $onStart, callable $onChunk): array
+    {
+        $response = $this->request($method, $url, $headers, null);
+        $lower = array_change_key_case($response['headers'] ?? [], CASE_LOWER);
+        if (!$onStart($response['status'], $lower)) {
+            return ['status' => $response['status'], 'body' => $response['body'], 'streamed' => false, 'complete' => true];
+        }
+        foreach (str_split($response['body'], self::STREAM_CHUNK) as $chunk) {
+            if ($chunk !== '') {
+                $onChunk($chunk);
+            }
+        }
+
+        return ['status' => $response['status'], 'body' => '', 'streamed' => true, 'complete' => true];
+    }
+
     public function request(string $method, string $url, array $headers, ?string $body): array
     {
         $GLOBALS['api_calls'][] = [

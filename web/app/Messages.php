@@ -72,10 +72,16 @@ final class Messages
             return $i18n->t('error.generic');
         }
 
-        $reason = $e->getMessage();
+        // ApiException carries the code as its message when the API sent none; that is no
+        // reason to show, and a raw code is never rendered (§3.4, REQ-UI-008).
+        $reason = $e->getMessage() === $e->code() ? '' : $e->getMessage();
         // `no_local_credential` is a 409 that says which authentication path the account
         // actually uses — an actionable reason of exactly the kind §3.4 shows (§2.6).
         $showReason = in_array($e->code(), ['validation_error', 'conflict', 'no_local_credential'], true);
+        if ($showReason && $reason === '') {
+            // The reason-bearing codes still say what kind of failure it was.
+            return $i18n->t($e->code() === 'validation_error' ? 'error.validation' : 'error.conflict');
+        }
 
         $lead = match ($e->code()) {
             'invalid_request' => $i18n->t('error.invalid_request'),

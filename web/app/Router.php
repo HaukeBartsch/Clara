@@ -29,7 +29,10 @@ final class Router
      * Only the routes this pass implements are listed; §2.1's remainder arrives
      * with M2–M6 of Plan/Web_Implementation.md, one row each.
      *
-     * @var list<array{method: string, pattern: string, controller: class-string, handler: string, guard: string, action?: string, region?: string}>
+     * A row marked `'session' => false` runs without the PHP session — no cookie, no CSRF
+     * token (the public survey page, §8.8).
+     *
+     * @var list<array{method: string, pattern: string, controller: class-string, handler: string, guard: string, action?: string, region?: string, session?: bool}>
      */
     private const ROUTES = [
         ['method' => 'GET', 'pattern' => '/login', 'controller' => Controllers\LoginController::class,
@@ -171,6 +174,17 @@ final class Router
         ['method' => 'POST', 'pattern' => '/projects/{id}/records/{record}', 'controller' => Controllers\RecordController::class,
             'handler' => 'revokeLink', 'guard' => 'login', 'action' => 'revoke_link'],
 
+        // M6 — the export action (§6.4): the page, and with `?download=1` the file it streams
+        // (REQ-TECH-011). A GET like every read; the API audits each download (REQ-API-076).
+        ['method' => 'GET', 'pattern' => '/projects/{id}/export', 'controller' => Controllers\ExportController::class,
+            'handler' => 'index', 'guard' => 'login'],
+
+        // M6 — the public survey page (§8.8): the URL the API issues for a survey link
+        // (API §4.17). Outside the session altogether (GD-1): no session is started, no
+        // cookie issued, and the link token in the path is the only credential.
+        ['method' => 'GET', 'pattern' => '/s/{link}', 'controller' => Controllers\SurveyController::class,
+            'handler' => 'show', 'guard' => 'public', 'session' => false],
+
         // The Control Panel (§5, REQ-UI-047): one is_admin route whose `?section=` picks the
         // section shown in the right-hand panel, defaulting to the first available.
         ['method' => 'GET', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
@@ -283,7 +297,7 @@ final class Router
     /** Matches the request and produces its response. */
     public function dispatch(): Response
     {
-        $matched = $this->match();
+        $matched = self::find($this->request);
 
         if ($matched === null) {
             return $this->notFound();
@@ -297,8 +311,10 @@ final class Router
         }
 
         // --- CSRF on every mutation, before the controller and before any API
-        // call: a rejected request must not reach the write at all (§3.3) ---
-        if ($this->request->isPost() && !Csrf::validate($this->request)) {
+        // call: a rejected request must not reach the write at all (§3.3). A route
+        // that runs without a session has no token to check against: its credential
+        // travels in its own path (the survey link, §8.8) ---
+        if ($this->request->isPost() && self::usesSession($route) && !Csrf::validate($this->request)) {
             $this->logger->warn('csrf rejection', ['path' => $this->request->path()]);
             Session::flash('danger', $this->i18n->t('error.csrf'));
 
@@ -327,14 +343,14 @@ final class Router
      *
      * @return array{0: array{method: string, pattern: string, controller: class-string, handler: string, guard: string, action?: string, region?: string}, 1: array<string, string>}|null
      */
-    private function match(): ?array
+    private static function find(Request $request): ?array
     {
         foreach (self::ROUTES as $route) {
-            if ($route['method'] !== $this->request->method()) {
+            if ($route['method'] !== $request->method()) {
                 continue;
             }
             $pathParams = [];
-            if (!$this->matchesPattern($route['pattern'], $pathParams)) {
+            if (!self::matchesPattern($route['pattern'], $request->path(), $pathParams)) {
                 continue;
             }
 
@@ -343,7 +359,7 @@ final class Router
             // POST to the same path with any other `action` is not a route, and the
             // request ends as a 404 like any unknown path — the shell never offers a
             // mutation this table does not carry, so nothing else can answer it.
-            if ($expected === null || hash_equals($expected, $this->request->action())) {
+            if ($expected === null || hash_equals($expected, $request->action())) {
                 return [$route, $pathParams];
             }
         }
@@ -352,11 +368,31 @@ final class Router
     }
 
     /**
+     * Whether this request runs inside the PHP session — asked by the front controller
+     * before it starts one. Only a route marked `'session' => false` runs without: the
+     * public survey page, which GD-1 keeps outside the session altogether (§8.8) — no
+     * cookie is issued and none is read. An unknown path keeps the session, so the 404
+     * renders like every other page.
+     */
+    public static function needsSession(Request $request): bool
+    {
+        $matched = self::find($request);
+
+        return $matched === null || self::usesSession($matched[0]);
+    }
+
+    /** @param array{session?: bool} $route */
+    private static function usesSession(array $route): bool
+    {
+        return ($route['session'] ?? true) !== false;
+    }
+
+    /**
      * Path pattern matching with `{name}` placeholders (no regex from user input:
      * only the fixed placeholder syntax becomes a named group). Matched values are
      * written into `$pathParams`.
      */
-    private function matchesPattern(string $pattern, array &$pathParams): bool
+    private static function matchesPattern(string $pattern, string $path, array &$pathParams): bool
     {
         $regex = preg_replace('/\{([a-zA-Z_][a-zA-Z0-9_]*)\}/', '(?P<$1>[^/]+)', $pattern);
         if ($regex === null) {
@@ -364,7 +400,7 @@ final class Router
         }
 
         $matches = [];
-        if (preg_match('#^' . $regex . '$#', $this->request->path(), $matches) !== 1) {
+        if (preg_match('#^' . $regex . '$#', $path, $matches) !== 1) {
             return false;
         }
         // Keep the named groups only: offset 0 is the whole path.

@@ -161,19 +161,28 @@ describe('project page (§6.1, REQ-UI-017)', function (): void {
         assert_contains('aria-current="page"', $response->body());
     });
 
-    it('offers no link to a section this build does not have (§3.1)', function (): void {
+    it('offers exactly the sections this member may use (§3.1)', function (): void {
         sign_in();
         queue_project_home();
 
         $response = router_for(http_request('GET', '/projects/3/overview', browser_headers()))->dispatch();
 
-        // Export arrives with M6; until then no link to it exists anywhere on the page.
-        // Setup and Design are built but project_admin-only, so this member has no link to
-        // them either (REQ-UI-003); the Record Status Dashboard is built and allowed (M5).
-        assert_not_contains('/export', $response->body());
+        // A view_edit member with an export level: Record Status (M5) and Export (M6) are
+        // theirs; Setup and Design are project_admin-only, Members and Roles is_admin-only,
+        // so no link to any of them exists on the page (REQ-UI-003).
+        assert_contains('/projects/3/record-status', $response->body());
+        assert_contains('/projects/3/export', $response->body());
         assert_not_contains('/setup', $response->body());
         assert_not_contains('/design', $response->body());
-        assert_contains('/projects/3/record-status', $response->body());
+        assert_not_contains('/projects/3/members', $response->body());
+
+        // Without an export level anywhere the Export entry is absent, not disabled (§6.4).
+        resetApi();
+        $detail = project_home_detail();
+        $detail['permissions']['arms'][0]['export_level'] = 'export_none';
+        queue_project_home($detail);
+        $response = router_for(http_request('GET', '/projects/3/overview', browser_headers()))->dispatch();
+        assert_not_contains('/export', $response->body());
     });
 
     it('serves the same summary as JSON, and no more (REQ-UI-044)', function (): void {
@@ -301,18 +310,21 @@ describe('project page panel rules (§6.1, REQ-UI-003/017)', function (): void {
         assert_true(!$member['roles']);
     });
 
-    it('keeps an unbuilt section out of the panel even when it is allowed (§3.1)', function (): void {
+    it('lists every section in canonical order once all are built (§6.1, REQ-UI-017)', function (): void {
         sign_in(['is_admin' => 1]);
         $detail = project_home_detail();
         $detail['permissions']['project_admin'] = true;
-        $paths = array_column(Navigation::projectSections(3, Permissions::fromProjectDetail($detail)), 'path');
+        $permissions = Permissions::fromProjectDetail($detail);
+        $paths = array_column(Navigation::projectSections(3, $permissions), 'path');
 
-        // Export is allowed for this member and still absent: its page arrives with M6, so a
-        // link would be a disabled control by another name. Setup and Design (project_admin)
-        // are built since M4, the Record Status Dashboard since M5; Members, Roles (is_admin)
-        // and Groups (data access) since M3.
+        // Setup and Design since M4, the Record Status Dashboard since M5, Export since M6;
+        // Members, Roles (is_admin) and Groups (data access) since M3.
         assert_same(['/projects/3/overview', '/projects/3/setup', '/projects/3/design',
-            '/projects/3/record-status', '/projects/3/members', '/projects/3/roles', '/projects/3/groups'], $paths);
+            '/projects/3/record-status', '/projects/3/export', '/projects/3/members', '/projects/3/roles',
+            '/projects/3/groups'], $paths);
+        // The `built` switch stays in place for sections a later build adds; none is off now.
+        assert_same([], array_column(array_filter(Navigation::projectSectionDefinitions(3, $permissions),
+            static fn (array $s): bool => !$s['built']), 'key'));
     });
 
     it('opens the first section after Overview, and Overview only as the fallback (REQ-UI-017)', function (): void {

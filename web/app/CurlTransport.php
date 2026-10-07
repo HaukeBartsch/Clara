@@ -52,4 +52,67 @@ final class CurlTransport implements Transport
         // A failed exchange — refused, timed out, unresolvable — carries no status.
         return $raw === false ? ['status' => 0, 'body' => ''] : ['status' => $status, 'body' => (string) $raw];
     }
+
+    /** At most this much of a non-streamed (error) body is kept. */
+    private const MAX_BUFFERED_BODY = 65536;
+
+    public function stream(string $method, string $url, array $headers, callable $onStart, callable $onChunk): array
+    {
+        $handle = curl_init($url);
+        if ($handle === false) {
+            return ['status' => 0, 'body' => '', 'streamed' => false, 'complete' => false];
+        }
+
+        $responseHeaders = [];
+        $status = 0;
+        $decided = false;
+        $streaming = false;
+        $buffer = '';
+
+        curl_setopt_array($handle, [
+            CURLOPT_CUSTOMREQUEST => $method,
+            CURLOPT_FOLLOWLOCATION => false,
+            CURLOPT_CONNECTTIMEOUT => $this->connectTimeoutSeconds,
+            // No overall timeout: a large export legitimately runs for minutes. A stalled
+            // transfer is cut instead — below one byte a second for the usual timeout.
+            CURLOPT_LOW_SPEED_LIMIT => 1,
+            CURLOPT_LOW_SPEED_TIME => $this->timeoutSeconds,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_HEADERFUNCTION => static function ($curl, string $line) use (&$responseHeaders): int {
+                $parts = explode(':', $line, 2);
+                if (count($parts) === 2) {
+                    $responseHeaders[strtolower(trim($parts[0]))] = trim($parts[1]);
+                }
+
+                return strlen($line);
+            },
+            CURLOPT_WRITEFUNCTION => static function ($curl, string $data) use (
+                &$decided, &$streaming, &$buffer, &$status, &$responseHeaders, $onStart, $onChunk
+            ): int {
+                if (!$decided) {
+                    $decided = true;
+                    $status = (int) curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
+                    $streaming = (bool) $onStart($status, $responseHeaders);
+                }
+                if ($streaming) {
+                    $onChunk($data);
+                } elseif (strlen($buffer) < self::MAX_BUFFERED_BODY) {
+                    $buffer .= $data;
+                }
+
+                return strlen($data);
+            },
+        ]);
+
+        $ok = curl_exec($handle) !== false;
+        if (!$decided) {
+            $status = $ok ? (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE) : 0;
+            // An empty body never reaches the write callback; the caller still decides.
+            if ($status > 0) {
+                $streaming = (bool) $onStart($status, $responseHeaders);
+            }
+        }
+
+        return ['status' => $status, 'body' => $buffer, 'streamed' => $streaming, 'complete' => $ok];
+    }
 }

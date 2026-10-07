@@ -447,6 +447,8 @@ return [
     // The self-service password change (§2.6): the one line a rejected credential gets.
     'error.bad_password' => 'The current password is not correct.',
     'error.forbidden' => 'You do not have permission for this action',
+    'error.conflict' => 'This change conflicts with the current state of the project.',
+    'error.validation' => 'The design contains a value that is not valid.',
     'error.not_found' => 'The object does not exist or you do not have access',
     // The form was accepted but the request did not carry this session's token:
     // nothing was sent to the API (§3.3).
@@ -698,4 +700,43 @@ return [
     'record.delete.done.event' => 'The values at {event} were deleted from record {record}.',
     'record.delete.done.record' => 'Record {record} was deleted.',
     'record.delete.nothing' => 'This form has no values to delete.',
+
+    // --- M6: export (§6.4) ---
+    'export.title' => 'Export',
+    'export.intro' => 'Download the project\'s data as a file. What the file contains follows your export permissions; the level being applied is shown below before you download.',
+    'export.format' => 'Format',
+    'export.format.csv' => 'CSV',
+    'export.format.json' => 'JSON',
+    'export.values' => 'Choice values',
+    'export.values.raw' => 'Codes',
+    'export.values.label' => 'Labels',
+    'export.headers' => 'Column headers',
+    'export.headers.raw' => 'Field names',
+    'export.headers.label' => 'Field labels',
+    'export.headers.both' => 'Label and field name',
+    'export.delimiter' => 'CSV delimiter',
+    'export.delimiter.comma' => 'Comma ( , )',
+    'export.delimiter.semicolon' => 'Semicolon ( ; )',
+    'export.delimiter.tab' => 'Tab',
+    'export.delimiter.pipe' => 'Pipe ( | )',
+    'export.arms' => 'Arms',
+    'export.lowest_rule' => 'With several arms selected, the most protective of their levels applies to the whole file. Export a single arm to receive its own level.',
+    'export.level' => 'Applied sensitivity',
+    'export.level.export_full' => 'Full dataset',
+    'export.level.export_no_identifiers' => 'Identifiers removed',
+    'export.level.export_de_identified' => 'De-identified',
+    'export.level_help.export_full' => 'All fields and values, unchanged.',
+    'export.level_help.export_no_identifiers' => 'Every identifier field is left out of the file.',
+    'export.level_help.export_de_identified' => 'Direct identifiers are removed, personal fields are pseudonymised and dates are shifted.',
+    'export.no_arm' => 'Choose at least one arm to export.',
+    'export.download' => 'Download',
+    'export.audit_note' => 'Every download is recorded in the audit log with the level applied.',
+    'export.pair_only' => 'Your export permission covers only individual instruments and events, and the export cannot apply those yet. Ask a project administrator for an export.',
+
+    // --- M6: public survey page (§8.8) ---
+    'survey.title' => 'Survey',
+    'survey.invalid' => 'This survey link is no longer valid. If you still want to take part, please contact the study team.',
+    'survey.rate_limited' => 'Too many requests from your connection. Please wait a few minutes and open the link again.',
+    'survey.unavailable' => 'The survey cannot be shown right now. Please try again later.',
+    'survey.submit_unavailable' => 'Answers cannot be sent online through this link yet. Please contact the study team to take part.',
 ];

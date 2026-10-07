@@ -346,3 +346,13 @@ h1 .clara-mode-badge {
 .clara-history-change {
   word-break: break-word;
 }
+
+/* --- responsive pass (M6; REQ-UI-032) --- */
+
+/* A wide table scrolls inside its .table-responsive wrapper. Absolutely positioned content in
+   it — Bootstrap's .visually-hidden labels in header cells — would otherwise be placed against
+   the page rather than the wrapper, at the far right of the table, and make the whole page
+   scroll sideways on a phone. */
+.table-responsive {
+  position: relative;
+}

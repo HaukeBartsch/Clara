@@ -53,7 +53,12 @@ if (str_starts_with($request->path(), '/assets/')) {
 }
 
 // --- session, then the page -------------------------------------------------
-Session::start($config);
+// Every route runs inside the PHP session except the public survey page, which GD-1 keeps
+// outside it entirely (User_Interface_Design.md §8.8): no session is started, so no cookie
+// is issued and none is read. The route table says which is which (Router::needsSession).
+if (Router::needsSession($request)) {
+    Session::start($config);
+}
 
 // The services may fail while being built, so the fallbacks below must not depend
 // on them having existed.

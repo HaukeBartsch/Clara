@@ -23,6 +23,13 @@ final class Response
     /** @var array<string, string> */
     private array $headers = [];
 
+    /**
+     * The body producer of a streamed response (stream()), or null for an ordinary one.
+     *
+     * @var (callable(StreamSink): void)|null
+     */
+    private $producer = null;
+
     private function __construct(
         private readonly int $status,
         private readonly string $body
@@ -76,6 +83,32 @@ final class Response
             'this route serves no JSON data region',
             406
         );
+    }
+
+    /**
+     * A response whose status, headers and body are produced while it is being sent — the
+     * export download, proxied piece by piece so nothing is held in memory (REQ-TECH-011).
+     * `$producer(StreamSink $sink)` calls `$sink->begin()` once with its status and headers,
+     * then `$sink->write()` for each piece. The base headers of every response (CSP,
+     * nosniff, referrer policy) are merged into what it begins with.
+     *
+     * The producer runs after the router has returned, outside its error handling, so it
+     * must answer its own failures — typically by beginning a redirect instead of a body.
+     *
+     * @param callable(StreamSink): void $producer
+     */
+    public static function stream(callable $producer): self
+    {
+        $response = new self(200, '');
+        $response->producer = $producer;
+
+        return $response;
+    }
+
+    /** True for a streamed response, whose body() is empty until it is sent. */
+    public function isStream(): bool
+    {
+        return $this->producer !== null;
     }
 
     public static function redirect(string $to, int $status = 302): self
@@ -141,6 +174,12 @@ final class Response
     /** Emits status, headers and body. Called once, by the front controller. */
     public function send(): void
     {
+        if ($this->producer !== null) {
+            $this->sendTo(new PhpOutputSink());
+
+            return;
+        }
+
         if (!headers_sent()) {
             http_response_code($this->status);
             foreach ($this->headers as $name => $value) {
@@ -149,6 +188,45 @@ final class Response
         }
 
         echo $this->body;
+    }
+
+    /**
+     * Sends this response into a sink — a streamed one by running its producer, an ordinary
+     * one as status, headers and body. The test harness passes a recording sink.
+     */
+    public function sendTo(StreamSink $sink): void
+    {
+        if ($this->producer === null) {
+            $sink->begin($this->status, $this->headers);
+            $sink->write($this->body);
+
+            return;
+        }
+
+        $base = $this->headers;
+        ($this->producer)(new class ($sink, $base) implements StreamSink {
+            private bool $begun = false;
+
+            /** @param array<string, string> $base */
+            public function __construct(private readonly StreamSink $inner, private readonly array $base) {}
+
+            public function begin(int $status, array $headers): void
+            {
+                if ($this->begun) {
+                    return;
+                }
+                $this->begun = true;
+                $this->inner->begin($status, $headers + $this->base);
+            }
+
+            public function write(string $chunk): void
+            {
+                if (!$this->begun) {
+                    $this->begin(200, []);
+                }
+                $this->inner->write($chunk);
+            }
+        });
     }
 
     /** Extension → media type for the asset handler; unknown extensions 404. */

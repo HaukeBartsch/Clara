@@ -92,6 +92,25 @@ final class Request
         return is_scalar($value) ? (string) $value : $default;
     }
 
+    /**
+     * A query parameter posted as a list (`arm[]=1&arm[]=3`), scalars only — the export's arm
+     * checkboxes (§6.4). A single value reads as a one-item list.
+     *
+     * @return list<string>
+     */
+    public function queryList(string $key): array
+    {
+        $value = $this->query[$key] ?? null;
+        if (is_scalar($value)) {
+            return [(string) $value];
+        }
+        if (!is_array($value)) {
+            return [];
+        }
+
+        return array_values(array_map('strval', array_filter($value, 'is_scalar')));
+    }
+
     /** One body field as a string; absent or non-scalar reads as ''. */
     public function field(string $key, string $default = ''): string
     {
