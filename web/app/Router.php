@@ -184,6 +184,11 @@ final class Router
         // cookie issued, and the link token in the path is the only credential.
         ['method' => 'GET', 'pattern' => '/s/{link}', 'controller' => Controllers\SurveyController::class,
             'handler' => 'show', 'guard' => 'public', 'session' => false],
+        // Submitting is a dedicated POST rather than `?action=`: the page has no session to
+        // carry an action or a CSRF token, so the link token alone addresses both the render
+        // and the write (`User_Interface_Design.md` §2.1, §8.8).
+        ['method' => 'POST', 'pattern' => '/s/{link}', 'controller' => Controllers\SurveyController::class,
+            'handler' => 'submit', 'guard' => 'public', 'session' => false],
 
         // The Control Panel (§5, REQ-UI-047): one is_admin route whose `?section=` picks the
         // section shown in the right-hand panel, defaulting to the first available.

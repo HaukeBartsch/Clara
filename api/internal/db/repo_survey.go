@@ -66,12 +66,15 @@ func (s *Store) RevokeSurveyLinkTx(ctx context.Context, tx *sql.Tx, projectID in
 	return n > 0, nil
 }
 
-// MarkSurveyLinkCollected stamps the first save through a link (REQ-DB-041):
-// "collected" is this column, so the write happens once and is never
-// overwritten — a later save through the same link changes nothing. Reports
-// whether this call was the one that stamped it.
-func (s *Store) MarkSurveyLinkCollected(ctx context.Context, linkID int64) (bool, error) {
-	res, err := s.DB.ExecContext(ctx,
+// MarkSurveyLinkCollectedTx stamps the first save through a link inside tx
+// (REQ-DB-041): "collected" is this column, so the write happens once and is
+// never overwritten — a later save through the same link changes nothing. It
+// runs in the submission's transaction for the reason that transaction exists:
+// a stored response the stamp did not survive would read as not yet collected,
+// and the edit-collected-surveys right of REQ-AUTH-071 gates on this column.
+// Reports whether this call was the one that stamped it.
+func (s *Store) MarkSurveyLinkCollectedTx(ctx context.Context, tx *sql.Tx, linkID int64) (bool, error) {
+	res, err := tx.ExecContext(ctx,
 		`UPDATE survey_links SET collected_at = ? WHERE id = ? AND collected_at IS NULL`,
 		nowUTC(), linkID)
 	if err != nil {

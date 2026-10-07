@@ -229,6 +229,18 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 			ImportRecordID: importInvalid, ImportFormName: "Validation error: " + msg}, nil
 	}
 
+	if sub.isLink() && recordID == "" {
+		// A survey link is the whole address: its row already holds the
+		// (record, instrument, event) this submission targets, so the public
+		// page names none of them (§3.10, REQ-API-083). The token is looked up
+		// instead of the record being told to a browser that must not learn it;
+		// a row that *does* name another triple is still the 403 below.
+		recordID = sub.Link.RecordID
+		// record_id doubles as the identifier field's value and is not a meta
+		// key, so writing it back keeps storage identical to a named submission
+		// — including for a record this call creates.
+		row["record_id"] = recordID
+	}
 	if recordID == "" {
 		return fail("record_id: CONTENT_INVALID — a record id is required")
 	}
@@ -283,6 +295,22 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 					"' conflicts with redcap_event_name '" + alias + "'")
 			}
 		}
+		// A row through a link that names no event takes the link's own — the
+		// public page cannot know the event name any more than the record id,
+		// and the link already says which of the instrument's events this is
+		// (§3.10, REQ-API-083). A spelling that *is* supplied stays, so the
+		// mismatch check below still turns a link used at another event into a
+		// 403 rather than silently retargeting the row.
+		if event == "" && sub.isLink() {
+			event = d.eventNameOf(sub.Link.EventID)
+			if event == "" {
+				// The link names an event this project no longer has: its design
+				// changed under the respondent. There is no target to fill, and
+				// letting it fall through would answer with a validation error
+				// about an empty event name — permission-shaped, so 403 (§3.10).
+				return importRow{}, errForbiddenRequest
+			}
+		}
 		if _, ok := d.eventArm[event]; !ok {
 			return fail(eventKey + ": CONTENT_INVALID — unknown event '" + event + "'")
 		}
@@ -309,6 +337,11 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 				}
 			}
 		}
+	} else if sub.isLink() {
+		// A project without events holds no survey link at all (DEV-DB-14), so
+		// a link reaching here names an event that no longer exists — its
+		// design changed under it. There is no empty-event store it could mean.
+		return importRow{}, errForbiddenRequest
 	}
 
 	offsetFor := h.collectionOffsetFor(p.TZ)
@@ -524,9 +557,16 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 			return importRow{}, err
 		}
 	}
-	// The submission's own entry rides in the same transaction, so a
-	// rollback cannot leave a success on the record (REQ-AUD-021).
 	if sub.isLink() {
+		// The first save through the link stamps its collection date, once and
+		// never again (REQ-DB-041); this is what makes the response "collected"
+		// for the edit-collected-surveys right (REQ-AUTH-071). It rides in this
+		// transaction so a stored response cannot lack the stamp.
+		if _, err := h.Store.MarkSurveyLinkCollectedTx(ctx, tx, sub.Link.ID); err != nil {
+			return importRow{}, err
+		}
+		// The submission's own entry rides along too, so a rollback cannot
+		// leave a success on the record (REQ-AUD-021).
 		if err := h.AuditTx(ctx, tx, surveySubmittedEntry(sub, recordID, "success", "", changes)); err != nil {
 			return importRow{}, err
 		}

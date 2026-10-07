@@ -109,6 +109,20 @@ func (d *projectDict) eventIDOf(eventName string) int64 {
 	return 0
 }
 
+// eventNameOf is eventIDOf in reverse: the unique event name a survey link's
+// event id stands for. A submission through a link names no event (§3.10), so
+// this is how the link's own event becomes the target of the row. The empty
+// answer means the link points at an event this project does not have, which
+// its caller refuses rather than storing the row under no event at all.
+func (d *projectDict) eventNameOf(eventID int64) string {
+	for _, e := range d.events {
+		if e.EventID == eventID {
+			return e.UniqueEventName
+		}
+	}
+	return ""
+}
+
 // pairAccess resolves the grant scope of one stored value: its instrument and
 // the event it is stored under, falling back to that event's arm default when the
 // pair carries no grant of its own (REQ-AUTH-069). This is where a data row meets

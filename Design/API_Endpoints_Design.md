@@ -289,12 +289,14 @@ The state is two maps keyed by source IP — the hit timestamps of the rolling w
 
 ### 3.10 Survey Link Tokens (GD-9, REQ-API-083)
 
-A survey link token (`survey_links.token`, `Database_Schema_Design.md` §8) is accepted as the `token` parameter of the data API, but only for the calls that render and fill its (record, instrument):
+A survey link token (`survey_links.token`, `Database_Schema_Design.md` §8) is accepted as the `token` parameter of the data API, but only for the calls that render and fill its (record, instrument, event):
 
 | Call | Allowed scope |
 |---|------|
 | `content=metadata` | the field definitions of that instrument (a `forms[]` naming another instrument → 403) |
-| `content=record` with `data` (REQ-API-012) | values for that record and that instrument |
+| `content=record` with `data` (REQ-API-012) | values for that record, instrument and event |
+
+**The link is the address.** A row submitted through a link names none of that triple: the API reads the record, the instrument and the event out of the `survey_links` row and stores under them, which is what lets the public page submit answers without ever telling the respondent which record they are filling (`User_Interface_Design.md` §8.8). A row that does name a record, an instrument or an event must name the link's own — anything else is the 403 below, never a silent retarget. The first save through the link stamps `survey_links.collected_at` in the submission's own transaction, so a stored response cannot exist without the stamp that makes it *collected* (REQ-DB-041, REQ-AUTH-071).
 
 Every other `content` (including `export` and `delete`), another record, or another instrument is rejected with 403 `Permission denied` (REQ-API-083, REQ-AUTH-039). In an analysis-mode project the permitted import is rejected too — `Project in analysis mode` (GD-20, REQ-API-109); the survey page then shows its closed state (`User_Interface_Design.md` §8.8). A revoked link is rejected on every call (REQ-AUTH-040). Link tokens are subject to the §3.9 rate limit (REQ-API-038). Submissions are audit-logged as `survey_submitted` — success and failure (`Audit_Logging_Design.md` §3.6). The public survey page is served by the PHP application; the browser never calls `/api/v1/*` from it (GD-1, REQ-API-084).
 

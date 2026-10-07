@@ -416,3 +416,103 @@ func TestSurveyLinkSubmissionDecidedByData(t *testing.T) {
 		t.Fatalf("cross-instrument flat submission = %v, want the pin's instrument message", res)
 	}
 }
+
+// The public page names none of the triple: a row carrying only field values is
+// addressed by the link itself, which is how a respondent submits without ever
+// being told the study's record id (§3.10, REQ-API-083). The first save through
+// the link stamps its collection date, and a later one leaves it alone
+// (REQ-DB-041).
+func TestSurveyLinkSubmissionResolvesItsTriple(t *testing.T) {
+	f, link := surveyLinkFixture(t)
+
+	res := f.importRows(t, importForm(link.Token, map[string]string{
+		"age": "47", "notes": "sent from the survey page",
+	}))
+	if len(res) != 1 || res[0].ImportRecordID != importUpdated {
+		t.Fatalf("unaddressed submission = %v, want one updated row on the link's triple", res)
+	}
+	if got := storedValue(t, f, "8DISC001", "baseline_arm_1", "age"); got != "47" {
+		t.Errorf("stored age = %q, want 47 at the link's record and event", got)
+	}
+	if got := storedValue(t, f, "8DISC001", "followup_arm_1", "age"); got != "43" {
+		t.Errorf("age at followup_arm_1 = %q, want the fixture's 43 — the link's event is the only target", got)
+	}
+
+	e := lastSurveyEntry(t, f)
+	if e == nil {
+		t.Fatal("no survey_submitted audit row")
+	}
+	if e.TargetRecord != "8DISC001" || e.Details.RecordID != "8DISC001" {
+		t.Errorf("audit identifies %q/%q, want the resolved 8DISC001 in both",
+			e.TargetRecord, e.Details.RecordID)
+	}
+
+	collected := func() sql.NullString {
+		t.Helper()
+		var v sql.NullString
+		if err := f.s.DB.QueryRow(`SELECT collected_at FROM survey_links WHERE id = ?`, link.ID).Scan(&v); err != nil {
+			t.Fatalf("read collected_at: %v", err)
+		}
+		return v
+	}
+	first := collected()
+	if !first.Valid {
+		t.Fatal("the first save through the link must stamp collected_at (REQ-DB-041)")
+	}
+	if res := f.importRows(t, importForm(link.Token, map[string]string{"age": "48"})); len(res) != 1 ||
+		res[0].ImportRecordID != importUpdated {
+		t.Fatalf("re-submission = %v, want one updated row", res)
+	}
+	if again := collected(); again != first {
+		t.Errorf("collected_at moved from %v to %v — later saves never change it", first, again)
+	}
+}
+
+// A submission that does name a triple stays bound to the link's. Another event
+// of the same instrument — which holds its own distinct link (REQ-AUTH-039) —
+// is the uniform 403 rather than a silent retarget, and an unknown event name
+// never resolves to the link's event either.
+func TestSurveyLinkSubmissionCannotNameAnotherEvent(t *testing.T) {
+	f, link := surveyLinkFixture(t)
+
+	cases := map[string]map[string]string{
+		"another event of the same instrument": {
+			"event_name": "followup_arm_1", "age": "50",
+		},
+		"another event, alias spelling": {
+			"redcap_event_name": "followup_arm_1", "age": "50",
+		},
+	}
+	for name, fields := range cases {
+		form := importForm(link.Token, fields)
+		code, body := f.call(t, form)
+		if code != 403 {
+			t.Errorf("%s: status = %d, want 403 (%s)", name, code, body)
+		}
+	}
+	// The event the link does not hold keeps its own value (the fixture's 43),
+	// and so does the one it does (its 42): a rejected submission writes nothing.
+	if got := storedValue(t, f, "8DISC001", "followup_arm_1", "age"); got != "43" {
+		t.Errorf("age at followup_arm_1 = %q, want the untouched 43", got)
+	}
+	if got := storedValue(t, f, "8DISC001", "baseline_arm_1", "age"); got != "42" {
+		t.Errorf("age at the link's event = %q, want the untouched 42", got)
+	}
+}
+
+// The record an unaddressed submission resolves to is the link's own, so a row
+// that names a different record alongside its values stays the 403 of
+// REQ-API-083 — resolution fills an omission, it does not overrule a claim.
+func TestSurveyLinkResolutionDoesNotOverruleANamedRecord(t *testing.T) {
+	f, link := surveyLinkFixture(t)
+
+	code, body := f.call(t, importForm(link.Token, map[string]string{
+		"record_id": "8DISC002", "age": "51",
+	}))
+	if code != 403 {
+		t.Errorf("status = %d, want 403 (%s)", code, body)
+	}
+	if got := storedValue(t, f, "8DISC002", "baseline_arm_1", "age"); got != "30" {
+		t.Errorf("8DISC002 age = %q, want the fixture's untouched 30", got)
+	}
+}

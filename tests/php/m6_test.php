@@ -232,10 +232,11 @@ describe('public survey page (§8.8, REQ-UI-028)', function (): void {
         assert_true(Router::needsSession(http_request('GET', '/login')));
         assert_true(Router::needsSession(http_request('GET', '/projects/3/export')));
         assert_true(Router::needsSession(http_request('GET', '/no/such/page')), 'a 404 renders like any page');
-        assert_true(Router::needsSession(http_request('POST', M6_LINK)), 'no POST route exists for a link yet');
+        // Submitting is sessionless too, and needs no CSRF token for it (§8.8).
+        assert_true(!Router::needsSession(http_request('POST', M6_LINK)));
     });
 
-    it('renders the link instrument with the shared form markup, without identifier or submit control', function (): void {
+    it('renders the link instrument with the shared form markup, without identifier but with a submit control', function (): void {
         queue_shell();
         api_route('data:content=metadata', [
             m6_meta('record_id', 'text', ['form_name' => 'intake', 'record_identifier' => 'Y']),
@@ -255,9 +256,10 @@ describe('public survey page (§8.8, REQ-UI-028)', function (): void {
         assert_contains('data-clara-required="1"', $body);
         assert_contains('"anyEvent":true', $body);
         assert_contains('/assets/js/survey.js', $body);
-        assert_contains('clara-survey-closed', $body);
         assert_not_contains('data-clara-field="record_id"', $body, 'the identifier is the study\'s, not shown');
-        assert_not_contains('type="submit"', $body);
+        assert_contains('type="submit"', $body, 'REQ-UI-028 asks the page for a submit action');
+        assert_contains('name="tz"', $body, 'the collection zone of GD-16 rides with the form');
+        assert_not_contains('clara-survey-closed', $body, 'a survey that can be answered is not closed');
         assert_not_contains('csrf', $body);
         assert_not_contains('Sign out', $body, 'standalone panel, no account footer');
 
@@ -294,6 +296,93 @@ describe('public survey page (§8.8, REQ-UI-028)', function (): void {
     it('reads the combined choices column into the stored encoding', function (): void {
         assert_same('1$Yes##2$No, not really##3$3', SurveyController::choicesFromCombined('1, Yes | 2, No, not really | 3'));
         assert_same('', SurveyController::choicesFromCombined(''));
+    });
+
+    it('sends the answers alone and ends on the closing panel (§8.8, REQ-API-083)', function (): void {
+        resetApi();
+        queue_shell();
+        api_route('data:action=import', [['record_id' => 'S001', 'form_name' => 'intake',
+            'import_record_id' => 2, 'import_form_name' => 'intake']]);
+
+        $response = router_for(http_request('POST', M6_LINK, browser_headers(), [
+            // `age` is untouched: entered values plus explicitly cleared ones only (GD-14).
+            'value' => ['happy' => '2', 'why' => 'the coffee', 'age' => ''],
+            'was' => ['age' => ''],
+            'tz' => 'Europe/Oslo',
+        ]))->dispatch();
+
+        assert_same(200, $response->status());
+        assert_contains('clara-survey-done', $response->body());
+        assert_not_contains('data-clara-survey-form', $response->body(), 'the visit ends here');
+
+        $sent = data_api_body('action=import');
+        assert_same('8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83', $sent['token'], 'the link token is the credential');
+        // The row names no target at all: record, instrument and event come from the link, so
+        // the study's record identifier never reaches the respondent (§3.10, REQ-AUTH-039).
+        $row = $sent['data'][0];
+        foreach (['record_id', 'form_name', 'event_name', 'redcap_event_name'] as $absent) {
+            assert_true(!array_key_exists($absent, $row), 'the row must not name ' . $absent);
+        }
+        assert_same('2', $row['happy']);
+        assert_same('the coffee', $row['why']);
+        assert_true(!array_key_exists('age', $row), 'an untouched field is not sent (REQ-UI-031)');
+        assert_same('Europe/Oslo', $sent['tz'], 'the browser zone is the collection zone (GD-16)');
+    });
+
+    it('re-shows the form with the API reasons when a value is refused (REQ-API-035)', function (): void {
+        resetApi();
+        queue_shell();
+        api_route('data:action=import', [['record_id' => 'S001', 'form_name' => '',
+            'import_record_id' => 0,
+            'import_form_name' => 'Validation error: age: CONTENT_INVALID — not an integer']]);
+        api_route('data:content=metadata', [m6_meta('age', 'text', ['validation_type' => 'integer'])]);
+
+        $response = router_for(http_request('POST', M6_LINK, browser_headers(), [
+            'value' => ['age' => 'forty-one'], 'was' => ['age' => ''],
+        ]))->dispatch();
+
+        assert_same(200, $response->status());
+        $body = $response->body();
+        assert_contains('data-clara-survey-form', $body, 'the respondent gets the form back');
+        assert_contains('not an integer', $body, 'the API reason, against its field');
+        assert_contains('value="forty-one"', $body, 'their own value comes back, not a blank form');
+        assert_contains('Nothing was saved', $body);
+    });
+
+    it('states a refusal no field input can carry, rather than promising reasons it hides', function (): void {
+        resetApi();
+        queue_shell();
+        api_route('data:action=import', [['record_id' => 'S001', 'form_name' => '',
+            'import_record_id' => 0,
+            'import_form_name' => 'Validation error: event_name: CONTENT_INVALID — unknown event']]);
+        api_route('data:content=metadata', [m6_meta('age', 'text')]);
+
+        $body = router_for(http_request('POST', M6_LINK, browser_headers(),
+            ['value' => ['age' => '1'], 'was' => []]))->dispatch()->body();
+
+        assert_contains('unknown event', $body, 'the reason is on screen, not only in the log');
+    });
+
+    it('closes the survey in analysis mode and answers a revoked link with the one state (§8.8)', function (): void {
+        resetApi();
+        queue_shell();
+        api_route('data:action=import', ['error' => 'Project in analysis mode'], 403);
+
+        $response = router_for(http_request('POST', M6_LINK, browser_headers(),
+            ['value' => ['age' => '1'], 'was' => []]))->dispatch();
+
+        assert_same(403, $response->status());
+        assert_contains('no longer accepts responses', $response->body());
+        assert_not_contains('analysis mode', $response->body(), 'the project mode is not the respondent\'s business');
+
+        // Revoked between opening the link and submitting: the same one state (REQ-AUTH-040).
+        resetApi();
+        queue_shell();
+        api_route('data:action=import', ['error' => 'Permission denied'], 403);
+        $revoked = router_for(http_request('POST', M6_LINK, browser_headers(),
+            ['value' => ['age' => '1'], 'was' => []]))->dispatch();
+        assert_same(404, $revoked->status());
+        assert_contains('no longer valid', $revoked->body());
     });
 });
 

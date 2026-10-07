@@ -735,8 +735,11 @@ return [
 
     // --- M6: public survey page (§8.8) ---
     'survey.title' => 'Survey',
+    'survey.submit' => 'Send answers',
+    'survey.done' => 'Thank you — your answers have been recorded.',
+    'survey.done.reopen' => 'To change an answer, open this link again and send the form once more.',
+    'survey.closed' => 'This survey no longer accepts responses. If something needs changing, please contact the study team.',
     'survey.invalid' => 'This survey link is no longer valid. If you still want to take part, please contact the study team.',
     'survey.rate_limited' => 'Too many requests from your connection. Please wait a few minutes and open the link again.',
     'survey.unavailable' => 'The survey cannot be shown right now. Please try again later.',
-    'survey.submit_unavailable' => 'Answers cannot be sent online through this link yet. Please contact the study team to take part.',
 ];

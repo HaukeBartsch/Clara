@@ -6,10 +6,10 @@ import { expect, test, type APIRequestContext } from "@playwright/test"
 // and never talks to the API from the browser (REQ-API-084). A revoked link is one
 // "no longer valid" state (REQ-AUTH-040).
 //
-// Not covered because not built: submitting answers. An import must name the link's record and
-// event, and no call a link token may make returns them — the page states that instead of
-// offering a button (see the M6 report). When the API gains that read, this spec gains the
-// submission half of the exit criterion.
+// Submitting is the other half of the exit criterion (Plan/Web_Implementation.md §9): the page
+// posts its answers and nothing else, because the API resolves the record, instrument and event
+// from the link token (REQ-API-083) — so the assertions here also check that the study's record
+// identifier never appears in the page or its requests.
 
 const API_URL = process.env.CLARA_API_URL ?? "http://127.0.0.1:8085"
 const SERVICE_TOKEN = process.env.CLARA_SERVICE_TOKEN ?? "clara-dev-481516-svc" // dev-stack.sh, development only
@@ -92,9 +92,33 @@ test.describe("public survey page (M6)", () => {
     await respondent.fill("#f-age", "abc")
     await expect(respondent.locator('[data-clara-field="age"] [data-clara-hint]')).toHaveText("Expected a whole number.")
 
-    // No submit control while the API cannot accept one — the page says so instead.
-    await expect(respondent.locator(".clara-survey-form button[type=submit]")).toHaveCount(0)
-    await expect(respondent.locator(".clara-survey-closed")).toBeVisible()
+    // The respondent is never told which record they are filling (REQ-AUTH-039): the token is
+    // the only thing that addresses it, and the API resolves the triple from it (§3.10).
+    expect(await respondent.locator("body").innerText()).not.toContain("S001")
+
+    // Submit (REQ-UI-028): answers only — no record, instrument or event in the post (§8.8).
+    await respondent.getByLabel("No, not really").check()
+    await respondent.fill("#f-why", "the coffee")
+    await respondent.fill("#f-age", "41")
+    await respondent.locator(".clara-survey-form button[type=submit]").click()
+    await expect(respondent.locator(".clara-survey-done")).toBeVisible()
+
+    // The answers landed on the link's own (record, instrument, event) …
+    const exported = await request.post(`${API_URL}/api/`, { form: {
+      token, content: "record", format: "json", records: "S001", events: "baseline_arm_1",
+    } })
+    expect(exported.ok()).toBeTruthy()
+    expect(JSON.stringify(await exported.json())).toContain("the coffee")
+
+    // …and the first save through the link stamped its collection date (REQ-DB-041).
+    const issued = await admin(request, "GET",
+      `${base}/records/S001/instruments/${survey.id}/survey-link?event=baseline_arm_1`)
+    expect(issued.collected_at).not.toBe("")
+
+    // Re-opening the link serves the form again — the respondent may change their answers
+    // (REQ-AUTH-042), though what they already said is not read back to them.
+    await respondent.goto(link)
+    await expect(respondent.locator(".clara-survey-form")).toBeVisible()
 
     // Outside the session (GD-1), and the browser only ever asked this application (REQ-API-084).
     expect(await respondent.context().cookies()).toEqual([])

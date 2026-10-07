@@ -11,10 +11,15 @@
 // identically. A link the API refuses — unknown, or revoked (REQ-AUTH-040) — is one
 // translated "no longer valid" state with no retry.
 //
-// Not yet possible, and stated on the page rather than offered as a control that would fail
-// (REQ-UI-003): submitting answers. An import must name the link's record and event, and no
-// call a link token may make tells the page what they are; the API change that closes this
-// (and the prefill of a reopened link, REQ-AUTH-042) is listed in the M6 report.
+// Submitting (`POST /s/{link}`) sends field values and nothing else: the row names no record,
+// instrument or event, because the API reads all three from the link it was addressed to
+// (§3.10, REQ-API-083). That is what keeps the study's record identifier out of the
+// respondent's browser — the page could not name the target even if it wanted to.
+//
+// What a respondent already answered cannot be read back: `content=record` without `data` is
+// the export path, which no link is granted (REQ-AUTH-039), so a re-opened link renders empty
+// (the prefill half of REQ-AUTH-042 stays open). The submission policy sends only entered
+// values (GD-14), so re-submitting an untouched form blanks nothing that is stored.
 
 declare(strict_types=1);
 
@@ -45,6 +50,72 @@ final class SurveyController extends Controller
             return $this->invalid();
         }
 
+        return $this->renderForm($token, null, []);
+    }
+
+    /**
+     * POST /s/{link} — the respondent's answers (§8.8, REQ-UI-028). The row carries field
+     * values only: the record, instrument and event come from the link the API resolves this
+     * token to (§3.10, REQ-API-083), so nothing here names them and nothing back there needs
+     * to be told to a browser that must not learn them (REQ-AUTH-039).
+     *
+     * The submission policy is the data-entry form's (GD-14, REQ-UI-031): entered values plus
+     * explicitly cleared ones, with the browser zone as the collection timezone (GD-16).
+     */
+    public function submit(): Response
+    {
+        $token = $this->request->pathParam('link');
+        if (preg_match(self::TOKEN, $token) !== 1) {
+            return $this->invalid();
+        }
+
+        $values = $this->request->fieldMap('value');
+        $params = ['content' => 'record', 'action' => 'import',
+            'data' => [DataEntry::submission($values, $this->request->fieldMap('was'))]];
+        $tz = $this->request->field('tz');
+        if (DataEntry::validTimezone($tz)) {
+            $params['tz'] = $tz;
+        }
+
+        try {
+            $result = $this->api->dataApi()->call($token, $params);
+        } catch (ApiException $e) {
+            $this->logger->info('survey submission refused', ['code' => $e->code(), 'status' => $e->status()]);
+
+            return match ($e->code()) {
+                // Analysis mode closes the survey (GD-20, REQ-API-109). No call a link token
+                // may make reports the project's mode, so submitting is where the page learns
+                // it — hence the closed state here rather than a read-only render (§8.8).
+                'analysis_mode' => $this->notice('survey.closed', 403),
+                // Revoked between opening and submitting: the same one state (REQ-AUTH-040).
+                'invalid_token', 'forbidden' => $this->invalid(),
+                'rate_limited' => $this->notice('survey.rate_limited', 429),
+                default => $this->notice('survey.unavailable', 502),
+            };
+        }
+
+        $outcome = is_array($result[0] ?? null) ? $result[0] : [];
+        $code = (int) ($outcome['import_record_id'] ?? 0);
+        if ($code !== 1 && $code !== 2) {
+            // Nothing of the row was stored (REQ-API-035): the respondent's own values come
+            // back, with the API's reason against each field — the same rule as §8.6.
+            return $this->renderForm($token, $values,
+                DataEntry::importErrors((string) ($outcome['import_form_name'] ?? '')));
+        }
+
+        // The visit ends here; re-opening the link serves the form again (REQ-AUTH-042).
+        return $this->standalone('survey_done', ['pageTitle' => $this->i18n->t('survey.title')]);
+    }
+
+    /**
+     * The link's instrument as a fillable form. `$draft` is a rejected submission's values, or
+     * null for a fresh page.
+     *
+     * @param array<string, string>|null $draft
+     * @param array<string, string>      $errors
+     */
+    private function renderForm(string $token, ?array $draft, array $errors): Response
+    {
         try {
             $rows = $this->api->dataApi()->call($token, ['content' => 'metadata']);
         } catch (ApiException $e) {
@@ -62,6 +133,15 @@ final class SurveyController extends Controller
         $fields = self::fieldsFromMetadata($rows);
         $instrument = (string) ($fields[0]['form_name'] ?? '');
 
+        // A reason keyed on a field the respondent has an input for belongs under that input;
+        // one keyed on anything else (a framing key the API names, or nothing at all) would
+        // leave the page promising reasons it shows nowhere — so it rides in the general line.
+        $names = array_column($fields, 'field_name');
+        $note = '';
+        foreach (array_diff_key($errors, array_flip($names)) as $key => $reason) {
+            $note .= ($note === '' ? '' : ' ') . ($key === '' ? '' : $key . ': ') . $reason;
+        }
+
         return $this->standalone('survey', [
             'pageTitle' => $this->i18n->t('survey.title'),
             'instrument' => $instrument,
@@ -74,8 +154,9 @@ final class SurveyController extends Controller
             'identifier' => '',
             'record' => '',
             'prefill' => [],
-            'draft' => null,
-            'errors' => [],
+            'draft' => $draft,
+            'errors' => array_intersect_key($errors, array_flip($names)),
+            'formNote' => $note,
             'patterns' => [],
             'formats' => self::DEFAULT_FORMATS,
             'clientContext' => ['firstEvent' => '', 'event' => '', 'anyEvent' => true, 'values' => (object) []],
