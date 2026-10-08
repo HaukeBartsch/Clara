@@ -50,10 +50,12 @@ var dataRowKeyRE = regexp.MustCompile(`^data\[(\d+)\]\[(.+)\]$`)
 // encoding yields no rows, which the caller answers as the uniform 400.
 func parseImportRows(r *http.Request, p Params) []map[string]string {
 	merged := map[string][]string{}
-	if r.URL != nil {
-		for k, vs := range r.URL.Query() {
-			merged[k] = vs
-		}
+	// Both maps come from the uncapped parsers in form.go: r.PostForm is
+	// published there for exactly this, and the query was already checked by
+	// ParseParams, so its error cannot be a limit here.
+	query, _ := queryValues(r)
+	for k, vs := range query {
+		merged[k] = vs
 	}
 	for k, vs := range r.PostForm {
 		merged[k] = vs

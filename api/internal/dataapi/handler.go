@@ -39,7 +39,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	p, err := ParseParams(r)
 	if err != nil {
-		writeError(w, "csv", http.StatusBadRequest, "Invalid content")
+		// A request-shape failure (form.go), answered before the token lookup
+		// and with the limit named: an oversized batch must never read back as
+		// an invalid-token 401.
+		writeError(w, "csv", http.StatusBadRequest, paramsErrorMessage(err))
 		return
 	}
 	enc := p.Encoding()

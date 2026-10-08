@@ -58,6 +58,10 @@ One endpoint: `POST /api/` with an `application/x-www-form-urlencoded` body; `GE
 
 Unknown parameters are accepted and ignored, never rejected — existing callers keep working (REQ-API-017).
 
+**Request bounds (REQ-API-144).** A request is bounded by body size (32 MiB, REQ-TECH-011) and by a parameter count of 250,000. The second bound is needed because the first does not imply it: an indexed call carries one parameter per cell, so a 50-row × 200-field import is 10,004 parameters — over the 10,000 `net/url` applies to one urlencoded string from Go 1.27 (`net/url.defaultMaxParams`), and far under its byte cap. The body is therefore parsed with `url.ParseQuery`'s acceptance rules (`&` separators, `+` as space, `%XX` escapes) without that count cap, and the result published as `r.PostForm`, so a handler reading the field afterwards sees these values rather than re-parsing a body that is already consumed. Either bound answers 400 with the limit named, before the token lookup; a batch over the parameter bound belongs in the JSON `data` encoding (REQ-API-031), which carries the same rows in one parameter.
+
+Only urlencoded bodies are read (REQ-API-009): a `multipart/form-data` body is refused as 400 rather than arriving as empty parameters, while a missing or unexpected Content-Type keeps being read as urlencoded for the PHP callers that omit it. Both rules exist so that no request-shape problem can surface as `Invalid token` — an empty parameter set carries an empty token, and that reads as an authentication failure for a credential that was never the problem (REQ-API-011).
+
 ### 3.2 Error Format (REQ-API-039, REQ-API-011)
 
 The error body is rendered in the requested response format (or `csv` when omitted):
@@ -73,6 +77,8 @@ HTTP status mapping (REQ-API-039):
 |---|---|---|
 | missing/invalid token | 401 | `Invalid token` (same body whether or not the token exists — REQ-AUTH-032) |
 | unknown/missing `content`, or `record` without supported `action` | 400 | `Invalid content` |
+| request over the body-size or parameter bound (§3.1) | 400 | `Too many parameters: …` / `Request body too large: …` — the limit named, answered before the token lookup (REQ-API-144) |
+| `multipart/form-data` body (§3.1) | 400 | `Unsupported Content-Type: send application/x-www-form-urlencoded` |
 | insufficient permission (incl. `export_none`, read-only import) | 403 | `Permission denied` |
 | write to an analysis-mode project (`import` / `delete`; survey submissions included) | 403 | `Project in analysis mode` (GD-20, REQ-API-109) |
 | rate limit exceeded (when enabled) | 429 | `Rate limit exceeded` (with `Retry-After`, §3.9) |
@@ -226,6 +232,8 @@ token=…&content=record&format=json&type=flat&overwriteBehavior=overwrite
 ```
 
 A row may omit `form_name` — a **flat row**: every supplied field is stored on its own instrument from the data dictionary, so a caller can post back an export without naming forms. The event rules are unchanged: a project with events still requires each row to name its event (`event_name`/`redcap_event_name`). Indexed parameters win when a call carries both encodings. `overwriteBehavior` and `forceAutoNumber` are accepted and ignored (REQ-API-017): import always upserts (REQ-API-033) and never assigns record ids itself.
+
+**A large batch belongs in the JSON encoding.** An indexed call carries one parameter per cell, so its size grows with rows × fields and meets the request bound of §3.1 at 250,000 parameters — about 1,250 rows of 200 fields; past that the call is refused 400 naming the limit rather than half-parsed (REQ-API-144). The same batch as one `data` parameter stays one parameter however wide it is, bounded only by the body size.
 
 Each value passes the full validation pipeline (`Data_Validation_Design.md` §2) before storage; invalid values are not stored (REQ-API-032, REQ-VAL-001). Empty values act as "no value" (clear/no-op, REQ-VAL-024) — an **intentional** clear: the UI data-entry path sends empties only for fields the user explicitly cleared (GD-14, REQ-UI-031). Values for calculated fields are rejected (`CALCULATED_READONLY`, REQ-API-095). Date/date-time values are stored with the collection offset — the `tz` parameter when present (UI: the browser's zone, sent by PHP), else `APP_TIMEZONE` (GD-16, REQ-VAL-041).
 

@@ -4,6 +4,7 @@ This document outlines the API for the clinical study management system, impleme
 
 ## 1. REDCap-Compatible Data API (external callers, e.g. Fiona)
 - Single endpoint: POST /api/ (also GET /api/) with form-encoded parameters.
+- Requests are bounded by body size (32 MiB) and by parameter count (250,000); either bound is answered 400 naming the limit, before any token lookup and never as 401. An indexed call carries one parameter per cell, so the count sits above Go's own 10,000-per-string cap and a batch over it moves to the JSON `data` encoding (REQ-API-144, REQ-TECH-011, REQ-API-031).
 - Common parameters: token, content, format (json|csv), type (flat|wide), returnFormat.
 - Supported content values:
     - project: Return project info (name, description, PI, REK number, start/end dates).

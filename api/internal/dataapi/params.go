@@ -7,18 +7,12 @@
 package dataapi
 
 import (
-	"io"
 	"net/http"
-	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 )
-
-// maxFormBytes bounds the form body — import payloads are the large ones
-// (REQ-TECH-011), 32 MiB is generous for any single call.
-const maxFormBytes = 32 << 20
 
 // Params is the parsed data-API request (API_Endpoints_Design.md §3.1).
 // Unknown parameters are accepted and dropped — existing callers keep
@@ -50,12 +44,15 @@ type Params struct {
 // ParseParams extracts the protocol parameters from a GET query string or
 // a POST form body. Body values take precedence over the query string —
 // the token travels in the body (REQ-API-009, REQ-API-010).
+//
+// A returned error is always a request-shape failure (form.go): an oversized
+// body, a request over maxFormParams, an unsupported encoding. Callers answer
+// it as the uniform 400 with paramsErrorMessage, before any token lookup, so
+// that none of them can read back as an invalid-token 401.
 func ParseParams(r *http.Request) (Params, error) {
-	query := map[string][]string{}
-	if r.URL != nil {
-		for k, vs := range r.URL.Query() {
-			query[k] = vs
-		}
+	query, err := queryValues(r)
+	if err != nil {
+		return Params{}, err
 	}
 	body := map[string][]string{}
 	if r.Method == http.MethodPost || r.Method == http.MethodPut {
@@ -125,34 +122,6 @@ func hasDataKey(m map[string][]string) bool {
 		}
 	}
 	return false
-}
-
-// formValues parses the POST body as urlencoded, tolerating a missing or
-// unexpected Content-Type header (PHP callers occasionally omit it).
-func formValues(r *http.Request) (map[string][]string, error) {
-	// Enforce the body cap on the primary read path too: the LimitReader in
-	// the fallback below only guards that branch, so a normal POST would
-	// otherwise be read in full. A nil ResponseWriter is fine — MaxBytesReader
-	// reports the overflow as an error, which ParseParams surfaces as the
-	// uniform 400 rather than a bare 413 (REQ-TECH-011).
-	if r.Body != nil {
-		r.Body = http.MaxBytesReader(nil, r.Body, maxFormBytes)
-	}
-	if err := r.ParseForm(); err == nil {
-		return r.PostForm, nil
-	}
-	if r.Body == nil {
-		return map[string][]string{}, nil
-	}
-	raw, err := io.ReadAll(io.LimitReader(r.Body, maxFormBytes))
-	if err != nil {
-		return nil, err
-	}
-	v, err := url.ParseQuery(string(raw))
-	if err != nil {
-		return nil, err
-	}
-	return v, nil
 }
 
 // Encoding is the response encoding (REQ-API-013): a present
