@@ -69,8 +69,8 @@ Defines the persistent data model requirements. `Design/Database_Schema_Design.m
 
 | ID | Requirement |
 |---|------|
-| REQ-DB-027 | Store survey link tokens: opaque unique token, project, record, survey instrument, **event**, created by, created at, and a revoked flag; the token is stable per (project, record, instrument, event) until revoked, so an instrument mapped to several events holds one distinct link each (GD-9, REQ-API-082/085, REQ-AUTH-039). |
-| REQ-DB-041 | A survey link MUST also carry the **collection date** — the UTC timestamp of the first response saved through it, `NULL` while nothing has been collected. The API MUST stamp it on the first save and MUST NOT overwrite it on a later save, so "collected" (REQ-AUTH-071) is a stored fact rather than an inference from the presence of values, and clearing every value through the link leaves the response collected. |
+| REQ-DB-027 | Store survey link tokens: opaque unique token, project, record, survey instrument, **event**, created by, created at, and a revoked flag; the row is keyed by (project, record, instrument, event) and its token is live until it is submitted, revoked, or replaced by a re-issue (REQ-API-145/146), so an instrument mapped to several events holds one distinct link each (GD-9, REQ-API-082/085, REQ-AUTH-039). |
+| REQ-DB-041 | A survey link MUST also carry the **collection date** — the UTC timestamp of the response saved through it, `NULL` while nothing has been collected. The API MUST stamp it on that save and MUST NOT overwrite it, so "collected" (REQ-AUTH-071) is a stored fact rather than an inference from the presence of values, and clearing every value leaves the response collected. Because a link admits exactly one submission (REQ-API-145), a non-null collection date **is also what marks the link spent**: no use counter, expiry column or history table is needed for that, and `revoked` keeps meaning "closed by a person" rather than "used". The stamp returns to `NULL` only when a fresh link is issued (REQ-API-146). |
 
 ### 2.7 Data Access Groups
 

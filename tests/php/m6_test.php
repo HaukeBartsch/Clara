@@ -293,6 +293,29 @@ describe('public survey page (§8.8, REQ-UI-028)', function (): void {
         assert_same(429, m6_get(M6_LINK)->status());
     });
 
+    it('answers a spent link with "already submitted", which is not the broken-link state (§8.8, REQ-API-145)', function (): void {
+        resetApi();
+        queue_shell();
+        api_route('data:content=metadata', ['error' => 'Survey already submitted'], 410);
+
+        $response = m6_get(M6_LINK);
+        assert_same(410, $response->status(), 'the status the API gave is the status the respondent gets');
+        $body = $response->body();
+        assert_contains('already submitted', $body);
+        assert_not_contains('no longer valid', $body, 'a finished survey must not read as a broken link');
+        assert_not_contains('data-clara-survey-form', $body, 'there is no second form on this link');
+
+        // Spent between opening the page and sending: two tabs, or a back-button resend. The same
+        // state, because the answer did arrive either way.
+        resetApi();
+        queue_shell();
+        api_route('data:action=import', ['error' => 'Survey already submitted'], 410);
+        $again = router_for(http_request('POST', M6_LINK, browser_headers(),
+            ['value' => ['age' => '1'], 'was' => []]))->dispatch();
+        assert_same(410, $again->status());
+        assert_contains('already submitted', $again->body());
+    });
+
     it('reads the combined choices column into the stored encoding', function (): void {
         assert_same('1$Yes##2$No, not really##3$3', SurveyController::choicesFromCombined('1, Yes | 2, No, not really | 3'));
         assert_same('', SurveyController::choicesFromCombined(''));
@@ -314,6 +337,8 @@ describe('public survey page (§8.8, REQ-UI-028)', function (): void {
         assert_same(200, $response->status());
         assert_contains('clara-survey-done', $response->body());
         assert_not_contains('data-clara-survey-form', $response->body(), 'the visit ends here');
+        // The closing panel is where the one-submission rule is told, not a footnote (REQ-UI-028).
+        assert_contains('cannot be used again', $response->body());
 
         $sent = data_api_body('action=import');
         assert_same('8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83', $sent['token'], 'the link token is the credential');

@@ -153,6 +153,11 @@ var importMetaKeys = map[string]bool{
 	"redcap_repeat_instrument": true, "redcap_repeat_instance": true,
 }
 
+// linkLockStripes is how many independent locks the per-link serialisation uses
+// (handler.go): contention is between submissions of one link, so a fixed set of
+// stripes keyed by link id keeps unrelated calls apart without a map to grow.
+const linkLockStripes = 32
+
 func (h *Handler) contentRecordImport(w http.ResponseWriter, r *http.Request, enc string, sub *subject, p Params) {
 	ctx := r.Context()
 
@@ -184,13 +189,28 @@ func (h *Handler) contentRecordImport(w http.ResponseWriter, r *http.Request, en
 		return
 	}
 
+	// The conditional stamp decides which submission of a link is the one (REQ-API-145).
+	// Inside this process they also take turns, so the loser opens its transaction
+	// after the winner committed and reads 410 rather than SQLite's write conflict;
+	// across processes the stamp alone decides.
+	if sub.isLink() && sub.Link != nil {
+		mu := h.linkLock(sub.Link.ID)
+		mu.Lock()
+		defer mu.Unlock()
+	}
+
 	results := make([]importRow, 0, len(rows))
 	for _, row := range rows {
 		res, fatal := h.importOneRow(ctx, sub, d, reg, p, row)
 		if fatal != nil {
-			if _, ok := fatal.(*forbiddenError); ok {
+			switch fatal.(type) {
+			case *forbiddenError:
 				writeError(w, enc, http.StatusForbidden, "Permission denied")
-			} else {
+			case *surveyUsedError:
+				// Another submission took this link's one stamp (REQ-API-145);
+				// nothing of this row was stored.
+				writeError(w, enc, http.StatusGone, "Survey already submitted")
+			default:
 				h.storeError(w, enc) // a store failure fails the call (500)
 			}
 			return
@@ -560,12 +580,19 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 		}
 	}
 	if sub.isLink() {
-		// The first save through the link stamps its collection date, once and
-		// never again (REQ-DB-041); this is what makes the response "collected"
-		// for the edit-collected-surveys right (REQ-AUTH-071). It rides in this
-		// transaction so a stored response cannot lack the stamp.
-		if _, err := h.Store.MarkSurveyLinkCollectedTx(ctx, tx, sub.Link.ID); err != nil {
+		// Storing a submitted row stamps the link's collection date and, under
+		// one-submission links, consumes it (REQ-DB-041, REQ-API-145) — this is
+		// what makes the response "collected" for the edit-collected-surveys
+		// right (REQ-AUTH-071). It rides in this transaction so a stored response
+		// cannot lack the stamp. The write is conditional, so its row count is
+		// also the guard: a submission racing a second one on the same link stamps
+		// nothing, and the `defer tx.Rollback()` puts its values back with it.
+		stamped, err := h.Store.MarkSurveyLinkCollectedTx(ctx, tx, sub.Link.ID)
+		if err != nil {
 			return importRow{}, err
+		}
+		if !stamped {
+			return importRow{}, errSurveyUsed
 		}
 		// The submission's own entry rides along too, so a rollback cannot
 		// leave a success on the record (REQ-AUD-021).
@@ -592,6 +619,15 @@ var errForbiddenRequest = &forbiddenError{}
 type forbiddenError struct{}
 
 func (*forbiddenError) Error() string { return "permission denied" }
+
+// errSurveyUsed marks a submission that lost the race for its link's one stamp
+// (REQ-API-145): nothing was stored, and the call answers 410 rather than a
+// result row — the link is spent, so there is no per-row outcome to report.
+var errSurveyUsed = &surveyUsedError{}
+
+type surveyUsedError struct{}
+
+func (*surveyUsedError) Error() string { return "survey already submitted" }
 
 // recomputeCalculated evaluates every calculated field of the project for
 // one record against its current values and stores changed results in tx,

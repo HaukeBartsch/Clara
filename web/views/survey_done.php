@@ -12,4 +12,4 @@ use Clara\View;
 <div class="alert alert-success py-2 mb-0 clara-survey-done" role="status">
     <?= View::e($view->t('survey.done')) ?>
 </div>
-<p class="small text-body-secondary mt-3 mb-0 clara-survey-reopen"><?= View::e($view->t('survey.done.reopen')) ?></p>
+<p class="small text-body-secondary mt-3 mb-0 clara-survey-reopen"><?= View::e($view->t('survey.done.once')) ?></p>

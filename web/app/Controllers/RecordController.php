@@ -28,7 +28,6 @@ use Clara\Messages;
 use Clara\Navigation;
 use Clara\Permissions;
 use Clara\Response;
-use Clara\Session;
 
 final class RecordController extends DataEntryController
 {
@@ -256,19 +255,18 @@ final class RecordController extends DataEntryController
     }
 
     /**
-     * POST …?action=survey_link — the stable public link of a (record, survey instrument, event)
-     * (§8.7, REQ-API-082): issued on first request, the same URL afterwards. The event travels as
-     * the `event` parameter, because an instrument mapped to three events holds three links.
-     * Fetching it is a write on the API side (issue + audit), so the browser asks with a POST and
-     * the URL is shown on the next render, once, in a read-only field with a copy button.
+     * POST …?action=survey_link — issue a fresh public link for a (record, survey instrument,
+     * event) (§8.7, REQ-API-146). It replaces any live link of that pair, and the API refuses it
+     * with 409 while the instrument still holds values for this record at this event: those go
+     * first, through the delete action beside it (REQ-UI-027), and `linkCall` surfaces that
+     * message instead of swallowing it (REQ-UI-028). The URL itself comes from the state report
+     * the next render reads — issuing here writes no session copy of it.
      */
     public function surveyLink(): Response
     {
         return $this->linkCall(function (int $projectId, string $record, int $iid, string $event): void {
-            $answer = $this->api->get($this->linkPath($projectId, $record, $iid), ['event' => $event]);
-            $url = is_string($answer['url'] ?? null) ? $answer['url'] : '';
-            Session::stash('survey_link', ['record' => $record, 'iid' => $iid, 'url' => $url]);
-        }, '');
+            $this->api->post($this->linkPath($projectId, $record, $iid), [], ['event' => $event]);
+        }, 'record.survey.issued');
     }
 
     /** POST …?action=revoke_link — `DELETE …/survey-link`, effective immediately (REQ-AUTH-040). */
@@ -352,7 +350,12 @@ final class RecordController extends DataEntryController
             && $permissions->canEditPair($uen, $instrumentName, $armNum);
         $isSurvey = $instrument !== null && !empty($instrument['is_survey']);
         $iid = (int) ($instrument['id'] ?? 0);
-        $link = Session::take('survey_link');
+        // Survey-link actions: survey-marked instruments, data access ≥ view_edit on this pair
+        // (REQ-API-082). The report then says which of the three the link's state offers (§8.7,
+        // REQ-UI-028) — reading it is free, so the view shows the state instead of remembering
+        // that a button was pressed.
+        $canLink = $isSurvey && $exists && $permissions->canEditPair($uen, $instrumentName, $armNum);
+        $link = $canLink ? $this->linkReport($projectId, $record, $iid, $uen) : null;
 
         return $this->renderSection($detail, 'project/record', 'record.title', [
             'record' => $record,
@@ -376,10 +379,8 @@ final class RecordController extends DataEntryController
             'deleteScopes' => !$analysis && $exists
                 ? self::deleteScopes($permissions, $mapping, $armNum, $uen, $instrumentName) : [],
             'isSurvey' => $isSurvey,
-            // Survey-link actions: survey-marked instruments, data access ≥ view_edit (§8.7).
-            // Issuing a link needs data access ≥ view_edit on this pair (REQ-API-082).
-            'canLink' => $isSurvey && $exists && $permissions->canEditPair($uen, $instrumentName, $armNum),
-            'link' => $link !== null && ($link['record'] ?? '') === $record && (int) ($link['iid'] ?? 0) === $iid ? (string) ($link['url'] ?? '') : '',
+            'canLink' => $canLink,
+            'link' => $link,
             'groups' => $permissions->projectAdmin && $exists ? self::listOf($this->api->get($base . '/data-access-groups')) : null,
             'patterns' => $this->patternsFor($fields),
             'formats' => self::DEFAULT_FORMATS,
@@ -652,6 +653,29 @@ final class RecordController extends DataEntryController
     private function linkPath(int $projectId, string $record, int $iid): string
     {
         return '/api/v1/projects/' . $projectId . '/records/' . rawurlencode($record) . '/instruments/' . $iid . '/survey-link';
+    }
+
+    /**
+     * The link of one (record, survey instrument, event) and its state — `none`, `live`,
+     * `submitted` or `revoked` (REQ-API-082). Reporting mints nothing, which is what lets the
+     * record view read it on every render: a link is spent by a submission, not by being looked
+     * at (REQ-API-145/146).
+     *
+     * @return array{state: string, url: string, collected_at: string}
+     */
+    private function linkReport(int $projectId, string $record, int $iid, string $event): array
+    {
+        $answer = $this->api->get($this->linkPath($projectId, $record, $iid), ['event' => $event]);
+        // One of the four states §4.17 defines; anything else renders as "never issued", because
+        // the view picks its message by state and an unknown word there would be a page error.
+        $state = (string) ($answer['state'] ?? 'none');
+
+        return [
+            'state' => in_array($state, ['none', 'live', 'submitted', 'revoked'], true) ? $state : 'none',
+            // The URL arrives only while the link is live; a spent one has nothing to copy.
+            'url' => (string) ($answer['url'] ?? ''),
+            'collected_at' => (string) ($answer['collected_at'] ?? ''),
+        ];
     }
 
     /** An event or instrument name as the forms carry it (`[a-z0-9_]`, REQ-DB-011/013). */

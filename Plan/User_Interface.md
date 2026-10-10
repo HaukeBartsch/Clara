@@ -49,6 +49,7 @@ A left panel appears only where it switches between sections. The **project over
     - Dynamic rendering of fields (Text, Dropdowns, Radio buttons, Matrix).
     - Real-time validation feedback (client-side JavaScript + HTML5; authoritative validation in the API).
     - A completion control as the always-last field of each instrument's form: set or clear this record/event/instrument's "finished" state, which drives the green marker on the status dashboard (REQ-UI-036). On survey instruments the same trailing field shows the completed state read-only, filled in automatically (GD-9).
+    - A **survey link** section on a survey instrument's view, for `view_edit` on the pair: the link's state — never issued / live / submitted on <date> / revoked — with copy while it is live, **get a new link**, and revoke (REQ-UI-028). Re-issue is refused while the instrument still holds values for this record at this event, so the control sits beside the delete action that clears them (`User_Interface_Design.md` §8.7, REQ-API-146). The public page never pre-populates and takes exactly one submission: its closing panel states that the link cannot be used again, and re-opening that link shows an "already submitted" state instead of a form (REQ-API-145).
 
 ### 6. Record Status Dashboard
 - Purpose: Overview of data completion for a project.

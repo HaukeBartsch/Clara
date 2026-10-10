@@ -119,6 +119,9 @@ final class DataApi
     {
         return match (true) {
             $status === 401 => 'invalid_token',
+            // A link that already carried its one submission (REQ-API-145): told apart from an
+            // invalid token on purpose, because "your answer arrived" is the respondent's answer.
+            $status === 410 => 'survey_submitted',
             $status === 403 && stripos($text, 'analysis mode') !== false => 'analysis_mode',
             $status === 403 => 'forbidden',
             $status === 429 => 'rate_limited',

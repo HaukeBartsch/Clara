@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 
 	"csms/api/internal/audit"
@@ -26,6 +27,22 @@ type Handler struct {
 	// under their internal locks, so the zero values work in place.
 	dicts dictCache
 	regs  registryCache
+
+	// linkLocks serialise survey-link submissions of one link inside this process
+	// (record_import.go, REQ-API-145). They are striped by link id, so an import of
+	// another record never waits behind a submission, and they are an optimisation
+	// only: the conditional stamp is what decides a race, here and across processes.
+	linkLocks [linkLockStripes]sync.Mutex
+}
+
+// linkLock returns the mutex that keeps submissions of one survey link from
+// writing at the same instant in this process.
+func (h *Handler) linkLock(linkID int64) *sync.Mutex {
+	i := linkID % linkLockStripes
+	if i < 0 {
+		i += linkLockStripes
+	}
+	return &h.linkLocks[i]
 }
 
 // ServeHTTP dispatches one data-API call (API_Endpoints_Design.md §3).
@@ -63,6 +80,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sub, rerr := h.resolveToken(r.Context(), p.Token)
+	if errors.Is(rerr, errSurveySubmitted) {
+		// A link that already carried its one submission (REQ-API-145): 410, not
+		// the uniform 401 — the respondent needs to know the answer arrived, and
+		// this is the only disclosure of a link's state to whoever holds it.
+		writeError(w, enc, http.StatusGone, "Survey already submitted")
+		return
+	}
 	if errors.Is(rerr, errInvalidToken) {
 		writeError(w, enc, http.StatusUnauthorized, "Invalid token")
 		return

@@ -160,25 +160,37 @@ $stateBadge = [
 
     <!-- Record actions (§8.7, REQ-UI-027) -->
     <?php if ($canLink): ?>
+        <!-- The link's state comes from the API on every render (REQ-UI-028): a submission spends
+             it, not a look (REQ-API-145), so there is nothing to remember about an earlier click.
+             Re-issue sits beside the delete action whose absence is the only reason it fails
+             (REQ-API-146). -->
         <section class="card card-body mb-3 clara-survey-link" aria-labelledby="survey-link-title">
             <h2 class="h6" id="survey-link-title"><?= View::e($view->t('record.survey.title')) ?></h2>
-            <?php if ($link !== ''): ?>
+            <p class="small mb-2<?= $link['state'] === 'submitted' ? ' fw-semibold' : '' ?>">
+                <?= View::e($link['state'] === 'submitted'
+                    ? $view->t('record.survey.state.submitted', ['date' => $link['collected_at']])
+                    : $view->t('record.survey.state.' . $link['state'])) ?>
+            </p>
+            <?php if ($link['url'] !== ''): ?>
                 <div class="input-group input-group-sm mb-2">
-                    <input class="form-control" type="text" id="clara-survey-url" value="<?= View::e($link) ?>" readonly
+                    <input class="form-control" type="text" id="clara-survey-url" value="<?= View::e($link['url']) ?>" readonly
                            aria-label="<?= View::e($view->t('record.survey.title')) ?>">
                     <button class="btn btn-outline-secondary" type="button" data-clara-copy="#clara-survey-url"><?= View::e($view->t('record.survey.copy')) ?></button>
                 </div>
             <?php endif; ?>
             <div class="d-flex flex-wrap gap-2">
-                <form method="post" action="<?= View::e($act('survey_link')) ?>">
+                <form method="post" action="<?= View::e($act('survey_link')) ?>"
+                      data-clara-confirm="<?= View::e($view->t('record.survey.confirm_get', ['record' => $record, 'instrument' => $instrumentName])) ?>">
                     <?= $view->csrfField() ?><?= $hidden($here) ?>
                     <button class="btn btn-sm btn-outline-primary" type="submit"><?= View::e($view->t('record.survey.get')) ?></button>
                 </form>
-                <form method="post" action="<?= View::e($act('revoke_link')) ?>"
-                      data-clara-confirm="<?= View::e($view->t('record.survey.confirm_revoke', ['record' => $record, 'instrument' => $instrumentName])) ?>">
-                    <?= $view->csrfField() ?><?= $hidden($here) ?>
-                    <button class="btn btn-sm btn-outline-danger" type="submit"><?= View::e($view->t('record.survey.revoke')) ?></button>
-                </form>
+                <?php if ($link['state'] === 'live'): ?>
+                    <form method="post" action="<?= View::e($act('revoke_link')) ?>"
+                          data-clara-confirm="<?= View::e($view->t('record.survey.confirm_revoke', ['record' => $record, 'instrument' => $instrumentName])) ?>">
+                        <?= $view->csrfField() ?><?= $hidden($here) ?>
+                        <button class="btn btn-sm btn-outline-danger" type="submit"><?= View::e($view->t('record.survey.revoke')) ?></button>
+                    </form>
+                <?php endif; ?>
             </div>
         </section>
     <?php endif; ?>

@@ -83,7 +83,7 @@ function m5_entry(string $action, string $event, array $fields, string $at = '20
 }
 
 /** Every read the two pages make, in fake-transport match order (specific before prefix). */
-function m5_queue(string $level = 'view_edit', string $mode = 'development', bool $projectAdmin = false, ?array $status = null, ?array $history = null, bool $rights = false): void
+function m5_queue(string $level = 'view_edit', string $mode = 'development', bool $projectAdmin = false, ?array $status = null, ?array $history = null, bool $rights = false, ?array $link = null): void
 {
     queue_shell();
     api_route('/api/v1/projects/3/mode', ['mode' => $mode, 'staging_open' => false]);
@@ -108,6 +108,11 @@ function m5_queue(string $level = 'view_edit', string $mode = 'development', boo
     ]);
     api_route('/api/v1/projects/3/data-access-groups', [['id' => 5, 'name' => 'Center <A>']]);
     api_route('/api/v1/projects/3/users/7/token', ['token' => 'tok-1']);
+    // The link report a survey pair's view reads on every render (§4.17, REQ-API-082): live by
+    // default, so a test passes its own `state` when it needs another. Queued before the bare
+    // project prefix below, which would otherwise answer it with a project detail.
+    api_route('/survey-link', $link ?? ['state' => 'live', 'event' => 'baseline_arm_1',
+        'url' => 'http://localhost:8000/s/link-token', 'collected_at' => null]);
     api_route('/api/v1/projects/3', m5_detail($level, $projectAdmin, $rights));
 }
 
@@ -533,23 +538,42 @@ describe('saving and deleting (§8.6, §8.7)', function (): void {
         assert_same('/projects/3/record-status', $response->headers()['Location']);
     });
 
-    it('assigns a group, "No group" unassigning, and shows the survey link once', function (): void {
+    it('assigns a group, "No group" unassigning, and issues a link with POST (§8.7)', function (): void {
         sign_in(['csrf_token' => M5_CSRF]);
         queue_shell();
         api_route('/data-access-group', ['record_id' => '8DISC001', 'group_id' => null]);
         m5_post('/projects/3/records/8DISC001', ['group_id' => 'none'], 'assign_group');
         assert_same(['group_id' => null], m4_body('PUT', '/records/8DISC001/data-access-group'));
 
-        api_route('/survey-link', ['url' => 'http://localhost:8000/s/link-token', 'revoked' => false]);
+        // Issuing is the POST now: GET only reports, so rendering a record view can never replace
+        // a live link (REQ-API-082/146).
+        api_route('/survey-link', ['state' => 'live', 'event' => 'baseline_arm_1',
+            'url' => 'http://localhost:8000/s/link-token', 'collected_at' => null]);
         m5_post('/projects/3/records/8DISC001', ['iid' => '12', 'event' => 'baseline_arm_1', 'instrument' => 'scores'], 'survey_link');
+        assert_same(1, m4_count('POST', '/survey-link'));
+    });
+
+    it('reports the survey link state on every render and hides what it rules out (§8.7, REQ-UI-028)', function (): void {
+        sign_in(['csrf_token' => M5_CSRF]);
+        m5_queue('view_edit');
+        $live = m5_get('/projects/3/records/8DISC001', ['event' => 'baseline_arm_1', 'instrument' => 'scores'])->body();
+        assert_contains('value="http://localhost:8000/s/link-token"', $live);
+        assert_contains('Revoke link', $live);
 
         resetApi();
         m5_queue('view_edit');
-        $body = m5_get('/projects/3/records/8DISC001', ['event' => 'baseline_arm_1', 'instrument' => 'scores'])->body();
-        assert_contains('value="http://localhost:8000/s/link-token"', $body);
+        assert_contains('/s/link-token',
+            m5_get('/projects/3/records/8DISC001', ['event' => 'baseline_arm_1', 'instrument' => 'scores'])->body(),
+            'a live link is reported every time, not once: looking at it changes nothing (REQ-API-145)');
+
+        // Submitted: no URL to copy, the date instead, and no revoke of a link that spent itself.
         resetApi();
-        m5_queue('view_edit');
-        $again = m5_get('/projects/3/records/8DISC001', ['event' => 'baseline_arm_1', 'instrument' => 'scores'])->body();
-        assert_not_contains('/s/link-token', $again, 'shown on one render only');
+        m5_queue('view_edit', link: ['state' => 'submitted', 'event' => 'baseline_arm_1',
+            'url' => '', 'collected_at' => '2026-10-08 09:15:00']);
+        $done = m5_get('/projects/3/records/8DISC001', ['event' => 'baseline_arm_1', 'instrument' => 'scores'])->body();
+        assert_not_contains('clara-survey-url', $done, 'a spent link has no URL to copy');
+        assert_contains('Submitted on 2026-10-08 09:15:00', $done);
+        assert_not_contains('Revoke link', $done);
+        assert_contains('Get a new link', $done, 're-issue stays offered; the API refuses it over stored values');
     });
 });

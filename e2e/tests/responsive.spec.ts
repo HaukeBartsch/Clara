@@ -63,7 +63,8 @@ test.describe("responsive pass (M6)", () => {
     await request.post(`${API_URL}/api/`, { form: { token, content: "record", format: "json",
       "data[0][record_id]": "R001", "data[0][form_name]": "instrument", "data[0][event_name]": "baseline_arm_1",
       "data[0][a_rather_long_field_name_for_layout]": "x", "data[0][smoker]": "2" } })
-    const link = (await admin(request, "GET",
+    // Issuing is a POST; GET only reports the state (§4.17), so the layout fixture asks for one.
+    const link = (await admin(request, "POST",
       `${base}/records/R001/instruments/${survey.id}/survey-link?event=baseline_arm_1`)).url as string
 
     const pages = [

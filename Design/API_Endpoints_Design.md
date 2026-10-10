@@ -81,6 +81,7 @@ HTTP status mapping (REQ-API-039):
 | `multipart/form-data` body (§3.1) | 400 | `Unsupported Content-Type: send application/x-www-form-urlencoded` |
 | insufficient permission (incl. `export_none`, read-only import) | 403 | `Permission denied` |
 | write to an analysis-mode project (`import` / `delete`; survey submissions included) | 403 | `Project in analysis mode` (GD-20, REQ-API-109) |
+| survey link already used for its one submission (§3.10) | 410 | `Survey already submitted` — distinct from 401 on purpose: the respondent needs to know the answer arrived (REQ-API-145) |
 | rate limit exceeded (when enabled) | 429 | `Rate limit exceeded` (with `Retry-After`, §3.9) |
 | import with per-record validation failures | 200 | — (per-record result codes, §3.7.2) |
 
@@ -295,18 +296,30 @@ The state is two maps keyed by source IP — the hit timestamps of the rolling w
 
 **Source IP (REQ-API-125).** When the direct TCP peer is inside `TRUSTED_PROXY_CIDRS` (`System_Configuration_Design.md` §3.9), the limiter keys on the proxy-provided `X-Real-IP`; otherwise on the connection's remote address; a client-supplied `X-Real-IP` from an untrusted peer is ignored. nginx overwrites `X-Real-IP` with its own `$remote_addr` on every routed request and never appends a chain (`Technology_Stack_Design.md` §5), so each external caller keeps a distinct address. Web-application calls arrive server-side from PHP on the application host: PHP forwards the browser's address (its own `REMOTE_ADDR`, which nginx sets) in `X-Real-IP`; loopback is trusted by default, so per-browser limiting works despite the shared server hop.
 
-### 3.10 Survey Link Tokens (GD-9, REQ-API-083)
+### 3.10 Survey Link Tokens (GD-9, REQ-API-083, REQ-API-145)
 
-A survey link token (`survey_links.token`, `Database_Schema_Design.md` §8) is accepted as the `token` parameter of the data API, but only for the calls that render and fill its (record, instrument, event):
+A survey link token (`survey_links.token`, `Database_Schema_Design.md` §8) is accepted as the `token` parameter of the data API **while it is live**, but only for the calls that render and fill its (record, instrument, event):
 
 | Call | Allowed scope |
 |---|------|
 | `content=metadata` | the field definitions of that instrument (a `forms[]` naming another instrument → 403) |
-| `content=record` with `data` (REQ-API-012) | values for that record, instrument and event |
+| `content=record` with `data` (REQ-API-012) | values for that record, instrument and event — once |
 
-**The link is the address.** A row submitted through a link names none of that triple: the API reads the record, the instrument and the event out of the `survey_links` row and stores under them, which is what lets the public page submit answers without ever telling the respondent which record they are filling (`User_Interface_Design.md` §8.8). A row that does name a record, an instrument or an event must name the link's own — anything else is the 403 below, never a silent retarget. The first save through the link stamps `survey_links.collected_at` in the submission's own transaction, so a stored response cannot exist without the stamp that makes it *collected* (REQ-DB-041, REQ-AUTH-071).
+**The link is the address.** A row submitted through a link names none of that triple: the API reads the record, the instrument and the event out of the `survey_links` row and stores under them, which is what lets the public page submit answers without ever telling the respondent which record they are filling (`User_Interface_Design.md` §8.8). A row that does name a record, an instrument or an event must name the link's own — anything else is the 403 below, never a silent retarget.
 
-Every other `content` (including `export` and `delete`), another record, or another instrument is rejected with 403 `Permission denied` (REQ-API-083, REQ-AUTH-039). In an analysis-mode project the permitted import is rejected too — `Project in analysis mode` (GD-20, REQ-API-109); the survey page then shows its closed state (`User_Interface_Design.md` §8.8). A revoked link is rejected on every call (REQ-AUTH-040). Link tokens are subject to the §3.9 rate limit (REQ-API-038). Submissions are audit-logged as `survey_submitted` — success and failure (`Audit_Logging_Design.md` §3.6). The public survey page is served by the PHP application; the browser never calls `/api/v1/*` from it (GD-1, REQ-API-084).
+**One submission per link.** The save that stores a submitted row stamps `survey_links.collected_at` in the submission's own transaction, so a stored response cannot exist without the stamp that makes it *collected* (REQ-DB-041, REQ-AUTH-071) — and under one-submission links that same stamp is what ends the link. No second column is involved:
+
+| Link state | Test | Data-API answer with its token |
+|---|---|---|
+| live | `revoked = 0 AND collected_at IS NULL` | admitted (§3.10 scope above) |
+| submitted | `collected_at IS NOT NULL` | **410** `Survey already submitted` (REQ-API-145) |
+| revoked, or no such token | `revoked = 1`, or unknown | 401 `Invalid token` (REQ-API-011, REQ-AUTH-040) |
+
+The stamp is a conditional write (`… WHERE collected_at IS NULL`) and its affected-row count is the concurrency guard: of two submissions racing on one link, only the transaction that stamps stores anything, and the other rolls back to 410 having written neither value nor a success audit entry. A row rejected by validation never reaches the stamp (REQ-API-035), so a respondent who mis-typed may correct and send again — it is the store that consumes the link, not the attempt.
+
+The 410 is the one place a link token's fate is told to the holder, and deliberately so: distinguishing "your answer arrived" from "this link was revoked" is what stops a respondent calling the study team over nothing, and the token is an unguessable UUID rather than an account credential. Unknown and revoked tokens still share the single indistinguishable 401 (REQ-AUTH-032).
+
+Every other `content` (including `export` and `delete`), another record, or another instrument is rejected with 403 `Permission denied` (REQ-API-083, REQ-AUTH-039). In an analysis-mode project the permitted import is rejected too — `Project in analysis mode` (GD-20, REQ-API-109); the survey page then shows its closed state (`User_Interface_Design.md` §8.8). Link tokens are subject to the §3.9 rate limit (REQ-API-038). Submissions are audit-logged as `survey_submitted` — success and failure (`Audit_Logging_Design.md` §3.6). The public survey page is served by the PHP application; the browser never calls `/api/v1/*` from it (GD-1, REQ-API-084).
 
 ## 4. Administration API — `/api/v1/`
 
@@ -776,20 +789,24 @@ Entries MAY carry the `token` column and payload values — the trail is the sol
 
 `order=newest` serves the same entries in reverse chronological order (`created_at DESC, id DESC`) and the cursor pages backwards (`REQ-API-137`, DEV-API-23): each page's `next_cursor` continues from its last (oldest) row with a strictly-earlier condition. The filters apply within the page exactly as in `chrono`, so paging semantics are unchanged. This is the read direction the data entry form uses to derive current values — walking backwards it stops per field at the first entry seen (`User_Interface_Design.md` §8.3, closing its §11 open item 3). Any other `order` value → 400 `invalid_request`.
 
-### 4.17 Survey links (GD-9, REQ-API-082…085)
+### 4.17 Survey links (GD-9, REQ-API-082…085, REQ-API-145/146)
 
-**`GET /api/v1/projects/{id}/records/{record}/instruments/{iid}/survey-link?event={unique_event_name}`** — data access ≥ `view_edit` **on that pair** (REQ-AUTH-069) + record visibility (REQ-AUTH-045). The instrument MUST be survey-marked (`is_survey = 1`) and mapped to the event — otherwise 400 `invalid_request`. 200 — the stable public link (URL carrying the link token; stable per (project, record, instrument, event) until revoked, so an instrument mapped to three events has three distinct links, `Database_Schema_Design.md` §8):
+All three endpoints address the one link of a **(record, instrument, event)** triple — named by the path plus `?event=` — and share its gate: data access ≥ `view_edit` **on that pair** (REQ-AUTH-069) plus record visibility (REQ-AUTH-045). The instrument MUST be survey-marked (`is_survey = 1`) and mapped to the event, otherwise 400 `invalid_request`.
+
+**`GET /api/v1/projects/{id}/records/{record}/instruments/{iid}/survey-link?event={unique_event_name}`** — reports that link and its state; it never mints a token (REQ-API-082). 200:
 
 ```json
-{ "url": "https://csms.example.org/s/8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83",
-  "event": "baseline_arm_1", "revoked": false, "collected_at": null }
+{ "state": "live", "url": "https://csms.example.org/s/8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83",
+  "event": "baseline_arm_1", "collected_at": null }
 ```
 
-`collected_at` is `null` until the first response is saved through the link and never changes afterwards — it is what makes a response "collected" (REQ-DB-041, REQ-AUTH-071), so the record view can show *not yet collected / collected on …* without probing values. Audit `survey_link_issued`.
+`state` is `none` (nothing issued for the pair), `live`, `submitted`, or `revoked`. `url` carries a value only while `live`: handing out a spent token's URL would only send a respondent to a 410. An instrument mapped to three events has three such links (`Database_Schema_Design.md` §8). With `state = submitted`, `collected_at` is when the response arrived (REQ-DB-041) — and that stamp is also what spent the link (§3.10, REQ-API-145), so the record view can say *submitted on …* without probing stored values. Reporting writes no audit entry; issuance and revocation do (REQ-API-043).
+
+**`POST /api/v1/projects/{id}/records/{record}/instruments/{iid}/survey-link?event={unique_event_name}`** — issues a fresh token for the pair and answers the object above with `state: live` (REQ-API-146). It replaces any live link of that pair, whose URL then admits nothing from its next call: "get another link" means the previous one is no longer the way in. **Refused 409 `conflict`** while the instrument still holds stored values for that record at that event — a second fill starts from nothing, so the collected answers go first through the delete action of §3.8 (REQ-API-036, REQ-UI-027), and the response says so rather than leaving the caller to guess. That check counts the instrument's fields **except the GD-8 record identifier**, which every record stores and whose presence would otherwise refuse every re-issue. Audit `survey_link_issued`.
 
 **`DELETE /api/v1/projects/{id}/records/{record}/instruments/{iid}/survey-link?event={unique_event_name}`** — revokes the link token **of that pair**; the links of the same instrument at other events stay valid (REQ-API-082). The revocation takes effect immediately (REQ-AUTH-040). 204. Audit `survey_link_revoked`.
 
-The data-API behaviour of a link token is fixed by §3.10 (render and fill that (record, instrument, event) only); the public survey page is served by the PHP application — the browser MUST NOT call `/api/v1/*` from it (GD-1, REQ-API-084).
+The data-API behaviour of a link token is fixed by §3.10 (render and fill that (record, instrument, event) only, once); the public survey page is served by the PHP application — the browser MUST NOT call `/api/v1/*` from it (GD-1, REQ-API-084).
 
 ### 4.18 Data access groups (GD-10, REQ-API-086…094)
 

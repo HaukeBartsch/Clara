@@ -1105,8 +1105,8 @@
       "get": {
         "tags": ["Admin: Records"],
         "operationId": "getSurveyLink",
-        "summary": "Issue / read the survey link of a pair (REQ-API-082, GD-9)",
-        "description": "Data access ≥ `view_edit` on that pair (REQ-AUTH-069) + record visibility. The instrument MUST be survey-marked and mapped to the event — otherwise 400. The link is stable per (project, record, instrument, event) until revoked; an instrument mapped to three events has three distinct links. `collected_at` is `null` until the first response is saved through the link and never changes afterwards. Audit `survey_link_issued`.",
+        "summary": "Report the survey link of a pair and its state (REQ-API-082, GD-9)",
+        "description": "Data access ≥ `view_edit` on that pair (REQ-AUTH-069) + record visibility. The instrument MUST be survey-marked and mapped to the event — otherwise 400. It NEVER mints a token: issuing is POST alone (REQ-API-146), so rendering a record view cannot replace a live link. `state` is `none`, `live`, `submitted` or `revoked`; an instrument mapped to three events has three distinct links, one per pair. Reporting writes no audit entry — issuance and revocation do (REQ-API-043).",
         "parameters": [
           { "$ref": "#/components/parameters/ProjectId" },
           { "$ref": "#/components/parameters/RecordId" },
@@ -1114,11 +1114,31 @@
           { "$ref": "#/components/parameters/EventQuery" }
         ],
         "responses": {
-          "200": { "description": "The stable public link.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SurveyLink" } } } },
+          "200": { "description": "The pair's link and its state.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SurveyLink" } } } },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
           "403": { "$ref": "#/components/responses/AdminForbidden" },
           "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "post": {
+        "tags": ["Admin: Records"],
+        "operationId": "postSurveyLink",
+        "summary": "Issue a fresh survey link for a pair (REQ-API-146)",
+        "description": "Same gate as GET. Issues a fresh token for the (record, instrument, event) pair and invalidates any live link it replaces — that URL admits nothing from its next call. Refused 409 while the instrument still holds stored values for this record at this event: those go first through the delete action of §3.8 (REQ-API-036), and the message names that rather than demanding the right up front. The GD-8 record identifier is not counted, being a stored value of every record. Audit `survey_link_issued`.",
+        "parameters": [
+          { "$ref": "#/components/parameters/ProjectId" },
+          { "$ref": "#/components/parameters/RecordId" },
+          { "$ref": "#/components/parameters/InstrumentId" },
+          { "$ref": "#/components/parameters/EventQuery" }
+        ],
+        "responses": {
+          "200": { "description": "The link, freshly issued.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SurveyLink" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
         }
       },
       "delete": {
@@ -2054,14 +2074,14 @@
       },
       "SurveyLink": {
         "type": "object",
-        "required": ["url", "event", "revoked"],
+        "required": ["state", "url", "event"],
         "properties": {
-          "url": { "type": "string", "description": "The stable public link carrying the link token — stable per (project, record, instrument, event) until revoked." },
+          "state": { "type": "string", "enum": ["none", "live", "submitted", "revoked"], "description": "`none` — nothing issued for the pair; `submitted` — its one submission arrived, which is also what spent the link (REQ-API-145)." },
+          "url": { "type": "string", "description": "The public link carrying the link token — a value only while the link is live, since handing out a spent token's URL would only send a respondent to a 410. One link per (project, record, instrument, event)." },
           "event": { "type": "string" },
-          "revoked": { "type": "boolean" },
-          "collected_at": { "type": ["string", "null"], "description": "`null` until the first response is saved through the link, then never changes (REQ-DB-041, REQ-AUTH-071)." }
+          "collected_at": { "type": ["string", "null"], "description": "`null` until a response is saved through the link, then never changes (REQ-DB-041, REQ-AUTH-071)." }
         },
-        "example": { "url": "https://csms.example.org/s/8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "event": "baseline_arm_1", "revoked": false, "collected_at": null }
+        "example": { "state": "live", "url": "https://csms.example.org/s/8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "event": "baseline_arm_1", "collected_at": null }
       },
       "Dag": {
         "type": "object",

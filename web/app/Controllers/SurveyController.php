@@ -17,9 +17,10 @@
 // respondent's browser — the page could not name the target even if it wanted to.
 //
 // What a respondent already answered cannot be read back: `content=record` without `data` is
-// the export path, which no link is granted (REQ-AUTH-039), so a re-opened link renders empty
-// (the prefill half of REQ-AUTH-042 stays open). The submission policy sends only entered
-// values (GD-14), so re-submitting an untouched form blanks nothing that is stored.
+// the export path, which no link is granted (REQ-AUTH-039), and under one submission there is
+// nothing to re-open over — a second fill starts from an empty form reached by a new link
+// (REQ-UI-028). The submission policy sends only entered values (GD-14), so an untouched field
+// cannot blank what is stored.
 
 declare(strict_types=1);
 
@@ -87,6 +88,10 @@ final class SurveyController extends Controller
                 // may make reports the project's mode, so submitting is where the page learns
                 // it — hence the closed state here rather than a read-only render (§8.8).
                 'analysis_mode' => $this->notice('survey.closed', 403),
+                // This link already carried its submission (REQ-API-145) — revoked between
+                // opening and sending, or two tabs racing. The respondent hears that the
+                // answer is in, which is exactly what a broken link would not say.
+                'survey_submitted' => $this->notice('survey.submitted', 410),
                 // Revoked between opening and submitting: the same one state (REQ-AUTH-040).
                 'invalid_token', 'forbidden' => $this->invalid(),
                 'rate_limited' => $this->notice('survey.rate_limited', 429),
@@ -103,7 +108,8 @@ final class SurveyController extends Controller
                 DataEntry::importErrors((string) ($outcome['import_form_name'] ?? '')));
         }
 
-        // The visit ends here; re-opening the link serves the form again (REQ-AUTH-042).
+        // The visit ends here, and so does the link: storing this row spent it (REQ-API-145), so
+        // reopening the URL answers 410 — the panel says as much.
         return $this->standalone('survey_done', ['pageTitle' => $this->i18n->t('survey.title')]);
     }
 
@@ -123,8 +129,10 @@ final class SurveyController extends Controller
 
             return match ($e->code()) {
                 // Unknown and revoked look the same to the respondent: one state, no retry
-                // (§8.8, REQ-AUTH-040).
+                // (§8.8, REQ-AUTH-040). A spent link is deliberately another state — it tells
+                // them their answer arrived (REQ-API-145).
                 'invalid_token', 'forbidden' => $this->invalid(),
+                'survey_submitted' => $this->notice('survey.submitted', 410),
                 'rate_limited' => $this->notice('survey.rate_limited', 429),
                 default => $this->notice('survey.unavailable', 502),
             };

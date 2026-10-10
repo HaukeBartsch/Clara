@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"database/sql"
 	"net/http"
 	"strings"
@@ -10,28 +11,70 @@ import (
 	"csms/api/internal/db"
 )
 
-// registerSurvey mounts §4.17: issuing and revoking the public survey link of a
-// (record, instrument, event) triple (REQ-API-082…085). The link is what the PHP
-// survey page carries; the browser never calls /api/v1/* from it (GD-1,
-// REQ-API-084), and what the link token may do on the data API is fixed by §3.10.
+// registerSurvey mounts §4.17: reporting, issuing and revoking the public survey
+// link of a (record, instrument, event) triple (REQ-API-082/085, REQ-API-145/146).
+// The link is what the PHP survey page carries; the browser never calls
+// /api/v1/* from it (GD-1, REQ-API-084), and what the link token may do on the
+// data API is fixed by §3.10 — once per link.
 func (h *Handler) registerSurvey(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/projects/{id}/records/{record}/instruments/{iid}/survey-link", h.getSurveyLink)
+	mux.HandleFunc("POST /api/v1/projects/{id}/records/{record}/instruments/{iid}/survey-link", h.postSurveyLink)
 	mux.HandleFunc("DELETE /api/v1/projects/{id}/records/{record}/instruments/{iid}/survey-link", h.deleteSurveyLink)
 }
 
-// surveyLinkObject is the §4.17 response: the public URL carrying the link
-// token, the event it belongs to, whether it still works, and whether the survey
-// has been collected through it (REQ-DB-041). The token itself is not returned
-// bare — the URL is the contract the caller renders.
+// The four states of a pair's link (§4.17). They are read off the one row, not
+// stored: `revoked` and `collected_at` together say everything, and issuing
+// clears both (db.IssueSurveyLinkTokenTx), so no fifth state can appear.
+const (
+	surveyStateNone      = "none"
+	surveyStateLive      = "live"
+	surveyStateSubmitted = "submitted"
+	surveyStateRevoked   = "revoked"
+)
+
+// surveyLinkObject is the §4.17 response: the link's state, the public URL —
+// present only while it is live, because handing out a spent token's URL would
+// only send a respondent to a 410 — the event it belongs to, and the collection
+// date once the response arrived (REQ-DB-041, REQ-API-145). The token itself is
+// not returned bare: the URL is the contract the caller renders.
 type surveyLinkObject struct {
-	URL         string `json:"url"`
-	Event       string `json:"event"`
-	Revoked     bool   `json:"revoked"`
-	CollectedAt string `json:"collected_at"` // "" = not collected yet
+	State       string  `json:"state"`
+	URL         string  `json:"url"`
+	Event       string  `json:"event"`
+	CollectedAt *string `json:"collected_at"` // null until a response arrived (REQ-DB-041)
 }
 
-// surveyLinkContext resolves everything both §4.17 endpoints share: the actor,
-// the project, membership, the event named by `?event=`, record visibility
+// surveyLinkReport renders one row as the §4.17 object. A row that carries a
+// collection date reports `submitted` even when it was revoked afterwards: the
+// date is the fact the member acts on, and both states offer the same two
+// actions (a fresh link, nothing to copy). The URL comes from h.surveyURL, so
+// the value handed to "copy link" and the route that serves it cannot drift
+// apart (User_Interface_Design.md §8.8).
+func (h *Handler) surveyLinkReport(link *db.SurveyLink, eventName string) surveyLinkObject {
+	if link == nil {
+		return surveyLinkObject{State: surveyStateNone, Event: eventName}
+	}
+	state := surveyStateLive
+	switch {
+	case link.CollectedAt.Valid:
+		state = surveyStateSubmitted
+	case link.Revoked:
+		state = surveyStateRevoked
+	}
+	url := ""
+	if state == surveyStateLive {
+		url = h.surveyURL(link.Token)
+	}
+	var collected *string
+	if link.CollectedAt.Valid {
+		v := link.CollectedAt.String
+		collected = &v
+	}
+	return surveyLinkObject{State: state, URL: url, Event: eventName, CollectedAt: collected}
+}
+
+// surveyLinkContext resolves everything the three §4.17 endpoints share: the
+// actor, the project, membership, the event named by `?event=`, record visibility
 // (uniform 403, REQ-AUTH-045), data access ≥ view_edit **on that pair**
 // (REQ-API-082, REQ-AUTH-069), an existing record and instrument belonging to the
 // project (404), and the survey marking plus the mapping — a link for a
@@ -156,28 +199,44 @@ func (h *Handler) surveyLinkContext(w http.ResponseWriter, r *http.Request) (*db
 	return u, instrument, projectID, recordID, eventID, true
 }
 
-// getSurveyLink returns the stable public link for a (record, instrument, event),
-// issuing one on first call (REQ-API-082). Repeat calls return the same URL and
-// write no second audit entry; after a revocation the next call mints a fresh
-// token, because the old one is dead on every surface (REQ-AUTH-040) and the
-// survey would otherwise be closed for good.
+// getSurveyLink reports the link of a (record, instrument, event) and its state
+// (REQ-API-082 as revised): it never mints a token, because issuing is what
+// consumes a live link and invalidates its URL — a read that did that would make
+// the record view destroy links by rendering them. Reporting writes no audit
+// entry; issuance and revocation do (REQ-API-043).
 func (h *Handler) getSurveyLink(w http.ResponseWriter, r *http.Request) {
+	_, instrument, projectID, recordID, eventID, ok := h.surveyLinkContext(w, r)
+	if !ok {
+		return
+	}
+	link, err := h.Store.GetSurveyLink(r.Context(), projectID, recordID, instrument.ID, eventID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, h.surveyLinkReport(link, r.URL.Query().Get("event")))
+}
+
+// postSurveyLink issues a fresh token for the pair and answers the object above
+// with state `live` (REQ-API-146). It replaces any live link of that pair, whose
+// URL admits nothing from its next call: "get another link" means the previous one
+// is no longer the way in. Issuing onto a survey that still holds answers is
+// refused — see the value check below — and both outcomes keep their audit entry
+// only on success (REQ-API-043).
+func (h *Handler) postSurveyLink(w http.ResponseWriter, r *http.Request) {
 	u, instrument, projectID, recordID, eventID, ok := h.surveyLinkContext(w, r)
 	if !ok {
 		return
 	}
 	ctx := r.Context()
-	link, err := h.Store.GetSurveyLink(ctx, projectID, recordID, instrument.ID, eventID)
+	eventName := r.URL.Query().Get("event")
+
+	// The fields whose stored values mean "this survey has answers" — the
+	// instrument's own, minus the GD-8 record identifier, which every record
+	// stores and whose presence would refuse every re-issue (REQ-API-146).
+	fields, err := h.surveyValueFields(ctx, projectID, instrument.ID)
 	if err != nil {
 		errInternal(w)
-		return
-	}
-	eventName := r.URL.Query().Get("event")
-	if link != nil && !link.Revoked {
-		writeJSON(w, http.StatusOK, surveyLinkObject{
-			URL: h.surveyURL(link.Token), Event: eventName, Revoked: false,
-			CollectedAt: link.CollectedAt.String,
-		})
 		return
 	}
 
@@ -187,6 +246,25 @@ func (h *Handler) getSurveyLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
+
+	// A second fill starts from nothing, so the answers collected through the old
+	// link go first: the caller clears them with the delete action of §3.8, which
+	// needs the delete right (REQ-API-036). The check is named rather than
+	// demanded up front — a member without that right is told what to ask for, not
+	// met with a bare 403 on an endpoint they may use. It runs inside this
+	// transaction so a submission arriving between the read and the issue cannot
+	// slip its values under a link minted over them.
+	stored, err := h.Store.InstrumentHasStoredValueTx(ctx, tx, projectID, recordID, eventName, fields)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	if stored {
+		errConflict(w, "this instrument already holds values for this record at this event — "+
+			"delete this instrument's values before issuing a new survey link")
+		return
+	}
+
 	fresh := &db.SurveyLink{
 		ProjectID: projectID, RecordID: recordID, InstrumentID: instrument.ID,
 		EventID: eventID, CreatedBy: sql.NullInt64{Int64: u.ID, Valid: true},
@@ -209,8 +287,33 @@ func (h *Handler) getSurveyLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, surveyLinkObject{
-		URL: h.surveyURL(fresh.Token), Event: eventName, Revoked: false,
+		State: surveyStateLive, URL: h.surveyURL(fresh.Token), Event: eventName,
 	})
+}
+
+// surveyValueFields lists the fields whose non-empty stored values make a survey
+// instrument hold answers for one record at one event (REQ-API-146). Two kinds of
+// field are left out: the GD-8 record identifier, a stored value of every record
+// that would otherwise refuse every re-issue, and the two presentation-only types
+// (`description`, `header`), which store nothing — the same exclusion the derived
+// "has data" test makes (REQ-API-134).
+func (h *Handler) surveyValueFields(ctx context.Context, projectID, instrumentID int64) ([]string, error) {
+	fields, err := h.Store.ListFieldsByInstrument(ctx, projectID, instrumentID)
+	if err != nil {
+		return nil, err
+	}
+	identifierID, err := h.recordIdentifierField(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(fields))
+	for _, f := range fields {
+		if f.ID == identifierID || f.FieldType == "description" || f.FieldType == "header" {
+			continue
+		}
+		names = append(names, f.FieldName)
+	}
+	return names, nil
 }
 
 // deleteSurveyLink revokes the link of one pair; the revocation takes effect on

@@ -11,7 +11,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"csms/api/internal/db"
@@ -388,40 +390,43 @@ func TestSurveyLinkCannotWriteForeignInstrumentFields(t *testing.T) {
 
 // A submission is decided by `data` too (REQ-API-012): with neither action nor
 // form_name the row still fills the link's (record, instrument) — and nothing
-// else.
+// else. The refused row comes first here on purpose: a row the validator rejected
+// stores nothing and does not consume the link, so the respondent corrects on the
+// spot and sends again (REQ-API-145) — which is what lets one link carry both
+// calls below.
 func TestSurveyLinkSubmissionDecidedByData(t *testing.T) {
 	f, link := surveyLinkFixture(t)
 
+	// The pin holds without form_name: a field of another instrument is refused…
 	code, body := f.call(t, url.Values{
-		"token": {link.Token}, "content": {"record"}, "returnFormat": {"json"},
-		"data": {`[{"record_id":"8DISC001","redcap_event_name":"baseline_arm_1","age":"45"}]`},
-	})
-	res := importResults(t, code, body)
-	if len(res) != 1 || res[0].ImportRecordID != importUpdated {
-		t.Fatalf("flat link submission = %v, want one updated row", res)
-	}
-	if got := storedValue(t, f, "8DISC001", "baseline_arm_1", "age"); got != "45" {
-		t.Errorf("stored age = %q, want 45", got)
-	}
-
-	// The pin still holds without form_name: a field of another instrument
-	// is refused.
-	code, body = f.call(t, url.Values{
 		"token": {link.Token}, "content": {"record"}, "returnFormat": {"json"},
 		"data": {`[{"record_id":"8DISC001","redcap_event_name":"baseline_arm_1","total":"9"}]`},
 	})
-	res = importResults(t, code, body)
+	res := importResults(t, code, body)
 	if len(res) != 1 || res[0].ImportRecordID != importInvalid ||
 		!strings.Contains(res[0].ImportFormName, "belongs to instrument 'calc', not 'demo'") {
 		t.Fatalf("cross-instrument flat submission = %v, want the pin's instrument message", res)
+	}
+
+	// …and left the link live, so the corrected row still gets in.
+	code, body = f.call(t, url.Values{
+		"token": {link.Token}, "content": {"record"}, "returnFormat": {"json"},
+		"data": {`[{"record_id":"8DISC001","redcap_event_name":"baseline_arm_1","age":"45"}]`},
+	})
+	res = importResults(t, code, body)
+	if len(res) != 1 || res[0].ImportRecordID != importUpdated {
+		t.Fatalf("flat link submission after a rejected row = %v, want one updated row", res)
+	}
+	if got := storedValue(t, f, "8DISC001", "baseline_arm_1", "age"); got != "45" {
+		t.Errorf("stored age = %q, want 45", got)
 	}
 }
 
 // The public page names none of the triple: a row carrying only field values is
 // addressed by the link itself, which is how a respondent submits without ever
 // being told the study's record id (§3.10, REQ-API-083). The first save through
-// the link stamps its collection date, and a later one leaves it alone
-// (REQ-DB-041).
+// the link stamps its collection date (REQ-DB-041) — and that stamp is what ends
+// the link, so it is also the last thing that happens on it (REQ-API-145).
 func TestSurveyLinkSubmissionResolvesItsTriple(t *testing.T) {
 	f, link := surveyLinkFixture(t)
 
@@ -459,12 +464,63 @@ func TestSurveyLinkSubmissionResolvesItsTriple(t *testing.T) {
 	if !first.Valid {
 		t.Fatal("the first save through the link must stamp collected_at (REQ-DB-041)")
 	}
-	if res := f.importRows(t, importForm(link.Token, map[string]string{"age": "48"})); len(res) != 1 ||
-		res[0].ImportRecordID != importUpdated {
-		t.Fatalf("re-submission = %v, want one updated row", res)
+	// The stamp is also what spends the link (REQ-API-145), so nothing arrives
+	// after it that could move it: both the stored value and the date stay as the
+	// one submission left them.
+	if code, body := f.call(t, importForm(link.Token, map[string]string{"age": "48"})); code != 410 {
+		t.Errorf("second submission = %d (%s), want 410", code, body)
+	}
+	if got := storedValue(t, f, "8DISC001", "baseline_arm_1", "age"); got != "47" {
+		t.Errorf("stored age = %q after a submission on a spent link, want the untouched 47", got)
 	}
 	if again := collected(); again != first {
 		t.Errorf("collected_at moved from %v to %v — later saves never change it", first, again)
+	}
+}
+
+// One submission per link (REQ-API-145): the save that stored the answer spent
+// the link, and every later call on its token answers 410 — the fill as much as
+// the render — having written neither value nor audit entry. The 410 is the one
+// state a link's holder is told: an unknown token keeps the uniform 401 of
+// REQ-API-011, so a respondent reopening their own finished survey learns that
+// their answer arrived without anyone being able to probe which links exist.
+func TestSurveyLinkSecondSubmissionGone(t *testing.T) {
+	f, link := surveyLinkFixture(t)
+
+	res := f.importRows(t, importForm(link.Token, map[string]string{"age": "47"}))
+	if len(res) != 1 || res[0].ImportRecordID != importUpdated {
+		t.Fatalf("first submission = %v, want one updated row", res)
+	}
+
+	calls := map[string]url.Values{
+		"a second fill": importForm(link.Token, map[string]string{"age": "48"}),
+		"the render":    {"token": {link.Token}, "content": {"metadata"}, "returnFormat": {"json"}},
+	}
+	for name, form := range calls {
+		code, body := f.call(t, form)
+		if code != 410 {
+			t.Errorf("%s: status = %d, want 410 (%s)", name, code, body)
+		}
+		if !strings.Contains(body, "Survey already submitted") {
+			t.Errorf("%s: body = %s, want the machine-readable 'Survey already submitted'", name, body)
+		}
+	}
+
+	// Nothing of the refused call was stored — not a value, not a trail.
+	if got := storedValue(t, f, "8DISC001", "baseline_arm_1", "age"); got != "47" {
+		t.Errorf("stored age = %q, want the 47 the accepted submission left", got)
+	}
+	if n := auditCount(t, f.s, "survey_submitted"); n != 1 {
+		t.Errorf("%d survey_submitted entries, want the one its own submission wrote", n)
+	}
+
+	// A token that is nobody's stays in the single indistinguishable 401
+	// (REQ-API-011, REQ-AUTH-032): only a link this respondent finished is told.
+	code, body := f.call(t, url.Values{
+		"token": {"00000000-0000-4000-8000-000000000000"}, "content": {"metadata"}, "returnFormat": {"json"},
+	})
+	if code != 401 || strings.Contains(body, "Survey") {
+		t.Errorf("unknown token: status = %d body = %s, want the uniform 401", code, body)
 	}
 }
 
@@ -514,5 +570,54 @@ func TestSurveyLinkResolutionDoesNotOverruleANamedRecord(t *testing.T) {
 	}
 	if got := storedValue(t, f, "8DISC002", "baseline_arm_1", "age"); got != "30" {
 		t.Errorf("8DISC002 age = %q, want the fixture's untouched 30", got)
+	}
+}
+
+// Two submissions racing on one link store exactly once (REQ-API-145). The stamp's
+// conditional write is the guard: the racer that stamps nothing rolls its values
+// back with it and answers 410 like any later call on a spent link, so no answer
+// is stored twice and the trail holds one submission.
+func TestSurveyLinkConcurrentSubmissionStoresOnce(t *testing.T) {
+	f, link := surveyLinkFixture(t)
+
+	// Each racer sends a distinct age, so the stored value names the winner.
+	const racers = 4
+	codes := make([]int, racers)
+	bodies := make([]string, racers)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < racers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start // release them together: the race is the point
+			rec := doRec(t, f.h, importForm(link.Token, map[string]string{"age": strconv.Itoa(50 + i)}))
+			codes[i], bodies[i] = rec.Code, rec.Body.String()
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	winner := -1
+	for i, code := range codes {
+		switch code {
+		case 200:
+			if winner >= 0 {
+				t.Fatalf("two submissions stored on one link: %v", codes)
+			}
+			winner = i
+		case 410:
+		default:
+			t.Errorf("racer %d answered %d (%s), want 200 or 410", i, code, bodies[i])
+		}
+	}
+	if winner < 0 {
+		t.Fatalf("no submission got in: %v / %s", codes, bodies[0])
+	}
+	if want, got := strconv.Itoa(50+winner), storedValue(t, f, "8DISC001", "baseline_arm_1", "age"); got != want {
+		t.Errorf("stored age = %q, want racer %d's %s", got, winner, want)
+	}
+	if n := auditCount(t, f.s, "survey_submitted"); n != 1 {
+		t.Errorf("%d survey_submitted entries, want the winner's alone", n)
 	}
 }

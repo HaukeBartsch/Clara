@@ -14,6 +14,14 @@ import (
 // cannot probe for valid ones (REQ-AUTH-032, REQ-API-011).
 var errInvalidToken = errors.New("invalid token")
 
+// errSurveySubmitted is a survey link that already carried its one submission
+// (REQ-API-145). It is deliberately kept apart from errInvalidToken: unknown
+// and revoked tokens stay indistinguishable from one another (REQ-AUTH-032),
+// while the respondent who reopens a used link needs to hear that their answer
+// arrived — handler.go renders this as 410, the single place where anything
+// about a link's fate is disclosed to its holder.
+var errSurveySubmitted = errors.New("survey link already submitted")
+
 // The two ladders, re-exported from authz so this package reads the same way as
 // the administration API does. They are aliases and nothing else: one ranking
 // exists, in authz (REQ-DB-009 as revised, REQ-AUTH-017) — a second copy here is
@@ -188,14 +196,22 @@ func (h *Handler) resolveToken(ctx context.Context, token string) (*subject, err
 
 // resolveSurveyLink admits a survey-link token (API_Endpoints_Design.md
 // §3.10): one indexed lookup on survey_links.token, the revocation check
-// (a revoked link is rejected on every call, REQ-AUTH-040), and the
-// project, instrument and event the link names. Levels stay empty — a link
-// holds no permissions; the dispatcher grants the two calls of §3.10 and
-// nothing else (REQ-API-083, REQ-AUTH-039).
+// (a revoked link is rejected on every call, REQ-AUTH-040), the spent-link check
+// (one submission per link, REQ-API-145), and the project, instrument and event
+// the link names. Levels stay empty — a link holds no permissions; the
+// dispatcher grants the two calls of §3.10 and nothing else (REQ-API-083,
+// REQ-AUTH-039).
 func (h *Handler) resolveSurveyLink(ctx context.Context, token string) (*subject, error) {
 	link, err := h.Store.GetSurveyLinkByToken(ctx, token)
 	if err != nil || link == nil || link.Revoked {
 		return nil, errInvalidToken
+	}
+	if link.CollectedAt.Valid {
+		// Spent. The save that stamped this link stored its one submission
+		// (REQ-DB-041, REQ-API-145); the answer is 410, not the 401 an unknown
+		// or revoked token draws, so a respondent reopening the URL learns that
+		// what they sent reached the study.
+		return nil, errSurveySubmitted
 	}
 	p, err := h.Store.GetProject(ctx, link.ProjectID)
 	if err != nil || p == nil {

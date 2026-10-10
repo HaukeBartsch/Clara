@@ -676,10 +676,19 @@ return [
     'record.hint.pattern' => 'The value does not have the expected form.',
     'record.hint.choice' => 'The value is not one of the choices.',
     'record.survey.title' => 'Survey link',
-    'record.survey.get' => 'Show survey link',
+    // The link's state, read from the API on every render (REQ-UI-028): one submission spends it.
+    'record.survey.state.none' => 'No link has been issued for this form at this event.',
+    'record.survey.state.live' => 'This link is live. It accepts one submission and then stops working.',
+    'record.survey.state.submitted' => 'Submitted on {date}. The link cannot be used again.',
+    'record.survey.state.revoked' => 'The link was revoked and no longer works.',
+    'record.survey.get' => 'Get a new link',
     'record.survey.copy' => 'Copy',
     'record.survey.revoke' => 'Revoke link',
-    'record.survey.confirm_revoke' => 'Revoke the survey link of {record} for {instrument}? It stops working immediately; showing the link again issues a new one.',
+    // Re-issue is refused while the form still holds answers, so the confirmation names the delete
+    // that clears the way instead of leaving the member to find it (REQ-API-146, REQ-UI-027).
+    'record.survey.confirm_get' => 'Issue a new survey link for {record}, form {instrument}? The current link stops working immediately. Answers already collected for this form at this event have to be removed first with "Delete this form\'s values" below.',
+    'record.survey.confirm_revoke' => 'Revoke the survey link of {record} for {instrument}? It stops working immediately; "Get a new link" issues another one.',
+    'record.survey.issued' => 'A new survey link was issued.',
     'record.survey.revoked' => 'The survey link was revoked.',
     'record.group.title' => 'Data access group',
     'record.group.label' => 'Assign the record to',
@@ -737,7 +746,10 @@ return [
     'survey.title' => 'Survey',
     'survey.submit' => 'Send answers',
     'survey.done' => 'Thank you — your answers have been recorded.',
-    'survey.done.reopen' => 'To change an answer, open this link again and send the form once more.',
+    'survey.done.once' => 'This link has recorded your answers and cannot be used again. To change something, please contact the study team.',
+    // The 410 of a spent link: distinct from an invalid one, because it says the answer arrived
+    // (REQ-API-145) — which is what keeps a finished submission from being reported as a broken link.
+    'survey.submitted' => 'You have already submitted this survey, so this link is closed. If an answer needs changing, please contact the study team.',
     'survey.closed' => 'This survey no longer accepts responses. If something needs changing, please contact the study team.',
     'survey.invalid' => 'This survey link is no longer valid. If you still want to take part, please contact the study team.',
     'survey.rate_limited' => 'Too many requests from your connection. Please wait a few minutes and open the link again.',

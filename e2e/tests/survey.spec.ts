@@ -4,7 +4,8 @@ import { expect, test, type APIRequestContext } from "@playwright/test"
 // the record view opens in a browser that holds no session, shows the link's instrument with
 // the same show/hide logic as the record form (§8.4), never starts a session (no cookie, GD-1),
 // and never talks to the API from the browser (REQ-API-084). A revoked link is one
-// "no longer valid" state (REQ-AUTH-040).
+// "no longer valid" state (REQ-AUTH-040); a used one is another, saying the answer arrived
+// (REQ-API-145) — which is what keeps a finished submission from reading as a broken link.
 //
 // Submitting is the other half of the exit criterion (Plan/Web_Implementation.md §9): the page
 // posts its answers and nothing else, because the API resolves the record, instrument and event
@@ -64,7 +65,7 @@ test.describe("public survey page (M6)", () => {
     await page.fill("#login-password", ADMIN_PASSWORD)
     await page.locator('form[action="/login?action=credentials"] button[type="submit"]').click()
     await page.goto(`/projects/${project.id}/records/S001?event=baseline_arm_1&instrument=feedback`)
-    await page.locator(".clara-survey-link").getByRole("button", { name: "Show survey link" }).click()
+    await page.locator(".clara-survey-link").getByRole("button", { name: "Get a new link" }).click()
     const link = await page.locator("#clara-survey-url").inputValue()
     // The URL the API builds is a route of this application (Plan/Web_Implementation.md §9).
     expect(link.startsWith(`${baseURL}/s/`)).toBeTruthy()
@@ -110,15 +111,38 @@ test.describe("public survey page (M6)", () => {
     expect(exported.ok()).toBeTruthy()
     expect(JSON.stringify(await exported.json())).toContain("the coffee")
 
-    // …and the first save through the link stamped its collection date (REQ-DB-041).
+    // …and the save that stored them stamped the link, which is also what spent it (REQ-DB-041,
+    // REQ-API-145): the report says `submitted`, and re-opening the URL tells the respondent their
+    // answer arrived instead of offering a second form.
     const issued = await admin(request, "GET",
       `${base}/records/S001/instruments/${survey.id}/survey-link?event=baseline_arm_1`)
-    expect(issued.collected_at).not.toBe("")
+    expect(issued.state).toBe("submitted")
+    expect(issued.url).toBe("") // nothing to hand out any more
+    expect(issued.collected_at).toBeTruthy()
+    const spent = await respondent.goto(link)
+    expect(spent?.status()).toBe(410)
+    await expect(respondent.locator(".clara-survey-notice")).toContainText("already submitted")
+    await expect(respondent.locator(".clara-survey-form")).toHaveCount(0)
 
-    // Re-opening the link serves the form again — the respondent may change their answers
-    // (REQ-AUTH-042), though what they already said is not read back to them.
-    await respondent.goto(link)
-    await expect(respondent.locator(".clara-survey-form")).toBeVisible()
+    // --- the member sees the same state, and a re-issue refused over the answers (§8.7) ---
+    await page.reload()
+    await expect(page.locator(".clara-survey-link")).toContainText("Submitted on")
+    await expect(page.locator("#clara-survey-url")).toHaveCount(0)
+    await page.locator(".clara-survey-link").getByRole("button", { name: "Get a new link" }).click()
+    await page.locator("#clara-confirm [data-clara-confirm-ok]").click()
+    // REQ-API-146 says the 409 names what has to happen first rather than leaving it to be found.
+    await expect(page.locator(".alert-danger")).toContainText("already holds values")
+
+    // Clearing the form's values (§8.7, REQ-API-036) is what opens the pair again: issuing then
+    // works, and there is a live link to revoke below.
+    await page.getByRole("button", { name: "Delete this form's values" }).click()
+    await page.locator("#clara-confirm [data-clara-confirm-ok]").click()
+    await expect(page.locator(".alert-success")).toContainText("deleted")
+    await page.locator(".clara-survey-link").getByRole("button", { name: "Get a new link" }).click()
+    await page.locator("#clara-confirm [data-clara-confirm-ok]").click()
+    const fresh = await page.locator("#clara-survey-url").inputValue()
+    expect(fresh.startsWith(`${baseURL}/s/`)).toBeTruthy()
+    expect(fresh).not.toBe(link) // the replaced token is gone, and this one is live
 
     // Outside the session (GD-1), and the browser only ever asked this application (REQ-API-084).
     expect(await respondent.context().cookies()).toEqual([])
@@ -128,7 +152,7 @@ test.describe("public survey page (M6)", () => {
     await page.locator(".clara-survey-link").getByRole("button", { name: "Revoke link" }).click()
     await page.locator("#clara-confirm [data-clara-confirm-ok]").click()
     await expect(page.locator(".alert-success")).toContainText("revoked")
-    const revoked = await respondent.goto(link)
+    const revoked = await respondent.goto(fresh)
     expect(revoked?.status()).toBe(404)
     await expect(respondent.locator(".clara-survey-notice")).toContainText("no longer valid")
     await expect(respondent.locator(".clara-survey-form")).toHaveCount(0)
