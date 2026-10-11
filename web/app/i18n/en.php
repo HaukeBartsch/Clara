@@ -729,7 +729,7 @@ return [
     'export.delimiter.tab' => 'Tab',
     'export.delimiter.pipe' => 'Pipe ( | )',
     'export.arms' => 'Arms',
-    'export.lowest_rule' => 'With several arms selected, the most protective of their levels applies to the whole file. Export a single arm to receive its own level.',
+    'export.lowest_rule' => 'Each instrument at each event is delivered at its own export level; the level shown below is the most protective one your selection holds.',
     'export.level' => 'Applied sensitivity',
     'export.level.export_full' => 'Full dataset',
     'export.level.export_no_identifiers' => 'Identifiers removed',
@@ -740,7 +740,10 @@ return [
     'export.no_arm' => 'Choose at least one arm to export.',
     'export.download' => 'Download',
     'export.audit_note' => 'Every download is recorded in the audit log with the level applied.',
-    'export.pair_only' => 'Your export permission covers only individual instruments and events, and the export cannot apply those yet. Ask a project administrator for an export.',
+    'export.none_here' => 'None of this project\'s instruments at their events are open to you for export. Ask a project administrator for an export.',
+    // Stated on the card rather than hidden (§6.4, REQ-UI-020): a partly permitted
+    // scope says so, and the count is what the API records alongside the level.
+    'export.dropped_pairs' => 'Not included, whatever you select: {count} instrument-and-event combination(s) of this project sit outside your export permission.',
 
     // --- M6: public survey page (§8.8) ---
     'survey.title' => 'Survey',

@@ -102,7 +102,7 @@ test.describe("export (M6)", () => {
     const rows = JSON.parse(await (await json.createReadStream()).toArray().then((parts) => Buffer.concat(parts).toString("utf8")))
     expect(rows.map((row: Record<string, string>) => row.record_id).sort()).toEqual(["E001", "E002"])
 
-    // --- the member: the lowest selected level applies, and it follows the selection ---
+    // --- the member: the most protective selected level is stated, and it follows the selection ---
     const member = await newPage(browser)
     await signIn(member, memberEmail, memberPassword)
     await member.goto(`/projects/${project.id}/export`)

@@ -493,6 +493,94 @@ func TestRecordExportDeIdentified(t *testing.T) {
 	}
 }
 
+// TestRecordExportPerPairLevels is the data-API surface of REQ-API-026 and
+// Data_Export_Design.md §4.3: one instrument held at two events, export_full on one
+// pair and export_none on the other. The permitted event delivers its values raw;
+// the refused one contributes nothing — not even a line naming the event — and the
+// audit records the level actually delivered together with the pair it dropped.
+func TestRecordExportPerPairLevels(t *testing.T) {
+	f := newRecordFixture(t)
+	ctx := context.Background()
+
+	var demoID, followupID int64
+	if err := f.s.DB.QueryRow(`SELECT id FROM instruments WHERE project_id = ? AND name = 'demo'`,
+		f.pid).Scan(&demoID); err != nil {
+		t.Fatalf("demo instrument: %v", err)
+	}
+	if err := f.s.DB.QueryRow(`SELECT id FROM events WHERE project_id = ? AND unique_event_name = 'followup_arm_1'`,
+		f.pid).Scan(&followupID); err != nil {
+		t.Fatalf("followup event: %v", err)
+	}
+	roleID, err := f.s.CreateRole(ctx, &db.Role{ProjectID: f.pid, RoleName: "baseline-export-only"},
+		[]db.RoleArm{{ArmNum: 1, DataAccessLevel: "read_only", ExportLevel: "export_full"}},
+		[]db.RoleGrant{{EventID: followupID, InstrumentID: demoID,
+			DataAccessLevel: "read_only", ExportLevel: "export_none"}})
+	if err != nil {
+		t.Fatalf("CreateRole: %v", err)
+	}
+	userID, err := f.s.CreateUser(ctx, &db.User{Email: "pairwise@example.org",
+		DisplayName: "Pairwise", Enabled: true, AuthSource: "local"})
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if _, err := f.s.AddAssignment(ctx, &db.Assignment{UserID: userID, ProjectID: f.pid,
+		Token: "tok-pairwise", RoleID: sql.NullInt64{Int64: roleID, Valid: true}}); err != nil {
+		t.Fatalf("AddAssignment: %v", err)
+	}
+
+	rows := f.exportJSON(t, "tok-pairwise", url.Values{"records": {"8DISC001"}})
+	if len(rows) != 1 {
+		t.Fatalf("rows = %v, want the permitted event's row alone", rows)
+	}
+	got := rows[0]
+	if got["redcap_event_name"] != "baseline_arm_1" {
+		t.Errorf("event = %q, want baseline_arm_1: the refused pair delivers no row", got["redcap_event_name"])
+	}
+	// export_full on this pair: nothing transformed, free text included.
+	if got["notes"] != "call me" || got["secret"] != "top secret" {
+		t.Errorf("row = %v, want the raw values of a full-level pair", got)
+	}
+	if got["record_id"] != "8DISC001" {
+		t.Errorf("record_id = %q, want it: every delivered pair is export_full", got["record_id"])
+	}
+
+	var details string
+	if err := f.s.DB.QueryRow(`SELECT details FROM audit_events WHERE event_type = ? ORDER BY id DESC LIMIT 1`,
+		audit.Export).Scan(&details); err != nil {
+		t.Fatalf("export audit: %v", err)
+	}
+	var d map[string]any
+	if err := json.Unmarshal([]byte(details), &d); err != nil {
+		t.Fatalf("decode details %q: %v", details, err)
+	}
+	if d["sensitivity"] != "export_full" {
+		t.Errorf("sensitivity = %v, want export_full (a dropped pair lowers no level)", d["sensitivity"])
+	}
+	if n, _ := d["pairs_dropped"].(float64); n != 1 {
+		t.Errorf("pairs_dropped = %v, want 1 (§4.3)", d["pairs_dropped"])
+	}
+
+	// Wide layout drops the refused pair's slots outright: no suffixed value
+	// column, no completion slot — its completion state is one of that pair's
+	// columns (§4.3) — and no identifier column names the event either, which
+	// is what the suppressed flat row refuses to do.
+	wide := f.exportJSON(t, "tok-pairwise", url.Values{"records": {"8DISC001"}, "type": {"wide"}})
+	if len(wide) != 1 {
+		t.Fatalf("wide rows = %v, want the record's one row", wide)
+	}
+	if got := wide[0]["age_baseline_arm_1"]; got != "42" {
+		t.Errorf("age_baseline_arm_1 = %q, want the permitted pair's raw value", got)
+	}
+	if got := wide[0]["demo_complete_baseline_arm_1"]; got != "1" {
+		t.Errorf("demo_complete_baseline_arm_1 = %q, want 1: values without a finished mark", got)
+	}
+	for k := range wide[0] {
+		if strings.Contains(k, "followup") {
+			t.Errorf("wide header carries %q, want nothing naming the refused event", k)
+		}
+	}
+}
+
 func TestRecordExportNoneForbidden(t *testing.T) {
 	f := newRecordFixture(t)
 	before := auditCount(t, f.s, audit.Export)

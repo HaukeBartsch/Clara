@@ -270,6 +270,25 @@ final class Permissions
         return false;
     }
 
+    /**
+     * Every mapped pair with its export level, as the permissions block enumerates
+     * them (REQ-API-126). Everywhere else the question is about one named pair,
+     * answered by pair(); the export page is the one surface that has to state what
+     * a whole selection delivers and what it leaves out (§6.4, REQ-UI-020).
+     *
+     * @return list<array{event: string, instrument: string, export: string}>
+     */
+    public function pairsByExport(): array
+    {
+        $out = [];
+        foreach ($this->pairs as $key => $grant) {
+            [$event, $instrument] = explode("\0", $key, 2);
+            $out[] = ['event' => $event, 'instrument' => $instrument, 'export' => $grant['export']];
+        }
+
+        return $out;
+    }
+
     /** The export card's gate: a non-`export_none` level on some arm or pair (§6.4). */
     public function canExportAny(): bool
     {

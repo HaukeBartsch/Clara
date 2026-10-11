@@ -5,16 +5,14 @@
 // `GET /api/v1/projects/{id}/export` piece by piece so a large export never sits in PHP's
 // memory (REQ-TECH-011).
 //
-// The sensitivity badge states what the API will apply, computed from the same values the
-// API computes it from: the export level of each selected arm's **default** in the
-// permissions block (REQ-API-126), the lowest — most protective — of them for a multi-arm
-// download (§6.4, REQ-EXP-003). The API decides; the badge only says beforehand what it will
-// decide, and the audit entry records the level actually applied (REQ-API-076).
-//
-// Known gap (Plan M6, report): the reworked requirements (REQ-API-075, REQ-UI-020) apply the
-// export level per (instrument, event) pair. The export endpoint does not yet; it reads the
-// arm defaults alone. A member whose export rights exist only as pair grants therefore sees
-// a notice here instead of a form, rather than a download the API would refuse.
+// The sensitivity badge states what the API will apply, computed the way the API
+// computes it: from the export level of each (instrument, event) pair in the
+// permissions block (REQ-API-126, REQ-AUTH-069), most protective first. The level a
+// download states is the strongest protection any of its columns carries less of
+// (§4.3) — not one level imposed on every column, which is what the old per-arm
+// model did. The API decides; the badge only says beforehand what it will decide,
+// and the audit entry records the level actually applied together with the pairs
+// dropped for want of a level (REQ-API-076).
 
 declare(strict_types=1);
 
@@ -42,7 +40,7 @@ final class ExportController extends ProjectPageController
     private const JS_KEYS = [
         'export.level.export_full', 'export.level.export_no_identifiers', 'export.level.export_de_identified',
         'export.level_help.export_full', 'export.level_help.export_no_identifiers', 'export.level_help.export_de_identified',
-        'export.no_arm',
+        'export.dropped_pairs', 'export.no_arm',
     ];
 
     /** GET /projects/{id}/export — the export page, or with `?download=1` the file (§2.1). */
@@ -65,6 +63,9 @@ final class ExportController extends ProjectPageController
             'exportUrl' => '/projects/' . $projectId . '/export',
             'arms' => $arms,
             'level' => self::appliedLevel($arms),
+            // Pairs the member may not export: stated on the card rather than hidden
+            // (§6.4, REQ-UI-020), and counted so a selection can say what it excludes.
+            'dropped' => array_sum(array_column($arms, 'dropped')),
             'formats' => self::FORMATS,
             'values' => self::VALUES,
             'headers' => self::HEADERS,
@@ -76,41 +77,92 @@ final class ExportController extends ProjectPageController
     }
 
     /**
-     * The arms the export may include: those whose default carries an export level above
-     * `export_none` — exactly the candidates the API selects (API §4.14) — with that level.
+     * The arms the export may include, and what each contributes (§6.4). An arm is
+     * offered when at least one of its (instrument, event) pairs carries an export
+     * level — a right held only as a pair grant is an export right like any other
+     * (REQ-AUTH-069) — with the most protective level its permitted pairs deliver
+     * and the count of its pairs that contribute nothing (§4.3). A project without
+     * events has no pairs, so its arm default is what applies.
      *
      * @param array<string, mixed> $detail
-     * @return list<array{arm_num: int, name: string, level: string}>
+     * @return list<array{arm_num: int, name: string, level: string, dropped: int}>
      */
     public static function exportableArms(array $detail, Permissions $permissions): array
     {
-        $arms = [];
-        foreach ((is_array($detail['arms'] ?? null) ? $detail['arms'] : []) as $arm) {
-            if (!is_array($arm)) {
+        // Which arm each event belongs to: the permissions block names its pairs by
+        // (event, instrument) and leaves the grouping to the reader, while §4.5
+        // embeds each arm's events under the arm itself.
+        $armRows = is_array($detail['arms'] ?? null) ? $detail['arms'] : [];
+        $armOfEvent = [];
+        foreach ($armRows as $arm) {
+            if (!is_array($arm) || !isset($arm['arm_num'])) {
                 continue;
             }
-            $armNum = (int) ($arm['arm_num'] ?? 0);
-            $level = $permissions->exportLevel($armNum);
-            if (Permissions::exportRank($level) > 0) {
-                $arms[] = ['arm_num' => $armNum, 'name' => (string) ($arm['name'] ?? ''), 'level' => $level];
+            $armNum = (int) $arm['arm_num'];
+            foreach ((is_array($arm['events'] ?? null) ? $arm['events'] : []) as $event) {
+                if (is_array($event) && isset($event['unique_event_name'])) {
+                    $armOfEvent[(string) $event['unique_event_name']] = $armNum;
+                }
             }
+        }
+
+        $levelsByArm = [];
+        $droppedByArm = [];
+        foreach ($permissions->pairsByExport() as $pair) {
+            $armNum = $armOfEvent[$pair['event']] ?? 0;
+            if (Permissions::exportRank($pair['export']) > 0) {
+                $levelsByArm[$armNum][] = $pair['export'];
+                continue;
+            }
+            $droppedByArm[$armNum] = ($droppedByArm[$armNum] ?? 0) + 1;
+        }
+
+        $arms = [];
+        foreach ($armRows as $arm) {
+            if (!is_array($arm) || !isset($arm['arm_num'])) {
+                continue;
+            }
+            $armNum = (int) $arm['arm_num'];
+            // An arm that has pairs is read through them: its default reaches only
+            // the pairs nobody mapped, and those deliver no columns at all.
+            $levels = $levelsByArm[$armNum] ?? [$permissions->exportLevel($armNum)];
+            $permitted = array_values(array_filter(
+                $levels,
+                static fn (string $level): bool => Permissions::exportRank($level) > 0
+            ));
+            if ($permitted === []) {
+                continue; // nothing here may be exported, so no control for it (REQ-UI-003)
+            }
+            $arms[] = [
+                'arm_num' => $armNum,
+                'name' => (string) ($arm['name'] ?? ''),
+                'level' => self::lowestLevel($permitted),
+                'dropped' => $droppedByArm[$armNum] ?? 0,
+            ];
         }
 
         return $arms;
     }
 
     /**
-     * The level a download of these arms is delivered at: the lowest among them (§6.4,
-     * REQ-EXP-003), or '' when there is none to export.
+     * The level a download of these arms is delivered at: the most protective among
+     * them (§6.4) — which under per-pair sensitivity is what the file states it
+     * holds, not a level applied to every column (Data_Export_Design.md §4.3).
      *
      * @param list<array{level: string}> $arms
      */
     public static function appliedLevel(array $arms): string
     {
+        return self::lowestLevel(array_column($arms, 'level'));
+    }
+
+    /** The most protective of the given level names; '' when none of them exports. */
+    private static function lowestLevel(array $levels): string
+    {
         $level = '';
-        foreach ($arms as $arm) {
-            if ($level === '' || Permissions::exportRank($arm['level']) < Permissions::exportRank($level)) {
-                $level = $arm['level'];
+        foreach ($levels as $candidate) {
+            if ($level === '' || Permissions::exportRank($candidate) < Permissions::exportRank($level)) {
+                $level = $candidate;
             }
         }
 

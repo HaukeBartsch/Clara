@@ -65,7 +65,10 @@ test.describe("public survey page (M6)", () => {
     await page.fill("#login-password", ADMIN_PASSWORD)
     await page.locator('form[action="/login?action=credentials"] button[type="submit"]').click()
     await page.goto(`/projects/${project.id}/records/S001?event=baseline_arm_1&instrument=feedback`)
+    // Every issue is confirmed (§8.7, "Get a new link → confirmation"), the first one too: with
+    // one-time links the call replaces whatever token was outstanding.
     await page.locator(".clara-survey-link").getByRole("button", { name: "Get a new link" }).click()
+    await page.locator("#clara-confirm [data-clara-confirm-ok]").click()
     const link = await page.locator("#clara-survey-url").inputValue()
     // The URL the API builds is a route of this application (Plan/Web_Implementation.md §9).
     expect(link.startsWith(`${baseURL}/s/`)).toBeTruthy()

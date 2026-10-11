@@ -112,9 +112,9 @@ Field renames are `field_updated` with `"changes":{"name":{"old":"…","new":"�
 
 | Code | When | `details` payload |
 |---|---|---|
-| `export` | every data export on both surfaces — data API (`content=record` without `data`, REQ-API-012) and administration API (`GET /api/v1/projects/{id}/export`) | `{"surface":"data_api or ui","sensitivity":"export_full or export_no_identifiers or export_de_identified","filters":{"records":["…"],"fields":["…"],"forms":["…"],"events":["…"],"filter_logic":"[age]=\"42\""}}` |
+| `export` | every data export on both surfaces — data API (`content=record` without `data`, REQ-API-012) and administration API (`GET /api/v1/projects/{id}/export`) | `{"surface":"data_api or ui","sensitivity":"export_full or export_no_identifiers or export_de_identified","pairs_dropped":0,"filters":{"records":["…"],"fields":["…"],"forms":["…"],"events":["…"],"filter_logic":"[age]=\"42\""}}` |
 
-Rules: omitted filters are empty arrays; `sensitivity` is the ladder name of the level applied per REQ-API-026/075 (for multi-arm exports, the **lowest / most protective** level among the exported arms — the one actually applied to every row, `Data_Export_Anonymization_Design.md` §4.3); a record-view row (§4) is written **in addition** to this entry for data-API exports only — the table is keyed by the call's token, which a UI export does not have, so its `export` event alone is the trail (REQ-AUD-013).
+Rules: omitted filters are empty arrays; `sensitivity` is the ladder name of the most protective level among the (instrument, event) pairs **actually delivered** per REQ-API-026/075 — never a higher level some individual pair would have permitted (`Data_Export_Anonymization_Design.md` §4.3); `pairs_dropped` counts the pairs in scope that contributed nothing for want of a level, so a reader can see a partly refused request; a record-view row (§4) is written **in addition** to this entry for data-API exports only — the table is keyed by the call's token, which a UI export does not have, so its `export` event alone is the trail (REQ-AUD-013).
 
 ### 3.6 Survey events (REQ-AUD-021)
 

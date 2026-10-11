@@ -2,9 +2,11 @@ package admin
 
 // GET /api/v1/projects/{id}/export (API_Endpoints_Design.md §4.14,
 // REQ-API-075/076): the UI-surface export of the shared sensitivity pipeline
-// (dataapi.streamExport). Unknown query parameters are accepted and ignored
-// (REQ-API-017); every successful call is audited as an `export` event with
-// surface "ui" (§3.5), rejections carry no audit row (REQ-AUD-004).
+// (dataapi.streamExport), so sensitivity follows the same per-(instrument,
+// event) resolution as the data API's own export. Unknown query parameters are
+// accepted and ignored (REQ-API-017); every successful call is audited as an
+// `export` event with surface "ui" (§3.5), rejections carry no audit row
+// (REQ-AUD-004).
 
 import (
 	"net/http"
@@ -12,7 +14,6 @@ import (
 	"strings"
 
 	"csms/api/internal/audit"
-	"csms/api/internal/authz"
 	"csms/api/internal/dataapi"
 )
 
@@ -62,9 +63,12 @@ func (h *Handler) exportProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Candidate arms (§4.14): the arm= parameters, or — when none is given —
-	// every arm the caller may export. An unknown arm number is 404; an arm
-	// the caller cannot export is 403. Both answer without an audit row
-	// (REQ-AUD-004), and neither discloses more than the uniform shape.
+	// every arm of the project. Which of them contributes is a per-pair question
+	// the exporter answers from the dictionary (Data_Export_Design.md §4.3), so
+	// an arm holding no permitted pair simply adds no columns and the call is
+	// refused only when its whole scope holds none. An unknown arm number is 404;
+	// both answer without an audit row (REQ-AUD-004), and neither discloses more
+	// than the uniform shape.
 	arms, err := h.Store.ListArms(ctx, projectID)
 	if err != nil {
 		errInternal(w)
@@ -87,10 +91,6 @@ func (h *Handler) exportProject(w http.ResponseWriter, r *http.Request) {
 				errNotFound(w)
 				return
 			}
-			if authz.ExportRank(lv.ExportFor(n)) == 0 {
-				errForbidden(w)
-				return
-			}
 			if !seen[n] {
 				seen[n] = true
 				candidates = append(candidates, n)
@@ -98,23 +98,7 @@ func (h *Handler) exportProject(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		for _, a := range arms {
-			if authz.ExportRank(lv.ExportFor(a.ArmNum)) > 0 {
-				candidates = append(candidates, a.ArmNum)
-			}
-		}
-	}
-	if len(candidates) == 0 {
-		errForbidden(w) // export_none on every arm — nothing may be exported
-		return
-	}
-
-	// The applied level is the lowest among the candidate arms (D-4): every
-	// row is delivered at a level no weaker than any arm allows, and this
-	// exact minimum is what the audit event records.
-	level := authz.ExportRank(lv.ExportFor(candidates[0]))
-	for _, n := range candidates[1:] {
-		if rk := authz.ExportRank(lv.ExportFor(n)); rk < level {
-			level = rk
+			candidates = append(candidates, a.ArmNum)
 		}
 	}
 
@@ -157,18 +141,34 @@ func (h *Handler) exportProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.Data.RunExport(w, r, dataapi.ExportSpec{
-		ProjectID:         projectID,
-		User:              u,
-		Surface:           audit.SourceUI,
-		Level:             level,
-		Arms:              candidates,
-		Events:            eventNames,
-		RestrictEvents:    true,
-		GroupID:           groupID,
+		ProjectID:      projectID,
+		User:           u,
+		Surface:        audit.SourceUI,
+		Arms:           candidates,
+		Events:         eventNames,
+		RestrictEvents: true,
+		GroupID:        groupID,
+		// Every column at its own pair's level, arm default underneath (GD-2 as
+		// revised, REQ-AUTH-069) — the same resolution the boundary applies to a
+		// write, read out for the export instead of re-derived here.
+		PairExport: func(eventID int64, armNum int, instrumentID int64) int {
+			return lv.PairOrArmDefault(eventID, instrumentID, armNum).ExportRankOf()
+		},
 		RawOrLabel:        q.Get("rawOrLabel"),
 		RawOrLabelHeaders: q.Get("rawOrLabelHeaders"),
 		Enc:               format,
 		Delimiter:         delimiter,
-		Error:             func(w http.ResponseWriter, _ int, _ string) { errInternal(w) },
+		// The pipeline's status, rendered in this surface's envelope (§4.2): a
+		// scope with no permitted pair is the uniform 403, never a server error.
+		Error: func(w http.ResponseWriter, status int, message string) {
+			switch status {
+			case http.StatusForbidden:
+				errForbidden(w)
+			case http.StatusBadRequest:
+				errBadRequest(w, message)
+			default:
+				errInternal(w)
+			}
+		},
 	})
 }

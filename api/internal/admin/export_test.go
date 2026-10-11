@@ -1,10 +1,10 @@
 package admin
 
-// The UI-surface export of §4.14 (REQ-API-075/076): candidate-arm resolution
-// and the lowest-wins sensitivity (D-4), arm validation, DAG scoping, the
-// label axes, and the audit event with surface "ui". The rendering pipeline
-// itself is covered by the data API tests; these exercise the administration
-// boundary around it.
+// The UI-surface export of §4.14 (REQ-API-075/076): arm scope resolution and the
+// per-(instrument, event) sensitivity of §4.3 that replaces the old lowest-wins
+// rule, arm validation, DAG scoping, the label axes, and the audit event with
+// surface "ui". The rendering pipeline itself is covered by the data API tests;
+// these exercise the administration boundary around it.
 
 import (
 	"context"
@@ -26,6 +26,10 @@ type exportFixture struct {
 	pid    int64
 	groupA int64 // data access groups for the DAG scoping test
 	groupB int64
+	// The two events' ids: pair grants address (event, instrument) (REQ-DB-040).
+	evBaseline int64
+	evVisit    int64
+	demoID     int64 // re-stated when addInstrument rewrites the arm's mapping
 }
 
 func newExportFixture(t *testing.T) *exportFixture {
@@ -106,7 +110,73 @@ func newExportFixture(t *testing.T) *exportFixture {
 	seed("REC-001", "baseline_arm_1", groupA)
 	seed("REC-002", "visit_arm_2", groupB)
 
-	return &exportFixture{e: e, pid: pid, groupA: groupA, groupB: groupB}
+	return &exportFixture{e: e, pid: pid, groupA: groupA, groupB: groupB,
+		evBaseline: ev1, evVisit: ev2, demoID: demoID}
+}
+
+// addInstrument maps a second instrument onto baseline_arm_1 with one free-text
+// field and one personal-information field, and returns its id. The mapping call
+// replaces the arm's whole list, so demo's own mapping is re-stated with it.
+func (f *exportFixture) addInstrument(t *testing.T, name string, position int) int64 {
+	t.Helper()
+	ctx := context.Background()
+	id, err := f.e.Store.AddInstrument(ctx, &db.Instrument{ProjectID: f.pid, Name: name, Position: position})
+	if err != nil {
+		t.Fatalf("AddInstrument %s: %v", name, err)
+	}
+	for _, fld := range []db.Field{
+		{FieldName: "b_note", FieldType: "text"}, // free text, not export-approved
+		{FieldName: "b_secret", FieldType: "text", PersonalInformation: true},
+	} {
+		fld.ProjectID, fld.InstrumentID = f.pid, id
+		if _, err := f.e.Store.AddField(ctx, &fld); err != nil {
+			t.Fatalf("AddField %s: %v", fld.FieldName, err)
+		}
+	}
+	if err := f.e.Store.SetInstrumentEventsForArm(ctx, f.pid, f.armOf(t, 1), []db.InstrumentEvent{
+		{InstrumentID: f.demoID, EventID: f.evBaseline},
+		{InstrumentID: id, EventID: f.evBaseline},
+	}); err != nil {
+		t.Fatalf("map %s: %v", name, err)
+	}
+	return id
+}
+
+// armOf reads the arm id behind an arm number.
+func (f *exportFixture) armOf(t *testing.T, armNum int) int64 {
+	t.Helper()
+	var id int64
+	if err := f.e.Store.DB.QueryRow(
+		`SELECT id FROM arms WHERE project_id = ? AND arm_num = ?`, f.pid, armNum).Scan(&id); err != nil {
+		t.Fatalf("arm %d: %v", armNum, err)
+	}
+	return id
+}
+
+// seedValues stores values on an existing record at one event — the per-instrument
+// fields a pair-grant test needs beside the fixture's own seeded row.
+func (f *exportFixture) seedValues(t *testing.T, recordID, event string, values map[string]string) {
+	t.Helper()
+	ctx := context.Background()
+	for field, value := range values {
+		if err := f.e.Store.UpsertDataValue(ctx, &db.DataValue{
+			ProjectID: f.pid, RecordID: recordID, UniqueEventName: event,
+			FieldName: field, Value: value,
+		}); err != nil {
+			t.Fatalf("seed %s.%s: %v", event, field, err)
+		}
+	}
+}
+
+// roleWithGrants creates a role with arm defaults and per-(instrument, event)
+// overrides — the shape REQ-AUTH-069 holds the permission at.
+func (f *exportFixture) roleWithGrants(t *testing.T, name string, arms []db.RoleArm, grants []db.RoleGrant) int64 {
+	t.Helper()
+	id, err := f.e.Store.CreateRole(context.Background(), &db.Role{ProjectID: f.pid, RoleName: name}, arms, grants)
+	if err != nil {
+		t.Fatalf("CreateRole %s: %v", name, err)
+	}
+	return id
 }
 
 // member inserts a user with an assignment on the fixture project.
@@ -250,51 +320,75 @@ func TestExportJSONFormat(t *testing.T) {
 	}
 }
 
-func TestExportArmLevelsLowestWins(t *testing.T) {
+// TestExportArmScopeCarriesPerPairLevels is the arm-scope half of the per-pair
+// model (Data_Export_Design.md §4.3, D-4 revised): `arm=` selects scope, and each
+// pair inside it renders at its own level. The union of columns appears — one file
+// holding arm 1's untransformed free text beside arm 2's hashed value is the normal
+// case — and the audit records the most protective level among the pairs delivered.
+func TestExportArmScopeCarriesPerPairLevels(t *testing.T) {
 	f := newExportFixture(t)
 	roleID := f.role(t, "mixed",
 		db.RoleArm{ArmNum: 1, DataAccessLevel: "read_only", ExportLevel: "export_no_identifiers"},
 		db.RoleArm{ArmNum: 2, DataAccessLevel: "read_only", ExportLevel: "export_de_identified"})
 	member := f.member(t, "member@example.org", roleID)
 
-	// No arm parameter: every exportable arm is a candidate and the applied
-	// level is the lowest among them (D-4) — de_identified. record_id is a
-	// direct identifier (gone below full), notes is unapproved free text
-	// (gone at de_identified), secret is hashed; both arms' records appear,
-	// each transformed at the applied minimum.
+	// No arm parameter: both arms are in scope. record_id belongs to no pair and
+	// follows the floor (de_identified), so it is gone from the file; notes is
+	// unapproved free text, held at de_identified strength on arm 2 only — so the
+	// column stays (arm 1 delivers it) and arm 2's cell is empty.
 	rec := f.e.do(http.MethodGet, f.path(""), nil, member)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("default export = %d %s, want 200", rec.Code, rec.Body.String())
 	}
 	rows := csvRows(t, rec.Body.String())
-	if headerHas(rows[0], "record_id") || headerHas(rows[0], "notes") {
-		t.Errorf("header = %v, want record_id and notes removed at de_identified", rows[0])
+	if headerHas(rows[0], "record_id") {
+		t.Errorf("header = %v, want record_id gone: the floor is de_identified", rows[0])
+	}
+	if !headerHas(rows[0], "notes") {
+		t.Fatalf("header = %v, want notes present for the pair that permits it", rows[0])
 	}
 	if len(rows) != 3 {
-		t.Fatalf("rows = %v, want both arms' records at the applied minimum", rows)
+		t.Fatalf("rows = %v, want both arms' records", rows)
 	}
-	secretIdx := 0
-	for i, h := range rows[0] {
-		if h == "secret" {
-			secretIdx = i
+	at := func(header string) int {
+		for i, h := range rows[0] {
+			if h == header {
+				return i
+			}
 		}
+		t.Fatalf("no %q column in %v", header, rows[0])
+		return -1
 	}
-	if v := rows[1][secretIdx]; v != "very private" && !isHash(v) {
-		t.Errorf("secret = %q, want the de-identified hash", v)
+	// Row 1 is REC-001 at baseline_arm_1 (no_identifiers), row 2 REC-002 at
+	// visit_arm_2 (de_identified): one column, two treatments.
+	if v := rows[1][at("secret")]; v != "very private" {
+		t.Errorf("arm 1 secret = %q, want the raw value at no_identifiers", v)
+	}
+	if v := rows[2][at("secret")]; !isHash(v) {
+		t.Errorf("arm 2 secret = %q, want the de-identified hash", v)
+	}
+	if v := rows[1][at("notes")]; v != "'=SUM(1)" {
+		t.Errorf("arm 1 notes = %q, want the value its pair permits (neutralised for CSV)", v)
+	}
+	if v := rows[2][at("notes")]; v != "" {
+		t.Errorf("arm 2 notes = %q, want an empty cell where the pair forbids the column", v)
+	}
+	if v := rows[1][at("visit_date")]; v != "2026-05-04" {
+		t.Errorf("arm 1 visit_date = %q, want it unshifted at no_identifiers", v)
+	}
+	if v := rows[2][at("visit_date")]; v == "2026-05-04" || v == "" {
+		t.Errorf("arm 2 visit_date = %q, want the shifted date", v)
 	}
 	if _, d := f.lastExportAudit(t); d["sensitivity"] != "export_de_identified" {
-		t.Errorf("audit sensitivity = %v, want export_de_identified (the applied minimum)", d["sensitivity"])
+		t.Errorf("audit sensitivity = %v, want export_de_identified (the most protective delivered)", d["sensitivity"])
 	}
 
-	// arm=1 alone: no_identifiers — free text survives, direct identifiers
-	// still removed, values untransformed.
+	// arm=1 alone: one pair in scope, so the whole file reads at no_identifiers —
+	// free text survives and no value is transformed.
 	rec = f.e.do(http.MethodGet, f.path("arm=1"), nil, member)
 	rows = csvRows(t, rec.Body.String())
 	if headerHas(rows[0], "record_id") {
 		t.Errorf("header = %v, want record_id removed at no_identifiers", rows[0])
-	}
-	if !headerHas(rows[0], "notes") {
-		t.Errorf("header = %v, want notes present at no_identifiers", rows[0])
 	}
 	if len(rows) != 2 || strings.Contains(rec.Body.String(), "visit_arm_2") {
 		t.Fatalf("rows = %v, want only arm 1's record", rows)
@@ -306,6 +400,159 @@ func TestExportArmLevelsLowestWins(t *testing.T) {
 	}
 	if _, d := f.lastExportAudit(t); d["sensitivity"] != "export_no_identifiers" {
 		t.Errorf("audit sensitivity = %v, want export_no_identifiers", d["sensitivity"])
+	}
+}
+
+// TestExportPairGrantsSideBySide is the headline case of §4.3: two instruments at
+// one event, held at different levels by pair grants (REQ-AUTH-069), delivered in
+// one file — each column transformed at its own pair's level.
+func TestExportPairGrantsSideBySide(t *testing.T) {
+	f := newExportFixture(t)
+	otherID := f.addInstrument(t, "followup", 2)
+	f.seedValues(t, "REC-001", "baseline_arm_1", map[string]string{
+		"b_note":   "free text",
+		"b_secret": "very private",
+	})
+	roleID := f.roleWithGrants(t, "pairwise",
+		[]db.RoleArm{{ArmNum: 1, DataAccessLevel: "view_edit", ExportLevel: "export_full"}},
+		[]db.RoleGrant{{EventID: f.evBaseline, InstrumentID: otherID,
+			DataAccessLevel: "view_edit", ExportLevel: "export_de_identified"}})
+	member := f.member(t, "member@example.org", roleID)
+
+	rec := f.e.do(http.MethodGet, f.path("arm=1"), nil, member)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	rows := csvRows(t, rec.Body.String())
+	if len(rows) != 2 {
+		t.Fatalf("rows = %v, want REC-001's one row", rows)
+	}
+	at := func(header string) int {
+		for i, h := range rows[0] {
+			if h == header {
+				return i
+			}
+		}
+		t.Fatalf("no %q column in %v", header, rows[0])
+		return -1
+	}
+	// The instrument held in full: raw values, unapproved free text included.
+	if v := rows[1][at("secret")]; v != "very private" {
+		t.Errorf("demo.secret = %q, want it raw at export_full", v)
+	}
+	if v := rows[1][at("notes")]; v == "" {
+		t.Error("demo.notes empty, want its free text at export_full")
+	}
+	// The de-identified instrument beside it: personal value hashed, unapproved
+	// free text absent from the file — its only pair forbids it everywhere.
+	if v := rows[1][at("b_secret")]; !isHash(v) {
+		t.Errorf("followup.b_secret = %q, want the hash its own pair applies", v)
+	}
+	if headerHas(rows[0], "b_note") {
+		t.Errorf("header = %v, want b_note absent: its only pair is de_identified", rows[0])
+	}
+	// And the record identifier, belonging to no pair, follows the floor — the
+	// stricter of the two instruments in scope.
+	if headerHas(rows[0], "record_id") {
+		t.Errorf("header = %v, want record_id gone while any pair is below full", rows[0])
+	}
+	if _, d := f.lastExportAudit(t); d["sensitivity"] != "export_de_identified" {
+		t.Errorf("audit sensitivity = %v, want export_de_identified (§4.3)", d["sensitivity"])
+	}
+}
+
+// TestExportDroppedPairKeepsTheRest is the other half of §4.3: a pair at
+// export_none contributes no columns and the request proceeds — it is counted in
+// the audit event, and it lowers no level, because nothing came from it.
+func TestExportDroppedPairKeepsTheRest(t *testing.T) {
+	f := newExportFixture(t)
+	otherID := f.addInstrument(t, "followup", 2)
+	f.seedValues(t, "REC-001", "baseline_arm_1", map[string]string{"b_note": "free text"})
+	roleID := f.roleWithGrants(t, "one-pair-none",
+		[]db.RoleArm{{ArmNum: 1, DataAccessLevel: "view_edit", ExportLevel: "export_full"}},
+		[]db.RoleGrant{{EventID: f.evBaseline, InstrumentID: otherID,
+			DataAccessLevel: "view_edit", ExportLevel: "export_none"}})
+	member := f.member(t, "member@example.org", roleID)
+
+	rec := f.e.do(http.MethodGet, f.path("arm=1"), nil, member)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export = %d %s, want 200: a pair at export_none drops, it does not refuse",
+			rec.Code, rec.Body.String())
+	}
+	rows := csvRows(t, rec.Body.String())
+	for _, h := range rows[0] {
+		if h == "b_note" || h == "b_secret" {
+			t.Errorf("header carries %q, want the dropped pair absent", h)
+		}
+	}
+	if !headerHas(rows[0], "record_id") {
+		t.Errorf("header = %v, want record_id: every delivered pair is export_full", rows[0])
+	}
+	_, d := f.lastExportAudit(t)
+	if d["sensitivity"] != "export_full" {
+		t.Errorf("audit sensitivity = %v, want export_full — a dropped pair lowers no level", d["sensitivity"])
+	}
+	if n, _ := d["pairs_dropped"].(float64); n != 1 {
+		t.Errorf("audit pairs_dropped = %v, want 1 (§4.3)", d["pairs_dropped"])
+	}
+}
+
+// TestExportCompletionStateFollowsPairs reads REQ-API-134 through §4.3: the
+// <instrument>_complete state belongs to the instrument's pair like its values do.
+// A flat row that survives on a permitted pair at its event still leaves the refused
+// pair's completion cell empty — whether that instrument was completed there is not
+// information the refusal leaves in the file.
+func TestExportCompletionStateFollowsPairs(t *testing.T) {
+	f := newExportFixture(t)
+	otherID := f.addInstrument(t, "followup", 2) // maps onto baseline beside demo
+	// Map both instruments onto arm 2's visit event too, so one event can hold a
+	// permitted and a refused pair at once.
+	ctx := context.Background()
+	if err := f.e.Store.SetInstrumentEventsForArm(ctx, f.pid, f.armOf(t, 2), []db.InstrumentEvent{
+		{InstrumentID: f.demoID, EventID: f.evVisit},
+		{InstrumentID: otherID, EventID: f.evVisit},
+	}); err != nil {
+		t.Fatalf("map onto visit: %v", err)
+	}
+	f.seedValues(t, "REC-002", "visit_arm_2", map[string]string{"b_note": "kept"})
+	roleID := f.roleWithGrants(t, "demo-not-at-visit",
+		[]db.RoleArm{
+			{ArmNum: 1, DataAccessLevel: "read_only", ExportLevel: "export_full"},
+			{ArmNum: 2, DataAccessLevel: "read_only", ExportLevel: "export_full"},
+		},
+		[]db.RoleGrant{{EventID: f.evVisit, InstrumentID: f.demoID,
+			DataAccessLevel: "read_only", ExportLevel: "export_none"}})
+	member := f.member(t, "member@example.org", roleID)
+
+	rec := f.e.do(http.MethodGet, f.path(""), nil, member)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("export = %d %s, want 200", rec.Code, rec.Body.String())
+	}
+	rows := csvRows(t, rec.Body.String())
+	if len(rows) != 3 {
+		t.Fatalf("rows = %v, want both records: visit_arm_2 delivers through followup's pair", rows)
+	}
+	completion, seen := -1, 0
+	for i, h := range rows[0] {
+		if h == "demo_complete" {
+			completion, seen = i, seen+1
+		}
+	}
+	if seen != 1 {
+		t.Fatalf("header %v carries %d demo_complete columns, want exactly one (flat)", rows[0], seen)
+	}
+	// REC-001 at baseline_arm_1: the pair permits, so the state is derived as ever —
+	// values without a finished mark.
+	if v := rows[1][completion]; v != "1" {
+		t.Errorf("REC-001 demo_complete = %q, want 1", v)
+	}
+	// REC-002 at visit_arm_2: the row stands on followup's permitted pair; demo's
+	// refused pair contributes nothing, its completion state included.
+	if rows[2][0] != "REC-002" {
+		t.Fatalf("row 2 = %v, want REC-002's", rows[2])
+	}
+	if v := rows[2][completion]; v != "" {
+		t.Errorf("REC-002 demo_complete = %q, want empty: the refused pair discloses no completion state", v)
 	}
 }
 

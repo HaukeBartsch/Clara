@@ -4,10 +4,11 @@ package dataapi
 // REQ-API-012) and the
 // administration export GET /api/v1/projects/{id}/export (§4.14) share one
 // streaming core: row shape flat (normative) or simplified wide (DEV-API-1),
-// the sensitivity pipeline of Data_Export_Anonymization_Design.md §4.2, CSV
-// formula neutralization (§3.3), and the export audit event (§8). Callers
-// resolve authorization — the applied level, candidate arms/events, DAG
-// scope — and hand the result to streamExport as an ExportSpec.
+// the sensitivity pipeline of Data_Export_Anonymization_Design.md §4.2 applied
+// per (instrument, event) pair (§4.3), CSV formula neutralization (§3.3), and
+// the export audit event (§8). Callers resolve authorization — what each pair
+// may be exported at, candidate arms/events, DAG scope — and hand the result to
+// streamExport as an ExportSpec.
 
 import (
 	"encoding/csv"
@@ -23,9 +24,9 @@ import (
 )
 
 // ExportSpec is one fully-resolved export. The caller has made every
-// authorization decision: Level is the applied sensitivity rank (the lowest
-// among Arms, D-4) and must be above none; Events/RestrictEvents bound the
-// candidate events; GroupID applies the data-access-group scope
+// authorization decision it can make without knowing the dictionary: PairExport
+// answers what it may export per (instrument, event) pair, Events/RestrictEvents
+// bound the candidate events, and GroupID applies the data-access-group scope
 // (REQ-API-092). The two surfaces differ only in how they fill this in.
 type ExportSpec struct {
 	ProjectID  int64
@@ -34,9 +35,17 @@ type ExportSpec struct {
 	Surface    string   // audit.SourceAPI | audit.SourceUI (Details["surface"], §3.5)
 	RecordView bool     // write the audit_record_views row when values returned (§4)
 
-	Level  int      // applied export level rank (> expNone), caller-resolved
-	Arms   []int    // candidate arms; exactly one stamps the audit ArmNum
-	Events []string // candidate unique event names (see RestrictEvents)
+	// PairExport reports the acting caller's export level rank for one
+	// (instrument, event) pair — expNone when the pair may contribute nothing.
+	// Sensitivity is held per pair and never as one level for the whole file:
+	// each column carries its own pair's transformation, so one file can hold
+	// export_full values beside hashed ones (REQ-API-026/075,
+	// Data_Export_Design.md §4.3). armNum is the event's arm, consulted only
+	// where the pair carries no grant of its own (REQ-AUTH-069). nil means the
+	// caller may export nothing anywhere, which is a 403 (§4.3).
+	PairExport func(eventID int64, armNum int, instrumentID int64) int
+	Arms       []int    // candidate arms; exactly one stamps the audit ArmNum
+	Events     []string // candidate unique event names (see RestrictEvents)
 	// RestrictEvents filters the dictionary to Events — an explicitly empty
 	// set then exports no rows. Without it, every event is a candidate.
 	RestrictEvents bool
@@ -58,7 +67,10 @@ type ExportSpec struct {
 	Delimiter         rune   // CSV separator; 0 = comma (REQ-EXP-013)
 
 	// Error renders a failure in the surface's own error shape (the data API
-	// speaks §3.2 text, the administration API §4.2 JSON). nil = REDCap text.
+	// speaks §3.2 text, the administration API §4.2 JSON). It receives the status
+	// streamExport decided on — 403 when the scope holds no permitted pair, 400
+	// for a malformed filterLogic, 500 otherwise — so a surface never turns a
+	// refusal into a server error. nil = REDCap text.
 	Error func(w http.ResponseWriter, status int, message string)
 }
 
@@ -90,9 +102,10 @@ func (h *Handler) contentRecordExport(w http.ResponseWriter, r *http.Request, en
 		return
 	}
 
-	// events[] filter; the candidate arms of the exported data decide the
-	// applied level — the lowest among them (D-4). No events filter means
-	// every arm is a candidate.
+	// events[] filter; the candidate arms of the exported data bound the scope.
+	// Sensitivity is no longer computed from them — every column is rendered at
+	// its own pair's level (Data_Export_Design.md §4.3), so the holder travels
+	// into the spec as a per-pair answer instead of as one applied rank.
 	wantEvents := toSet(p.Events)
 	var events []eventRow
 	for _, e := range d.events {
@@ -108,12 +121,6 @@ func (h *Handler) contentRecordExport(w http.ResponseWriter, r *http.Request, en
 			arms = append(arms, e.ArmNum)
 		}
 	}
-	level := sub.appliedExportLevel(arms)
-	if level <= expNone {
-		// export_none answers 403 and writes no audit row (REQ-AUD-004).
-		writeError(w, enc, http.StatusForbidden, "Permission denied")
-		return
-	}
 
 	groupID, err := h.activeGroupID(ctx, sub)
 	if err != nil {
@@ -122,12 +129,14 @@ func (h *Handler) contentRecordExport(w http.ResponseWriter, r *http.Request, en
 	}
 
 	h.streamExport(w, r, d, ExportSpec{
-		ProjectID:         sub.Project.ID,
-		User:              sub.User,
-		Token:             p.Token,
-		Surface:           audit.SourceAPI,
-		RecordView:        true,
-		Level:             level,
+		ProjectID:  sub.Project.ID,
+		User:       sub.User,
+		Token:      p.Token,
+		Surface:    audit.SourceAPI,
+		RecordView: true,
+		PairExport: func(eventID int64, armNum int, instrumentID int64) int {
+			return sub.pairAt(eventID, instrumentID, armNum).ExportRankOf()
+		},
 		Arms:              arms,
 		Events:            p.Events,
 		RestrictEvents:    len(p.Events) > 0,
@@ -169,18 +178,21 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		events = d.events
 	}
 
-	// Columns: value-carrying fields after the forms/fields filters, then
-	// the level's column removals (§4.2 steps 1 and 3 — removed means the
-	// column is absent, not empty). A filter naming a removed column is
-	// silently absent (REQ-API-092): the filter runs first, the level wins.
+	// --- columns, and their sensitivity per (instrument, event) pair (§4.3) ---
+	// The filters run first (a filter naming a column the level would remove is
+	// silently absent — REQ-API-092), then every surviving field is rendered at
+	// the level of *its own* pair: one file carries export_full values beside
+	// hashed ones, and a pair at export_none contributes nothing while the rest
+	// of the request proceeds (REQ-API-026/075).
+	type column struct {
+		f        recField
+		cat      exportCategory
+		dateBrg  bool
+		pairLess bool // the record identifier: belongs to no pair, follows the floor (GD-8)
+	}
 	wantForms := toSet(s.Forms)
 	wantFields := toSet(s.Fields)
-	type column struct {
-		f       recField
-		cat     exportCategory
-		dateBrg bool
-	}
-	var cols []column
+	var wanted []column
 	for _, f := range d.fields {
 		if f.FieldType == "description" || f.FieldType == "header" {
 			continue // carry no values, never appear (§3.2)
@@ -191,14 +203,171 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		if wantFields != nil && !wantFields[f.FieldName] {
 			continue
 		}
-		cat := categorize(f, d.identifier)
-		if s.Level < expFull && cat == catDirectID {
+		wanted = append(wanted, column{
+			f: f, cat: categorize(f, d.identifier), dateBrg: isDateBearing(f.Field),
+			pairLess: f.FieldName == d.identifier,
+		})
+	}
+
+	// mapped reports whether the instrument is mapped to the event: only a
+	// mapped pair exists, so only a mapped pair contributes (the mapping_updated
+	// rule the dashboard follows too).
+	mapped := func(instrID int64, event string) bool {
+		for _, n := range d.instrEvents[instrID] {
+			if n == event {
+				return true
+			}
+		}
+		return false
+	}
+
+	// The candidate pairs are every candidate event × every instrument the
+	// filters left a value column on, over the mapped combinations only. An
+	// event-less project has the single scope event "", which is where its values
+	// are stored and what its pair key uses.
+	type scopeEvent struct {
+		name    string
+		eventID int64
+		armNum  int
+	}
+	scope := make([]scopeEvent, 0, len(events)+1)
+	if d.hasEvents {
+		for _, e := range events {
+			scope = append(scope, scopeEvent{name: e.UniqueEventName, eventID: e.EventID, armNum: e.ArmNum})
+		}
+	} else {
+		scope = append(scope, scopeEvent{})
+	}
+	valueInstrs := map[int64]bool{}
+	for _, c := range wanted {
+		valueInstrs[c.f.InstrumentID] = true
+	}
+
+	pairKey := func(event string, instrID int64) string {
+		return event + "|" + strconv.FormatInt(instrID, 10)
+	}
+	// rankOf answers one pair. floor is the most protective level among the
+	// permitted ones — what the audit event records and what every pair-less
+	// column follows, so nothing leaves the system less protected than the
+	// weakest part of the request (D-4 revised). A pair at export_none is counted
+	// as dropped and lowers no level: it is simply not in the file.
+	rankOf := map[string]int{}
+	// candidatesAt counts the pairs this call could have delivered at each event,
+	// so a row whose every pair was refused can be recognised as one (§4.3).
+	candidatesAt := map[string]int{}
+	floor, permitted, dropped := expFull, 0, 0
+	for _, sc := range scope {
+		for instrID := range valueInstrs {
+			if d.hasEvents && !mapped(instrID, sc.name) {
+				continue
+			}
+			rank := expNone
+			if s.PairExport != nil {
+				rank = s.PairExport(sc.eventID, sc.armNum, instrID)
+			}
+			rankOf[pairKey(sc.name, instrID)] = rank
+			candidatesAt[sc.name]++
+			if rank <= expNone {
+				dropped++
+				continue
+			}
+			permitted++
+			if rank < floor {
+				floor = rank
+			}
+		}
+	}
+	if permitted == 0 && dropped > 0 {
+		// Pairs in scope and none of them exportable: 403, and a rejection writes
+		// nothing to either audit table (REQ-AUD-004).
+		s.fail(w, http.StatusForbidden, "Permission denied")
+		return
+	}
+	if permitted == 0 {
+		// The filters left no pair at all: nothing to disclose and no level to
+		// state, so the value-carrying columns stay out and the floor says so.
+		floor = expNone
+	}
+
+	// visible[i] lists the events where column i appears. A pair that may not
+	// contribute is a missing *slot* in wide layout, where every slot names its
+	// event; flat layout has one header for all events, so a column stays for the
+	// events that permit it and renders empty for the others — how an absent
+	// value already reads (REQ-API-028). A column no candidate event permits is
+	// absent from the file entirely.
+	var cols []column
+	visible := make([]map[string]bool, 0, len(wanted))
+	// deliveredAt counts the columns a given event actually contributes: an event
+	// that had pairs and delivered none is a row of pair-less columns only, and
+	// naming an event the caller may not export from is itself a disclosure. Such a
+	// row is left out (§4.3's "nothing less protected than the weakest part").
+	deliveredAt := map[string]int{}
+	dateShiftNeeded := false
+	// pairLessCols indexes the surviving identifier columns in cols; their slots
+	// are filled once emptied() can say which events the file names at all.
+	var pairLessCols []int
+	for _, c := range wanted {
+		if c.pairLess {
+			// The record identifier belongs to no pair (GD-8), so it follows the
+			// floor: an export holding any restricted pair never ships a raw one.
+			if floor < expFull {
+				continue
+			}
+			pairLessCols = append(pairLessCols, len(cols))
+			visible = append(visible, map[string]bool{})
+			cols = append(cols, c)
 			continue
 		}
-		if s.Level == expDeIdentified && cat == catFreeText && !f.ExportApproved {
+		at := map[string]bool{}
+		for _, sc := range scope {
+			rank, known := rankOf[pairKey(sc.name, c.f.InstrumentID)]
+			if !known || rank <= expNone {
+				continue // no pair at this event, or one that contributes nothing
+			}
+			if rank < expFull && c.cat == catDirectID {
+				continue // identifier field of this pair (§4.2 step 1)
+			}
+			if rank == expDeIdentified && c.cat == catFreeText && !c.f.ExportApproved {
+				continue // unapproved free text at de-identified strength (§4.2 step 3)
+			}
+			if c.dateBrg && rank == expDeIdentified {
+				dateShiftNeeded = true
+			}
+			at[sc.name] = true
+			deliveredAt[sc.name]++
+		}
+		if len(at) == 0 {
 			continue
 		}
-		cols = append(cols, column{f: f, cat: cat, dateBrg: isDateBearing(f.Field)})
+		visible = append(visible, at)
+		cols = append(cols, c)
+	}
+
+	// emptied reports an event whose every candidate pair was refused: there were
+	// pairs in scope and none of them may deliver a column, so the only thing left
+	// to say about it would be that the event exists (see the flat row loop).
+	emptied := func(event string) bool {
+		return candidatesAt[event] > 0 && deliveredAt[event] == 0
+	}
+	// The pair-less slots appear wherever the event itself appears in the file:
+	// a wide record_id_<event> column on an emptied event would name it exactly
+	// like the suppressed flat row did, and flat rows only exist for events that
+	// are not emptied (§4.3).
+	for _, i := range pairLessCols {
+		for _, sc := range scope {
+			if !emptied(sc.name) {
+				visible[i][sc.name] = true
+			}
+		}
+	}
+	// pairRefused reports whether a mapped pair was refused — the question an
+	// <instrument>_complete column asks of its pair (§4.3): the completion state
+	// is one of the columns a refused pair contributes nothing of. An unmapped
+	// combination has no pair to refuse it, and keeps the derived three-state
+	// reading it had before per-pair sensitivity existed.
+	pairRefused := func(event string, instrID int64) bool {
+		rank, known := rankOf[pairKey(event, instrID)]
+		return known && rank <= expNone
 	}
 
 	// Completion columns (REQ-API-134): whole-instrument exports — full or
@@ -242,14 +411,6 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 			}
 			finished[completionKey(c.RecordID, name, c.InstrumentID)] = true
 		}
-	}
-	mapped := func(instrID int64, event string) bool {
-		for _, n := range d.instrEvents[instrID] {
-			if n == event {
-				return true
-			}
-		}
-		return false
 	}
 
 	// Records: visible under the data-access-group rule, intersected with
@@ -351,27 +512,43 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 			instr := instr
 			fieldEvents := d.eventsForInstrument(instr.ID, events)
 			for _, i := range colsOf[instr.ID] {
+				// Wide layout names a slot for one event, so a pair that may not
+				// contribute loses that slot outright — the literal "contributes no
+				// columns" of §4.3. The bare-vs-suffixed naming keeps following the
+				// mapping rather than the permission, so which events an instrument
+				// spans never changes a header a caller parses.
 				if len(fieldEvents) > 1 {
 					for _, e := range fieldEvents {
+						if !visible[i][e.UniqueEventName] {
+							continue
+						}
 						header = append(header, headerOf(cols[i])+"_"+e.UniqueEventName)
 						slots = append(slots, wideSlot{col: i, event: e.UniqueEventName})
 					}
-				} else {
-					// Single-event field: bare name, looked up in that event;
-					// an event-less project keeps the "" (scan) lookup.
-					ev := ""
-					if len(fieldEvents) == 1 {
-						ev = fieldEvents[0].UniqueEventName
-					}
-					header = append(header, headerOf(cols[i]))
-					slots = append(slots, wideSlot{col: i, event: ev})
+					continue
 				}
+				// Single-event field: bare name, looked up in that event; an
+				// event-less project keeps the "" (scan) lookup.
+				ev := ""
+				if len(fieldEvents) == 1 {
+					ev = fieldEvents[0].UniqueEventName
+				}
+				if !visible[i][ev] {
+					continue
+				}
+				header = append(header, headerOf(cols[i]))
+				slots = append(slots, wideSlot{col: i, event: ev})
 			}
 			if !withComplete {
 				continue
 			}
 			if len(fieldEvents) > 1 {
 				for _, e := range fieldEvents {
+					// The completion state belongs to the pair like any other
+					// column: a refused pair loses its slot outright (§4.3).
+					if pairRefused(e.UniqueEventName, instr.ID) {
+						continue
+					}
 					header = append(header, instr.Name+"_complete_"+e.UniqueEventName)
 					slots = append(slots, wideSlot{comp: &instr, event: e.UniqueEventName})
 				}
@@ -453,23 +630,19 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 			continue
 		}
 
-		// De-identified date shift needs the record's persisted offset;
-		// computed lazily only when a date-bearing column survives.
+		// De-identified date shift needs the record's persisted offset. The pass
+		// runs only when a visible column is date-bearing at a pair held at
+		// de-identified strength, so an export that shifts nothing persists nothing.
 		var offsetDays int
 		offsetReady := false
-		if s.Level == expDeIdentified {
-			for _, c := range cols {
-				if c.dateBrg {
-					off, err := db.EnsureAnonOffset(ctx, h.Store, s.ProjectID, id,
-						h.Cfg.AnonSalt, h.Cfg.AnonDateShiftMin, h.Cfg.AnonDateShiftMax)
-					if err != nil {
-						s.fail(w, http.StatusInternalServerError, "Internal error")
-						return
-					}
-					offsetDays, offsetReady = off, true
-					break
-				}
+		if dateShiftNeeded {
+			off, err := db.EnsureAnonOffset(ctx, h.Store, s.ProjectID, id,
+				h.Cfg.AnonSalt, h.Cfg.AnonDateShiftMin, h.Cfg.AnonDateShiftMax)
+			if err != nil {
+				s.fail(w, http.StatusInternalServerError, "Internal error")
+				return
 			}
+			offsetDays, offsetReady = off, true
 		}
 		cell := func(c column, event string) string {
 			v := rv[event][c.f.FieldName]
@@ -487,10 +660,17 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 			if v == "" {
 				return ""
 			}
-			if c.cat == catPersonal && s.Level == expDeIdentified {
+			// The value carries the transformation of its own pair (REQ-API-026):
+			// two instruments in one file, one hashing and one not, is the normal
+			// case rather than something to reconcile.
+			rank, known := rankOf[pairKey(event, c.f.InstrumentID)]
+			if !known && c.pairLess {
+				rank = floor // the record identifier follows the floor (GD-8)
+			}
+			if c.cat == catPersonal && rank == expDeIdentified {
 				v = fieldHash(h.Cfg.AnonSalt, s.ProjectID, c.f.FieldName, v)
 			}
-			if s.Level == expDeIdentified && c.dateBrg && offsetReady {
+			if rank == expDeIdentified && c.dateBrg && offsetReady {
 				v = shiftDatePart(v, offsetDays)
 			}
 			if labelValues && c.f.Choices.String != "" {
@@ -551,7 +731,10 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 			var specs []rowSpec
 			if d.hasEvents {
 				for _, e := range events {
-					if len(rv[e.UniqueEventName]) > 0 {
+					// A row is written for an event that holds data and delivers at
+					// least one permitted column: pairs in scope that all refused
+					// would leave a line naming nothing but the event itself.
+					if len(rv[e.UniqueEventName]) > 0 && !emptied(e.UniqueEventName) {
 						specs = append(specs, rowSpec{event: e.UniqueEventName})
 					}
 				}
@@ -568,7 +751,20 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 				}
 				for _, sl := range slots {
 					if sl.comp != nil {
+						if pairRefused(rs.event, sl.comp.ID) {
+							// This row's pair refuses even its completion state; the cell
+							// reads as an absent value, like a refused value column.
+							cells = append(cells, "")
+							continue
+						}
 						cells = append(cells, completeCell(*sl.comp, rs.event, id))
+						continue
+					}
+					if !visible[sl.col][rs.event] {
+						// This row's pair may not contribute, so the cell reads as an
+						// absent value (REQ-API-028) while the column stays for the
+						// events that do permit it.
+						cells = append(cells, "")
 						continue
 					}
 					cells = append(cells, cell(cols[sl.col], rs.event))
@@ -578,6 +774,9 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 				for _, sl := range slots {
 					if sl.comp != nil {
 						continue // the record-view list stays value-driven
+					}
+					if !visible[sl.col][rs.event] {
+						continue // nothing was delivered from this pair
 					}
 					if cellsValueHasData(cell(cols[sl.col], rs.event)) {
 						instruments[cols[sl.col].f.Instrument] = true
@@ -644,9 +843,13 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		ProjectID: s.ProjectID,
 		ArmNum:    singleArm,
 		Details: map[string]any{
-			"surface":     surface,
-			"sensitivity": exportName(s.Level),
-			"filters":     filters,
+			"surface": surface,
+			// The most protective level among the pairs delivered, plus how many
+			// pairs the request held that were dropped for want of a level — never
+			// a higher level some individual pair would have permitted (§4.3).
+			"sensitivity":   exportName(floor),
+			"pairs_dropped": dropped,
+			"filters":       filters,
 		},
 	}, audit.RecordView{
 		UserID:      s.User.ID,

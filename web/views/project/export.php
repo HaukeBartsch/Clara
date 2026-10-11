@@ -7,8 +7,8 @@
  * selection changes — without it the badge states the level for all arms, which is what the
  * form sends by default.
  *
- * Reads: $exportUrl, $arms (list of {arm_num, name, level}), $level, $formats, $values,
- * $headers, $delimiters.
+ * Reads: $exportUrl, $arms (list of {arm_num, name, level, dropped}), $level, $dropped,
+ * $formats, $values, $headers, $delimiters.
  */
 
 use Clara\View;
@@ -18,9 +18,9 @@ $multiArm = count($arms) > 1;
 <h1 class="h4 mb-3"><?= View::e($view->t('export.title')) ?></h1>
 
 <?php if ($arms === []): ?>
-    <!-- Export rights that exist only as grants on single instruments and events: the export
-         endpoint reads arm defaults alone and would refuse the download (see ExportController). -->
-    <div class="alert alert-secondary py-2 clara-export-pairs-only"><?= View::e($view->t('export.pair_only')) ?></div>
+    <!-- The gate is a non-export_none level anywhere (§6.4); reaching here with no arm to
+         offer means those levels sit on pairs this project's detail does not place. -->
+    <div class="alert alert-secondary py-2 clara-export-none"><?= View::e($view->t('export.none_here')) ?></div>
 <?php else: ?>
     <p class="text-body-secondary small"><?= View::e($view->t('export.intro')) ?></p>
 
@@ -74,7 +74,8 @@ $multiArm = count($arms) > 1;
                         <?php foreach ($arms as $arm): ?>
                             <div class="form-check mb-0">
                                 <input class="form-check-input" type="checkbox" name="arm[]" id="export-arm-<?= (int) $arm['arm_num'] ?>"
-                                       value="<?= (int) $arm['arm_num'] ?>" checked data-clara-export-arm data-level="<?= View::e($arm['level']) ?>">
+                                       value="<?= (int) $arm['arm_num'] ?>" checked data-clara-export-arm
+                                       data-level="<?= View::e($arm['level']) ?>" data-dropped="<?= (int) ($arm['dropped'] ?? 0) ?>">
                                 <label class="form-check-label" for="export-arm-<?= (int) $arm['arm_num'] ?>">
                                     <?= View::e($view->t('roles.arm', ['arm' => (string) $arm['arm_num']]) . ($arm['name'] !== '' ? ' — ' . $arm['name'] : '')) ?>
                                     <span class="text-body-secondary small">(<?= View::e($view->t('export.level.' . $arm['level'])) ?>)</span>
@@ -85,7 +86,10 @@ $multiArm = count($arms) > 1;
                     <div class="form-text"><?= View::e($view->t('export.lowest_rule')) ?></div>
                 </fieldset>
             <?php else: ?>
-                <input type="hidden" name="arm[]" value="<?= (int) $arms[0]['arm_num'] ?>">
+                <!-- One arm: no checkbox to show, but the arm still carries its count of
+                     excluded pairs — every offered arm states it in the DOM. -->
+                <input type="hidden" name="arm[]" value="<?= (int) $arms[0]['arm_num'] ?>"
+                       data-dropped="<?= (int) ($arms[0]['dropped'] ?? 0) ?>">
             <?php endif; ?>
         </div>
 
@@ -95,6 +99,12 @@ $multiArm = count($arms) > 1;
             <span class="badge text-bg-primary" data-clara-export-level data-level="<?= View::e($level) ?>"><?= View::e($view->t('export.level.' . $level)) ?></span>
             <div class="form-text mt-1" data-clara-export-level-help><?= View::e($view->t('export.level_help.' . $level)) ?></div>
         </div>
+
+        <!-- Pairs outside the member's permission appear in no download; a partly permitted
+             scope is stated rather than hidden (§6.4, REQ-UI-020). export.js recounts them
+             over the checked arms, since an unselected arm excludes none. -->
+        <div class="form-text mt-1 clara-export-dropped<?= $dropped > 0 ? '' : ' d-none' ?>"
+             data-clara-export-dropped><?= View::e($dropped > 0 ? $view->t('export.dropped_pairs', ['count' => (string) $dropped]) : '') ?></div>
 
         <div class="alert alert-warning py-2 mt-3 d-none" data-clara-export-no-arm role="alert"><?= View::e($view->t('export.no_arm')) ?></div>
 

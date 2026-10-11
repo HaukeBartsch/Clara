@@ -101,40 +101,6 @@ func (s *subject) pairAt(eventID, instrumentID int64, armNum int) authz.PairLeve
 	return s.Levels.PairOrArmDefault(eventID, instrumentID, armNum)
 }
 
-// appliedExportLevel is the lowest export level among the given arms — the most
-// protective reading of a mixed request. An empty arm list means the project has
-// no arms to check, so the holder's highest level applies (a role-less member or
-// an administrator holds full).
-//
-// OUTSTANDING (§4.3 of Data_Export_Anonymization_Design.md, revised 2026-10-03):
-// sensitivity is now held per (instrument, event) pair, so the normative shape is
-// one file carrying export_full for one instrument next to hashed columns for
-// another, with a pair at export_none contributing no columns instead of failing
-// the call. Until that lands in the exporter, every column of the response is
-// rendered at the strictest level in scope and an unpermitted arm still answers
-// 403 — stricter than entitled, never looser.
-func (s *subject) appliedExportLevel(arms []int) int {
-	if len(arms) == 0 {
-		best := expNone
-		for _, r := range s.Levels.Export {
-			if r2 := authz.ExportRank(r); r2 > best {
-				best = r2
-			}
-		}
-		if s.Levels.Unrestricted {
-			return expFull
-		}
-		return best
-	}
-	best := expFull
-	for _, a := range arms {
-		if r := authz.ExportRank(s.Levels.Export[a]); r < best {
-			best = r
-		}
-	}
-	return best
-}
-
 // canDeleteValues reports whether the holder may clear stored values anywhere in
 // the project at all. The right is held per (instrument, event) pair
 // (REQ-AUTH-018), so this is only the cheap upfront no — the per-record gate of

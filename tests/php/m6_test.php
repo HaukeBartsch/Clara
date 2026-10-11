@@ -142,24 +142,44 @@ describe('export page (§6.4, REQ-UI-020)', function (): void {
         $body = m6_get('/projects/3/export')->body();
 
         assert_not_contains('export-arm-2', $body);
-        assert_contains('<input type="hidden" name="arm[]" value="1">', $body);
+        assert_contains('<input type="hidden" name="arm[]" value="1"', $body);
+        assert_contains('data-dropped="0"', $body, 'an arm with no pairs of its own excludes nothing');
         assert_contains('Identifiers removed', $body);
     });
 
-    it('refuses a member with no export level anywhere, and says so when only pair grants export', function (): void {
+    it('refuses a member with no export level anywhere, and reads a pair grant as the right it is', function (): void {
         sign_in();
         m6_queue(m6_detail([1 => ['view_edit', 'export_none']]));
         assert_contains('You do not have permission', m6_get('/projects/3/export')->body());
 
         resetApi();
-        // Export rights only as a pair grant: the export endpoint reads arm defaults alone, so the
-        // page states the gap instead of offering a download the API would refuse.
+        // Export rights held only as a pair grant (REQ-AUTH-069): that is an export right like
+        // any other, so the page offers the download at the level of the pairs it can deliver.
         m6_queue(m6_detail([1 => ['view_edit', 'export_none']], [[
             'unique_event_name' => 'baseline_arm_1', 'instrument' => 'intake', 'data_access_level' => 'view_edit',
             'export_level' => 'export_full', 'delete_values' => false, 'edit_surveys' => false]]));
         $body = m6_get('/projects/3/export')->body();
-        assert_contains('clara-export-pairs-only', $body);
-        assert_not_contains('data-clara-export-form', $body);
+        assert_contains('data-clara-export-form', $body);
+        assert_contains('data-clara-export-level data-level="export_full"', $body);
+        assert_contains('Full dataset', $body);
+    });
+
+    it('states the pairs a download leaves out for want of a permission (§6.4, REQ-UI-020)', function (): void {
+        sign_in();
+        m6_queue(m6_detail([1 => ['view_edit', 'export_full']], [
+            ['unique_event_name' => 'baseline_arm_1', 'instrument' => 'intake', 'data_access_level' => 'view_edit',
+                'export_level' => 'export_full', 'delete_values' => false, 'edit_surveys' => false],
+            ['unique_event_name' => 'baseline_arm_1', 'instrument' => 'unsponsored', 'data_access_level' => 'view_edit',
+                'export_level' => 'export_none', 'delete_values' => false, 'edit_surveys' => false],
+        ]));
+
+        $body = m6_get('/projects/3/export')->body();
+
+        // The permitted pair sets the stated level; the refused one lowers nothing and is counted.
+        assert_contains('data-clara-export-level data-level="export_full"', $body);
+        assert_contains('clara-export-dropped', $body);
+        assert_contains('Not included, whatever you select: 1', $body);
+        assert_contains('data-dropped="1"', $body, 'the client recounts it against the arm selection');
     });
 });
 
