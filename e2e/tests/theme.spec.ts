@@ -34,21 +34,25 @@ function contrastRatio(fg: string, bg: string): number {
 async function selectTheme(page: Page, value: string): Promise<void> {
   await page.selectOption("#clara-theme", value)
   await page.locator('form[action="/theme"] button[type="submit"]').click()
-  await expect(page).toHaveURL(/\/$/)
+  // Redirects back to `next`, so assert on the selector itself rather than a URL.
+  await expect(page.locator("#clara-theme")).toHaveValue(value)
 }
 
 test.describe("theme selector (REQ-UI-040)", () => {
   test.skip(!process.env.CLARA_WEB_URL, "CLARA_WEB_URL not set — no running web/ application to drive")
 
-  test("the navbar brand stays legible in every installed theme", async ({ page }) => {
-    await signInAsAdmin(page)
-
+  async function themeOptions(page: Page): Promise<string[]> {
     const options = await page.locator("#clara-theme option").evaluateAll((els) =>
       els.map((el) => el.getAttribute("value")).filter((v): v is string => v !== null),
     )
     expect(options.length).toBeGreaterThan(1) // "default" plus the installed themes
+    return options
+  }
 
-    for (const value of options) {
+  test("the navbar brand stays legible in every installed theme", async ({ page }) => {
+    await signInAsAdmin(page)
+
+    for (const value of await themeOptions(page)) {
       await selectTheme(page, value)
       const brand = page.locator(".navbar-brand")
       await expect(brand).toHaveText("CLARA")
@@ -58,6 +62,34 @@ test.describe("theme selector (REQ-UI-040)", () => {
       }))
       // 4.5:1 is the WCAG AA bar for normal text; the brand is larger than that already.
       expect(contrastRatio(colors.color, colors.bodyBg), `theme ${value}: ${colors.color} on ${colors.bodyBg}`).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+
+  // Darkly compiles its component palette behind [data-bs-theme=dark]; if <html> does not
+  // declare the scheme, --bs-tertiary-bg stays light and the hover highlight turns the
+  // white sidebar text white-on-white.
+  test("sidebar links stay legible while hovered in every installed theme", async ({ page }) => {
+    await signInAsAdmin(page)
+    // The home page has no section panel; Control Panel always renders the sidebar.
+    await page.goto("/admin")
+    await expect(page.locator("#clara-nav .nav-link").first()).toBeVisible()
+
+    for (const value of await themeOptions(page)) {
+      await selectTheme(page, value)
+      const link = page.locator("#clara-nav .nav-link:not(.active)").first()
+      await expect(link).toBeVisible()
+      await link.hover()
+      // .nav-link transitions color and background over .15s; sampling mid-transition
+      // reads a partially faded highlight, so let it settle first.
+      await page.waitForTimeout(300)
+      const colors = await link.evaluate((el) => ({
+        color: getComputedStyle(el).color,
+        bg: getComputedStyle(el).backgroundColor,
+      }))
+      // The hover rule paints an opaque background; a transparent one would measure as
+      // invisible-on-invisible rather than the bug, so assert it changed first.
+      expect(colors.bg, `theme ${value}: hover painted no background`).not.toContain("rgba(0, 0, 0, 0)")
+      expect(contrastRatio(colors.color, colors.bg), `theme ${value} hover: ${colors.color} on ${colors.bg}`).toBeGreaterThanOrEqual(4.5)
     }
   })
 })

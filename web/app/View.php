@@ -162,12 +162,29 @@ final class View
      */
     public function stylesheetHref(): string
     {
+        return Config::themeHref($this->resolvedTheme());
+    }
+
+    /**
+     * The Bootstrap color scheme of the resolved theme, emitted as data-bs-theme on
+     * <html>: dark Bootswatch themes keep their component palette behind
+     * [data-bs-theme=dark] selectors, so without the declaration subtle backgrounds
+     * stay light and dark-on-light text turns invisible on hover (REQ-UI-040).
+     */
+    public function colorScheme(): string
+    {
+        return Config::THEME_COLOR_SCHEMES[$this->resolvedTheme()] ?? 'light';
+    }
+
+    /** The one theme both the stylesheet href and the color scheme resolve from. */
+    private function resolvedTheme(): string
+    {
         $theme = $this->isAuthenticated() ? Session::uiThemeOverride() : null;
         if ($theme === null || !Config::themeIsInstalled($theme)) {
             $theme = $this->config->uiTheme;
         }
 
-        return Config::themeHref($theme);
+        return $theme;
     }
 
     /** The installation default, for the selector's "Default" entry. */

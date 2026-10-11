@@ -24,6 +24,14 @@ final class Config
     /** Installed theme identifiers (REQ-TECH-027) — mirrors config.UIThemes in Go. */
     public const THEME_INSTALL_ORDER = ['bootstrap', 'darkly', 'yeti'];
 
+    /**
+     * Color scheme each installed theme compiles for (REQ-UI-040). A dark Bootswatch
+     * theme carries its component palette — subtle backgrounds, emphasis, form controls —
+     * under [data-bs-theme=dark] selectors while its :root keeps the light values, so the
+     * <html> element must declare the scheme or those variables never flip.
+     */
+    public const THEME_COLOR_SCHEMES = ['bootstrap' => 'light', 'darkly' => 'dark', 'yeti' => 'light'];
+
     /** How many indexed OAuth2 providers / LDAP servers the variable set allows (`OAUTH2_1…3`). */
     private const SOURCE_INDEX_MAX = 3;
 

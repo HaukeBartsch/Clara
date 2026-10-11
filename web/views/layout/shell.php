@@ -41,7 +41,7 @@ if ($navItems === []) {
 $controlPanel = $view->isAdmin() && Navigation::controlPanelExists();
 ?>
 <!doctype html>
-<html lang="<?= View::e($view->currentLanguage()) ?>">
+<html lang="<?= View::e($view->currentLanguage()) ?>" data-bs-theme="<?= View::e($view->colorScheme()) ?>">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
