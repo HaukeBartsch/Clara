@@ -266,11 +266,36 @@ describe('Record Status Dashboard (§6.3, REQ-UI-019)', function (): void {
 
         assert_same(200, $response->status());
         $payload = json_decode($response->body(), true);
-        assert_same([['record_id' => '8DISC001', 'cells' => [
+        assert_same([['record_id' => '8DISC001', 'events' => ['baseline_arm_1', 'follow_up_arm_1'], 'cells' => [
             'baseline_arm_1|intake' => 'some_data',
             'baseline_arm_1|scores' => 'finished',
             'follow_up_arm_1|intake' => 'no_data', // an unknown state never reaches the client
         ]]], $payload['records']);
+    });
+
+    it('relays the sparse read: reported events without cells, an empty cell map (REQ-API-149)', function (): void {
+        sign_in();
+        m5_queue(status: [
+            ['record_id' => '8DISC001', 'events' => [
+                ['unique_event_name' => 'baseline_arm_1', 'instruments' => [['name' => 'intake', 'state' => 'some_data']]],
+                ['unique_event_name' => 'follow_up_arm_1', 'instruments' => []],
+            ]],
+            ['record_id' => '8DISC002', 'events' => [
+                ['unique_event_name' => 'baseline_arm_1', 'instruments' => []],
+            ]],
+        ]);
+
+        $response = m5_get('/projects/3/record-status', [], json_headers());
+
+        assert_same(200, $response->status());
+        // The cell map stays a JSON object even when empty — the client indexes it by key.
+        assert_contains('"cells":{}', $response->body());
+        $payload = json_decode($response->body(), true);
+        assert_same([
+            ['record_id' => '8DISC001', 'events' => ['baseline_arm_1', 'follow_up_arm_1'],
+                'cells' => ['baseline_arm_1|intake' => 'some_data']],
+            ['record_id' => '8DISC002', 'events' => ['baseline_arm_1'], 'cells' => []],
+        ], $payload['records']);
     });
 
     it('opens the record view on a valid new name and keeps an invalid one in the field', function (): void {

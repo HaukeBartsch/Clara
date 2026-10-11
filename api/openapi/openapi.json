@@ -1009,11 +1009,11 @@
       "get": {
         "tags": ["Admin: Records"],
         "operationId": "getRecordStatus",
-        "summary": "Record status dashboard (REQ-API-074)",
-        "description": "Data access ≥ `read_only` + record visibility (REQ-AUTH-045). All visible records, with their instruments per event in the instrument order of each arm and a three-state completion state per (record, event, instrument): only `finished` is stored; `no_data`/`some_data` are computed per row. A survey-marked instrument always reports `finished` (GD-9). The response MUST NOT contain field values; a record-status read is not a record view.",
+        "summary": "Record status dashboard (REQ-API-074, REQ-API-149)",
+        "description": "Data access ≥ `read_only` + record visibility (REQ-AUTH-045). All visible records, with their instruments per event in the instrument order of each arm and a three-state completion state per (record, event, instrument): only `finished` is stored; `no_data`/`some_data` are computed per row. A survey-marked instrument always reports `finished` (GD-9). Sparse (REQ-API-149): every visible record and every readable event with a mapped instrument is listed, but an event lists only the instruments whose state is not `no_data` (possibly none) — a mapped instrument absent from a listed event is `no_data`; an event absent from a record is not reported. The response MUST NOT contain field values; a record-status read is not a record view.",
         "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
         "responses": {
-          "200": { "description": "The status grid.", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/RecordStatus" } }, "example": [ { "record_id": "8DISC042", "events": [ { "unique_event_name": "baseline_arm_1", "instruments": [ { "name": "intake", "state": "finished" }, { "name": "scores", "state": "some_data" }, { "name": "labs", "state": "no_data" } ] } ] } ] } } },
+          "200": { "description": "The status grid.", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/RecordStatus" } }, "example": [ { "record_id": "8DISC042", "events": [ { "unique_event_name": "baseline_arm_1", "instruments": [ { "name": "intake", "state": "finished" }, { "name": "scores", "state": "some_data" } ] }, { "unique_event_name": "week_4_arm_1", "instruments": [] } ] } ] } } },
           "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
           "403": { "$ref": "#/components/responses/AdminForbidden" },
           "404": { "$ref": "#/components/responses/NotFound" }
@@ -2069,7 +2069,7 @@
         "required": ["record_id", "events"],
         "properties": {
           "record_id": { "type": "string" },
-          "events": { "type": "array", "items": { "type": "object", "required": ["unique_event_name", "instruments"], "properties": { "unique_event_name": { "type": "string" }, "instruments": { "type": "array", "items": { "type": "object", "required": ["name", "state"], "properties": { "name": { "type": "string" }, "state": { "type": "string", "enum": ["no_data", "some_data", "finished"] } } } } } } }
+          "events": { "type": "array", "items": { "type": "object", "required": ["unique_event_name", "instruments"], "properties": { "unique_event_name": { "type": "string" }, "instruments": { "type": "array", "description": "Only the cells that are not `no_data` (REQ-API-149); a mapped instrument absent here is `no_data`.", "items": { "type": "object", "required": ["name", "state"], "properties": { "name": { "type": "string" }, "state": { "type": "string", "enum": ["some_data", "finished"] } } } } } } }
         }
       },
       "AuditPage": {

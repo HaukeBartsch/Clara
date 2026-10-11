@@ -27,16 +27,18 @@ func (h *Handler) registerQueries(mux *http.ServeMux) {
 // --- GET /api/v1/projects/{id}/record-status (§4.13, REQ-API-074) ---
 
 // recordStatusInstrument is one (record, event, instrument) cell of the
-// dashboard: three states, no values (REQ-API-074). state is no_data or
-// some_data as derived from the stored values, or finished when the user
-// assigned it (§4.13, REQ-DB-036).
+// dashboard: three states, no values (REQ-API-074). state is some_data as
+// derived from the stored values, or finished when the user assigned it
+// (§4.13, REQ-DB-036); no_data cells are not listed (REQ-API-149).
 type recordStatusInstrument struct {
 	Name  string `json:"name"`
 	State string `json:"state"`
 }
 
-// recordStatusEvent is one event with its mapped instruments in the
-// instrument order of the arm (§4.13 shape).
+// recordStatusEvent is one event with the mapped instruments that hold a
+// state other than no_data, in the instrument order of the arm (§4.13 shape,
+// REQ-API-149). An event is listed whenever it has a mapped instrument, so an
+// empty list says "nothing here yet" rather than "not reported".
 type recordStatusEvent struct {
 	UniqueEventName string                   `json:"unique_event_name"`
 	Instruments     []recordStatusInstrument `json:"instruments"`
@@ -51,10 +53,12 @@ type recordStatusRow struct {
 // recordStatus returns all records visible to the acting user under the DAG
 // rule (REQ-AUTH-045) with a three-state completion state per (record, event,
 // instrument) — no_data / some_data derived, finished stored
-// (REQ-API-074, REQ-DB-036). Requires data access ≥ read_only + project
-// visibility; events
-// of arms without read access are omitted (GD-2). A record-status read is not
-// a record view — no audit row is written (§4.13, ASM-AUD-2).
+// (REQ-API-074, REQ-DB-036). The answer is sparse (REQ-API-149): no_data
+// cells are left out, because the dense matrix grows with records × events ×
+// mapped instruments however little data exists. Requires data access ≥
+// read_only + project visibility; events of arms without read access are
+// omitted (GD-2). A record-status read is not a record view — no audit row is
+// written (§4.13, ASM-AUD-2).
 func (h *Handler) recordStatus(w http.ResponseWriter, r *http.Request) {
 	u, ok := actor(r)
 	if !ok {
@@ -198,11 +202,13 @@ func (h *Handler) recordStatus(w http.ResponseWriter, r *http.Request) {
 				continue // events of inaccessible arms are not disclosed (GD-2)
 			}
 			for _, ev := range eventsByArm[a.ArmNum] {
-				var instrs []recordStatusInstrument
+				instrs := []recordStatusInstrument{}
+				anyMapped := false
 				for _, in := range instruments { // instrument order (position)
 					if !mapped[ev.ID][in.ID] {
 						continue
 					}
+					anyMapped = true
 					// Derived first, then overridden by the user's assignment:
 					// finished wins over both, never the other way round, so
 					// the badge cannot claim less than the data shows and
@@ -217,11 +223,14 @@ func (h *Handler) recordStatus(w http.ResponseWriter, r *http.Request) {
 					if in.IsSurvey || finished[storedKey{re.RecordID, ev.ID, in.ID}] {
 						state = StateFinished
 					}
+					if state == StateNoData {
+						continue // the listed event already says it (REQ-API-149)
+					}
 					instrs = append(instrs, recordStatusInstrument{
 						Name: in.Name, State: state,
 					})
 				}
-				if len(instrs) == 0 {
+				if !anyMapped {
 					continue // events without mapped instruments carry no state
 				}
 				row.Events = append(row.Events, recordStatusEvent{

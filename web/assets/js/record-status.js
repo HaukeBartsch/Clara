@@ -23,8 +23,8 @@ const recordLink = (base, record, column) =>
 
 function cell(base, record, column, state) {
   if (state === undefined) {
-    // The pair is not part of this record's status (an arm the record has no data in, or a
-    // pair the API did not report): an empty cell rather than a claim about it.
+    // The event was not reported for this record (an arm the API did not disclose): an
+    // empty cell rather than a claim about it.
     return td("", "text-center")
   }
   const safe = STATES.includes(state) ? state : "no_data"
@@ -40,10 +40,16 @@ function cell(base, record, column, state) {
   return el("td", { class: "text-center", dataset: { state: safe } }, link)
 }
 
+// The region is sparse (REQ-API-149): a reported event lists only the cells that hold
+// something, so a column of a reported event without a cell is no data.
+const stateOf = (cells, reported, column) =>
+  cells[column.key] ?? (reported.has(column.event) ? "no_data" : undefined)
+
 function row(base, columns, record) {
   const name = el("th", { scope: "row", class: "fw-normal text-nowrap" }, el("a", { href: recordLink(base, record.record_id) }, record.record_id))
   const cells = record.cells || {}
-  return el("tr", { dataset: { record: record.record_id } }, [name, ...columns.map((column) => cell(base, record.record_id, column, cells[column.key]))])
+  const reported = new Set(record.events || [])
+  return el("tr", { dataset: { record: record.record_id } }, [name, ...columns.map((column) => cell(base, record.record_id, column, stateOf(cells, reported, column)))])
 }
 
 function failed(body, span, retry) {

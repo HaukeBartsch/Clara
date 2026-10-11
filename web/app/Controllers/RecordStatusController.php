@@ -95,10 +95,12 @@ final class RecordStatusController extends DataEntryController
     }
 
     /**
-     * The `records` data region (REQ-UI-044): one row per visible record, each cell keyed
-     * `<unique_event_name>|<instrument name>` with its three-state completion. Authorized
-     * like the page — the same detail read and data-access gate — and disclosing exactly
-     * what the API's record-status read does: names and states, no values (REQ-API-074).
+     * The `records` data region (REQ-UI-044): one row per visible record with the events the
+     * API reported for it and the cells that hold a state other than no data, keyed
+     * `<unique_event_name>|<instrument name>` — sparse like the read it relays (REQ-API-149),
+     * so a project's size in pairs never multiplies into the payload. Authorized like the
+     * page — the same detail read and data-access gate — and disclosing exactly what the
+     * API's record-status read does: names and states, no values (REQ-API-074).
      */
     public function data(): Response
     {
@@ -111,16 +113,18 @@ final class RecordStatusController extends DataEntryController
             if (!is_array($row) || !isset($row['record_id'])) {
                 continue;
             }
+            $events = [];
             $cells = [];
             foreach ((is_array($row['events'] ?? null) ? $row['events'] : []) as $event) {
                 $uen = (string) ($event['unique_event_name'] ?? '');
+                $events[] = $uen;
                 foreach ((is_array($event['instruments'] ?? null) ? $event['instruments'] : []) as $instrument) {
                     $state = (string) ($instrument['state'] ?? '');
                     $cells[$uen . '|' . (string) ($instrument['name'] ?? '')] =
                         in_array($state, DataEntry::STATES, true) ? $state : 'no_data';
                 }
             }
-            $records[] = ['record_id' => (string) $row['record_id'], 'cells' => (object) $cells];
+            $records[] = ['record_id' => (string) $row['record_id'], 'events' => $events, 'cells' => (object) $cells];
         }
 
         return Response::json(['records' => $records]);

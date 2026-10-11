@@ -717,19 +717,25 @@ Each array lists the events an instrument is mapped to; an empty array = mapped 
 
 An instrument is active for data entry once it is mapped to at least one event (REQ-DB-012). **Unmapping never deletes anything:** the pair's `data` rows and its `instrument_completion` rows stay in place (REQ-DB-036 creates none while the pair is unmapped, and removes none), and they become visible again — in the form, on the record-status dashboard, and in exports — as soon as the pair is mapped back. Unmapping a pair that holds values is therefore non-breaking and needs no acknowledgement in any mode (§4.21). 200. Audit `mapping_updated`.
 
-### 4.13 Record status (REQ-API-074, REQ-API-110)
+### 4.13 Record status (REQ-API-074, REQ-API-110, REQ-API-149)
 
-**`GET /api/v1/projects/{id}/record-status`** — data access ≥ `read_only` + record visibility (REQ-AUTH-045). 200 — all visible records, with their instruments per event in the instrument order of each arm and a **three-state** completion state per (record, event, instrument):
+**`GET /api/v1/projects/{id}/record-status`** — data access ≥ `read_only` + record visibility (REQ-AUTH-045). 200 — all visible records, with their instruments per event in the instrument order of each arm and a **three-state** completion state per (record, event, instrument), listed **sparsely** (REQ-API-149, DEV-API-26):
 
 ```json
 [ { "record_id": "8DISC042",
     "events": [ { "unique_event_name": "baseline_arm_1",
                   "instruments": [ { "name": "intake", "state": "finished" },
-                                   { "name": "scores", "state": "some_data" },
-                                   { "name": "labs",   "state": "no_data" } ] } ] } ]
+                                   { "name": "scores", "state": "some_data" } ] },
+                { "unique_event_name": "week_4_arm_1",
+                  "instruments": [] } ] },
+  { "record_id": "8DISC043",
+    "events": [ { "unique_event_name": "baseline_arm_1", "instruments": [] },
+                { "unique_event_name": "week_4_arm_1",   "instruments": [] } ] } ]
 ```
 
 `state` is `no_data` | `some_data` | `finished`. Only `finished` is stored (REQ-DB-036); the other two are computed per row from whether any of that instrument's fields in that event holds a value, so the field never reports `no_data` for an instrument that has values or `some_data` for one the user marked finished. A survey-marked instrument always reports `finished` — its completion info is filled in automatically, with nothing stored and no assignment taken; the other two states never apply to it (GD-9; master spec "Instrument level completion info").
+
+**Sparse listing** (REQ-API-149). Every visible record is listed, and under it every event of a readable arm that has at least one mapped instrument; an event's `instruments` carries only the cells that are not `no_data`, as an empty list when there are none. A mapped instrument absent from a listed event is `no_data` — in the example, `labs` at `baseline_arm_1` and everything at `week_4_arm_1`; the mapped pairs come from the instrument–event mapping (§4.12). An event absent from a record is **not reported** (an arm the caller may not read, GD-2) and carries no state, so a client renders it as unknown, never as grey. The dense alternative — one cell per (record, event, mapped instrument) — grew with the design rather than the data: a 32-record stress project with 12,348 mapped pairs answered 15 MB for 102 non-empty cells, beyond what the web layer can decode within its `memory_limit` (DEV-API-26).
 
 The response MUST NOT contain field values (REQ-API-074). A record-status read is not a record view (`Audit_Logging_Design.md` §8, ASM-AUD-2).
 

@@ -60,7 +60,9 @@ func newCompletionFixture(t *testing.T, e *env) completionFixture {
 	return f
 }
 
-// stateOf reads one cell back through the dashboard endpoint.
+// stateOf reads one cell back through the dashboard endpoint. The answer is
+// sparse (REQ-API-149): a listed event without the instrument means no_data,
+// while a missing record or event is a failure — it was never reported.
 func stateOf(t *testing.T, e *env, actor *db.User, f completionFixture, event, instrument string) string {
 	t.Helper()
 	rec := e.do("GET", "/api/v1/projects/"+itoa(f.projectID)+"/record-status", nil, actor)
@@ -82,9 +84,10 @@ func stateOf(t *testing.T, e *env, actor *db.User, f completionFixture, event, i
 					return in.State
 				}
 			}
+			return StateNoData
 		}
 	}
-	t.Fatalf("cell (%s, %s) absent from %v", event, instrument, rows)
+	t.Fatalf("event %s absent from %v", event, rows)
 	return ""
 }
 

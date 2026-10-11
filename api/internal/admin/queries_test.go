@@ -137,23 +137,34 @@ func TestRecordStatus(t *testing.T) {
 	if len(rows[0].Events) != 2 {
 		t.Fatalf("R1 events: %+v", rows[0].Events)
 	}
-	e1 := rows[0].Events[0] // v1_arm_1 — intake, scores, feedback in instrument order
-	if e1.UniqueEventName != "v1_arm_1" || len(e1.Instruments) != 3 ||
+	// Sparse (REQ-API-149): v1_arm_1 lists intake and feedback in instrument
+	// order; scores holds nothing, so it is absent rather than no_data.
+	e1 := rows[0].Events[0]
+	if e1.UniqueEventName != "v1_arm_1" || len(e1.Instruments) != 2 ||
 		e1.Instruments[0].Name != "intake" || e1.Instruments[0].State != StateSomeData ||
-		e1.Instruments[1].Name != "scores" || e1.Instruments[1].State != StateNoData ||
-		e1.Instruments[2].Name != "feedback" {
+		e1.Instruments[1].Name != "feedback" {
 		t.Fatalf("R1 v1 state: %+v", e1)
 	}
 	// The survey instrument reports finished automatically — nothing was
 	// assigned, and it has no values (GD-9, master spec "Instrument level
 	// completion info").
-	if e1.Instruments[2].State != StateFinished {
-		t.Fatalf("survey cell = %q, want the automatic %s", e1.Instruments[2].State, StateFinished)
+	if e1.Instruments[1].State != StateFinished {
+		t.Fatalf("survey cell = %q, want the automatic %s", e1.Instruments[1].State, StateFinished)
 	}
-	e2 := rows[0].Events[1] // v2_arm_1 — intake only; empty value = no data
-	if e2.UniqueEventName != "v2_arm_1" || len(e2.Instruments) != 1 ||
-		e2.Instruments[0].State != StateNoData {
+	// v2_arm_1 maps intake only and its one value is empty: the event is still
+	// listed — so its absent intake reads as no data, not as unreported — with
+	// no cell under it.
+	e2 := rows[0].Events[1]
+	if e2.UniqueEventName != "v2_arm_1" || e2.Instruments == nil || len(e2.Instruments) != 0 {
 		t.Fatalf("R1 v2 state: %+v", e2)
+	}
+	if strings.Contains(rec.Body.String(), StateNoData) {
+		t.Fatalf("sparse response lists a %s cell: %s", StateNoData, rec.Body.String())
+	}
+	// R2 holds no values: both events listed, only the survey cell under v1.
+	if r2 := rows[1].Events; len(r2) != 2 || len(r2[0].Instruments) != 1 ||
+		r2[0].Instruments[0].Name != "feedback" || len(r2[1].Instruments) != 0 {
+		t.Fatalf("R2 events: %+v", r2)
 	}
 	// Nothing has been assigned in this fixture, so no non-survey cell may
 	// report the stored state (REQ-DB-036 — finished comes from a user, or
