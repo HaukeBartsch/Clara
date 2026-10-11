@@ -778,6 +778,16 @@ Survey links should also be keyed by events. For example an instrument enabled f
 
 ## Later: bcrypt password improvements
 
-The bcrypt algorithm requires a password with a maximum length (72b). Switch to Argon2 with buildin libraries that do not have that limitation. Use for golang the official golang.org/x/crypto/argon2 package.
+The bcrypt algorithm requires a password with a maximum length (72b). Switch to Argon2 (Argon2id?) with buildin libraries that do not have that limitation. Use for golang the official golang.org/x/crypto/argon2 package.
+
+A general recommendation is to switch from stateful sessions to JWTs or opaque tokens with cryptographically signed JSON Web Tokens (JWTs) for stateless architectures. Is this possible for the php session part of the Clara application? Can this include refresh token rotations with short-lived access tokens (e.g., 15 minutes) and longer-lived refresh tokens? Token rotation should be automatic, where every use of a refresh token invalidates the old one and issues a new pair to detect and mitigate token theft. After this change the /api endpoint should still use the tokens linked to user permissions. 
+
+Does it makes sense to add OIDC Authorization Code Flow with PKCE to Clara?
+
+## General question
 
 Check if other functionality in the api/ (golang) can be implemented by using official packages.
+
+## Export features
+
+Does the export correctly uses double quotes for double quoted strings and string that contain commas? Is there an option to export using semi-colons (';') instead of commas? Export as semi-colon should be a default if the language is nb/nn (european languages use comma instead of dot for numeric values, also taken care of?).
