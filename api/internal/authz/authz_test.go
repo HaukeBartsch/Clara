@@ -329,6 +329,10 @@ func TestCheckActiveInactivityAutoDisable(t *testing.T) {
 		t.Errorf("auto-disable must clear enabled and the inactivity clock, got enabled=%v last_login=%v",
 			fresh.Enabled, fresh.LastLoginAt)
 	}
+	// Like every disable it ends the account's sessions (REQ-AUTH-074).
+	if fresh.SessionEpoch != u.SessionEpoch+1 {
+		t.Errorf("session_epoch = %d after auto-disable, want %d", fresh.SessionEpoch, u.SessionEpoch+1)
+	}
 
 	var n int
 	err = s.DB.QueryRow(

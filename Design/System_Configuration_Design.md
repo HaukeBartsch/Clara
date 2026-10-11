@@ -96,9 +96,11 @@ Per server `N` (1…3):
 | Variable | Component | Type | Default | Required | Description |
 |---|---|---|---|---|---|
 | `SESSION_DIR` | web | directory path | OS temp dir | — | MUST be a directory, never the application database file (REQ-CFG-017) |
-| `SESSION_COOKIE_NAME` | web | string | `csms_session` | — | (REQ-CFG-017) |
-| `SESSION_LIFETIME` | web | seconds | `28800` (8 h) | — | inactivity timeout (REQ-CFG-017, REQ-AUTH-015) |
-| `SESSION_COOKIE_SECURE` | web | `0`\|`1` | dev: `0`, prod: `1` | — | (REQ-CFG-007, REQ-TECH-019) |
+| `SESSION_COOKIE_NAME` | web | string | `csms_session` | — | letters, digits, `_` (REQ-CFG-017); sent as `__Host-<name>` whenever the cookie is `Secure` (REQ-AUTH-075) |
+| `SESSION_LIFETIME` | web | seconds ≥ 60 | `28800` (8 h) | — | absolute lifetime from sign-in, however active the session (REQ-CFG-017, REQ-AUTH-015) |
+| `SESSION_IDLE_TIMEOUT` | web | seconds: `0` or ≥ 60 | `1800` (30 min) | — | ends a session with no request for this long; `0` = off (REQ-CFG-017, REQ-AUTH-015) |
+| `SESSION_ROTATE_INTERVAL` | web | seconds: `0` or ≥ 120 | `900` (15 min) | — | moves a signed-in session to a new id this often; the replaced id follows its successor for 60 s, after which it counts as a replay (REQ-AUTH-072/073); `0` = off, which also disables replay detection; the minimum is twice the grace window |
+| `SESSION_COOKIE_SECURE` | web | `0`\|`1` | dev: `0`, prod: `1` | — | `Secure` flag; `0` is refused under `APP_ENV=production` (REQ-CFG-007, REQ-TECH-019, REQ-AUTH-075) |
 
 ### 3.9 Rate limiting (api)
 
@@ -151,6 +153,8 @@ The rate-limit **thresholds are not environment variables**: `rate_limit_enabled
 | every entry of `OAUTH2_N_NAMES` / `LDAP_SERVER_N_NAMES` / `LOCAL_LOGIN_NAMES` non-empty after trimming; duplicate entries within one list ignored | required | required (REQ-CFG-032) |
 | `ANON_DATE_SHIFT_MIN ≤ ANON_DATE_SHIFT_MAX` | required | required |
 | `SESSION_DIR` is a directory path and not equal to `DB_DATABASE` | required (REQ-CFG-017) | required |
+| `SESSION_IDLE_TIMEOUT` is `0` or an integer ≥ 60; `SESSION_ROTATE_INTERVAL` is `0` or an integer ≥ 120 | required (REQ-CFG-017) | required |
+| `SESSION_COOKIE_SECURE=1` | — (`0` allowed) | required — `0` refuses startup (REQ-AUTH-075) |
 | `AUTH_INACTIVITY_LIMIT_DAYS` is an integer ≥ 0 (default 180; 0 = rule off) | required | required (REQ-CFG-024) |
 | `APP_TIMEZONE` is a resolvable IANA timezone name (default `UTC`) | required | required (REQ-CFG-026) |
 | `AUTH_REQUIRE_2FA` ∈ {`0`,`1`} (default `0`); `TFA_EMAIL_CODE_TTL` integer > 0; `SMTP_SECURITY` ∈ {`starttls`,`tls`,`none`} | required | required (GD-21, REQ-CFG-027/028/029) |
@@ -223,6 +227,8 @@ ANON_DATE_SHIFT_MAX=364
 SESSION_DIR=/tmp/csms-sessions
 SESSION_COOKIE_NAME=csms_session
 SESSION_LIFETIME=28800
+SESSION_IDLE_TIMEOUT=1800
+SESSION_ROTATE_INTERVAL=900
 SESSION_COOKIE_SECURE=0
 
 # rate limiting (api) — thresholds live in system_settings, edited in the admin interface
@@ -257,7 +263,7 @@ OTP_MAIL_FROM=
 | finite value-length cap key (`Data_Validation_Design.md` §11) | `MAX_VALUE_BYTES`, §3.7 |
 | date-shift "sane defaults" (REQ-CFG-016) | 0…364 days, §3.6 |
 | rate-limit keys (REQ-CFG-020) | superseded 2026-09-27 (master spec "Rate limitter", DEV-CFG-3): enable flag and per-source-IP threshold moved to `system_settings` edited in the admin interface (`API_Endpoints_Design.md` §4.22); env keeps only `TRUSTED_PROXY_CIDRS`, §3.9 |
-| session settings (REQ-CFG-017) | §3.8, 8 h default per REQ-AUTH-015 |
+| session settings (REQ-CFG-017) | §3.8, 8 h default per REQ-AUTH-015; idle timeout (30 min) and rotation interval (15 min) added 2026-10-11 (DEV-AUTH-17) |
 | bootstrap local password (GD-18, master spec "Details") | `ADMIN_BOOTSTRAP_PASSWORD`, §3.3; startup rule §4.1; redaction §4.4 |
 | inactivity auto-disable rule key (GD-19, master spec "Details") | `AUTH_INACTIVITY_LIMIT_DAYS` (default 180, 0 = off), §3.10 |
 | default collection timezone (GD-16, master spec "Details") | `APP_TIMEZONE` (IANA name, default `UTC`), §3.10 |

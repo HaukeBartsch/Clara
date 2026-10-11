@@ -25,6 +25,7 @@ var wantFiles = []string{
 	"0009_ui_theme.sql",
 	"0010_password_tokens.sql",
 	"0011_role_pair_grants.sql",
+	"0012_session_epoch.sql",
 }
 
 var dialects = []string{"sqlite", "mariadb"}

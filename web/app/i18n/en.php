@@ -74,6 +74,13 @@ return [
     // the only honest instruction is to start again.
     'login.failure.expired_session' => 'That sign-in attempt has expired. Please sign in again.',
 
+    // --- why a signed-in session ended (§3.1, REQ-AUTH-015/073/074) — shown on the login page ---
+    'session.ended.idle' => 'You were signed out after a period of inactivity. Please sign in again.',
+    'session.ended.expired' => 'Your session has expired. Please sign in again.',
+    // Two places used the same session: we cannot tell which one was yours, so both ended.
+    'session.ended.replayed' => 'For your security you were signed out everywhere: your session was used from two places at once. Please sign in again, and tell your administrator if this keeps happening.',
+    'session.ended.revoked' => 'Your session was ended because your account changed — for example its password was set or it was disabled. Please sign in again.',
+
     // --- two-factor challenge at login (§2.2, REQ-UI-038) ---
     'login.mfa.title' => 'Second factor',
     'login.mfa.heading' => 'Confirm it is you',

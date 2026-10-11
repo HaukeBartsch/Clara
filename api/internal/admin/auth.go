@@ -9,6 +9,7 @@ import (
 
 	"csms/api/internal/audit"
 	"csms/api/internal/authz"
+	"csms/api/internal/dataapi"
 	"csms/api/internal/db"
 	"csms/api/internal/passhash"
 )
@@ -23,6 +24,7 @@ func (h *Handler) registerAuth(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/login", h.login)
 	mux.HandleFunc("POST /api/v1/auth/verify-password", h.verifyPassword)
 	mux.HandleFunc("POST /api/v1/auth/logout", h.logout)
+	mux.HandleFunc("POST /api/v1/auth/session-replay", h.sessionReplay)
 }
 
 // loginRequest is the §4.3 body: provider only for oauth2/ldap, password
@@ -447,6 +449,48 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 		EventType: audit.Logout, Source: audit.SourceUI,
 		UserID: u.ID, Email: u.Email, Details: map[string]any{},
 	}); err != nil {
+		errInternal(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// sessionReplay implements POST /api/v1/auth/session-replay (REQ-API-148,
+// REQ-AUTH-073). The web layer rotates a session's id every
+// SESSION_ROTATE_INTERVAL and keeps the old id only as a pointer to its
+// successor; when that old id comes back after the grace window, two parties
+// held the same session and one of them should not have. Nothing tells the
+// API which one, so it ends every session of the acting account by raising
+// its epoch (REQ-AUTH-074) and records session_replay_detected with the
+// address that presented the old id. Like logout it keeps no state of its own
+// (GD-1): the epoch lives on the users row.
+func (h *Handler) sessionReplay(w http.ResponseWriter, r *http.Request) {
+	u, ok := actor(r)
+	if !ok {
+		errForbidden(w)
+		return
+	}
+	ctx := r.Context()
+	tx, err := h.Store.DB.BeginTx(ctx, nil)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	defer tx.Rollback()
+	if err := db.BumpSessionEpoch(ctx, tx, u.ID); err != nil {
+		errInternal(w)
+		return
+	}
+	if err := h.Audit.InsertTx(ctx, tx, audit.Entry{
+		EventType: audit.SessionReplayDetected, Source: audit.SourceUI,
+		UserID: u.ID, Email: u.Email,
+		// Never the session id: the old one is dead, the new one is not ours to log.
+		Details: map[string]any{"ip": dataapi.SourceIP(h.Cfg, r)},
+	}); err != nil {
+		errInternal(w)
+		return
+	}
+	if err := tx.Commit(); err != nil {
 		errInternal(w)
 		return
 	}

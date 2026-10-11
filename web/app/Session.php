@@ -3,7 +3,8 @@
 // application database (REQ-CFG-017), and never visible to the API (REQ-API-044).
 //
 // Key set is Authentication_Authorization_Design.md §3 — user_id, email,
-// display_name, is_admin, auth_source, auth_source_name, issued_at, csrf_token —
+// display_name, is_admin, auth_source, auth_source_name, issued_at, csrf_token,
+// and the lifecycle keys last_seen_at, rotated_at and session_epoch (§3.1) —
 // plus the acting user's own two display preferences, ui_language and ui_theme:
 // §3.8 resolves the effective theme from "the session's user object", so those
 // fields are expected here; they are presentation settings, not authorization
@@ -20,6 +21,15 @@
 //                 on POST /lang (Plan/Web_Implementation.md §5 sanctions it)
 // A third holds the in-flight OAuth2 round trip (`_oauth_txn`) — the `state` and
 // PKCE verifier Sequence A needs between the two browser hops (§2.1).
+//
+// The lifecycle (§3.1, REQ-AUTH-015/072/073/074) runs once per request, before the
+// guard: an idle or over-age session ends; every SESSION_ROTATE_INTERVAL the session
+// moves to a new id, and the old id is left holding nothing but a `tombstone` that
+// points at its successor. For ROTATION_GRACE_SECONDS the tombstone leads there — the
+// requests a page fires together were sent with the old cookie — and after that the
+// old id coming back means two parties held this session: it ends, and the API is told
+// to end every other session of the account. The session epoch the API handed out at
+// login rides on every administration call; a raised one ends the session there.
 
 declare(strict_types=1);
 
@@ -32,6 +42,28 @@ final class Session
 
     /** How long an OAuth2 round trip may stay unfinished before its state is dropped. */
     public const OAUTH_TRANSACTION_SECONDS = 600;
+
+    /**
+     * How long a rotated-away id still leads to its successor (REQ-AUTH-072): long enough
+     * for the requests already in flight when the new cookie was issued, short enough that
+     * a copied cookie is caught at the next rotation. SESSION_ROTATE_INTERVAL must be at
+     * least twice this.
+     */
+    public const ROTATION_GRACE_SECONDS = 60;
+
+    // What lifecycle() finds for this request's session (§3.1).
+    /** Nothing to do: a live session, or none signed in. */
+    public const LIVE = 'live';
+    /** Signed in, and the id is due for replacement (REQ-AUTH-072). */
+    public const ROTATE = 'rotate';
+    /** A rotated-away id inside its grace window: continue in the successor. */
+    public const FOLLOW = 'follow';
+    /** A rotated-away id after its grace window: someone holds a copy (REQ-AUTH-073). */
+    public const REPLAYED = 'replayed';
+    /** Past SESSION_LIFETIME from sign-in, or opened before session epochs existed. */
+    public const EXPIRED = 'expired';
+    /** Past SESSION_IDLE_TIMEOUT without a request (REQ-AUTH-015). */
+    public const IDLE = 'idle';
 
     private function __construct() {}
 
@@ -75,9 +107,201 @@ final class Session
 
         session_start();
 
-        if (!isset($_SESSION['csrf_token'])) {
+        // A tombstone stays exactly what rotation left (§3.1): lifecycle() reads it next,
+        // and nothing is ever rendered from it.
+        if (!isset($_SESSION['csrf_token']) && !isset($_SESSION['tombstone'])) {
             $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
         }
+    }
+
+    /**
+     * Reads what this request's session is (§3.1) without changing anything — the whole
+     * decision, kept apart from the id swaps so it can be tested on its own.
+     */
+    public static function verdict(Config $config, int $now): string
+    {
+        $tombstone = $_SESSION['tombstone'] ?? null;
+        if (is_array($tombstone)) {
+            return (int) ($tombstone['at'] ?? 0) + self::ROTATION_GRACE_SECONDS >= $now
+                ? self::FOLLOW
+                : self::REPLAYED;
+        }
+
+        // Pre-authentication states keep their own clocks (§2.7, the OAuth2 round trip).
+        if (!self::isAuthenticated()) {
+            return self::LIVE;
+        }
+
+        // A session from before epochs existed cannot be revoked, so it is not kept.
+        if (!isset($_SESSION['session_epoch'])) {
+            return self::EXPIRED;
+        }
+
+        $issuedAt = (int) ($_SESSION['issued_at'] ?? 0);
+        if ($issuedAt + $config->sessionLifetime < $now) {
+            return self::EXPIRED;
+        }
+
+        $lastSeen = (int) ($_SESSION['last_seen_at'] ?? $issuedAt);
+        if ($config->sessionIdleTimeout > 0 && $lastSeen + $config->sessionIdleTimeout < $now) {
+            return self::IDLE;
+        }
+
+        $rotatedAt = (int) ($_SESSION['rotated_at'] ?? $issuedAt);
+        if ($config->sessionRotateInterval > 0 && $rotatedAt + $config->sessionRotateInterval <= $now) {
+            return self::ROTATE;
+        }
+
+        return self::LIVE;
+    }
+
+    /**
+     * Applies the lifecycle to this request's session (§3.1) and returns what it found,
+     * so the caller can tell the user why they are at the login page and report a replay
+     * to the API — the two things that need more than the session. For REPLAYED,
+     * `user_id` names the account whose old id came back; it is 0 otherwise.
+     *
+     * @return array{verdict: string, user_id: int}
+     */
+    public static function lifecycle(Config $config, int $now): array
+    {
+        $verdict = self::verdict($config, $now);
+
+        $followed = false;
+        if ($verdict === self::FOLLOW) {
+            self::followSuccessor();
+            $followed = true;
+            $verdict = self::verdict($config, $now);
+            // A successor that is itself a tombstone is not followed a second time.
+            if ($verdict === self::FOLLOW || $verdict === self::REPLAYED) {
+                self::reset();
+
+                return ['verdict' => self::EXPIRED, 'user_id' => 0];
+            }
+        }
+
+        switch ($verdict) {
+            case self::REPLAYED:
+                $userId = (int) ($_SESSION['tombstone']['user_id'] ?? 0);
+                self::reset();
+
+                return ['verdict' => self::REPLAYED, 'user_id' => $userId];
+            case self::EXPIRED:
+            case self::IDLE:
+                self::reset();
+
+                return ['verdict' => $verdict, 'user_id' => 0];
+            case self::ROTATE:
+                self::rotate($now);
+                break;
+        }
+
+        if (self::isAuthenticated()) {
+            $_SESSION['last_seen_at'] = $now;
+        }
+
+        return ['verdict' => $followed && $verdict === self::LIVE ? self::FOLLOW : $verdict, 'user_id' => 0];
+    }
+
+    /**
+     * Moves the session to a new id (REQ-AUTH-072) and leaves the old one holding only a
+     * tombstone: the successor, when it was made, and whose session it was — nothing a
+     * page could be rendered from, and nothing that signs anyone in.
+     */
+    private static function rotate(int $now): void
+    {
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+            // Outside a running session (a CLI test) there is no id to swap; the bookkeeping
+            // is what remains.
+            $_SESSION['rotated_at'] = $now;
+
+            return;
+        }
+
+        $successor = session_create_id();
+        if (!is_string($successor) || $successor === '') {
+            return; // still due: the next request tries again
+        }
+
+        $data = $_SESSION;
+        $_SESSION = ['tombstone' => [
+            'successor' => $successor,
+            'at' => $now,
+            'user_id' => (int) ($data['user_id'] ?? 0),
+        ]];
+        session_write_close();
+
+        // Strict mode adopts only ids the save handler already knows, and the successor has
+        // no file until this start creates it. It is an id this request just made with
+        // session_create_id(), so strict mode steps aside for this one start; PHP restores
+        // the setting when the request ends.
+        ini_set('session.use_strict_mode', '0');
+        session_id($successor);
+        session_start(); // issues the new cookie
+        $_SESSION = $data;
+        $_SESSION['rotated_at'] = $now;
+    }
+
+    /**
+     * Continues in the successor a tombstone names (FOLLOW). Strict mode is on again here:
+     * a successor that no longer exists — signed out, expired, collected — yields a fresh,
+     * empty session instead of one this request invented.
+     */
+    private static function followSuccessor(): void
+    {
+        $successor = (string) ($_SESSION['tombstone']['successor'] ?? '');
+        if (session_status() !== PHP_SESSION_ACTIVE || preg_match('/^[A-Za-z0-9,-]{22,256}$/', $successor) !== 1) {
+            self::reset();
+
+            return;
+        }
+
+        session_write_close();
+        session_id($successor);
+        session_start(); // re-issues the successor's cookie to the client that missed it
+        if (!isset($_SESSION['csrf_token']) && !isset($_SESSION['tombstone'])) {
+            $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+        }
+    }
+
+    /**
+     * Ends the signed-in identity but keeps a fresh anonymous session under a new id, so
+     * the login page that follows has a CSRF token and the line saying why (REQ-UI-007).
+     * The old id's file goes: whatever it held — an identity, a tombstone — it opens
+     * nothing again.
+     */
+    public static function reset(): void
+    {
+        $_SESSION = [];
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_regenerate_id(true);
+        }
+        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    }
+
+    /**
+     * The session epoch the API handed out at sign-in (REQ-AUTH-074), presented on every
+     * administration call made for this session — or null when none is recorded.
+     */
+    public static function epoch(): ?int
+    {
+        $epoch = $_SESSION['session_epoch'] ?? null;
+
+        return is_int($epoch) ? $epoch : null;
+    }
+
+    /**
+     * Keeps this session alive across a change it made itself (REQ-AUTH-074): the API
+     * raised the epoch to end the account's *other* sessions and answered the new value.
+     * The id moves too — a credential change is a privilege boundary like sign-in.
+     */
+    public static function adoptEpoch(int $epoch): void
+    {
+        $_SESSION['session_epoch'] = $epoch;
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_regenerate_id(true);
+        }
+        $_SESSION['rotated_at'] = time();
     }
 
     /** True once the identity keys are present and no pre-auth state stands. */
@@ -224,10 +448,10 @@ final class Session
     }
 
     /**
-     * Absolute session bound: the normative `issued_at` key plus SESSION_LIFETIME
-     * (REQ-AUTH-015). Reading §3's key set literally, issued_at is the only
-     * timestamp available, so this is an absolute rather than a sliding window —
-     * strictly stronger, and it does not depend on PHP's session GC running.
+     * Both session bounds of REQ-AUTH-015: SESSION_LIFETIME from sign-in (`issued_at`),
+     * and SESSION_IDLE_TIMEOUT from the last request (`last_seen_at`). lifecycle() ends
+     * such a session before any guard runs; the guard asks again so a page can never be
+     * served from one, and neither check depends on PHP's session GC having run.
      */
     public static function hasTimedOut(Config $config): bool
     {
@@ -235,8 +459,13 @@ final class Session
         if ($issuedAt === 0) {
             return false;
         }
+        $now = time();
+        if ($issuedAt + $config->sessionLifetime < $now) {
+            return true;
+        }
+        $lastSeen = (int) ($_SESSION['last_seen_at'] ?? $issuedAt);
 
-        return $issuedAt + $config->sessionLifetime < time();
+        return $config->sessionIdleTimeout > 0 && $lastSeen + $config->sessionIdleTimeout < $now;
     }
 
     /**
@@ -266,7 +495,13 @@ final class Session
         $_SESSION['ui_language'] = (string) ($user['ui_language'] ?? 'en');
         $_SESSION['ui_theme'] = isset($user['ui_theme']) && is_string($user['ui_theme']) ? $user['ui_theme'] : null;
         $_SESSION['auth_source_name'] = $authSourceName;
-        $_SESSION['issued_at'] = time();
+        $now = time();
+        $_SESSION['issued_at'] = $now;
+        $_SESSION['last_seen_at'] = $now;
+        $_SESSION['rotated_at'] = $now;
+        // An API older than session epochs omits the value; 0 is what such an API's
+        // accounts would hold, and that API ignores the header anyway (REQ-AUTH-074).
+        $_SESSION['session_epoch'] = (int) ($user['session_epoch'] ?? 0);
         $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
     }
 

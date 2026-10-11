@@ -466,6 +466,27 @@ final class Auth
     }
 
     /**
+     * REQ-AUTH-073: a session id this layer had rotated away came back after its grace
+     * window, so two parties held the account's session. Session::lifecycle() has already
+     * ended the one presented here; this asks the API to end every other session of the
+     * account and to record the event. It speaks as that account through the override —
+     * no session stands behind the call any more. A failure is logged, never shown: the
+     * local session is gone either way.
+     */
+    public function reportSessionReplay(int $userId): void
+    {
+        $this->logger->warn('a rotated-away session id was presented again', ['user' => $userId]);
+        if ($userId <= 0) {
+            return;
+        }
+        try {
+            $this->api->asUser($userId)->post('/api/v1/auth/session-replay');
+        } catch (ApiException $e) {
+            $this->logger->error('the session replay could not be reported', ['user' => $userId, 'code' => $e->code()]);
+        }
+    }
+
+    /**
      * The distinct authentication-source names configured for this installation,
      * each with the kinds of source behind it (REQ-CFG-032, REQ-AUTH-064). With
      * exactly one distinct name the login picker is skipped and that name applies

@@ -34,6 +34,8 @@ const (
 	TFAEnrolled         = "tfa_enrolled" // REQ-AUD-028
 	TFADisabled         = "tfa_disabled" // REQ-AUD-028
 	TFAReset            = "tfa_reset"    // REQ-AUD-028
+	// SessionReplayDetected: a rotated-away session id came back (REQ-AUD-030).
+	SessionReplayDetected = "session_replay_detected"
 
 	// §3.2 data change events
 	RecordCreated         = "record_created"

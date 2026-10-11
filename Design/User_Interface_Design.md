@@ -71,7 +71,7 @@ There are no other browser-reachable routes. State-changing browser requests are
 - Failure presentation: a single translated error line per the API reason — provider unavailable / state mismatch / **bad password** / bad credentials (LDAP) / **account disabled** (incl. "disabled after inactivity — an administrator must re-enable") / **account expired** ("validity period ended — an administrator must extend it") — no internals. Rate-limit rejection (429) shows the lockout duration (REQ-AUTH-035).
 - **Two-factor step** (GD-21, REQ-UI-038): on 401 `mfa_required` the page switches to a second panel — one code field with method-specific help ("Enter the code from your authenticator app" / "We sent a code to your email address" + a resend action, rate-limited) and an "use a recovery code" toggle. PHP holds the first-factor success in the pre-auth `tfa_pending` session (`Authentication_Authorization_Design.md` §2.7); no other page is reachable while it stands. 401 `bad_mfa_code` re-shows the panel with the failure line; on success the response completes the login exactly as without a second factor.
 - **Mandated enrollment** (GD-21, REQ-AUTH-059): on 401 `tfa_enrollment_required` (`AUTH_REQUIRE_2FA` on, account has no method) the page shows the enrollment wizard of §2.5; completing it resumes the login.
-- Session inactivity timeout: any request with an expired session redirects to `/login` (REQ-UI-007, REQ-AUTH-015).
+- Ended sessions (`Authentication_Authorization_Design.md` §3.1): any request whose session has ended redirects to `/login` — with `?next=` for a page request, so signing in returns there — and the login page shows one translated line saying why: idle (`session.ended.idle`), past its absolute lifetime (`session.ended.expired`), revoked because the account changed (`session.ended.revoked`), or ended everywhere after a replayed session id (`session.ended.replayed`, a danger alert that asks the user to tell their administrator if it repeats). A data request (`Accept: application/json`) answers 403 `forbidden` instead, which the client treats as "session over" (REQ-UI-007, REQ-AUTH-015/073/074).
 
 ### 2.3 No-access page
 
@@ -123,7 +123,7 @@ Self-service page in the shell, reachable by every signed-in user (also rendered
 
 ### 2.6 Password change, reset, and invite completion (GD-22/GD-23)
 
-**Change own password (`GET /account/password`, authenticated, in the shell).** Offered in the footer (§2.4) only when the account has a local credential (GD-23). One form: current password, new password + repeat; submits `PUT /api/v1/users/me/password` (CSRF, REQ-UI-005). A wrong current password shows the generic bad-password line (`API_Endpoints_Design.md` §4.2); success shows a confirmation and clears the fields. The account's **email address is displayed read-only** — identity changes go through an administrator (REQ-AUTH-061). Existing sessions stay valid (DEV-AUTH-13).
+**Change own password (`GET /account/password`, authenticated, in the shell).** Offered in the footer (§2.4) only when the account has a local credential (GD-23). One form: current password, new password + repeat; submits `PUT /api/v1/users/me/password` (CSRF, REQ-UI-005). A wrong current password shows the generic bad-password line (`API_Endpoints_Design.md` §4.2); success shows a confirmation and clears the fields. The account's **email address is displayed read-only** — identity changes go through an administrator (REQ-AUTH-061). The change signs the account out everywhere else; the session that made it stays signed in under a new id (REQ-AUTH-074).
 
 **Forgot password (`GET /password-reset`, public, standalone panel).** One email field; submits `POST /api/v1/auth/password-reset/request`; the page always shows the same translated line — "If that address has an account with a local password, a reset link has been sent" — never revealing whether it did (REQ-AUTH-062). Rate-limit rejection (429) shows a retry-soon message.
 
@@ -164,6 +164,7 @@ The PHP layer maps the stable `error` code of `API_Endpoints_Design.md` §4.2 to
 | `mfa_required` (login, GD-21) | not an error — switches the login page to the two-factor panel (§2.2) |
 | `bad_mfa_code` (login) | "That code is wrong or has expired" on the two-factor panel; resend stays available until the lockout line replaces it (REQ-AUTH-058) |
 | `tfa_enrollment_required` (login) | not an error — opens the enrollment wizard (§2.5, §2.2) |
+| `session_revoked` (401) | not a line on the current page: the session is ended and the browser goes to `/login`, which shows `session.ended.revoked` (§2.2, REQ-AUTH-074) |
 | `service_token_invalid` / `internal` (500) | a generic failure line + the operator is notified by the application log — never internals (REQ-API-006) |
 | data-API `import_record_id = 0` | the per-field validation detail from `import_form_name` (`Data_Validation_Design.md` §3 codes), §8.6 |
 

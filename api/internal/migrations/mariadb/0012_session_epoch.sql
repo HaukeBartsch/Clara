@@ -1,0 +1,11 @@
+-- Per-account session epoch (REQ-DB-008, REQ-AUTH-074). The web layer copies
+-- the value into the PHP session at login and presents it on every
+-- administration call as X-Internal-Session-Epoch; the API refuses a call
+-- whose epoch no longer matches (401 session_revoked). Raising the counter
+-- therefore ends every PHP session of the account at its next API call
+-- without the API keeping a session registry (GD-1). It is raised on every
+-- write of password_hash, on every transition of enabled to 0, on an
+-- administrator's two-factor reset, and when the web layer reports a replayed
+-- session id. Existing rows start at 0, which is what the web layer assumes
+-- when an older API omits the value — no backfill.
+ALTER TABLE users ADD COLUMN session_epoch INTEGER NOT NULL DEFAULT 0;

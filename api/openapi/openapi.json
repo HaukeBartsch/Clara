@@ -197,7 +197,7 @@
         "tags": ["Admin: Session"],
         "operationId": "authLogin",
         "summary": "Login (§4.3, REQ-API-044/045)",
-        "description": "Called by the PHP application after successful OAuth2/LDAP authentication, or with `source: \"local\"` and the password for table-based login (GD-18). Exempt from `X-Internal-User-Id` (DEV-API-16); it still requires the service token. The API reports success and audit-logs it but MUST NOT create or store a session (GD-1).\n\nProcessing order: local credential check (or an unexpired `first_factor` handle standing in for the hash check where a second factor guards the account, REQ-API-131) → account-active rule (`account_expired` / `account_disabled`) → two-factor gate (`mfa_required`, `bad_mfa_code`, `tfa_enrollment_required`) → bootstrap-admin promotion → `auth_source`/`last_login_at` update → audit `login_success`.",
+        "description": "Called by the PHP application after successful OAuth2/LDAP authentication, or with `source: \"local\"` and the password for table-based login (GD-18). Exempt from `X-Internal-User-Id` (DEV-API-16); it still requires the service token. The API reports success and audit-logs it but MUST NOT create or store a session (GD-1).\n\nProcessing order: local credential check (or an unexpired `first_factor` handle standing in for the hash check where a second factor guards the account, REQ-API-131) → account-active rule (`account_expired` / `account_disabled`) → two-factor gate (`mfa_required`, `bad_mfa_code`, `tfa_enrollment_required`) → bootstrap-admin promotion → `auth_source`/`last_login_at` update → audit `login_success`. The returned user object carries the account's `session_epoch`, which the web layer keeps in the session it establishes (REQ-AUTH-074).",
         "security": [ { "InternalServiceToken": [] } ],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoginRequest" }, "examples": {
           "oauth2": { "value": { "email": "user@example.org", "source": "oauth2", "provider": "https://idp.example.org" } },
@@ -252,6 +252,19 @@
         }
       }
     },
+    "/api/v1/auth/session-replay": {
+      "post": {
+        "tags": ["Admin: Session"],
+        "operationId": "authSessionReplay",
+        "summary": "Report a replayed session id (REQ-API-148)",
+        "description": "Called by the web layer when a session id it rotated away (REQ-AUTH-072) is presented again after the grace window — two parties held the same session (REQ-AUTH-073). The acting user is the account the old id belonged to, named by `X-Internal-User-Id` without `X-Internal-Session-Epoch`. The API raises the account's session epoch, which ends every session of the account at its next call (REQ-AUTH-074), and records `session_replay_detected` with the presenting address (never a session id). No body. The API keeps no session state (GD-1).",
+        "responses": {
+          "200": { "description": "Every session of the account is ended.", "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string", "const": "ok" } } }, "example": { "status": "ok" } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
+        }
+      }
+    },
     "/api/v1/auth/password-reset/request": {
       "post": {
         "tags": ["Admin: Session"],
@@ -271,7 +284,7 @@
         "tags": ["Admin: Session"],
         "operationId": "passwordResetComplete",
         "summary": "Set the new password with a reset token (REQ-API-120)",
-        "description": "Pre-authentication: service token only. Constant-time hash verification, purpose `reset`, expiry, single use; success stores the argon2id hash, consumes the token, invalidates all outstanding tokens of the account and audits `password_reset_completed`. No temporary password exists (REQ-AUTH-062). Any failure — unknown, expired, consumed or wrong-purpose token — answers the generic 401 `invalid_setup_token` (causes are not distinguished).",
+        "description": "Pre-authentication: service token only. Constant-time hash verification, purpose `reset`, expiry, single use; success stores the argon2id hash, consumes the token, invalidates all outstanding tokens of the account, raises its session epoch (every session of the account ends, REQ-AUTH-074) and audits `password_reset_completed`. No temporary password exists (REQ-AUTH-062). Any failure — unknown, expired, consumed or wrong-purpose token — answers the generic 401 `invalid_setup_token` (causes are not distinguished).",
         "security": [ { "InternalServiceToken": [] } ],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["token", "password"], "additionalProperties": false, "properties": { "token": { "type": "string" }, "password": { "type": "string", "writeOnly": true } } } } } },
         "responses": {
@@ -328,7 +341,7 @@
         "tags": ["Admin: Users"],
         "operationId": "updateUser",
         "summary": "Update a user (REQ-API-047/048, REQ-AUTH-068)",
-        "description": "Requires `is_admin`; idempotent (REQ-API-042). Any change that would leave zero enabled administrators (an `is_admin` revocation, a disabling, or both in one call) is rejected 409 `conflict` with nothing written and no audit entry (REQ-API-136). `valid_days` re-sets `valid_until` (`0` → indefinite); `password` set/resets the local hash and an empty string clears it. Disabling a user denies the effective permissions of that user's API tokens at call time (REQ-AUTH-033). Audit `user_updated` with the changed attributes.",
+        "description": "Requires `is_admin`; idempotent (REQ-API-042). Any change that would leave zero enabled administrators (an `is_admin` revocation, a disabling, or both in one call) is rejected 409 `conflict` with nothing written and no audit entry (REQ-API-136). `valid_days` re-sets `valid_until` (`0` → indefinite); `password` set/resets the local hash and an empty string clears it. Disabling a user denies the effective permissions of that user's API tokens at call time (REQ-AUTH-033). A password write or a disabling raises the account's session epoch, ending its sessions (REQ-AUTH-074); the user object returned carries the new `session_epoch`. Audit `user_updated` with the changed attributes.",
         "parameters": [ { "$ref": "#/components/parameters/UserId" } ],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UpdateUserRequest" } } } },
         "responses": {
@@ -362,10 +375,10 @@
         "tags": ["Admin: Users"],
         "operationId": "changeMyPassword",
         "summary": "Change my own password (REQ-API-118)",
-        "description": "Self-service. The current password is verified against `password_hash` first (failure → 401 `bad_password`, audit-logged, counted toward the REQ-AUTH-035 lockout), then the new argon2id hash is stored. Accounts without a local credential → 409 `no_local_credential`. Sessions are not revoked (DEV-AUTH-13). Audit `password_changed`.",
+        "description": "Self-service. The current password is verified against `password_hash` first (failure → 401 `bad_password`, audit-logged, counted toward the REQ-AUTH-035 lockout), then the new argon2id hash is stored. Accounts without a local credential → 409 `no_local_credential`. The change raises the account's session epoch, ending every other session (REQ-AUTH-074); the answer carries the new value so the session that made the change can adopt it and stay signed in. Audit `password_changed`.",
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["current_password", "new_password"], "additionalProperties": false, "properties": { "current_password": { "type": "string", "writeOnly": true }, "new_password": { "type": "string", "writeOnly": true } } } } } },
         "responses": {
-          "200": { "description": "The password was changed.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OkResponse" } } } },
+          "200": { "description": "The password was changed.", "content": { "application/json": { "schema": { "type": "object", "required": ["ok", "session_epoch"], "properties": { "ok": { "type": "boolean", "const": true }, "session_epoch": { "type": "integer", "format": "int64", "description": "The raised epoch (REQ-AUTH-074)." } } }, "example": { "ok": true, "session_epoch": 3 } } } },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "description": "`bad_password` — the current password did not verify.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } } },
           "409": { "description": "`no_local_credential` — the account has no local password.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } } }
@@ -450,10 +463,10 @@
         "tags": ["Admin: Users"],
         "operationId": "resetUserTfa",
         "summary": "Reset a user's second factor (REQ-API-116)",
-        "description": "Requires `is_admin`. Deletes the account's `user_two_factor` row back to `off` (lost device/email). No endpoint ever returns a secret, pending code, or recovery code outside its single enrollment/activation response. Audit `tfa_reset`.",
+        "description": "Requires `is_admin`. Deletes the account's `user_two_factor` row back to `off` (lost device/email). No endpoint ever returns a secret, pending code, or recovery code outside its single enrollment/activation response. Also raises the account's session epoch, ending its sessions (REQ-AUTH-074); the answer names the new value, which the acting session adopts when it reset its own account. Audit `tfa_reset`.",
         "parameters": [ { "$ref": "#/components/parameters/UserId" } ],
         "responses": {
-          "200": { "description": "The factor was reset to `off`.", "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string", "const": "ok" } } } } } },
+          "200": { "description": "The factor was reset to `off`.", "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string", "const": "ok" }, "session_epoch": { "type": "integer", "format": "int64", "description": "The target account's raised epoch (REQ-AUTH-074)." } } }, "example": { "status": "ok", "session_epoch": 1 } } } },
           "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
           "403": { "$ref": "#/components/responses/AdminForbidden" },
           "404": { "$ref": "#/components/responses/NotFound" }
@@ -1477,7 +1490,7 @@
         "type": "apiKey",
         "in": "header",
         "name": "X-Internal-User-Id",
-        "description": "The acting user's id — authoritative for authorization (REQ-AUTH-013): the API applies that user's effective levels; the PHP layer adds none. Unknown or disabled user → 403 + audit `admin_rejected`. Set by the trusted PHP layer only; the proxy strips it from every externally-originated request."
+        "description": "The acting user's id — authoritative for authorization (REQ-AUTH-013): the API applies that user's effective levels; the PHP layer adds none. Unknown or disabled user → 403 + audit `admin_rejected`. Set by the trusted PHP layer only; the proxy strips it from every externally-originated request. A call made for an established PHP session also carries `X-Internal-Session-Epoch` — the account's session epoch as the session recorded it at login (REQ-AUTH-074, REQ-API-147); when it differs from the stored value (or is not a number) the call is refused 401 `session_revoked` + audit `admin_rejected`. A call without it is not checked: the two-factor enrollment wizard's pending identity has no session yet (§2.7)."
       }
     },
     "parameters": {
@@ -1498,7 +1511,7 @@
         "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } }
       },
       "UnauthorizedServiceToken": {
-        "description": "`service_token_invalid` — missing/invalid X-Internal-Service-Token (audit `admin_rejected`).",
+        "description": "`service_token_invalid` — missing/invalid X-Internal-Service-Token; or `session_revoked` — the call carried an `X-Internal-Session-Epoch` that no longer matches the acting account's (REQ-API-147; the web layer ends the session). Both audited `admin_rejected`.",
         "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } }
       },
       "AdminForbidden": {
@@ -1624,7 +1637,7 @@
       "User": {
         "type": "object",
         "description": "The user object (§4.3), returned by login and every user endpoint.",
-        "required": ["id", "email", "display_name", "enabled", "is_admin", "auth_source", "ui_language", "status", "tfa_method"],
+        "required": ["id", "email", "display_name", "enabled", "is_admin", "auth_source", "ui_language", "status", "tfa_method", "session_epoch"],
         "properties": {
           "id": { "type": "integer", "format": "int64" },
           "email": { "type": "string", "format": "email" },
@@ -1637,9 +1650,10 @@
           "last_login_at": { "type": ["string", "null"], "description": "`null` when the account has never logged in." },
           "valid_until": { "type": ["string", "null"], "description": "`null` when indefinite (REQ-AUTH-052)." },
           "status": { "type": "string", "enum": ["active", "disabled", "expired", "auto_disabled"], "description": "Derived (GD-19, REQ-AUTH-052/053)." },
-          "tfa_method": { "type": "string", "enum": ["off", "totp", "email"], "description": "GD-21, REQ-API-116." }
+          "tfa_method": { "type": "string", "enum": ["off", "totp", "email"], "description": "GD-21, REQ-API-116." },
+          "session_epoch": { "type": "integer", "format": "int64", "minimum": 0, "description": "The account's session epoch (REQ-AUTH-074): the web layer stores it in the session at login and presents it as `X-Internal-Session-Epoch`; raised by every password write, every disable, an administrator's two-factor reset and a reported session replay. Counts revocations; authorizes nothing on its own." }
         },
-        "example": { "id": 3, "email": "user@example.org", "display_name": "User", "enabled": true, "is_admin": true, "auth_source": "oauth2", "ui_language": "en", "ui_theme": null, "last_login_at": "2026-09-20 08:14:05", "valid_until": null, "status": "active", "tfa_method": "off" }
+        "example": { "id": 3, "email": "user@example.org", "display_name": "User", "enabled": true, "is_admin": true, "auth_source": "oauth2", "ui_language": "en", "ui_theme": null, "last_login_at": "2026-09-20 08:14:05", "valid_until": null, "status": "active", "tfa_method": "off", "session_epoch": 0 }
       },
       "LoginRequest": {
         "type": "object",

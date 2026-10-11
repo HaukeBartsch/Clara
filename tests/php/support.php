@@ -135,7 +135,10 @@ function test_config(array $overrides = []): Config
     ], $overrides));
 }
 
-/** An authenticated session holding the identity keys of Authentication §3. */
+/**
+ * An authenticated session holding the identity keys of Authentication §3, fresh by every
+ * lifecycle clock of §3.1 (just signed in, just seen, just rotated, epoch 0).
+ */
 function sign_in(array $overrides = []): void
 {
     $_SESSION = array_merge([
@@ -148,6 +151,9 @@ function sign_in(array $overrides = []): void
         'ui_theme' => null,
         'auth_source_name' => '',
         'issued_at' => time(),
+        'last_seen_at' => time(),
+        'rotated_at' => time(),
+        'session_epoch' => 0,
         'csrf_token' => str_repeat('a', 64),
     ], $overrides);
 }

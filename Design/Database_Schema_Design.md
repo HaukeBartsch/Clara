@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS users (               -- REQ-DB-008 (GD-18/GD-19)
     is_admin      INTEGER NOT NULL DEFAULT 0,    -- GD-4
     ui_language   VARCHAR(8)  NOT NULL DEFAULT 'en',  -- GD-12
     ui_theme      VARCHAR(16),                       -- nullable; installed theme id (bootstrap|darkly|yeti); NULL = follow installation default UI_THEME (GD-26, REQ-DB-008)
+    session_epoch INTEGER NOT NULL DEFAULT 0,    -- raised to end every PHP session of the account: password writes, disables, 2FA reset, replay (REQ-AUTH-074, migration 0012)
     created_at    DATETIME NOT NULL
 );
 
@@ -440,6 +441,7 @@ Reference scale (REQ-DB-025): 100 projects × 10,000 records × 200 fields × 10
 | per-pair grants | `role_grants(role_id, event_id, instrument_id, …)` under `role_arms`; an absent row is the arm default, never a permission; a design change materializes new pairs as `read_only`/`export_none`/rights off (REQ-DB-040, REQ-AUTH-069) |
 | simplified `projects` (master spec "Details", GD-17) | `projects` keeps name, organization, PI, DM, REK, dates, naming pattern (§4); removed attributes are ordinary instrument data if wanted (REQ-DB-032) |
 | table-based authentication (master spec "Details", GD-18) | `users.password_hash` (nullable, argon2id) + `auth_source = local` (§4); plaintext never stored |
+| session revocation (owner decision 2026-10-11, DEV-AUTH-17) | `users.session_epoch` (integer, default `0`, §4) — raised in the transaction of the change that ends the account's sessions; the API compares it with `X-Internal-Session-Epoch` (`Authentication_Authorization_Design.md` §3.1); no session table — the API stores no sessions (GD-1) |
 | account validity and inactivity (master spec "Details", GD-19) | `users.valid_until` (NULL = indefinite) + `users.last_login_at` (§4); auto-disable rule in `Authentication_Authorization_Design.md` §4.4 |
 | two-factor authentication (master spec "Details", GD-21) | `user_two_factor` — one row per user, method/secret/replay step/pending-code hash/recovery hashes (§4); verification and enrollment in `Authentication_Authorization_Design.md` §2.7 |
 | account onboarding and password lifecycle (GD-22/GD-23) | `password_tokens` — single-use hashed invite/reset tokens (§4); issuance, email, and completion in `Authentication_Authorization_Design.md` §2.8 |

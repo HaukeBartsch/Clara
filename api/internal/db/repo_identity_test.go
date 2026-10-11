@@ -210,6 +210,68 @@ func TestUserLifecycle(t *testing.T) {
 	}
 }
 
+// TestSessionEpochWrites pins which repository writes end an account's
+// sessions (REQ-AUTH-074): every credential write and every disable raise the
+// epoch; re-enabling and the other attribute writes leave it alone.
+func TestSessionEpochWrites(t *testing.T) {
+	s := migrateTestStore(t)
+	ctx := context.Background()
+	id, err := s.CreateUser(ctx, &User{Email: "epoch@example.org", DisplayName: "E", Enabled: true})
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	expect := func(step string, want int64) {
+		t.Helper()
+		got, err := s.SessionEpoch(ctx, id)
+		if err != nil {
+			t.Fatalf("%s: SessionEpoch: %v", step, err)
+		}
+		if got != want {
+			t.Errorf("%s: session_epoch = %d, want %d", step, got, want)
+		}
+		u, err := s.GetUser(ctx, id)
+		if err != nil || u == nil {
+			t.Fatalf("%s: GetUser: %v", step, err)
+		}
+		if u.SessionEpoch != want {
+			t.Errorf("%s: scanned SessionEpoch = %d, want %d", step, u.SessionEpoch, want)
+		}
+	}
+
+	expect("a new account", 0)
+	if err := s.SetUserPasswordHash(ctx, id, sql.NullString{String: "$argon2id$x", Valid: true}); err != nil {
+		t.Fatalf("SetUserPasswordHash: %v", err)
+	}
+	expect("password set", 1)
+	if err := s.SetUserPasswordHash(ctx, id, sql.NullString{}); err != nil {
+		t.Fatalf("clear password: %v", err)
+	}
+	expect("password cleared", 2)
+	if err := s.SetUserEnabled(ctx, id, false); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	expect("disabled", 3)
+	if err := s.SetUserEnabled(ctx, id, true); err != nil {
+		t.Fatalf("re-enable: %v", err)
+	}
+	expect("re-enabled", 3)
+	if err := s.AutoDisable(ctx, id); err != nil {
+		t.Fatalf("AutoDisable: %v", err)
+	}
+	expect("auto-disabled", 4)
+	if err := s.SetUILanguage(ctx, id, "nb"); err != nil {
+		t.Fatalf("SetUILanguage: %v", err)
+	}
+	if err := s.TouchLastLogin(ctx, id, "local"); err != nil {
+		t.Fatalf("TouchLastLogin: %v", err)
+	}
+	expect("preference and login writes", 4)
+	if err := BumpSessionEpoch(ctx, s.DB, id); err != nil {
+		t.Fatalf("BumpSessionEpoch: %v", err)
+	}
+	expect("explicit bump", 5)
+}
+
 func TestUpsertBootstrap(t *testing.T) {
 	s := migrateTestStore(t)
 	ctx := context.Background()

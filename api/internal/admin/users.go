@@ -360,6 +360,19 @@ func (h *Handler) updateUser(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		// A credential write or a disable ends the account's sessions
+		// (REQ-AUTH-074): committed with the change, so no session outlives it.
+		if writePw || (writesEnabled && !next.Enabled) {
+			if err := db.BumpSessionEpoch(ctx, tx, target.ID); err != nil {
+				errInternal(w)
+				return
+			}
+			if err := tx.QueryRowContext(ctx, `SELECT session_epoch FROM users WHERE id = ?`,
+				target.ID).Scan(&next.SessionEpoch); err != nil {
+				errInternal(w)
+				return
+			}
+		}
 		if err := h.Audit.InsertTx(ctx, tx, audit.Entry{
 			EventType: audit.UserUpdated, Source: audit.SourceUI,
 			UserID: actorUser.ID, Email: actorUser.Email,

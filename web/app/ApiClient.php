@@ -148,6 +148,7 @@ final class ApiClient
             $decoded = ['error' => 'internal', 'message' => ''];
         }
         $this->noteOperatorFailure($decoded, 'GET', $path);
+        $this->endRevokedSession($decoded, 'GET', $path);
 
         throw ApiException::fromBody($decoded, $response['status']);
     }
@@ -188,8 +189,32 @@ final class ApiClient
     }
 
     /**
+     * A `session_revoked` answer means the account's sessions were ended since this one
+     * signed in (REQ-AUTH-074). It ends this session too, then leaves the page by an
+     * exception no controller catches as a refusal (SessionRevoked). Only a call made
+     * for the session can get one — a pending identity's wizard call presents no epoch.
+     *
+     * @param array<mixed> $decoded
+     */
+    private function endRevokedSession(array $decoded, string $method, string $path): void
+    {
+        if (($decoded['error'] ?? '') !== 'session_revoked' || $this->actorOverride !== null) {
+            return;
+        }
+        $this->logger->info('session ended: the account was revoked since sign-in', [
+            'method' => $method,
+            'path' => $path,
+            'user' => Session::userId(),
+        ]);
+        Session::reset();
+
+        throw new SessionRevoked('session revoked');
+    }
+
+    /**
      * The headers every call carries across the internal boundary: the service token, the
-     * caller's address (REQ-API-125) and — when one is authenticated — the acting user.
+     * caller's address (REQ-API-125) and — when one is authenticated — the acting user and
+     * the session's epoch (REQ-AUTH-074).
      *
      * @return list<string>
      */
@@ -211,6 +236,13 @@ final class ApiClient
         $actor = $this->actorOverride ?? (Session::isAuthenticated() ? Session::userId() : null);
         if ($actor !== null) {
             $headers[] = 'X-Internal-User-Id: ' . $actor;
+        }
+        // The session's epoch from sign-in: the API refuses it once a revocation raised the
+        // account's (REQ-API-147). Only a call made for the session carries it — the override
+        // speaks for an identity that has no session yet.
+        $epoch = Session::epoch();
+        if ($this->actorOverride === null && $actor !== null && $epoch !== null) {
+            $headers[] = 'X-Internal-Session-Epoch: ' . $epoch;
         }
 
         return $headers;
@@ -270,6 +302,7 @@ final class ApiClient
                 $decoded = ['error' => 'internal', 'message' => ''];
             }
             $this->noteOperatorFailure($decoded, $method, $path);
+            $this->endRevokedSession($decoded, $method, $path);
 
             throw ApiException::fromBody($decoded, $status);
         }

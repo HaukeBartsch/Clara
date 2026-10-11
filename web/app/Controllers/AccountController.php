@@ -103,8 +103,9 @@ final class AccountController extends Controller
      * The repeat field is checked here as well as in the browser: the client check is a
      * convenience, this one is authoritative (§2.6). A wrong current password is the §3.4
      * bad-password line — the API has already audited it and counted it toward the Sequence
-     * E lockout — and existing sessions stay valid (DEV-AUTH-13), which is why nothing here
-     * touches the session.
+     * E lockout. A change ends every other session of the account (REQ-AUTH-074): the API
+     * raised the session epoch and answered the new value, which this session adopts — under
+     * a new id — so the person who changed the password stays signed in here.
      */
     public function changePassword(): Response
     {
@@ -122,7 +123,7 @@ final class AccountController extends Controller
         try {
             // Exactly the two attributes the endpoint accepts — an extra one is a 400
             // (Plan/Web_Implementation.md §7 rule 1).
-            $this->api->put('/api/v1/users/me/password', [
+            $answer = $this->api->put('/api/v1/users/me/password', [
                 'current_password' => $current,
                 'new_password' => $password,
             ]);
@@ -130,6 +131,9 @@ final class AccountController extends Controller
             $this->logger->info('password change rejected', ['code' => $e->code(), 'status' => $e->status()]);
 
             return $this->passwordPage(Messages::forApiException($this->i18n, $e));
+        }
+        if (is_int($answer['session_epoch'] ?? null)) {
+            Session::adoptEpoch($answer['session_epoch']);
         }
 
         // Nothing is echoed back and nothing is kept: the confirmation is the flash, and

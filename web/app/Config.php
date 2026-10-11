@@ -42,9 +42,22 @@ final class Config
 
     public string $sessionDir = '';
 
+    /**
+     * The cookie name on the wire: SESSION_COOKIE_NAME, carrying the `__Host-` prefix
+     * whenever the cookie is Secure (REQ-AUTH-075) — the browser then refuses it unless it
+     * is Secure, host-only and on path `/`, so neither a sibling subdomain nor a plain-HTTP
+     * page can plant or overwrite it.
+     */
     public string $sessionCookieName = 'csms_session';
 
+    /** Absolute bound from sign-in (REQ-AUTH-015): SESSION_LIFETIME, default 8 h. */
     public int $sessionLifetime = 28800;
+
+    /** Inactivity bound (REQ-AUTH-015): SESSION_IDLE_TIMEOUT, default 30 min; 0 = off. */
+    public int $sessionIdleTimeout = 1800;
+
+    /** Session id rotation (REQ-AUTH-072): SESSION_ROTATE_INTERVAL, default 15 min; 0 = off. */
+    public int $sessionRotateInterval = 900;
 
     public bool $sessionCookieSecure = false;
 
@@ -195,12 +208,40 @@ final class Config
             $c->sessionLifetime = (int) $lifetime;
         }
 
+        // Inactivity and rotation (REQ-AUTH-015/072): 0 turns either off. A rotation
+        // interval must outlast the grace window twice over, or the requests a page fires
+        // together would still be following one rotation when the next one starts.
+        $idle = $get('SESSION_IDLE_TIMEOUT', '1800');
+        if (preg_match('/^\d+$/', $idle) !== 1 || ((int) $idle !== 0 && (int) $idle < 60)) {
+            $errors[] = "SESSION_IDLE_TIMEOUT must be 0 (off) or an integer number of seconds ≥ 60, got '{$idle}'";
+            $c->sessionIdleTimeout = 1800;
+        } else {
+            $c->sessionIdleTimeout = (int) $idle;
+        }
+
+        $rotate = $get('SESSION_ROTATE_INTERVAL', '900');
+        $minimum = 2 * Session::ROTATION_GRACE_SECONDS;
+        if (preg_match('/^\d+$/', $rotate) !== 1 || ((int) $rotate !== 0 && (int) $rotate < $minimum)) {
+            $errors[] = "SESSION_ROTATE_INTERVAL must be 0 (off) or an integer number of seconds ≥ {$minimum}, got '{$rotate}'";
+            $c->sessionRotateInterval = 900;
+        } else {
+            $c->sessionRotateInterval = (int) $rotate;
+        }
+
         $secure = $get('SESSION_COOKIE_SECURE', $c->isDevelopment ? '0' : '1');
         if (!in_array($secure, ['0', '1'], true)) {
             $errors[] = "SESSION_COOKIE_SECURE must be 0 or 1, got '{$secure}'";
             $secure = $c->isDevelopment ? '0' : '1';
+        } elseif ($secure === '0' && !$c->isDevelopment) {
+            // A session cookie that may travel over plain HTTP is a session anyone on the
+            // path can take; production refuses to start rather than run that way (REQ-AUTH-075).
+            $errors[] = 'SESSION_COOKIE_SECURE=0 is refused when APP_ENV=production — serve the site over HTTPS (REQ-AUTH-075)';
+            $secure = '1';
         }
         $c->sessionCookieSecure = $secure === '1';
+        if ($c->sessionCookieSecure) {
+            $c->sessionCookieName = '__Host-' . $c->sessionCookieName;
+        }
 
         // --- appearance (REQ-CFG-031, REQ-TECH-027) ---
         $c->uiTheme = strtolower($get('UI_THEME', 'bootstrap'));
@@ -430,8 +471,8 @@ final class Config
     {
         $keys = [
             'APP_ENV', 'API_ADDR', 'INTERNAL_SERVICE_TOKEN', 'WEB_PUBLIC_URL', 'LOG_LEVEL_WEB',
-            'SESSION_DIR', 'SESSION_COOKIE_NAME', 'SESSION_LIFETIME', 'SESSION_COOKIE_SECURE',
-            'UI_THEME', 'LOCAL_LOGIN_NAMES',
+            'SESSION_DIR', 'SESSION_COOKIE_NAME', 'SESSION_LIFETIME', 'SESSION_IDLE_TIMEOUT',
+            'SESSION_ROTATE_INTERVAL', 'SESSION_COOKIE_SECURE', 'UI_THEME', 'LOCAL_LOGIN_NAMES',
         ];
         for ($n = 1; $n <= self::SOURCE_INDEX_MAX; $n++) {
             $keys[] = "OAUTH2_{$n}_ISSUER";

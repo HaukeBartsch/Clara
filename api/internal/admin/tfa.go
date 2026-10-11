@@ -289,8 +289,21 @@ func (h *Handler) resetUserTFA(w http.ResponseWriter, r *http.Request) {
 		errInternal(w)
 		return
 	}
+	// A reset answers a lost or compromised factor, so it also ends the
+	// account's sessions (REQ-AUTH-074). The raised epoch is in the answer for
+	// the one case it matters: an administrator resetting their own account
+	// keeps the session that did it.
+	if err := db.BumpSessionEpoch(ctx, h.Store.DB, userID); err != nil {
+		errInternal(w)
+		return
+	}
+	epoch, err := h.Store.SessionEpoch(ctx, userID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
 	h.auditTFA(ctx, audit.TFAReset, adminUser, map[string]any{"target_email": target.Email})
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "session_epoch": epoch})
 }
 
 // --- login-time challenge (Sequence G; called from auth.go) ---

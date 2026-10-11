@@ -304,6 +304,49 @@ final class Router
     /** Matches the request and produces its response. */
     public function dispatch(): Response
     {
+        // --- the session's lifecycle, before anything reads identity (§3.1) ---
+        if (self::needsSession($this->request)) {
+            $this->applySessionLifecycle();
+        }
+
+        try {
+            return $this->route();
+        } catch (SessionRevoked) {
+            // A revocation surfaced mid-request (REQ-AUTH-074): ApiClient has ended the
+            // session, so whatever the controller was building is moot — the user signs in.
+            Session::flash('warning', $this->i18n->t('session.ended.revoked'));
+
+            return $this->shapeRefusal(Response::redirect('/login'));
+        }
+    }
+
+    /**
+     * Runs Session::lifecycle() and does the two parts it cannot: telling the user why they
+     * are being asked to sign in, and reporting a replayed id to the API so every other
+     * session of the account ends (REQ-AUTH-073). The guard that follows sends an ended
+     * session to the login page, remembering the page it asked for.
+     */
+    private function applySessionLifecycle(): void
+    {
+        $outcome = Session::lifecycle($this->config, time());
+
+        $notice = match ($outcome['verdict']) {
+            Session::IDLE => ['info', 'session.ended.idle'],
+            Session::EXPIRED => ['info', 'session.ended.expired'],
+            Session::REPLAYED => ['danger', 'session.ended.replayed'],
+            default => null,
+        };
+        if ($outcome['verdict'] === Session::REPLAYED) {
+            $this->auth->reportSessionReplay($outcome['user_id']);
+        }
+        if ($notice !== null) {
+            Session::flash($notice[0], $this->i18n->t($notice[1]));
+        }
+    }
+
+    /** The guard, CSRF and content negotiation of one matched request. */
+    private function route(): Response
+    {
         $matched = self::find($this->request);
 
         if ($matched === null) {

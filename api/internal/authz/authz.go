@@ -383,8 +383,11 @@ func autoDisable(ctx context.Context, store *db.Store, aw *audit.Writer, cfg *co
 	if user.LastLoginAt.Valid {
 		last = user.LastLoginAt.String
 	}
+	// Like every disable, the auto-disable ends the account's sessions
+	// (REQ-AUTH-074), so a re-enable cannot revive one opened before it.
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE users SET enabled = 0, last_login_at = NULL WHERE id = ?`, user.ID); err != nil {
+		`UPDATE users SET enabled = 0, last_login_at = NULL, session_epoch = session_epoch + 1 WHERE id = ?`,
+		user.ID); err != nil {
 		return err
 	}
 	if err := aw.InsertTx(ctx, tx, audit.Entry{

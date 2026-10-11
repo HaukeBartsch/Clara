@@ -724,7 +724,7 @@ The `authLockout`, `addressLimiter` and `sendLimiter` maps (`lockout.go:35`, `pa
 
 ### F17 — Session lifecycle (Low)
 
-PHP sessions have an absolute lifetime only, with no idle timeout. A password change or reset does not end other sessions (DEV-AUTH-13). `SESSION_COOKIE_SECURE` defaults to `0`, and `SESSION_DIR` points at `/tmp`. **Fix:** Add an idle timeout of about 30 minutes. Store a per-user session epoch that the API bumps on password change. Refuse non-secure cookies when `APP_ENV=production`. Use a private 0700 session directory.
+PHP sessions have an absolute lifetime only, with no idle timeout. A password change or reset does not end other sessions (DEV-AUTH-13). `SESSION_COOKIE_SECURE` defaults to `0`, and `SESSION_DIR` points at `/tmp`. **Fix:** Add an idle timeout of about 30 minutes. Store a per-user session epoch that the API bumps on password change. Refuse non-secure cookies when `APP_ENV=production`. Use a private 0700 session directory. **Status:** Fixed 2026-10-11 except the session directory (DEV-AUTH-17, `Authentication_Authorization_Design.md` §3.1). Idle timeout `SESSION_IDLE_TIMEOUT` (default 30 min) beside the absolute `SESSION_LIFETIME`; `users.session_epoch`, raised by every password write, every disable, an administrator's two-factor reset and a detected replay, checked as `X-Internal-Session-Epoch` (supersedes DEV-AUTH-13); production refuses `SESSION_COOKIE_SECURE=0`, and a `Secure` cookie is named `__Host-…`. Added beyond the finding: session id rotation every 15 minutes with replay detection (REQ-AUTH-072/073). Still open: `.env.example` keeps `SESSION_DIR=/tmp/csms-sessions`, and an existing directory's mode is not checked (one the web layer creates itself is 0700).
 
 ### F18 — 2FA race conditions (Low)
 
@@ -783,6 +783,16 @@ The bcrypt algorithm requires a password with a maximum length (72b). Switch to 
 **Status:** Done 2026-10-11 — argon2id via `golang.org/x/crypto/argon2` (`api/internal/passhash`), PHC-encoded at RFC 9106's second recommended setting (64 MiB, t = 3, p = 4); no bcrypt fallback, since no installation holds local accounts yet; password upper bound 1,024 bytes (DEV-AUTH-16, F12).
 
 A general recommendation is to switch from stateful sessions to JWTs or opaque tokens with cryptographically signed JSON Web Tokens (JWTs) for stateless architectures. Is this possible for the php session part of the Clara application? Can this include refresh token rotations with short-lived access tokens (e.g., 15 minutes) and longer-lived refresh tokens? Token rotation should be automatic, where every use of a refresh token invalidates the old one and issues a new pair to detect and mitigate token theft. After this change the /api endpoint should still use the tokens linked to user permissions. 
+
+Answer: Possible, but not adopted. The recommendation targets clients that call resource servers directly. In CLARA the browser talks only to PHP, and the API re-reads the acting user on every call, so a signed token would save no lookup. Refresh-token rotation with reuse detection needs server-side state anyway. And the session holds things a readable token must not, such as the cached project token and the PKCE verifier. The same properties are delivered on the existing opaque session instead: short-lived credentials, automatic rotation, theft detection and revocation (owner decision, DEV-AUTH-17).
+
+**Status:** Done 2026-10-11 (`Authentication_Authorization_Design.md` §3.1, REQ-AUTH-015/072…075):
+- the session ends after 30 minutes without a request, and 8 hours after sign-in;
+- its id is replaced every 15 minutes; an old id still works for 60 seconds (requests in flight), and after that its use counts as theft: every session of the account ends and `session_replay_detected` is audited;
+- a per-account session epoch lets password changes and resets, disables and two-factor resets sign the account out everywhere, without the API storing sessions;
+- production refuses a non-`Secure` cookie, and the cookie is named `__Host-…`.
+
+The `/api/` endpoint is unchanged: its project tokens are still linked to the user's permissions, which are resolved at call time.
 
 Does it makes sense to add OIDC Authorization Code Flow with PKCE to Clara?
 

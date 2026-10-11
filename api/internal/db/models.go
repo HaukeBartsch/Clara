@@ -46,6 +46,7 @@ type User struct {
 	IsAdmin      bool
 	UILanguage   string
 	UITheme      sql.NullString // installed theme id; NULL = follow UI_THEME default (GD-26)
+	SessionEpoch int64          // raised to end every PHP session of the account (REQ-AUTH-074)
 	CreatedAt    string
 }
 

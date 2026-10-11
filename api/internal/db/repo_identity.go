@@ -9,7 +9,7 @@ import (
 // --- users (REQ-DB-008) ---
 
 const userColumns = `id, email, display_name, enabled, auth_source, password_hash,
-	valid_until, last_login_at, is_admin, ui_language, ui_theme, created_at`
+	valid_until, last_login_at, is_admin, ui_language, ui_theme, session_epoch, created_at`
 
 func scanUser(row interface{ Scan(dest ...any) error }) (User, error) {
 	var (
@@ -20,7 +20,7 @@ func scanUser(row interface{ Scan(dest ...any) error }) (User, error) {
 		lastLogin  any
 	)
 	err := row.Scan(&u.ID, &u.Email, &u.DisplayName, &enabled, &u.AuthSource,
-		&u.PasswordHash, &validUntil, &lastLogin, &isAdmin, &u.UILanguage, &u.UITheme, &u.CreatedAt)
+		&u.PasswordHash, &validUntil, &lastLogin, &isAdmin, &u.UILanguage, &u.UITheme, &u.SessionEpoch, &u.CreatedAt)
 	if err != nil {
 		return u, err
 	}
@@ -60,7 +60,7 @@ func (s *Store) UpsertBootstrap(ctx context.Context, email, displayName, passwor
 	var u User
 	err := s.DB.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE email = ?`, email).
 		Scan(&u.ID, &u.Email, &u.DisplayName, new(int), &u.AuthSource, &u.PasswordHash,
-			new(any), new(any), new(int), &u.UILanguage, &u.UITheme, &u.CreatedAt)
+			new(any), new(any), new(int), &u.UILanguage, &u.UITheme, &u.SessionEpoch, &u.CreatedAt)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, err
 	}
@@ -173,7 +173,9 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 }
 
 // SetUserEnabled sets the enabled flag and, when re-enabling, resets the
-// inactivity clock (last_login_at = NULL) per REQ-AUTH-053.
+// inactivity clock (last_login_at = NULL) per REQ-AUTH-053. Disabling ends
+// the account's sessions (REQ-AUTH-074), so a later re-enable cannot revive
+// one that was open when the account was switched off.
 func (s *Store) SetUserEnabled(ctx context.Context, id int64, enabled bool) error {
 	if enabled {
 		_, err := s.DB.ExecContext(ctx,
@@ -181,7 +183,7 @@ func (s *Store) SetUserEnabled(ctx context.Context, id int64, enabled bool) erro
 		return err
 	}
 	_, err := s.DB.ExecContext(ctx,
-		`UPDATE users SET enabled = 0 WHERE id = ?`, id)
+		`UPDATE users SET enabled = 0, session_epoch = session_epoch + 1 WHERE id = ?`, id)
 	return err
 }
 
@@ -190,9 +192,33 @@ func (s *Store) SetUserValidUntil(ctx context.Context, id int64, validUntil sql.
 	return err
 }
 
+// SetUserPasswordHash stores (or, with an invalid hash, clears) the local
+// credential. Every write of the credential ends the account's sessions
+// (REQ-AUTH-074): whoever held one opened it under the old password.
 func (s *Store) SetUserPasswordHash(ctx context.Context, id int64, hash sql.NullString) error {
-	_, err := s.DB.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ?`, nullStr(hash), id)
+	_, err := s.DB.ExecContext(ctx,
+		`UPDATE users SET password_hash = ?, session_epoch = session_epoch + 1 WHERE id = ?`, nullStr(hash), id)
 	return err
+}
+
+// BumpSessionEpoch raises the account's session epoch, which ends every PHP
+// session of the account at its next administration call (REQ-AUTH-074). It
+// runs on whatever executes it — the store or an open transaction — so a
+// caller can commit it together with the change that warrants it.
+func BumpSessionEpoch(ctx context.Context, x interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, id int64) error {
+	_, err := x.ExecContext(ctx, `UPDATE users SET session_epoch = session_epoch + 1 WHERE id = ?`, id)
+	return err
+}
+
+// SessionEpoch reads the account's current session epoch — what a caller
+// hands back after raising it on the acting user's own behalf, so the session
+// that made the change can adopt the new value instead of ending with the rest.
+func (s *Store) SessionEpoch(ctx context.Context, id int64) (int64, error) {
+	var epoch int64
+	err := s.DB.QueryRowContext(ctx, `SELECT session_epoch FROM users WHERE id = ?`, id).Scan(&epoch)
+	return epoch, err
 }
 
 func (s *Store) SetUILanguage(ctx context.Context, id int64, lang string) error {
@@ -209,10 +235,11 @@ func (s *Store) SetUITheme(ctx context.Context, id int64, theme sql.NullString) 
 }
 
 // AutoDisable marks a user disabled and clears the inactivity clock
-// (REQ-AUTH-053), used by the account-active rule.
+// (REQ-AUTH-053), used by the account-active rule. Like every disable it ends
+// the account's sessions (REQ-AUTH-074).
 func (s *Store) AutoDisable(ctx context.Context, id int64) error {
 	_, err := s.DB.ExecContext(ctx,
-		`UPDATE users SET enabled = 0, last_login_at = NULL WHERE id = ?`, id)
+		`UPDATE users SET enabled = 0, last_login_at = NULL, session_epoch = session_epoch + 1 WHERE id = ?`, id)
 	return err
 }
 

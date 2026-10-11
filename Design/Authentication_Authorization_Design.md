@@ -33,7 +33,7 @@ reverse proxy (nginx)
 Go API ──► SQLite / MariaDB
 ```
 
-- `/api/v1/*` is reachable only from the trusted internal path (REQ-AUTH-014, REQ-API-040); the proxy strips `X-Internal-Service-Token` and `X-Internal-User-Id` from every externally-originated request (rules fixed in `Technology_Stack_Design.md` §5).
+- `/api/v1/*` is reachable only from the trusted internal path (REQ-AUTH-014, REQ-API-040); the proxy strips `X-Internal-Service-Token`, `X-Internal-User-Id` and `X-Internal-Session-Epoch` from every externally-originated request (rules fixed in `Technology_Stack_Design.md` §5).
 - Inter-component traffic is loopback or TLS (REQ-AUTH-034).
 - The browser never calls `/api/v1/*` directly (GD-1, REQ-AUTH-010, REQ-UI-002).
 - The proxy MUST NOT log the query string of `/api/` requests, or must redact `token=…` (the bearer rides in the query/body per REQ-API-010; REQ-AUTH-049).
@@ -110,7 +110,7 @@ The API is stateless with respect to sessions: it MUST NOT create or store a ses
 
 Normative ordering: the audit call **precedes** session destruction (REQ-AUTH-015); REQ-API-045's assignment of destruction to the PHP layer is satisfied by step 4.
 
-Session inactivity timeout: `SESSION_LIFETIME` (default 8 h, REQ-AUTH-015, `System_Configuration_Design.md` §3.8); an expired session redirects to `/login` (REQ-UI-007).
+Session bounds: `SESSION_IDLE_TIMEOUT` (default 30 min) and the absolute `SESSION_LIFETIME` (default 8 h) — REQ-AUTH-015, `System_Configuration_Design.md` §3.8; an ended session redirects to `/login` with a line saying why (REQ-UI-007). The whole lifecycle — bounds, id rotation, replay detection, revocation — is §3.1.
 
 ### 2.5 Sequence E — brute-force protection (REQ-AUTH-035)
 
@@ -138,7 +138,7 @@ On success PHP establishes the session (§3) exactly as for the other paths; `au
 
 **Challenge flow.** Sequence F/B receive 401 `mfa_required` from Sequence C step 1.5. PHP records the first-factor success in a **pre-authentication** session (`tfa_pending = {email, source, verified_at}` plus, on the local path, the **first-factor handle** verify-password issued — REQ-API-131; TTL 5 min) and renders the code form (no other page is reachable). Submitting the code re-invokes `POST /api/v1/auth/login` with `mfa_code` and, on the local path, that handle in place of the password: the user types one field, and no layer holds their password between the two calls (REQ-AUTH-036 — a PHP session holding it would be plaintext persistence). On success PHP promotes the pending session to a full session (§3) — `session_regenerate_id(true)` as always. Failed attempts count toward the Sequence E lockout; while locked, no verification runs and no email code is sent (REQ-AUTH-058). A handle that has expired or been invalidated answers 401 `first_factor_expired`, which is not a credential failure and does not extend the lockout — PHP clears the pending state and returns the user to the credential form.
 
-**Mandated enrollment.** 401 `tfa_enrollment_required` (first factor OK, method `off`, `AUTH_REQUIRE_2FA` on) leads PHP to the enrollment wizard inside the pending session. The self-service endpoints (REQ-API-115) accept `X-Internal-User-Id` for the pending identity — the same service-token trust boundary as every other admin call; PHP only supplies an id whose first factor it just verified. That 401 carries the pending identity's `user_id`, which is what makes the wizard drivable pre-session (web-readiness amendment, 2026-09-29): PHP stores it in `tfa_pending` and presents it as `X-Internal-User-Id` on every wizard call. Wizard: TOTP enroll → secret + QR shown once → confirm with one current code; or email start/confirm (409 when SMTP is not configured). Activation writes the method and returns the recovery codes once; PHP then resumes the login call and completes normally.
+**Mandated enrollment.** 401 `tfa_enrollment_required` (first factor OK, method `off`, `AUTH_REQUIRE_2FA` on) leads PHP to the enrollment wizard inside the pending session. The self-service endpoints (REQ-API-115) accept `X-Internal-User-Id` for the pending identity — the same service-token trust boundary as every other admin call; PHP only supplies an id whose first factor it just verified. That 401 carries the pending identity's `user_id`, which is what makes the wizard drivable pre-session (web-readiness amendment, 2026-09-29): PHP stores it in `tfa_pending` and presents it as `X-Internal-User-Id` on every wizard call — without `X-Internal-Session-Epoch`, since no session exists yet (§3.1). Wizard: TOTP enroll → secret + QR shown once → confirm with one current code; or email start/confirm (409 when SMTP is not configured). Activation writes the method and returns the recovery codes once; PHP then resumes the login call and completes normally.
 
 **Self-service management.** A signed-in user reaches the same wizard from the account page (`User_Interface_Design.md`): change method, view status, disable — disable requires a valid current code or recovery code, so a hijacked session cannot silently drop the factor (REQ-API-115). Audit: `tfa_enrolled`, `tfa_disabled`, `tfa_reset` (REQ-AUD-028).
 
@@ -152,11 +152,11 @@ On success PHP establishes the session (§3) exactly as for the other paths; `au
 
 **Reset request.** `POST /api/v1/auth/password-reset/request` with `{ "email": "…" }`: the response is a fixed 202 body regardless of outcome (REQ-AUTH-062 — no enumeration oracle). Internally: an **active local account** (`enabled = 1`, not expired, per §4.4) matching the address receives the emailed link; anything else sends nothing yet answers identically. Rate limit: default 3 requests / 15 minutes per address (plus the general IP limiter, `System_Configuration_Design.md` §3.9); audit `password_reset_requested` with the submitted address and source IP — never a token.
 
-**Reset completion.** `POST /api/v1/auth/password-reset/complete` with `{ "token": "…", "password": "***" }`: verifies per the shared mechanics (purpose `reset`), stores the new argon2id hash, consumes the token, **invalidates all outstanding tokens of the account**, and audits `password_reset_completed`. No temporary password exists at any point (REQ-AUTH-062). Existing PHP sessions are not revoked — DEV-AUTH-13; they end via logout or timeout (REQ-AUTH-015).
+**Reset completion.** `POST /api/v1/auth/password-reset/complete` with `{ "token": "…", "password": "***" }`: verifies per the shared mechanics (purpose `reset`), stores the new argon2id hash, consumes the token, **invalidates all outstanding tokens of the account**, and audits `password_reset_completed`. No temporary password exists at any point (REQ-AUTH-062). The same transaction raises the account's session epoch, so every existing PHP session of the account ends at its next API call (REQ-AUTH-074, §3.1 — superseding DEV-AUTH-13); invite completion does the same.
 
 **Pre-authentication boundary.** The three Sequence H endpoints ride the same internal trust path as `POST /api/v1/auth/login`: service token required, no `X-Internal-User-Id` (the REQ-API-041 exception set — DEV-API-16), unreachable from outside (§1.2). PHP's public routes (`/password-reset`, `/set-password`) are the only browser-facing entry points and carry CSRF protection like every other form (REQ-AUTH-037); the token itself is the credential, so no session or identity is implied before completion.
 
-**Self-service change (signed-in).** Not part of Sequence H's pre-auth path: `PUT /api/v1/users/me/password` verifies `current_password` against the hash first (failure → 401 `bad_password`, audit-logged, counted toward the Sequence E lockout), then stores the new hash and audits `password_changed` (REQ-AUTH-061, REQ-API-118).
+**Self-service change (signed-in).** Not part of Sequence H's pre-auth path: `PUT /api/v1/users/me/password` verifies `current_password` against the hash first (failure → 401 `bad_password`, audit-logged, counted toward the Sequence E lockout), then stores the new hash, raises the account's session epoch — ending its other sessions — and audits `password_changed`; the answer carries the new epoch, which the calling session adopts under a new id (§3.1) (REQ-AUTH-061, REQ-API-118).
 
 ### 2.9 Sequence I — named source selection and the parallel credential race (master spec "Authentication order", REQ-AUTH-063…067, DEV-AUTH-14)
 
@@ -184,7 +184,7 @@ The submitted email+password is sent **only** to the sources under the selected 
 
 The session is owned by the PHP web application: PHP-native session, file storage in `SESSION_DIR` (MUST NOT be the application database, REQ-CFG-017). The API never sees the session (GD-1, REQ-API-044).
 
-**Cookie** (REQ-TECH-019): name `SESSION_COOKIE_NAME`; `HttpOnly`, `Secure` in production (`SESSION_COOKIE_SECURE`), `SameSite=Lax`. On login, `session_regenerate_id(true)` is performed (session-fixation defense).
+**Cookie** (REQ-TECH-019, REQ-AUTH-075): name `SESSION_COOKIE_NAME`, sent as `__Host-<SESSION_COOKIE_NAME>` whenever it is `Secure`; `HttpOnly`, `Secure` in production (`SESSION_COOKIE_SECURE` — `0` refuses to start under `APP_ENV=production`), `SameSite=Lax`. On login, `session_regenerate_id(true)` is performed (session-fixation defense).
 
 | Key | Set | Value | Cleared |
 |---|---|---|---|
@@ -194,10 +194,14 @@ The session is owned by the PHP web application: PHP-native session, file storag
 | `is_admin` | login | `0`/`1` | |
 | `auth_source` | login | `oauth2`/`ldap`/`local` | |
 | `auth_source_name` | `/login` selection (§2.9) | the user-selected source name (REQ-AUTH-067); updated at each login | |
-| `issued_at` | login | unix timestamp | |
+| `issued_at` | login | unix timestamp — start of the absolute bound (§3.1) | |
+| `last_seen_at` | login; every request | unix timestamp — start of the idle bound (§3.1) | |
+| `rotated_at` | login; every id rotation | unix timestamp (§3.1) | |
+| `session_epoch` | login (the user object's `session_epoch`) | integer (REQ-AUTH-074) — sent as `X-Internal-Session-Epoch` | replaced when the session adopts its own account's raised epoch (§3.1) |
 | `csrf_token` | session start | 32-byte random hex | session regeneration |
 | `oauth2_state` | `/login` | 16-byte random hex | callback (single use) |
 | `oauth2_pkce_verifier` | `/login` | random (S256) | callback (single use) |
+| `tombstone` | id rotation, on the **replaced** id only | `{successor, at, user_id}` — the only key a replaced id holds; never signed in, never rendered (§3.1) | replay detection, or session GC |
 | `tfa_pending` | login 401 `mfa_required` / `tfa_enrollment_required` (§2.7) | `{email, source, verified_at}` plus `user_id` on `tfa_enrollment_required` (drives the wizard, §2.7), plus `first_factor` on the local path — the handle of REQ-API-131 that stands in for the password when the code is submitted, so the credential is never persisted here — **pre-authentication**: not a session; every page guard rejects it | second factor verified or enrollment completed (promoted via `session_regenerate_id(true)`), or TTL 5 min / abort |
 
 The identity keys above are written **only after the two-factor gate has passed** for accounts with a method other than `off` (GD-21, §2.7); while only `tfa_pending` exists, no authenticated page is reachable.
@@ -205,6 +209,42 @@ The identity keys above are written **only after the two-factor gate has passed*
 All page reads go through a single `require_login()` helper; a missing session redirects to `/login`. The session stores **identity only** — no permissions, no project tokens, no data: permissions are re-derived from the API on every request (REQ-AUTH-033), and project tokens live in `user_projects.token`, never in the session.
 
 The reference application's `AC.php` (master spec, "Details"; `assets/table_based_authentication_plus_user_management/AC.php`) is the model for this PHP session-establishment flow — a per-page access-control include that checks the session and redirects to login when it is absent, resolving the identity by name **or** institutional email. Only that *session pattern* is adopted (REQ-UI-032, REQ-TECH-025); the authentication mechanism itself (§2), the credential handling, and the storage (the database, not the reference's JSON file) follow this document and the fixed requirements (REQ-AUTH-036, REQ-TECH-020/024).
+
+### 3.1 Session lifecycle (REQ-AUTH-015, REQ-AUTH-072…075 — DEV-AUTH-17)
+
+The session stays an opaque, server-side PHP session. What this section adds is how long one id lives, how a copied id is noticed, and how the API ends sessions it never stored. The router runs the lifecycle once per request — after the session starts, before the guard or anything else reads identity (`Session::lifecycle()`; the translator loads the user's language only on its first line, for the same reason).
+
+**Bounds (REQ-AUTH-015).** `issued_at + SESSION_LIFETIME` (default 8 h) is absolute; `last_seen_at + SESSION_IDLE_TIMEOUT` (default 30 min, `0` = off) is the idle bound, and every request of a signed-in session moves `last_seen_at`. A session past either bound ends: the identity is dropped, the id regenerated with its file removed, a fresh CSRF token set, the flash line `session.ended.expired` or `session.ended.idle` queued, and the guard sends the browser to `/login?next=…`. A signed-in session without `session_epoch` predates this design and ends the same way.
+
+**Rotation (REQ-AUTH-072).** On the first request after `rotated_at + SESSION_ROTATE_INTERVAL` (default 15 min, `0` = off, at least 120 s):
+
+1. create the successor id (`session_create_id()`);
+2. overwrite the current session with only `tombstone = {successor, at, user_id}` and write it;
+3. start the successor — strict mode steps aside for this one start, because the id has no file yet — restore the data into it and set `rotated_at`; the response carries the new cookie.
+
+The CSRF token moves with the data, so forms rendered before the rotation still submit.
+
+**Grace window and replay (REQ-AUTH-072/073).** A request that presents a replaced id:
+
+- within 60 s of `tombstone.at` continues in the successor, and its response re-issues the successor's cookie. PHP's session-file lock serializes the requests of one session, so a request queued behind the rotating one reads the tombstone only after the successor exists;
+- after that is a replay. The tombstone is removed (the id regenerated), the presenting browser gets an anonymous session and `session.ended.replayed`, and PHP calls `POST /api/v1/auth/session-replay` as `tombstone.user_id` — through the override, without an epoch. The API raises the epoch, which ends the session holding the successor at its next call, and records `session_replay_detected` with the presenting address (REQ-AUD-030). Whoever holds the successor — the user or the copy — loses it; the system cannot tell which one is legitimate, so neither keeps it.
+
+The trade-off is deliberate. Inside the grace window a copied old id is followed like a legitimate one; it is caught at the next rotation instead. A response carrying a new cookie that never reaches the browser, followed by more than 60 s without a request, reads as a replay: that user signs in again, and the audit trail shows it.
+
+**Session epoch (REQ-AUTH-074).** `users.session_epoch` (REQ-DB-008) is copied into the session at login (the user object's `session_epoch`; `0` from an API that predates it, which also ignores the header) and sent as `X-Internal-Session-Epoch` on every call PHP makes for the session — not on the enrollment wizard's override calls (§2.7) nor on the replay report. The API compares it after the account-active rule (§4.3): a mismatch answers 401 `session_revoked` and writes `admin_rejected` with reason `session_revoked`. PHP then resets the session, and the router sends the browser to `/login` with `session.ended.revoked` — or answers a data request 403 `forbidden`, like any unauthenticated one. A controller never sees the refusal as a line to show: it travels as `SessionRevoked`, which is not an `ApiException`.
+
+| Raises the epoch | Endpoint | Atomic with |
+|---|---|---|
+| any write of the local password — self-service change, reset completion, invite completion, administrator set or clear, re-create of a disabled account with a password | `PUT /users/me/password`, `POST /auth/password-reset/complete`, `POST /auth/invite/complete`, `PUT /users/{id}`, `POST /users` | the password write |
+| `enabled` → `0` | `PUT /users/{id}`; the inactivity auto-disable (§4.4) | the disable (and its audit entry) |
+| an administrator's two-factor reset | `POST /users/{id}/tfa/reset` | — |
+| a reported replay | `POST /auth/session-replay` | the `session_replay_detected` entry |
+
+Re-enabling never lowers the epoch, so a session from before a disable stays dead. The session that changed its own account keeps going: a self-service password change, or an administrator's password set or two-factor reset on their own row, answers the raised epoch, and PHP adopts it with `session_regenerate_id(true)` — no tombstone, since a credential change must not leave an old id that still leads anywhere. An administrator who disables their own account does not adopt it.
+
+**Cookie (REQ-AUTH-075).** With `SESSION_COOKIE_SECURE=1` the cookie is `__Host-<SESSION_COOKIE_NAME>` — `Path=/`, no `Domain`, `Secure`, `HttpOnly`, `SameSite=Lax` — which a browser accepts only from this exact host over HTTPS, so neither a sibling subdomain nor a plain-HTTP page can plant or overwrite it. `APP_ENV=production` with `SESSION_COOKIE_SECURE=0` refuses to start. `SameSite=Strict` is not used: the OAuth2 callback (§2.1) is a cross-site top-level navigation that must carry the session holding `state` and the PKCE verifier.
+
+**Why not signed tokens.** The owner asked (2026-10-11) whether the PHP session should become stateless JWTs with rotating refresh tokens. That design serves clients that call resource servers directly. Here the browser talks only to PHP (REQ-AUTH-010), and the API re-reads the acting user on every call anyway (§6), so a self-contained token would save no lookup; refresh-token rotation with reuse detection is server-side state in any case; and the session holds things a readable token must not (the cached project token, the PKCE verifier). This section delivers the properties that recommendation is after — short-lived credentials, automatic rotation, theft detection, revocation — on the opaque session (DEV-AUTH-17). The data API's project tokens are a separate credential and unchanged (§5).
 
 ## 4. Authorization Evaluation (ASM-AUTH-5)
 
@@ -274,7 +314,8 @@ active(user, now):
   if user.last_login_at is not null
      and AUTH_INACTIVITY_LIMIT_DAYS > 0
      and now - user.last_login_at > AUTH_INACTIVITY_LIMIT_DAYS days:
-     AUTO-DISABLE: set enabled = 0, last_login_at = NULL   (same transaction)
+     AUTO-DISABLE: set enabled = 0, last_login_at = NULL,
+                   session_epoch + 1 (§3.1)             (same transaction)
      audit account_auto_disabled (source = system)         (REQ-AUTH-053, REQ-AUD-024)
      reject account_disabled
   return active
@@ -302,7 +343,8 @@ Rules:
 
 - `X-Internal-Service-Token` is compared in constant time (`crypto/subtle.ConstantTimeCompare`) and MUST NOT be logged (REQ-AUTH-012); a missing/invalid token → 401 + audit `admin_rejected` — enforced regardless of any other configuration (REQ-CFG-023).
 - `X-Internal-User-Id` is authoritative for authorization on `/api/v1/*` (REQ-AUTH-013); an unknown or disabled user → 403 + audit `admin_rejected`.
-- The proxy strips both headers from every externally-originated request (REQ-AUTH-014; configuration in `Technology_Stack_Design.md` §5).
+- `X-Internal-Session-Epoch`, when present, MUST equal the acting account's `session_epoch`; otherwise 401 `session_revoked` + audit `admin_rejected` (REQ-API-147, §3.1). It is checked after the account-active rule, so a disabled account keeps its 403.
+- The proxy strips all three headers from every externally-originated request (REQ-AUTH-014; configuration in `Technology_Stack_Design.md` §5).
 - `POST /api/v1/auth/login` (service token only, no user id — §2.3), the three pre-authentication password endpoints of Sequence H (§2.8), and `POST /api/v1/auth/verify-password` (§2.9) are the exceptions.
 
 ## 7. Non-Functional Security
@@ -326,8 +368,9 @@ Rules:
 | table-based authentication (owner decision 2026-09-22, GD-18) | `users.password_hash` (argon2id since 2026-10-11, DEV-AUTH-16) + `auth_source = local`; Sequence F before the LDAP fallback (ordering superseded by Sequence I, DEV-AUTH-14); bootstrap password from `ADMIN_BOOTSTRAP_PASSWORD` (required at startup when no IdP is configured); `REQ-AUTH-036` revised to "no plaintext, hash only" (§2.2/§2.3/§2.6, §7) |
 | account validity and inactivity (owner decision 2026-09-22, GD-19) | `users.valid_until` / `users.last_login_at`; the account-active rule of §4.4 evaluated at every authentication check; auto-disable + `account_auto_disabled` audit; admin re-enable resets the inactivity clock |
 | two-factor authentication (owner decision 2026-09-28, GD-21) | `user_two_factor` (§2.7); Sequence C step 1.5 gate on local/LDAP logins only — OAuth2 MFA stays with the IdP (DEV-AUTH-10); TOTP (stdlib RFC 6238) + email codes (`net/smtp`); recovery codes; `tfa_pending` pre-auth session (§3); mandate `AUTH_REQUIRE_2FA`; admin reset |
-| account onboarding and password lifecycle (owner decision 2026-09-28, GD-22/GD-23) | Sequence H (§2.8): `password_tokens` (REQ-DB-039) — invite and reset share single-use hashed expiring tokens (`AUTH_PASSWORD_TOKEN_TTL_DAYS`, REQ-CFG-030); the three pre-auth endpoints extend the REQ-API-041 exception set (DEV-API-16); generic reset response (no enumeration), no temp passwords, current-password proof for self-service change; sessions not revoked (DEV-AUTH-13) |
+| account onboarding and password lifecycle (owner decision 2026-09-28, GD-22/GD-23) | Sequence H (§2.8): `password_tokens` (REQ-DB-039) — invite and reset share single-use hashed expiring tokens (`AUTH_PASSWORD_TOKEN_TTL_DAYS`, REQ-CFG-030); the three pre-auth endpoints extend the REQ-API-041 exception set (DEV-API-16); generic reset response (no enumeration), no temp passwords, current-password proof for self-service change; sessions not revoked (DEV-AUTH-13 — superseded 2026-10-11 by the session epoch, §3.1) |
 | authentication order (owner decision 2026-09-29, master spec "Authentication order") | Sequence I (§2.9): user selects a source **name** before login (many-to-many with sources); local+LDAP sources under the name race in parallel, first "login ok" wins via side-effect-free `verify-password` + single Sequence C finalization; OAuth2 stays interactive within the name; credentials confined to the selected set; supersedes the sequential LDAP fallback and local-first ordering (DEV-AUTH-14) |
+| session lifecycle hardening (owner decision 2026-10-11, DEV-AUTH-17; security finding F17) | §3.1: idle bound `SESSION_IDLE_TIMEOUT` (30 min) beside the absolute `SESSION_LIFETIME` (8 h); id rotation every `SESSION_ROTATE_INTERVAL` (15 min) with a 60 s grace window and a tombstone on the replaced id; replay → all sessions of the account end + `session_replay_detected`; `users.session_epoch` raised by password writes, disables, two-factor resets and replays, checked as `X-Internal-Session-Epoch` (supersedes DEV-AUTH-13); `__Host-` cookie, production refuses a non-`Secure` one. Signed stateless tokens were considered and not adopted (§3.1, "Why not signed tokens") |
 
 ## 9. Open Items
 

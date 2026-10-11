@@ -11,6 +11,11 @@
 //
 // Anonymous pages have no user, so they have no language to look up: they render
 // English without calling the API at all (the bundle read needs an actor).
+//
+// The overlay is read on the first translated line, not when this object is built:
+// the front controller builds it before the router has run the session's lifecycle
+// (Session::lifecycle(), §3.1), and nothing may act on an identity before that step
+// has decided whether the session still stands.
 
 declare(strict_types=1);
 
@@ -21,8 +26,8 @@ final class I18n
     /** @var array<string, string> the English catalog */
     private array $english;
 
-    /** @var array<string, string> the active language's overrides */
-    private array $overlay = [];
+    /** @var array<string, string>|null the active language's overrides; null until first read */
+    private ?array $overlay = null;
 
     /** How long a fetched language list stays fresh inside one session. */
     private const LANGUAGE_CACHE_SECONDS = 900;
@@ -37,10 +42,6 @@ final class I18n
             throw new \LogicException('app/i18n/en.php must return an array');
         }
         $this->english = $catalog;
-
-        if (Session::isAuthenticated()) {
-            $this->loadOverlay();
-        }
     }
 
     /**
@@ -63,6 +64,12 @@ final class I18n
 
     public function t(string $key, array $params = []): string
     {
+        if ($this->overlay === null) {
+            $this->overlay = [];
+            if (Session::isAuthenticated()) {
+                $this->loadOverlay();
+            }
+        }
         $text = $this->overlay[$key] ?? null;
         if ($text === null || $text === '') {
             $text = $this->english[$key] ?? null;

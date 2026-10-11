@@ -161,8 +161,11 @@ func (h *Handler) completeSetup(w http.ResponseWriter, r *http.Request, purpose,
 		return
 	}
 	defer tx.Rollback()
+	// The new credential ends every session the account had (REQ-AUTH-074):
+	// a reset is exactly what someone does who suspects another holds one.
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE users SET password_hash = ? WHERE id = ?`, hash, target.ID); err != nil {
+		`UPDATE users SET password_hash = ?, session_epoch = session_epoch + 1 WHERE id = ?`,
+		hash, target.ID); err != nil {
 		errInternal(w)
 		return
 	}
@@ -368,7 +371,9 @@ func (h *Handler) inviteUser(w http.ResponseWriter, r *http.Request) {
 // changeMyPassword proves the current credential before accepting a new
 // one: a wrong current password is 401 bad_password, audit-logged and
 // counted toward the Sequence E lockout. Accounts without a local credential
-// answer 409 no_local_credential. Sessions are not revoked (DEV-AUTH-13).
+// answer 409 no_local_credential. The change ends every other session of the
+// account (REQ-AUTH-074): the answer carries the raised session epoch, which
+// the session that made the change adopts to stay signed in.
 func (h *Handler) changeMyPassword(w http.ResponseWriter, r *http.Request) {
 	u, ok := actor(r)
 	if !ok {
@@ -433,7 +438,12 @@ func (h *Handler) changeMyPassword(w http.ResponseWriter, r *http.Request) {
 		errInternal(w)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	epoch, err := h.Store.SessionEpoch(ctx, u.ID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "session_epoch": epoch})
 }
 
 // --- per-address reset limiter (Sequence H request cap) ---

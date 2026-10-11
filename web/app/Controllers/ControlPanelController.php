@@ -257,12 +257,13 @@ final class ControlPanelController extends Controller
     {
         $id = $this->targetUserId();
         try {
-            $this->api->post('/api/v1/users/' . $id . '/tfa/reset');
+            $answer = $this->api->post('/api/v1/users/' . $id . '/tfa/reset');
         } catch (ApiException $e) {
             $this->flashDanger(Messages::forApiException($this->i18n, $e));
 
             return $this->toSection('users');
         }
+        $this->keepOwnSession($id, $answer);
         $this->flashSuccess($this->i18n->t('admin.users.tfa_reset', ['email' => $this->targetEmail()]));
 
         return $this->toSection('users');
@@ -273,16 +274,33 @@ final class ControlPanelController extends Controller
     {
         $id = $this->targetUserId();
         try {
-            $this->api->put('/api/v1/users/' . $id, $body);
+            $answer = $this->api->put('/api/v1/users/' . $id, $body);
         } catch (ApiException $e) {
             $this->logger->info('user update rejected', ['code' => $e->code(), 'status' => $e->status()]);
             $this->flashDanger(Messages::forApiException($this->i18n, $e));
 
             return $this->toSection('users');
         }
+        $this->keepOwnSession($id, $answer);
         $this->flashSuccess($this->i18n->t($successKey, ['email' => $this->targetEmail()]));
 
         return $this->toSection('users');
+    }
+
+    /**
+     * A password write or a two-factor reset ends the target account's sessions
+     * (REQ-AUTH-074). When the administrator acted on their own row, the session doing it
+     * adopts the raised epoch the API answered rather than ending with the others — unless
+     * the change disabled the account, which is meant to end this session too.
+     *
+     * @param array<mixed> $answer
+     */
+    private function keepOwnSession(int $id, array $answer): void
+    {
+        if ($id === Session::userId() && is_int($answer['session_epoch'] ?? null)
+            && $answer['session_epoch'] !== Session::epoch() && ($answer['enabled'] ?? true) !== false) {
+            Session::adoptEpoch($answer['session_epoch']);
+        }
     }
 
     private function targetUserId(): int

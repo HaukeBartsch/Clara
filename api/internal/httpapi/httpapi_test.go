@@ -428,6 +428,73 @@ func TestAdminBoundaryActiveUserReachesHandlerWithActor(t *testing.T) {
 	}
 }
 
+// TestAdminBoundarySessionEpoch covers REQ-AUTH-074 / REQ-API-147: a call made
+// for an established PHP session carries X-Internal-Session-Epoch, and the
+// boundary accepts it only while it equals the account's stored epoch. A
+// mismatch is the one 401 that is not about the service token — PHP ends the
+// session on it — and it is audited like every other boundary rejection.
+func TestAdminBoundarySessionEpoch(t *testing.T) {
+	withEpoch := func(e *env, u *db.User, epoch string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/projects", nil)
+		req.Header.Set("X-Internal-Service-Token", "test-token")
+		req.Header.Set("X-Internal-User-Id", strconv.FormatInt(u.ID, 10))
+		req.Header.Set("X-Internal-Session-Epoch", epoch)
+		return serve(e.t, e.Boundary, req)
+	}
+	raise := func(e *env, u *db.User, to int64) {
+		if _, err := e.Store.DB.Exec(`UPDATE users SET session_epoch = ? WHERE id = ?`, to, u.ID); err != nil {
+			e.t.Fatalf("set epoch: %v", err)
+		}
+	}
+
+	t.Run("the current epoch passes", func(t *testing.T) {
+		e := newEnv(t)
+		u := e.mustUser("member@example.org")
+		raise(e, u, 3)
+		if got := e.actor(withEpoch(e, u, "3")); got.ID != u.ID {
+			t.Errorf("handler saw user %d, want %d", got.ID, u.ID)
+		}
+	})
+
+	for _, tc := range []struct{ name, presented string }{
+		{"an older epoch", "2"},
+		{"a newer epoch", "4"},
+		{"a value that is not a number", "three"},
+		{"an empty value", ""},
+	} {
+		t.Run(tc.name+" is session_revoked", func(t *testing.T) {
+			e := newEnv(t)
+			u := e.mustUser("member@example.org")
+			raise(e, u, 3)
+			before := e.rejections()
+			rec := withEpoch(e, u, tc.presented)
+			e.mustError(rec, http.StatusUnauthorized, "session_revoked")
+			e.mustAuditOne(before, "session_revoked", "GET /api/v1/projects")
+		})
+	}
+
+	t.Run("no header means no session stands behind the call", func(t *testing.T) {
+		// The two-factor enrollment wizard drives the API for a pending
+		// identity before any session exists (§2.7); it presents no epoch.
+		e := newEnv(t)
+		u := e.mustUser("member@example.org")
+		raise(e, u, 3)
+		rec := e.do(http.MethodGet, "/api/v1/projects", str("test-token"), str(strconv.FormatInt(u.ID, 10)))
+		if got := e.actor(rec); got.ID != u.ID {
+			t.Errorf("handler saw user %d, want %d", got.ID, u.ID)
+		}
+	})
+
+	t.Run("a disabled account stays a 403, whatever the epoch", func(t *testing.T) {
+		e := newEnv(t)
+		u := e.mustDisabled("gone@example.org")
+		before := e.rejections()
+		rec := withEpoch(e, u, "0")
+		e.mustError(rec, http.StatusForbidden, "forbidden")
+		e.mustAuditOne(before, "user_disabled", "GET /api/v1/projects")
+	})
+}
+
 // TestAdminBoundaryLoginExemption covers the sole exception to
 // X-Internal-User-Id (Authentication_Authorization_Design.md §2.3): login is
 // reached with a service token alone, the identity riding in the body. The

@@ -139,8 +139,11 @@ var preAuthPaths = map[string]bool{
 // (REQ-API-041, REQ-AUTH-011…013): a valid X-Internal-Service-Token
 // (constant-time compare, never logged) and — except for the pre-auth
 // endpoints — an active acting user from the authoritative
-// X-Internal-User-Id header. Rejections are audit-logged as admin_rejected
-// (REQ-AUD-008).
+// X-Internal-User-Id header. A call made for an established PHP session also
+// carries X-Internal-Session-Epoch, which must equal the account's current
+// session epoch; anything else means the session was ended since PHP opened
+// it (REQ-AUTH-074, REQ-API-147). Rejections are audit-logged as
+// admin_rejected (REQ-AUD-008).
 func AdminBoundary(next http.Handler, store *db.Store, cfg *config.Config, aw *audit.Writer) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		presented := r.Header.Get("X-Internal-Service-Token")
@@ -173,6 +176,17 @@ func AdminBoundary(next http.Handler, store *db.Store, cfg *config.Config, aw *a
 			rejectAdmin(w, r, aw, "user_disabled")
 			return
 		}
+		// The header is absent on the calls no session stands behind — the
+		// two-factor enrollment wizard's pending identity (§2.7) — and from a
+		// web layer older than the check; present, it must match exactly, and
+		// a value that is not a number cannot match anything.
+		if raw, present := r.Header["X-Internal-Session-Epoch"]; present {
+			epoch, err := strconv.ParseInt(raw[0], 10, 64)
+			if err != nil || epoch != u.SessionEpoch {
+				rejectAdmin(w, r, aw, "session_revoked")
+				return
+			}
+		}
 		next.ServeHTTP(w, r.WithContext(authz.WithActor(r.Context(), u)))
 	})
 }
@@ -182,8 +196,14 @@ func AdminBoundary(next http.Handler, store *db.Store, cfg *config.Config, aw *a
 func rejectAdmin(w http.ResponseWriter, r *http.Request, aw *audit.Writer, reason string) {
 	code := "forbidden"
 	status := http.StatusForbidden
-	if reason == "service_token_invalid" {
+	switch reason {
+	case "service_token_invalid":
 		code = "service_token_invalid"
+		status = http.StatusUnauthorized
+	case "session_revoked":
+		// Not a permission answer: the session's credential is gone, and PHP
+		// ends the session on this code (User_Interface_Design.md §3.4).
+		code = "session_revoked"
 		status = http.StatusUnauthorized
 	}
 	admin.APIError(w, status, code, r.URL.Path)

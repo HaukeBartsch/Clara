@@ -291,6 +291,10 @@ type UserObject struct {
 	ValidUntil  *string `json:"valid_until"`
 	Status      string  `json:"status"`
 	TFAMethod   string  `json:"tfa_method"` // off | totp | email (REQ-API-116)
+	// SessionEpoch is what the web layer copies into a session at login and
+	// presents as X-Internal-Session-Epoch (REQ-AUTH-074). Not a secret: it
+	// counts revocations and authorizes nothing on its own.
+	SessionEpoch int64 `json:"session_epoch"`
 }
 
 // NewUserObject maps a db.User to the response shape. tfa_method defaults to
@@ -302,6 +306,7 @@ func NewUserObject(u *db.User, now time.Time) UserObject {
 		Enabled: u.Enabled, IsAdmin: u.IsAdmin, AuthSource: u.AuthSource,
 		UILanguage: u.UILanguage, UITheme: NullStrPtr(u.UITheme),
 		Status: authz.UserStatus(u, now), TFAMethod: "off",
+		SessionEpoch: u.SessionEpoch,
 	}
 	if u.LastLoginAt.Valid {
 		s := u.LastLoginAt.String

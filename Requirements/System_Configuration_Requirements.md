@@ -54,7 +54,7 @@ Defines how the system is configured across environments. The design document `D
 
 | ID | Requirement |
 |---|------|
-| REQ-CFG-017 | PHP session settings MUST be configurable: storage directory (MUST NOT be the application database), cookie name, session lifetime, secure flag. |
+| REQ-CFG-017 | PHP session settings MUST be configurable: storage directory (MUST NOT be the application database), cookie name, absolute session lifetime, idle timeout, id rotation interval, secure flag (REQ-AUTH-015/072). With `APP_ENV=production` a non-`Secure` session cookie MUST be refused at startup (REQ-AUTH-075). |
 | REQ-CFG-018 | The public base URL of the application MUST be configurable (used for OAuth2 redirect URIs and API documentation links). |
 | REQ-CFG-019 | Log level MUST be configurable per component (debug|info|warn|error). |
 | REQ-CFG-020 | Optional rate limiting for the API MUST be configurable as **system-wide runtime settings stored in the database** — enabled/disabled (default disabled), requests-per-minute per source IP (default 600) and how long an over-budget source IP stays blocked (default 10 minutes, REQ-API-113) — editable through the administration interface and effective without a restart; it MUST NOT depend on environment variables (REQ-API-112, REQ-DB-037; master spec "Rate limitter"). Which proxy addresses may supply the caller IP stays deployment configuration (`TRUSTED_PROXY_CIDRS`, REQ-API-125). |

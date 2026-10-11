@@ -254,6 +254,8 @@ ADMIN_BOOTSTRAP_PASSWORD=CHANGE_ME
 SESSION_DIR=/var/lib/clara/sessions
 SESSION_COOKIE_NAME=csms_session
 SESSION_LIFETIME=28800
+SESSION_IDLE_TIMEOUT=1800
+SESSION_ROTATE_INTERVAL=900
 SESSION_COOKIE_SECURE=1
 
 # --- rate limiting: nginx runs on this host
@@ -300,7 +302,9 @@ Things to know about the values:
 | `ANON_SALT` | Determines the date shift in anonymized exports. **Never change it after go-live, and back it up.** A different salt produces different shifts, so new exports no longer line up with earlier ones. |
 | `ADMIN_BOOTSTRAP_PASSWORD` | Must be at least 12 characters. It is used **only to create** the account on the first start and is stored as an argon2id hash. Changing it later in `.env` does not change the password. The value stays required at startup while no OAuth2 provider and no LDAP server are configured. |
 | `ADMIN_BOOTSTRAP_EMAIL` | While `ADMIN_BOOTSTRAP_PASSWORD` is set, every API start re-enables this account and makes it an administrator again, so disabling it in the interface does not last. With OAuth2/LDAP configured, the account with this email becomes administrator at its first login through any source. |
-| `SESSION_COOKIE_SECURE=1` | Session cookies are sent over HTTPS only. That is why nginx must terminate TLS. |
+| `SESSION_COOKIE_SECURE=1` | Session cookies are sent over HTTPS only. That is why nginx must terminate TLS. With `APP_ENV=production` the web layer refuses to start with `0`. The cookie is then named `__Host-csms_session`: a browser accepts it only from this exact host over HTTPS. |
+| `SESSION_IDLE_TIMEOUT`, `SESSION_LIFETIME` | A session ends after 30 minutes without a request, and 8 hours after sign-in however active it was. Users who fill in long forms may need a longer idle timeout; `0` turns it off. |
+| `SESSION_ROTATE_INTERVAL` | Every 15 minutes a signed-in session gets a new id. If an old id is used again more than 60 seconds later, the session was copied: every session of that account ends, and the audit log records `session_replay_detected`. |
 | `DB_HOST=127.0.0.1` | Must match the database account's host part `'clara'@'127.0.0.1'` (section 8). |
 
 The format is plain `KEY=VALUE`: no `export`, no comment after a value, and quotes are optional. Variables set in the process environment override the file (REQ-CFG-002). The complete variable list, with every optional key, is in `/opt/clara/.env.example` and [System_Configuration_Design.md](Design/System_Configuration_Design.md) §3.
@@ -637,6 +641,7 @@ server {
         # internal-only headers are stripped from every external request
         proxy_set_header   X-Internal-Service-Token "";
         proxy_set_header   X-Internal-User-Id "";
+        proxy_set_header   X-Internal-Session-Epoch "";
 
         # exports stream and can take minutes
         proxy_buffering    off;
@@ -669,6 +674,7 @@ server {
         fastcgi_param HTTP_X_REAL_IP $remote_addr;
         fastcgi_param HTTP_X_INTERNAL_SERVICE_TOKEN "";
         fastcgi_param HTTP_X_INTERNAL_USER_ID "";
+        fastcgi_param HTTP_X_INTERNAL_SESSION_EPOCH "";
         fastcgi_pass  unix:/run/php-fpm/clara.sock;
         fastcgi_read_timeout 600s;
     }
@@ -693,7 +699,7 @@ What the configuration enforces ([Technology_Stack_Design.md](Design/Technology_
 | Only `POST /api/` reaches the API from outside; `GET /api/` is refused | `location = /api/` |
 | `/api/v1/*` (administration) is never routable | `location /api/` → 404 |
 | `/docs`, `/openapi.json`, `/healthz` never reach the API | not proxied; PHP answers 404 |
-| `X-Internal-Service-Token` and `X-Internal-User-Id` are stripped from every external request | `proxy_set_header … ""` / `fastcgi_param … ""` |
+| `X-Internal-Service-Token`, `X-Internal-User-Id` and `X-Internal-Session-Epoch` are stripped from every external request | `proxy_set_header … ""` / `fastcgi_param … ""` |
 | `X-Real-IP` is always nginx's own `$remote_addr`, for both the API and PHP | `proxy_set_header` / `fastcgi_param HTTP_X_REAL_IP` |
 | Exports stream instead of buffering | `proxy_buffering off`; PHP sends `X-Accel-Buffering: no` |
 
@@ -872,7 +878,8 @@ Each audit table has one partition per year (`p2026`, `p2027`, …). The API cre
 | Browser shows "The web application is misconfigured" | The web layer refused its configuration. The reason is in `/var/log/php-fpm/error.log` (`"configuration refused startup"`). Common causes: `.env` not readable by `clara` (mode/owner or SELinux label), or `SESSION_DIR` not writable. |
 | `502 Bad Gateway` on pages | PHP-FPM is not running, or the socket is not `/run/php-fpm/clara.sock`. Check `systemctl status php-fpm`. |
 | `502 Bad Gateway` on `POST /api/`, or pages report the service unavailable | API down (`systemctl status clara-api`), or SELinux blocks the connection (`getsebool httpd_can_network_connect` must be `on`). |
-| Login seems to work but you land on the login page again | The session cookie is HTTPS-only (`SESSION_COOKIE_SECURE=1`). Use `https://`, and make sure `WEB_PUBLIC_URL` matches the address in the browser. |
+| Login seems to work but you land on the login page again | The session cookie is HTTPS-only (`SESSION_COOKIE_SECURE=1`, named `__Host-csms_session`). Use `https://` and the exact host name in `WEB_PUBLIC_URL` — the `__Host-` cookie is not shared with any other host or subdomain. |
+| Users report "signed out everywhere" | A session id was used again after it had been replaced: either a copied cookie, or a response that never reached the browser followed by more than a minute without a request. Each case is in the audit log as `session_replay_detected` with the address. Repeated cases from one address warrant a closer look. |
 | `413 Request Entity Too Large` on an import | Body over `client_max_body_size` (32 MiB, the API's own limit). |
 | LDAP login always says the sign-in service cannot be reached | Network/firewall towards the directory, untrusted `ldaps` CA, `php-cli` missing, or `proc_open` disabled in `php.ini`. |
 | Anything works with `setenforce 0` but not with SELinux on | `ausearch -m AVC -ts recent`; re-run the labels and booleans of section 7. |
