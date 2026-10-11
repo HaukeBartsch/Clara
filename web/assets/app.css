@@ -81,6 +81,13 @@
   gap: 0.5rem;
   font-weight: 600;
   letter-spacing: 0.01em;
+  /* Bootswatch themes hardcode the navbar brand for a light navbar (#222 in
+   * Darkly) and only flip it under data-bs-theme="dark", which we never set —
+   * the theme stylesheet carries the scheme (REQ-UI-040). Re-point the brand
+   * color at the body color, which every installed theme keeps in step with
+   * its own background. */
+  --bs-navbar-brand-color: var(--bs-body-color);
+  --bs-navbar-brand-hover-color: var(--bs-body-color);
 }
 
 /* Sidebar navigation: denser than Bootstrap's default list-group, and the active
