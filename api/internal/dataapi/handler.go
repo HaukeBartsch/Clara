@@ -79,6 +79,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The CSV options validate strictly (REQ-EXP-013/015): a delimiter outside
+	// REDCap's set or an unknown decimal character is a malformed request, never
+	// silently read as something else. Answered after the rate limit, which counts
+	// it, and before the token lookup.
+	if _, ok := ParseDelimiter(p.CSVDelimiter); !ok {
+		writeError(w, enc, http.StatusBadRequest, "Invalid csvDelimiter")
+		return
+	}
+	if _, ok := ParseDecimal(p.DecimalCharacter); !ok {
+		writeError(w, enc, http.StatusBadRequest, "Invalid decimalCharacter")
+		return
+	}
+
 	sub, rerr := h.resolveToken(r.Context(), p.Token)
 	if errors.Is(rerr, errSurveySubmitted) {
 		// A link that already carried its one submission (REQ-API-145): 410, not

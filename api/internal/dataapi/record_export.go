@@ -65,6 +65,10 @@ type ExportSpec struct {
 	Type              string // "" flat (normative) | "wide" (§3.6.2)
 	Enc               string // "csv" | "json"
 	Delimiter         rune   // CSV separator; 0 = comma (REQ-EXP-013)
+	// Decimal is the decimalCharacter (REQ-EXP-015): the separator written into
+	// calculated and floating-point values, in either encoding; 0 keeps the
+	// stored form.
+	Decimal byte
 
 	// Error renders a failure in the surface's own error shape (the data API
 	// speaks §3.2 text, the administration API §4.2 JSON). It receives the status
@@ -151,6 +155,7 @@ func (h *Handler) contentRecordExport(w http.ResponseWriter, r *http.Request, en
 		Type:              p.Type,
 		Enc:               enc,
 		Delimiter:         p.Delimiter(),
+		Decimal:           p.Decimal(),
 	})
 }
 
@@ -189,6 +194,7 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		cat      exportCategory
 		dateBrg  bool
 		pairLess bool // the record identifier: belongs to no pair, follows the floor (GD-8)
+		decimal  bool // a number decimalCharacter rewrites: calculated or floating point (REQ-EXP-015)
 	}
 	wantForms := toSet(s.Forms)
 	wantFields := toSet(s.Fields)
@@ -206,6 +212,7 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		wanted = append(wanted, column{
 			f: f, cat: categorize(f, d.identifier), dateBrg: isDateBearing(f.Field),
 			pairLess: f.FieldName == d.identifier,
+			decimal:  f.FieldType == "calculated" || f.ValidationType.String == "floating point",
 		})
 	}
 
@@ -572,7 +579,13 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 	if enc == "csv" {
 		w.Header().Set("Content-Type", "text/csv")
 		w.WriteHeader(http.StatusOK)
-		_ = cw.Write(header)
+		// Header cells are neutralized like values: a label header is the
+		// designer's text, and may begin with any character (REQ-EXP-013).
+		cells := make([]string, len(header))
+		for i, name := range header {
+			cells[i] = validate.CSVCell(name)
+		}
+		_ = cw.Write(cells)
 	} else {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -677,6 +690,13 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 				if l := validate.LabelForCode(c.f.Choices.String, v); l != "" {
 					v = l
 				}
+			}
+			// The decimal character is presentation, applied last: a personal
+			// field was hashed from its stored value above, so no hash depends
+			// on the option, and a hash is no number for WithDecimal to rewrite
+			// (REQ-EXP-015).
+			if c.decimal {
+				v = validate.WithDecimal(v, s.Decimal)
 			}
 			return v
 		}

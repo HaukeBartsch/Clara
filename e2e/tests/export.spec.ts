@@ -3,7 +3,8 @@ import { expect, test, type APIRequestContext, type Browser, type Page } from "@
 // M6 — the export action (User_Interface_Design.md §6.4, REQ-UI-020): the page states the
 // sensitivity level before the download starts, the level follows the arm selection (the most
 // protective of the selected arms, REQ-EXP-003), and the file streams through the PHP route
-// (REQ-TECH-011) as an attachment in the chosen format.
+// (REQ-TECH-011) as an attachment in the chosen format — for CSV with the chosen delimiter,
+// decimal separator and byte-order mark (REQ-EXP-013/015/016).
 //
 // The structure is seeded through the administration API with the development service token
 // of e2e/dev-stack.sh — what this spec asserts is the page, not the designer. Every name is
@@ -58,6 +59,7 @@ test.describe("export (M6)", () => {
       { field_name: "record_id", field_type: "text" },
       { field_name: "age", field_type: "text", validation_type: "integer", field_label: "Age" },
       { field_name: "sex", field_type: "radio", choices: "1$Male##2$Female, other", field_label: "Sex" },
+      { field_name: "weight", field_type: "text", validation_type: "floating point", field_label: "Weight" },
     ] })
     await admin(request, "PUT", `${base}/instrument-event-mapping`, { arm_num: 1, mapping: { instrument: ["baseline_arm_1"] } })
     await admin(request, "PUT", `${base}/instrument-event-mapping`, { arm_num: 2, mapping: { instrument: ["visit_arm_2"] } })
@@ -69,7 +71,7 @@ test.describe("export (M6)", () => {
     const imported = await request.post(`${API_URL}/api/`, { form: {
       token, content: "record", format: "json",
       "data[0][record_id]": "E001", "data[0][form_name]": "instrument", "data[0][event_name]": "baseline_arm_1",
-      "data[0][age]": "42", "data[0][sex]": "2",
+      "data[0][age]": "42", "data[0][sex]": "2", "data[0][weight]": "71.5",
       "data[1][record_id]": "E002", "data[1][form_name]": "instrument", "data[1][event_name]": "baseline_arm_1",
       "data[1][age]": "37", "data[1][sex]": "1",
     } })
@@ -83,7 +85,9 @@ test.describe("export (M6)", () => {
     await expect(page).toHaveURL(new RegExp(`/projects/${project.id}/export$`))
     const level = page.locator("[data-clara-export-level]")
     await expect(level).toHaveText("Full dataset")
-    await expect(page.locator("[data-clara-export-csv]")).toBeVisible()
+    const csvOptions = page.locator("[data-clara-export-csv]")
+    await expect(csvOptions).toHaveCount(3) // delimiter, decimal separator, byte-order mark
+    for (const option of await csvOptions.all()) await expect(option).toBeVisible()
 
     await page.selectOption("#export-values", "label")
     const [csv] = await Promise.all([page.waitForEvent("download"), page.locator("[data-clara-export-download]").click()])
@@ -94,9 +98,22 @@ test.describe("export (M6)", () => {
     expect(header).toContain("age")
     expect(lines.join("\n")).toContain("Female, other") // a label, not the code, and quoted intact
     expect(lines.join("\n")).toContain("42")
+    expect(lines.join("\n")).toContain("71.5") // English defaults: comma, stored period, no mark
+    expect(csvText.charCodeAt(0)).not.toBe(0xfeff)
+
+    // The spreadsheet options: semicolon, decimal comma and the mark ahead of the first byte.
+    await page.selectOption("#export-delimiter", "semicolon")
+    await page.selectOption("#export-decimal", "comma")
+    await page.check("#export-bom")
+    const [sheet] = await Promise.all([page.waitForEvent("download"), page.locator("[data-clara-export-download]").click()])
+    const sheetText = await (await sheet.createReadStream()).toArray().then((parts) => Buffer.concat(parts).toString("utf8"))
+    expect(sheetText.charCodeAt(0)).toBe(0xfeff)
+    const [sheetHeader, ...sheetLines] = sheetText.slice(1).trim().split(/\r?\n/)
+    expect(sheetHeader.split(";")).toContain("record_id")
+    expect(sheetLines.join("\n")).toContain(";71,5")
 
     await page.check("#export-format-json")
-    await expect(page.locator("[data-clara-export-csv]")).toBeHidden()
+    for (const option of await csvOptions.all()) await expect(option).toBeHidden()
     const [json] = await Promise.all([page.waitForEvent("download"), page.locator("[data-clara-export-download]").click()])
     expect(json.suggestedFilename()).toMatch(/\.json$/)
     const rows = JSON.parse(await (await json.createReadStream()).toArray().then((parts) => Buffer.concat(parts).toString("utf8")))

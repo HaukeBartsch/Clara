@@ -54,7 +54,17 @@ The master spec's \"CSV raw / CSV labels\" pair is the `rawOrLabel` axis on the 
 
 ### 3.3 CSV mechanics (REQ-API-029, REQ-TECH-011)
 
-Streamed (never fully materialized; full flat export < 10 s on the reference hardware of `Technology_Stack_Design.md` §7), quoted per standard CSV rules, `csvDelimiter` honored (empty = comma), and formula-triggering leading characters neutralized per `Data_Validation_Design.md` §5.3 (REQ-VAL-032) — the stored value is unaffected, only the CSV cell.
+Streamed (never fully materialized; full flat export < 10 s on the reference hardware of `Technology_Stack_Design.md` §7), quoted per standard CSV rules (Go `encoding/csv`: a field holding the delimiter, `"`, CR or LF — or starting with a space — is enclosed in double quotes, an embedded `"` doubled; with `;` a comma inside a field stays unquoted), and formula-triggering leading characters neutralized per `Data_Validation_Design.md` §5.3 (REQ-VAL-032) in every cell, the header row included — a `rawOrLabelHeaders=label|both` header is the designer's text. The stored value is unaffected, only the CSV cell.
+
+The spreadsheet options (REQ-EXP-013/015/016, DEV-EXP-6), the same on both surfaces:
+
+| Option | Values | Effect |
+|---|---|---|
+| `csvDelimiter` | `,` (also empty/absent) · `;` · `\|` · `^` · tab, as the character or the name `tab` | the column separator; any other value → 400 on both surfaces, never cut down to its first character (`dataapi.ParseDelimiter`) |
+| `decimalCharacter` | empty/absent · `.` · `,` | the decimal separator written into a value of a `calculated` field or a `floating point`-validated text field that matches the §4 floating-point grammar (`validate.WithDecimal`); integers, text and every other type are untouched; any other value → 400 (`dataapi.ParseDecimal`). Applied to the value in **either** encoding, as REDCap does, and **last** in the cell pipeline — after the §4.2 transformation and label rendering — so a personal field is hashed from its stored value and no hash depends on the option. §5.3 neutralization reads `-1,5` as the number it is |
+| byte-order mark | on / off (UI only) | the PHP route writes `EF BB BF` ahead of the first proxied byte of a CSV download when the user ticks it (`ExportController`); neither API surface ever emits one, so REDCap clients, R and pandas never read it into the first column name |
+
+Import is unchanged: it accepts the period form only (REQ-VAL-016), so a comma-decimal file is a copy for reading, not an import source.
 
 ### 3.4 Parameters accepted and ignored (REQ-API-016/017, DEV-API-2)
 
@@ -213,6 +223,7 @@ No new variables — the canonical inventory is `System_Configuration_Design.md`
 | REQ-API-026/075/076 (sensitivity per level, both surfaces) | §4 |
 | REQ-API-027/028 (raw/label, row shape) | §3.1, §3.2 |
 | REQ-API-029 (CSV streaming, delimiter, formula injection) | §3.3 |
+| REQ-EXP-013/015/016, DEV-EXP-6 (delimiter set, decimal character, byte-order mark) | §3.3 |
 | REQ-API-030 (record-view audit on every pull) | §8 |
 | REQ-API-092 (DAG scope vs. level) | §4.3, §6 |
 | REQ-AUTH-017/018 (export levels, semantics) | §4.2, §4.3 |

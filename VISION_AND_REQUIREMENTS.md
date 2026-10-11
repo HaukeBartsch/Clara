@@ -793,3 +793,5 @@ Check if other functionality in the api/ (golang) can be implemented by using of
 ## Export features
 
 Does the export correctly uses double quotes for double quoted strings and string that contain commas? Is there an option to export using semi-colons (';') instead of commas? Export as semi-colon should be a default if the language is nb/nn (european languages use comma instead of dot for numeric values, also taken care of?).
+
+**Status:** Done 2026-10-11. Quoting already followed standard CSV rules (Go `encoding/csv`), and the export page already offered a semicolon delimiter. Added: REDCap's `decimalCharacter` on both API surfaces (REQ-EXP-015); an optional UTF-8 byte-order mark on the UI download so Excel reads `æøå` correctly (REQ-EXP-016); semicolon, decimal comma and the mark pre-selected on the export page for `nb`/`nn`, while the API keeps REDCap's defaults (REQ-UI-020). Fixed on the way: `csvDelimiter` is limited to REDCap's set, including `tab` by name (the data API had read `tab` as the letter `t`), and label headers now get formula neutralization (REQ-EXP-013, DEV-EXP-6).

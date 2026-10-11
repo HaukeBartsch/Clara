@@ -1,9 +1,14 @@
 <?php
 // The export action (`User_Interface_Design.md` §6.4, REQ-UI-020): one page offering the
-// project export — CSV or JSON, codes or labels, the header style, the CSV delimiter and the
-// arms to include — and, on `?download=1`, the file itself, proxied from
-// `GET /api/v1/projects/{id}/export` piece by piece so a large export never sits in PHP's
-// memory (REQ-TECH-011).
+// project export — CSV or JSON, codes or labels, the header style, the CSV delimiter, decimal
+// separator and byte-order mark, and the arms to include — and, on `?download=1`, the file
+// itself, proxied from `GET /api/v1/projects/{id}/export` piece by piece so a large export
+// never sits in PHP's memory (REQ-TECH-011).
+//
+// The CSV options start from the user's UI language: a language whose spreadsheets read the
+// comma as decimal separator gets semicolon, decimal comma and the byte-order mark
+// pre-selected, every other one the API's own defaults (REQ-UI-020, DEV-EXP-6). It is only a
+// pre-selection — the form shows each option, and the API never guesses a language.
 //
 // The sensitivity badge states what the API will apply, computed the way the API
 // computes it: from the export level of each (instrument, event) pair in the
@@ -33,6 +38,15 @@ final class ExportController extends ProjectPageController
 
     /** The CSV delimiters the form offers, by name — the character never travels in the URL. */
     public const DELIMITERS = ['comma' => ',', 'semicolon' => ';', 'tab' => "\t", 'pipe' => '|'];
+
+    /** The decimal separators the form offers, by name, as the API's `decimalCharacter` (REQ-EXP-015). */
+    public const DECIMALS = ['period' => '.', 'comma' => ','];
+
+    /** UI languages whose spreadsheet convention is the decimal comma with semicolon lists. */
+    public const COMMA_DECIMAL_LANGUAGES = ['nb', 'nn'];
+
+    /** Marks a download as UTF-8 for spreadsheet software opening it directly (REQ-EXP-016). */
+    private const UTF8_BOM = "\xEF\xBB\xBF";
 
     /** What a downloaded file may be labelled as; anything else goes out as a plain download. */
     private const CONTENT_TYPES = ['text/csv', 'application/json'];
@@ -70,10 +84,28 @@ final class ExportController extends ProjectPageController
             'values' => self::VALUES,
             'headers' => self::HEADERS,
             'delimiters' => array_keys(self::DELIMITERS),
+            'decimals' => array_keys(self::DECIMALS),
+            'csvDefaults' => self::csvDefaults(Session::uiLanguage()),
         ], [
             'scripts' => ['/assets/app.js', '/assets/js/export.js'],
             'jsKeys' => self::JS_KEYS,
         ], $this->projectMode($projectId));
+    }
+
+    /**
+     * The CSV options the form starts from for a UI language (REQ-UI-020): semicolon, decimal
+     * comma and the byte-order mark where spreadsheets expect them, the API's defaults — comma,
+     * the stored period, no mark — everywhere else.
+     *
+     * @return array{delimiter: string, decimal: string, bom: bool}
+     */
+    public static function csvDefaults(string $language): array
+    {
+        if (in_array($language, self::COMMA_DECIMAL_LANGUAGES, true)) {
+            return ['delimiter' => 'semicolon', 'decimal' => 'comma', 'bom' => true];
+        }
+
+        return ['delimiter' => 'comma', 'decimal' => 'period', 'bom' => false];
     }
 
     /**
@@ -208,14 +240,21 @@ final class ExportController extends ProjectPageController
         if ($format === 'csv' && $delimiter !== null) {
             $query['csvDelimiter'] = $delimiter;
         }
+        $decimal = self::DECIMALS[$this->request->query('decimal')] ?? null;
+        if ($format === 'csv' && $decimal !== null) {
+            $query['decimalCharacter'] = $decimal;
+        }
+        // The mark is the download's, not the API's (REQ-EXP-016): written here ahead of the
+        // first proxied byte, so programmatic callers of the API never receive one.
+        $bom = $format === 'csv' && $this->request->query('bom') === '1';
 
         $filename = self::filename($projectName, $format);
         $path = '/api/v1/projects/' . $projectId . '/export';
 
-        return Response::stream(function (StreamSink $sink) use ($path, $query, $filename, $back): void {
+        return Response::stream(function (StreamSink $sink) use ($path, $query, $filename, $back, $bom): void {
             try {
                 $this->api->stream($path, $query,
-                    static function (int $status, array $upstream) use ($sink, $filename): void {
+                    static function (int $status, array $upstream) use ($sink, $filename, $bom): void {
                         // The session is not needed any more once the file starts, and holding
                         // its lock for the length of a download would block the user's other
                         // pages (Session::close).
@@ -227,6 +266,9 @@ final class ExportController extends ProjectPageController
                             // Asks nginx not to buffer the proxied body (Technology_Stack §5).
                             'X-Accel-Buffering' => 'no',
                         ]);
+                        if ($bom) {
+                            $sink->write(self::UTF8_BOM);
+                        }
                     },
                     static fn (string $chunk) => $sink->write($chunk)
                 );

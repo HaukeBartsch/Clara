@@ -43,6 +43,13 @@ func TestCSVCell(t *testing.T) {
 		{"minus leading dot (outside §4)", "-.5", "'-.5"},
 		{"minus trailing dot (outside §4)", "-5.", "'-5."},
 
+		// a decimal comma (decimalCharacter=",", REQ-EXP-015) is still a number
+		{"minus decimal comma", "-1,5", "-1,5"},
+		{"plus decimal comma", "+3,14", "+3,14"},
+		{"minus two commas", "-1,5,3", "'-1,5,3"},
+		{"minus comma and dot", "-1,5.3", "'-1,5.3"},
+		{"minus comma formula", "-1,5+cmd", "'-1,5+cmd"},
+
 		// whitespace decides, content is preserved
 		{"whitespace before equals", "  =1+1", "'  =1+1"},
 		{"tab before at", "\t@SUM(A1)", "'\t@SUM(A1)"},
@@ -55,6 +62,33 @@ func TestCSVCell(t *testing.T) {
 				t.Errorf("CSVCell(%q) = %q, want %q", tt.in, got, tt.want)
 			}
 		})
+	}
+}
+
+// WithDecimal rewrites only a floating-point number's separator (REQ-EXP-015).
+func TestWithDecimal(t *testing.T) {
+	tests := []struct {
+		in   string
+		sep  byte
+		want string
+	}{
+		{"1.5", ',', "1,5"},
+		{"-0.25", ',', "-0,25"},
+		{"+3.14", ',', "+3,14"},
+		{"42", ',', "42"},                 // an integer has no separator
+		{"1.5", '.', "1.5"},               // the stored form
+		{"1.5", 0, "1.5"},                 // option absent
+		{"", ',', ""},                     // no value
+		{"1.5 kg", ',', "1.5 kg"},         // not a number
+		{"1.2.3", ',', "1.2.3"},           // not a number
+		{"2026-03-01", ',', "2026-03-01"}, // a date is not a number
+		{"a3f9c0.d1", ',', "a3f9c0.d1"},   // nor is anything hash-like
+		{"1e10", ',', "1e10"},             // outside the §4 grammar
+	}
+	for _, tt := range tests {
+		if got := WithDecimal(tt.in, tt.sep); got != tt.want {
+			t.Errorf("WithDecimal(%q, %q) = %q, want %q", tt.in, tt.sep, got, tt.want)
+		}
 	}
 }
 

@@ -52,14 +52,17 @@ func (h *Handler) exportProject(w http.ResponseWriter, r *http.Request) {
 		errBadRequest(w, "format must be csv or json")
 		return
 	}
-	var delimiter rune // 0 = comma in the core (REQ-EXP-013)
-	if raw := q.Get("csvDelimiter"); raw != "" {
-		rs := []rune(raw)
-		if len(rs) != 1 {
-			errBadRequest(w, "csvDelimiter must be a single character")
-			return
-		}
-		delimiter = rs[0]
+	// The CSV options take the data API's value sets (REQ-EXP-013/015), so one
+	// caller's file reads the same on both surfaces.
+	delimiter, ok := dataapi.ParseDelimiter(q.Get("csvDelimiter"))
+	if !ok {
+		errBadRequest(w, "csvDelimiter must be one of , ; | ^ or tab")
+		return
+	}
+	decimal, ok := dataapi.ParseDecimal(q.Get("decimalCharacter"))
+	if !ok {
+		errBadRequest(w, "decimalCharacter must be . or ,")
+		return
 	}
 
 	// Candidate arms (§4.14): the arm= parameters, or — when none is given —
@@ -158,6 +161,7 @@ func (h *Handler) exportProject(w http.ResponseWriter, r *http.Request) {
 		RawOrLabelHeaders: q.Get("rawOrLabelHeaders"),
 		Enc:               format,
 		Delimiter:         delimiter,
+		Decimal:           decimal,
 		// The pipeline's status, rendered in this surface's envelope (§4.2): a
 		// scope with no permitted pair is the uniform 403, never a server error.
 		Error: func(w http.ResponseWriter, status int, message string) {

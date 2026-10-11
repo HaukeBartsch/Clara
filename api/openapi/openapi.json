@@ -173,7 +173,8 @@
           { "name": "format", "in": "query", "required": false, "schema": { "type": "string", "enum": ["json", "csv"], "default": "csv" } },
           { "name": "returnFormat", "in": "query", "required": false, "schema": { "type": "string", "enum": ["json", "csv"] }, "description": "Takes precedence over `format` for the response encoding (REQ-API-013)." },
           { "name": "type", "in": "query", "required": false, "schema": { "type": "string", "enum": ["flat", "wide"], "default": "wide" }, "description": "`flat` is normative — one row per (record, event); `wide` is the simplified compatibility mode (§3.6.2, DEV-API-1)." },
-          { "name": "csvDelimiter", "in": "query", "required": false, "schema": { "type": "string", "default": "," }, "description": "Single character; empty value = comma (REQ-API-029)." },
+          { "name": "csvDelimiter", "in": "query", "required": false, "schema": { "type": "string", "enum": ["", ",", ";", "|", "^", "\t", "tab"], "default": "," }, "description": "REDCap's set — tab as the character or by the name `tab`; empty value = comma. Any other value → 400 (REQ-API-029, REQ-EXP-013)." },
+          { "name": "decimalCharacter", "in": "query", "required": false, "schema": { "type": "string", "enum": ["", ".", ","], "default": "" }, "description": "Record export: the decimal separator of calculated and floating-point values, in either format; empty value = the stored form (a period). Any other value → 400 (REQ-EXP-015)." },
           { "name": "records", "in": "query", "required": false, "schema": { "type": "array", "items": { "type": "string" } }, "style": "form", "explode": true, "description": "Repeated values or the REDCap indexed syntax `records[0]=…` (REQ-API-015)." },
           { "name": "fields", "in": "query", "required": false, "schema": { "type": "array", "items": { "type": "string" } }, "style": "form", "explode": true },
           { "name": "forms", "in": "query", "required": false, "schema": { "type": "array", "items": { "type": "string" } }, "style": "form", "explode": true },
@@ -1035,7 +1036,8 @@
           { "name": "arm", "in": "query", "required": false, "schema": { "type": "array", "items": { "type": "integer" } }, "style": "form", "explode": true, "description": "Repeatable (`arm=1&arm=3`) — restricts the export to those arms (REQ-EXP-003). An arm the caller cannot export → 403; an unknown arm number → 404." },
           { "name": "rawOrLabel", "in": "query", "required": false, "schema": { "type": "string", "enum": ["raw", "label"], "default": "raw" } },
           { "name": "rawOrLabelHeaders", "in": "query", "required": false, "schema": { "type": "string", "enum": ["raw", "label", "both"], "default": "raw" } },
-          { "name": "csvDelimiter", "in": "query", "required": false, "schema": { "type": "string", "default": "," }, "description": "Single character; empty value = comma (REQ-EXP-013). CSV only." }
+          { "name": "csvDelimiter", "in": "query", "required": false, "schema": { "type": "string", "enum": ["", ",", ";", "|", "^", "\t", "tab"], "default": "," }, "description": "The data API's set — tab as the character or by the name `tab`; empty value = comma. Any other value → 400 (REQ-EXP-013). CSV only." },
+          { "name": "decimalCharacter", "in": "query", "required": false, "schema": { "type": "string", "enum": ["", ".", ","], "default": "" }, "description": "The decimal separator of calculated and floating-point values, in either format; empty value = the stored form (a period). Any other value → 400 (REQ-EXP-015). The response never carries a byte-order mark (REQ-EXP-016)." }
         ],
         "responses": {
           "200": {
@@ -1595,7 +1597,8 @@
           "format": { "type": "string", "enum": ["json", "csv"], "default": "csv" },
           "returnFormat": { "type": "string", "enum": ["json", "csv"], "description": "A present returnFormat takes precedence for the response encoding (REQ-API-013)." },
           "type": { "type": "string", "enum": ["flat", "wide"], "default": "wide", "description": "`flat` is normative — one row per (record, event); `wide` is the simplified compatibility mode of §3.6.2 (DEV-API-1)." },
-          "csvDelimiter": { "type": "string", "maxLength": 1, "default": ",", "description": "Single character; empty value = comma (REQ-API-029)." },
+          "csvDelimiter": { "type": "string", "enum": ["", ",", ";", "|", "^", "\t", "tab"], "default": ",", "description": "REDCap's set — tab as the character or by the name `tab`; empty value = comma. Any other value → 400 (REQ-API-029, REQ-EXP-013)." },
+          "decimalCharacter": { "type": "string", "enum": ["", ".", ","], "default": "", "description": "Record export: the decimal separator of calculated and floating-point values, in either format; empty value = the stored form (a period). Any other value → 400 (REQ-EXP-015)." },
           "records": { "type": "array", "items": { "type": "string" }, "description": "Sent as `records[0]=…` or repeated `records=…`." },
           "fields": { "type": "array", "items": { "type": "string" } },
           "forms": { "type": "array", "items": { "type": "string" } },

@@ -1,14 +1,15 @@
 <?php
 /**
  * Project page — Export (§6.4, REQ-UI-020): CSV or JSON, codes or labels, the header style,
- * the CSV delimiter and the arms to include, with a badge stating the sensitivity level the
+ * the CSV delimiter, decimal separator and byte-order mark — pre-selected for the UI language
+ * ($csvDefaults) — and the arms to include, with a badge stating the sensitivity level the
  * download will be delivered at. The form is a plain GET to this route with `download=1`,
  * which streams the file (REQ-TECH-011); export.js only recomputes the badge when the arm
  * selection changes — without it the badge states the level for all arms, which is what the
  * form sends by default.
  *
  * Reads: $exportUrl, $arms (list of {arm_num, name, level, dropped}), $level, $dropped,
- * $formats, $values, $headers, $delimiters.
+ * $formats, $values, $headers, $delimiters, $decimals, $csvDefaults.
  */
 
 use Clara\View;
@@ -61,9 +62,26 @@ $multiArm = count($arms) > 1;
                 <label class="form-label small mb-1" for="export-delimiter"><?= View::e($view->t('export.delimiter')) ?></label>
                 <select class="form-select form-select-sm" id="export-delimiter" name="delimiter">
                     <?php foreach ($delimiters as $delimiter): ?>
-                        <option value="<?= View::e($delimiter) ?>"><?= View::e($view->t('export.delimiter.' . $delimiter)) ?></option>
+                        <option value="<?= View::e($delimiter) ?>"<?= $delimiter === $csvDefaults['delimiter'] ? ' selected' : '' ?>><?= View::e($view->t('export.delimiter.' . $delimiter)) ?></option>
                     <?php endforeach; ?>
                 </select>
+            </div>
+
+            <div class="col-sm-6 col-lg-3" data-clara-export-csv>
+                <label class="form-label small mb-1" for="export-decimal"><?= View::e($view->t('export.decimal')) ?></label>
+                <select class="form-select form-select-sm" id="export-decimal" name="decimal">
+                    <?php foreach ($decimals as $decimal): ?>
+                        <option value="<?= View::e($decimal) ?>"<?= $decimal === $csvDefaults['decimal'] ? ' selected' : '' ?>><?= View::e($view->t('export.decimal.' . $decimal)) ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+
+            <div class="col-sm-12 col-lg-6" data-clara-export-csv>
+                <div class="form-check mt-lg-4">
+                    <input class="form-check-input" type="checkbox" name="bom" id="export-bom" value="1"<?= $csvDefaults['bom'] ? ' checked' : '' ?>>
+                    <label class="form-check-label small" for="export-bom"><?= View::e($view->t('export.bom')) ?></label>
+                    <div class="form-text mt-0"><?= View::e($view->t('export.bom_help')) ?></div>
+                </div>
             </div>
 
             <?php if ($multiArm): ?>

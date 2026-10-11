@@ -446,11 +446,33 @@ func TestCSVOutput(t *testing.T) {
 		}
 	}
 
-	// A single-character csvDelimiter is honored (REQ-API-029).
+	// A csvDelimiter of REDCap's set is honored (REQ-API-029, REQ-EXP-013) —
+	// tab also by REDCap's name for it.
 	code, body = do(t, h, url.Values{"token": {full}, "content": {"event"}, "csvDelimiter": {"|"}})
 	mustStatus(t, code, http.StatusOK, body)
 	if first := strings.SplitN(body, "\n", 2)[0]; first != "event_name|arm_num|unique_event_name|event_id" {
 		t.Errorf("delimiter header = %q, want pipes", first)
+	}
+	code, body = do(t, h, url.Values{"token": {full}, "content": {"event"}, "csvDelimiter": {"tab"}})
+	mustStatus(t, code, http.StatusOK, body)
+	if first := strings.SplitN(body, "\n", 2)[0]; first != "event_name\tarm_num\tunique_event_name\tevent_id" {
+		t.Errorf("delimiter header = %q, want tabs", first)
+	}
+
+	// Anything outside the sets is a 400 in the requested format, never a file
+	// delimited by its first character (REQ-EXP-013/015).
+	for _, bad := range []url.Values{
+		{"csvDelimiter": {"ab"}}, {"csvDelimiter": {`"`}}, {"decimalCharacter": {"x"}},
+	} {
+		form := url.Values{"token": {full}, "content": {"event"}, "format": {"json"}}
+		for k, v := range bad {
+			form[k] = v
+		}
+		code, body = do(t, h, form)
+		mustStatus(t, code, http.StatusBadRequest, body)
+		if !strings.Contains(body, `"error":"Invalid `) {
+			t.Errorf("%v: body = %q, want a JSON Invalid … error", bad, body)
+		}
 	}
 }
 

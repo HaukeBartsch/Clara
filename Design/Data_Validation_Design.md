@@ -135,10 +135,10 @@ The result of step 4 is the stored value. Steps 1–3 reject with `CONTENT_INVAL
 Applied **at CSV serialization only** (export, REQ-API-029), never at store and never for JSON: for each cell value `v`, after trimming leading whitespace,
 - if `v` is empty → emit empty;
 - else if `v` begins with `=` or `@` → emit `'` + `v`;
-- else if `v` begins with `+` or `-` **and** `v` is not itself a valid number (integer/floating-point grammar, §4) → emit `'` + `v`;
+- else if `v` begins with `+` or `-` **and** `v` is not itself a valid number (integer/floating-point grammar, §4 — also with its one decimal point written as a comma, the form `decimalCharacter=,` produces, REQ-EXP-015) → emit `'` + `v`;
 - otherwise emit `v` unchanged.
 
-This blocks spreadsheet formula injection (`=CMD`, `@SUM(...)`, `+-x`) while leaving legitimate numeric data such as `-5` and `+3.14` intact. The stored value is unaffected; only the CSV cell is prefixed. (Refines REQ-VAL-032's "e.g. single-quote prefix" to avoid corrupting real numbers.)
+This blocks spreadsheet formula injection (`=CMD`, `@SUM(...)`, `+-x`) while leaving legitimate numeric data such as `-5`, `+3.14` and `-1,5` intact; it applies to header cells as well as values, since a label header is the designer's text (REQ-EXP-013). The stored value is unaffected; only the CSV cell is prefixed. (Refines REQ-VAL-032's "e.g. single-quote prefix" to avoid corrupting real numbers.)
 
 ## 6. Calculated Fields (GD-11, REQ-VAL-033…038)
 

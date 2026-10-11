@@ -183,6 +183,62 @@ describe('export page (§6.4, REQ-UI-020)', function (): void {
     });
 });
 
+describe('export CSV options (REQ-UI-020, REQ-EXP-013/015/016)', function (): void {
+    it('pre-selects comma, period and no mark, and semicolon, comma and the mark for nb and nn', function (): void {
+        sign_in();
+        m6_queue(m6_detail([1 => ['view_edit', 'export_full']]));
+        $body = m6_get('/projects/3/export')->body();
+        assert_contains('<option value="comma" selected>Comma ( , )</option>', $body);
+        assert_contains('<option value="period" selected>Period ( 1.5 )</option>', $body);
+        assert_contains('name="bom" id="export-bom" value="1">', $body, 'the mark is off by default');
+        assert_same(3, substr_count($body, 'data-clara-export-csv'), 'every CSV option hides for JSON');
+
+        foreach (['nb', 'nn'] as $language) {
+            resetApi();
+            sign_in(['ui_language' => $language]);
+            m6_queue(m6_detail([1 => ['view_edit', 'export_full']]));
+            $body = m6_get('/projects/3/export')->body();
+            assert_contains('<option value="semicolon" selected>', $body, $language);
+            assert_contains('<option value="comma" selected>Comma ( 1,5 )</option>', $body, $language);
+            assert_contains('name="bom" id="export-bom" value="1" checked>', $body, $language);
+            assert_not_contains('<option value="comma" selected>Comma ( , )</option>', $body, $language);
+        }
+
+        assert_same(['delimiter' => 'comma', 'decimal' => 'period', 'bom' => false], ExportController::csvDefaults('en'));
+        assert_same(['delimiter' => 'semicolon', 'decimal' => 'comma', 'bom' => true], ExportController::csvDefaults('nn'));
+    });
+
+    it('sends the decimal character, and writes the mark itself ahead of the first byte', function (): void {
+        sign_in();
+        m6_queue(m6_detail([1 => ['view_edit', 'export_full']]));
+        $sink = m6_stream(m6_get('/projects/3/export', ['download' => '1', 'format' => 'csv', 'arm' => ['1'],
+            'delimiter' => 'semicolon', 'decimal' => 'comma', 'bom' => '1']));
+
+        assert_same(200, $sink->status);
+        assert_same(['format' => ['csv'], 'arm' => ['1'], 'csvDelimiter' => [';'], 'decimalCharacter' => [',']],
+            m6_export_query(), 'the mark is not an API parameter (REQ-EXP-016)');
+        assert_same("\xEF\xBB\xBF", $sink->chunks[0], 'the mark leads, on its own');
+        assert_same("\xEF\xBB\xBFrecord_id,age,sex\nE001,42,Female\nE002,37,Male\n", $sink->body());
+    });
+
+    it('sends no CSV option and no mark with JSON, and drops unknown values', function (): void {
+        sign_in();
+        m6_queue(m6_detail([1 => ['view_edit', 'export_full']]));
+        $sink = m6_stream(m6_get('/projects/3/export', ['download' => '1', 'format' => 'json', 'arm' => ['1'],
+            'delimiter' => 'semicolon', 'decimal' => 'comma', 'bom' => '1']));
+        assert_same(['format' => ['json'], 'arm' => ['1']], m6_export_query());
+        assert_same("record_id,age,sex\nE001,42,Female\nE002,37,Male\n", $sink->body(), 'no mark on JSON');
+
+        resetApi();
+        sign_in();
+        m6_queue(m6_detail([1 => ['view_edit', 'export_full']]));
+        $sink = m6_stream(m6_get('/projects/3/export', ['download' => '1', 'format' => 'csv', 'arm' => ['1'],
+            'decimal' => ';', 'bom' => 'yes']));
+        assert_same(['format' => ['csv'], 'arm' => ['1']], m6_export_query());
+        assert_same('r', $sink->body()[0], 'only bom=1 asks for the mark');
+    });
+});
+
 describe('export download (REQ-TECH-011)', function (): void {
     it('streams the API body in pieces as an attachment, with the base headers', function (): void {
         sign_in();

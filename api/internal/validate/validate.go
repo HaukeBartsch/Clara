@@ -126,9 +126,10 @@ type Field struct {
 // CSVCell returns v ready for a CSV cell, prefixing a single quote when v
 // would otherwise read as a spreadsheet formula. Applied at CSV serialization
 // only, never for JSON, and never at store: a leading `=`/`@` always; a
-// leading `+`/`-` only when v is not itself a number (so `-5` and `+3.14`
-// pass through intact). Leading whitespace is trimmed only to *decide* — the
-// cell content itself is emitted unchanged apart from an added quote, so
+// leading `+`/`-` only when v is not itself a number (so `-5`, `+3.14` and,
+// after a decimalCharacter conversion, `-1,5` pass through intact —
+// REQ-EXP-015). Leading whitespace is trimmed only to *decide* — the cell
+// content itself is emitted unchanged apart from an added quote, so
 // legitimate values never lose data.
 func CSVCell(v string) string {
 	t := strings.TrimLeft(v, " \t")
@@ -139,7 +140,7 @@ func CSVCell(v string) string {
 	case '=', '@':
 		return "'" + v
 	case '+', '-':
-		if !isNumber(t) {
+		if !isNumber(t) && !isNumber(strings.Replace(t, ",", ".", 1)) {
 			return "'" + v
 		}
 	}
@@ -150,6 +151,17 @@ func CSVCell(v string) string {
 // exactly (not strconv's wider acceptance of e.g. -Inf, -.5 or 1e10).
 func isNumber(v string) bool {
 	return matchRegex(integerRE, v) || matchRegex(floatRE, v)
+}
+
+// WithDecimal renders a number of the §4 floating-point grammar with sep as
+// its decimal separator (the export's decimalCharacter, REQ-EXP-015); any
+// other value — text, a hash, an integer, which carries no separator — is
+// returned unchanged. sep 0 or '.' keeps the stored form.
+func WithDecimal(v string, sep byte) string {
+	if sep == 0 || sep == '.' || !matchRegex(floatRE, v) {
+		return v
+	}
+	return strings.Replace(v, ".", string(sep), 1)
 }
 
 // --- type validators (REQ-VAL-015…023, §4) ---

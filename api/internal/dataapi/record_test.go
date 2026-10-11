@@ -273,6 +273,39 @@ func TestRecordExportCSVHeaderAndLabels(t *testing.T) {
 	}
 }
 
+// The data API honors REDCap's decimalCharacter on record export
+// (REQ-EXP-015): calculated values take the separator, integers carry none, and
+// a converted negative number stays unprefixed in CSV (REQ-VAL-032).
+func TestRecordExportDecimalCharacter(t *testing.T) {
+	f := newRecordFixture(t)
+	if err := f.s.AddDataValue(context.Background(), &db.DataValue{ProjectID: f.pid, RecordID: "8DISC001",
+		UniqueEventName: "baseline_arm_1", FieldName: "total", Value: "-84.5"}); err != nil {
+		t.Fatalf("seed total: %v", err)
+	}
+	export := func(extra url.Values) string {
+		t.Helper()
+		form := url.Values{"token": {"tok-admin"}, "content": {"record"},
+			"records": {"8DISC001"}, "events": {"baseline_arm_1"}}
+		for k, v := range extra {
+			form[k] = v
+		}
+		code, body := f.call(t, form)
+		mustStatus(t, code, 200, body)
+		return body
+	}
+
+	body := export(url.Values{"csvDelimiter": {";"}, "decimalCharacter": {","}})
+	if !strings.Contains(body, ";-84,5;") || !strings.Contains(body, ";42;") {
+		t.Errorf("csv = %q, want total -84,5 unprefixed and age 42 unchanged", body)
+	}
+	if body = export(nil); !strings.Contains(body, ",-84.5,") {
+		t.Errorf("csv = %q, want the stored -84.5 without the option", body)
+	}
+	if body = export(url.Values{"format": {"json"}, "decimalCharacter": {","}}); !strings.Contains(body, `"total":"-84,5"`) {
+		t.Errorf("json = %q, want total -84,5", body)
+	}
+}
+
 // TestRecordExportCompleteColumns covers REQ-API-134: the <instrument>_complete
 // column of whole-instrument exports — the 0/1/2 derivation, finished
 // assignments (incl. their invisibility while unmapped), the survey flag, the

@@ -127,17 +127,38 @@ func TestEncoding(t *testing.T) {
 	}
 }
 
-// Delimiter is a single character; empty means the default comma
-// (REQ-API-029).
-func TestDelimiter(t *testing.T) {
-	if got := (Params{}).Delimiter(); got != ',' {
-		t.Errorf("empty delimiter = %q, want ,", got)
+// csvDelimiter takes REDCap's set — tab also by name — and an empty value
+// means the default comma; anything else is refused rather than cut down to
+// its first character (REQ-EXP-013). decimalCharacter is "", "." or ","
+// (REQ-EXP-015).
+func TestDelimiterAndDecimal(t *testing.T) {
+	for raw, want := range map[string]rune{
+		"": ',', ",": ',', ";": ';', "|": '|', "^": '^', "\t": '\t', "tab": '\t',
+	} {
+		if got, ok := ParseDelimiter(raw); !ok || got != want {
+			t.Errorf("ParseDelimiter(%q) = %q, %v; want %q, true", raw, got, ok, want)
+		}
+		if got := (Params{CSVDelimiter: raw}).Delimiter(); got != want {
+			t.Errorf("Delimiter() for %q = %q, want %q", raw, got, want)
+		}
 	}
-	if got := (Params{CSVDelimiter: "|"}).Delimiter(); got != '|' {
-		t.Errorf("pipe delimiter = %q, want |", got)
+	for _, raw := range []string{";;", "ab", "x", "TAB", "\"", "\n", "\r", " "} {
+		if _, ok := ParseDelimiter(raw); ok {
+			t.Errorf("ParseDelimiter(%q) accepted, want refused", raw)
+		}
 	}
-	// Only the first rune is honored.
-	if got := (Params{CSVDelimiter: ";;"}).Delimiter(); got != ';' {
-		t.Errorf("multi-char delimiter = %q, want ;", got)
+
+	for raw, want := range map[string]byte{"": 0, ".": '.', ",": ','} {
+		if got, ok := ParseDecimal(raw); !ok || got != want {
+			t.Errorf("ParseDecimal(%q) = %q, %v; want %q, true", raw, got, ok, want)
+		}
+		if got := (Params{DecimalCharacter: raw}).Decimal(); got != want {
+			t.Errorf("Decimal() for %q = %q, want %q", raw, got, want)
+		}
+	}
+	for _, raw := range []string{",,", ";", "comma", " "} {
+		if _, ok := ParseDecimal(raw); ok {
+			t.Errorf("ParseDecimal(%q) accepted, want refused", raw)
+		}
 	}
 }

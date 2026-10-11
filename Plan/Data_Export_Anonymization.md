@@ -4,6 +4,7 @@ This document outlines the strategy for exporting data from the clinical study m
 
 ## Export Formats
 - CSV: For easy import into statistical software (e.g., R, SPSS).
+  - Spreadsheet options (DEV-EXP-6): REDCap's delimiter set (`csvDelimiter`, REQ-EXP-013), the decimal separator (`decimalCharacter`, REQ-EXP-015) and, on the web download only, a UTF-8 byte-order mark (REQ-EXP-016). The export page pre-selects semicolon, decimal comma and the mark for `nb`/`nn`, whose spreadsheets read those; the API keeps comma, the stored period and no mark for every caller (REQ-UI-020).
 - JSON: For API-based data transfer.
 
 ## Anonymization Rules

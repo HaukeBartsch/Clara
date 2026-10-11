@@ -601,9 +601,15 @@ func TestExportArmValidation(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("bad format = %d, want 400", rec.Code)
 	}
-	rec = f.e.do(http.MethodGet, f.path("csvDelimiter=ab"), nil, member)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("multi-char delimiter = %d, want 400", rec.Code)
+	// The CSV options take REDCap's value sets and nothing else (REQ-EXP-013/015):
+	// a longer value is never cut down to its first character, and a double quote
+	// cannot delimit a CSV field at all.
+	for _, q := range []string{"csvDelimiter=ab", "csvDelimiter=x", "csvDelimiter=%22",
+		"csvDelimiter=%0A", "decimalCharacter=x", "decimalCharacter=%2C%2C"} {
+		rec = f.e.do(http.MethodGet, f.path(q), nil, member)
+		if rec.Code != http.StatusBadRequest || decodeError(t, rec) != "invalid_request" {
+			t.Errorf("%s = %d %s, want 400 invalid_request", q, rec.Code, rec.Body.String())
+		}
 	}
 	// Unknown parameters are accepted and ignored (REQ-API-017).
 	rec = f.e.do(http.MethodGet, f.path("bogus=1"), nil, member)
@@ -672,4 +678,159 @@ func headerHas(h []string, col string) bool {
 		}
 	}
 	return false
+}
+
+// exportNumbers adds the fields the CSV options act on to the fixture's demo
+// instrument and fills them for REC-001: a floating-point and a calculated value
+// (decimalCharacter rewrites both), a text value that only looks like a number
+// (it does not), a personal floating-point value (hashed at de-identified
+// strength from its stored form), and a label beginning with "=".
+func (f *exportFixture) exportNumbers(t *testing.T) {
+	t.Helper()
+	ctx := context.Background()
+	for i, fld := range []db.Field{
+		{FieldName: "weight", FieldType: "text",
+			ValidationType: sql.NullString{String: "floating point", Valid: true}},
+		{FieldName: "bmi", FieldType: "calculated",
+			Calculation: sql.NullString{String: "[weight]", Valid: true}},
+		{FieldName: "remark", FieldType: "text", ExportApproved: true},
+		{FieldName: "p_weight", FieldType: "text", PersonalInformation: true,
+			ValidationType: sql.NullString{String: "floating point", Valid: true}},
+		{FieldName: "trap", FieldType: "text", ExportApproved: true,
+			FieldLabel: sql.NullString{String: "=HYPERLINK(1)", Valid: true}},
+	} {
+		fld.ProjectID, fld.InstrumentID, fld.Position = f.pid, f.demoID, 10+i
+		if _, err := f.e.Store.AddField(ctx, &fld); err != nil {
+			t.Fatalf("AddField %s: %v", fld.FieldName, err)
+		}
+	}
+	f.seedValues(t, "REC-001", "baseline_arm_1", map[string]string{
+		"weight": "-1.5", "bmi": "23.25", "remark": `1.5 says "hi", ok`, "p_weight": "70.5", "trap": "x",
+	})
+}
+
+// cellOf reads one named column of the first data row.
+func cellOf(t *testing.T, rows [][]string, col string) string {
+	t.Helper()
+	for i, h := range rows[0] {
+		if h == col {
+			return rows[1][i]
+		}
+	}
+	t.Fatalf("header = %v, want a %s column", rows[0], col)
+	return ""
+}
+
+// TestExportCSVOptions covers the spreadsheet options of REQ-EXP-013/015: REDCap's
+// delimiter set (tab by name included), standard quoting under any delimiter, the
+// decimal character on calculated and floating-point values in either encoding, a
+// converted negative number left unprefixed, and neutralized header cells.
+func TestExportCSVOptions(t *testing.T) {
+	f := newExportFixture(t)
+	f.exportNumbers(t)
+	admin := f.e.mustAdmin("admin@example.org")
+
+	get := func(query string) string {
+		t.Helper()
+		rec := f.e.do(http.MethodGet, f.path(query), nil, admin)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s = %d %s, want 200", query, rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+	parse := func(body string, comma rune) [][]string {
+		t.Helper()
+		r := csv.NewReader(strings.NewReader(body))
+		r.Comma = comma
+		rows, err := r.ReadAll()
+		if err != nil {
+			t.Fatalf("parse %q: %v", body, err)
+		}
+		return rows
+	}
+
+	// Semicolon and decimal comma — the nb/nn spreadsheet pair.
+	body := get("arm=1&csvDelimiter=%3B&decimalCharacter=%2C")
+	rows := parse(body, ';')
+	for col, want := range map[string]string{
+		"weight": "-1,5",  // converted, and still a number: no formula prefix (REQ-VAL-032)
+		"bmi":    "23,25", // calculated values convert too
+		"age":    "41",    // an integer has no separator
+		"remark": `1.5 says "hi", ok`,
+	} {
+		if got := cellOf(t, rows, col); got != want {
+			t.Errorf("%s = %q, want %q", col, got, want)
+		}
+	}
+	// Quoting is the standard one under any delimiter: the semicolon file leaves a
+	// comma unquoted but still quotes the double quotes, doubled.
+	if !strings.Contains(body, `;-1,5;23,25;"1.5 says ""hi"", ok";`) {
+		t.Errorf("body = %q, want the raw cells -1,5;23,25 and the quoted remark", body)
+	}
+
+	// The same conversion under a comma delimiter quotes the converted cell.
+	body = get("arm=1&decimalCharacter=%2C")
+	if !strings.Contains(body, `,"-1,5","23,25",`) {
+		t.Errorf("body = %q, want the comma-decimal cells quoted", body)
+	}
+	if rows = parse(body, ','); cellOf(t, rows, "bmi") != "23,25" {
+		t.Errorf("bmi = %q, want 23,25", cellOf(t, rows, "bmi"))
+	}
+
+	// A period, or no option at all, is the stored form.
+	for _, q := range []string{"arm=1", "arm=1&decimalCharacter=.", "arm=1&decimalCharacter="} {
+		if got := cellOf(t, parse(get(q), ','), "weight"); got != "-1.5" {
+			t.Errorf("%s: weight = %q, want the stored -1.5", q, got)
+		}
+	}
+
+	// Tab, by REDCap's name and as the character.
+	for _, q := range []string{"arm=1&csvDelimiter=tab", "arm=1&csvDelimiter=%09"} {
+		if got := cellOf(t, parse(get(q), '\t'), "bmi"); got != "23.25" {
+			t.Errorf("%s: bmi = %q, want 23.25 in a tab-separated file", q, got)
+		}
+	}
+
+	// The decimal character is not CSV-only (REDCap applies it to the values).
+	var out []map[string]string
+	if err := json.Unmarshal([]byte(get("arm=1&format=json&decimalCharacter=%2C")), &out); err != nil {
+		t.Fatalf("decode JSON: %v", err)
+	}
+	if len(out) != 1 || out[0]["bmi"] != "23,25" || out[0]["weight"] != "-1,5" {
+		t.Errorf("JSON = %v, want bmi 23,25 and weight -1,5", out)
+	}
+
+	// Header cells are neutralized like values (REQ-EXP-013): a label header is
+	// the designer's text.
+	rows = parse(get("arm=1&rawOrLabelHeaders=label"), ',')
+	if !headerHas(rows[0], "'=HYPERLINK(1)") || headerHas(rows[0], "=HYPERLINK(1)") {
+		t.Errorf("header = %v, want the label neutralized to '=HYPERLINK(1)", rows[0])
+	}
+}
+
+// The personal-field hash is computed from the stored value, so the decimal
+// character never changes it (REQ-EXP-015, REQ-EXP-030): two exports of the same
+// record link up whichever separator each one asked for.
+func TestExportDecimalLeavesHashesAlone(t *testing.T) {
+	f := newExportFixture(t)
+	f.exportNumbers(t)
+	roleID := f.role(t, "deid",
+		db.RoleArm{ArmNum: 1, DataAccessLevel: "read_only", ExportLevel: "export_de_identified"})
+	member := f.member(t, "member@example.org", roleID)
+
+	hashed := func(query string) string {
+		t.Helper()
+		rec := f.e.do(http.MethodGet, f.path(query), nil, member)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s = %d %s, want 200", query, rec.Code, rec.Body.String())
+		}
+		return cellOf(t, csvRows(t, rec.Body.String()), "p_weight")
+	}
+	stored, comma := hashed("arm=1"), hashed("arm=1&decimalCharacter=%2C")
+	if stored == "70.5" || stored == "" {
+		t.Fatalf("p_weight = %q, want a hash at de-identified strength", stored)
+	}
+	if comma != stored {
+		t.Errorf("p_weight hash = %q with a decimal comma, %q without: the option fed the hash", comma, stored)
+	}
 }

@@ -25,6 +25,7 @@ type Params struct {
 	ReturnFormat      string
 	Type              string
 	CSVDelimiter      string
+	DecimalCharacter  string
 	Records           []string
 	Fields            []string
 	Forms             []string
@@ -98,6 +99,7 @@ func ParseParams(r *http.Request) (Params, error) {
 		ReturnFormat:      single("returnFormat"),
 		Type:              single("type"),
 		CSVDelimiter:      single("csvDelimiter"),
+		DecimalCharacter:  single("decimalCharacter"),
 		Records:           list("records"),
 		Fields:            list("fields"),
 		Forms:             list("forms"),
@@ -137,13 +139,47 @@ func (p Params) Encoding() string {
 	return "csv"
 }
 
-// Delimiter is the CSV column separator (REQ-API-029): a single
-// character; empty means comma.
+// Delimiter is the CSV column separator (REQ-API-029, REQ-EXP-013). ServeHTTP
+// has refused a value outside the set, so the comma fallback never decides.
 func (p Params) Delimiter() rune {
-	if p.CSVDelimiter == "" {
-		return ','
+	d, _ := ParseDelimiter(p.CSVDelimiter)
+	return d
+}
+
+// Decimal is the record export's decimal character (REQ-EXP-015); 0 keeps the
+// stored form. ServeHTTP has refused a value outside the set.
+func (p Params) Decimal() byte {
+	d, _ := ParseDecimal(p.DecimalCharacter)
+	return d
+}
+
+// ParseDelimiter reads a csvDelimiter value against REDCap's set
+// (REQ-EXP-013): comma — also for an empty value — semicolon, pipe, caret,
+// and tab, given as the character or by REDCap's name "tab". Anything else is
+// not ok: a double quote, CR and LF cannot delimit a CSV field, and a longer
+// value is never cut down to its first character. Both export surfaces read it.
+func ParseDelimiter(raw string) (rune, bool) {
+	switch raw {
+	case "", ",":
+		return ',', true
+	case ";", "|", "^":
+		return rune(raw[0]), true
+	case "\t", "tab":
+		return '\t', true
 	}
-	return []rune(p.CSVDelimiter)[0]
+	return ',', false
+}
+
+// ParseDecimal reads a decimalCharacter value (REQ-EXP-015): empty keeps the
+// stored form (0), "." or "," names the separator; anything else is not ok.
+func ParseDecimal(raw string) (byte, bool) {
+	switch raw {
+	case "":
+		return 0, true
+	case ".", ",":
+		return raw[0], true
+	}
+	return 0, false
 }
 
 var indexedKeyRE = regexp.MustCompile(`^(.*)\[(\d+)\]$`)
