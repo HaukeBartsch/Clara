@@ -17,6 +17,7 @@ use Clara\View;
 /** @var list<string> $exportLevels */
 $base = '/projects/' . (int) $projectId . '/roles';
 $editingId = (int) ($editing['id'] ?? 0);
+$projectAdmin = !empty($editing['project_admin']);
 
 // A pair shows its own grant, or the arm default it inherits when the role says nothing about
 // it — which is exactly what the API's role object leaves out (REQ-AUTH-069).
@@ -148,8 +149,8 @@ $multiArm = count($arms) > 1;
                         <tr>
                             <th scope="col" rowspan="2"><?= View::e($view->t('roles.matrix.pair')) ?></th>
                             <th scope="colgroup" colspan="<?= count($dataLevels) ?>" class="text-center"><?= View::e($view->t('roles.data_level')) ?></th>
-                            <th scope="col" rowspan="2" class="text-center"><span class="visually-hidden"><?= View::e($view->t('roles.delete_values')) ?></span></th>
-                            <th scope="col" rowspan="2" class="text-center"><span class="visually-hidden"><?= View::e($view->t('roles.edit_surveys')) ?></span></th>
+                            <th scope="col" class="text-center"><?= View::e($view->t('roles.delete_values')) ?></th>
+                            <th scope="col" class="text-center"><?= View::e($view->t('roles.edit_surveys')) ?></th>
                             <th scope="colgroup" colspan="<?= count($exportLevels) ?>" class="text-center"><?= View::e($view->t('roles.export_level')) ?></th>
                         </tr>
                         <tr>
