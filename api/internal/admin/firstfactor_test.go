@@ -195,9 +195,12 @@ func tamper(handle string) string {
 	if handle == "" {
 		return "x"
 	}
+	// The last character of an unpadded 32-byte signature carries two padding
+	// bits the decoder ignores: A→B would change only those and decode to the
+	// same signature (one second in sixteen), so A goes to Q, a data bit.
 	last := handle[len(handle)-1]
 	if last == 'A' {
-		return handle[:len(handle)-1] + "B"
+		return handle[:len(handle)-1] + "Q"
 	}
 
 	return handle[:len(handle)-1] + "A"

@@ -704,7 +704,7 @@ Fixed findings carry a **Status** line with the date and how the fix landed; the
 - **Where:** `api/internal/admin/passwords.go:106`, `changeMyPassword`, `bootstrapAdmin`.
 - **What:** Any non-empty password is accepted. bcrypt rejects passwords over 72 bytes, which surfaces as a 500.
 - **Fix:** Enforce a minimum length of 12 and a maximum of 72 bytes with a clear 400. Optionally check a local breached-password list. Apply the same rule to `ADMIN_BOOTSTRAP_PASSWORD` at startup.
-- **Status:** Fixed 2026-10-02 (breached-password list not implemented). Minimum 12 characters / maximum 72 bytes with a clear 400, enforced on setup completion (after token validation), self-service change (after the current-password check), user create/update, and `ADMIN_BOOTSTRAP_PASSWORD` at startup — no policy-free path remains. Regression tests `TestPasswordPolicyOnSetupCompletion`, `TestPasswordPolicyOnSelfServiceChange`, `TestValidatePasswordPolicy`.
+- **Status:** Fixed 2026-10-02 (breached-password list not implemented). Minimum 12 characters / maximum 72 bytes with a clear 400, enforced on setup completion (after token validation), self-service change (after the current-password check), user create/update, and `ADMIN_BOOTSTRAP_PASSWORD` at startup — no policy-free path remains. Regression tests `TestPasswordPolicyOnSetupCompletion`, `TestPasswordPolicyOnSelfServiceChange`, `TestValidatePasswordPolicy`. **Amended 2026-10-11:** with the switch to argon2id (DEV-AUTH-16) the 72-byte maximum, which existed only for bcrypt, became 1,024 bytes — still a clear 400, now bounding the work one request can ask for.
 
 ### F13 — Account enumeration (Low)
 
@@ -779,6 +779,8 @@ Survey links should also be keyed by events. For example an instrument enabled f
 ## Later: bcrypt password improvements
 
 The bcrypt algorithm requires a password with a maximum length (72b). Switch to Argon2 (Argon2id?) with buildin libraries that do not have that limitation. Use for golang the official golang.org/x/crypto/argon2 package.
+
+**Status:** Done 2026-10-11 — argon2id via `golang.org/x/crypto/argon2` (`api/internal/passhash`), PHC-encoded at RFC 9106's second recommended setting (64 MiB, t = 3, p = 4); no bcrypt fallback, since no installation holds local accounts yet; password upper bound 1,024 bytes (DEV-AUTH-16, F12).
 
 A general recommendation is to switch from stateful sessions to JWTs or opaque tokens with cryptographically signed JSON Web Tokens (JWTs) for stateless architectures. Is this possible for the php session part of the Clara application? Can this include refresh token rotations with short-lived access tokens (e.g., 15 minutes) and longer-lived refresh tokens? Token rotation should be automatic, where every use of a refresh token invalidates the old one and issues a new pair to detect and mitigate token theft. After this change the /api endpoint should still use the tokens linked to user permissions. 
 

@@ -18,13 +18,12 @@ import (
 	"syscall"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
-
 	"csms/api/internal/admin"
 	"csms/api/internal/audit"
 	"csms/api/internal/config"
 	"csms/api/internal/db"
 	"csms/api/internal/httpapi"
+	"csms/api/internal/passhash"
 )
 
 func main() {
@@ -123,7 +122,7 @@ func run() error {
 
 // bootstrapAdmin ensures the bootstrap administrator exists when configured
 // (GD-4, GD-18, REQ-CFG-014/025). The plaintext password from
-// ADMIN_BOOTSTRAP_PASSWORD is hashed with bcrypt (cost ≥ 10) and never
+// ADMIN_BOOTSTRAP_PASSWORD is hashed with argon2id (internal/passhash) and never
 // logged; an existing row keeps its current hash — password changes go
 // through the administration API (REQ-AUTH-050).
 func bootstrapAdmin(ctx context.Context, store *db.Store, cfg *config.Config) error {
@@ -132,16 +131,15 @@ func bootstrapAdmin(ctx context.Context, store *db.Store, cfg *config.Config) er
 	}
 	// The password policy applies to the configured bootstrap password too
 	// (security finding F12): fail fast at startup rather than minting an
-	// admin account on a guessable credential — or surfacing bcrypt's 72-byte
-	// limit as a hash failure.
+	// admin account on a guessable credential.
 	if err := admin.ValidatePasswordPolicy(cfg.AdminBootstrapPassword); err != nil {
 		return fmt.Errorf("ADMIN_BOOTSTRAP_PASSWORD: %w", err)
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(cfg.AdminBootstrapPassword), bcrypt.DefaultCost)
+	hash, err := passhash.Hash(cfg.AdminBootstrapPassword)
 	if err != nil {
 		return err
 	}
-	u, err := store.UpsertBootstrap(ctx, cfg.AdminBootstrapEmail, "Administrator", string(hash))
+	u, err := store.UpsertBootstrap(ctx, cfg.AdminBootstrapEmail, "Administrator", hash)
 	if err != nil {
 		return err
 	}

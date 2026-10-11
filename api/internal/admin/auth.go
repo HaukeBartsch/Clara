@@ -7,11 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
-
 	"csms/api/internal/audit"
 	"csms/api/internal/authz"
 	"csms/api/internal/db"
+	"csms/api/internal/passhash"
 )
 
 // registerAuth mounts the session endpoints of §4.3: login, the
@@ -99,7 +98,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Step 0 (GD-18, REQ-AUTH-050): local hash check. A missing hash and a
-	// mismatch are indistinguishable to the caller; bcrypt comparison is
+	// mismatch are indistinguishable to the caller; the argon2id comparison is
 	// constant-time per hash. A first_factor handle from verify-password stands
 	// in for the password only where a second factor still guards the account,
 	// so it can never complete a login by itself (REQ-API-131).
@@ -125,8 +124,7 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 					"the first-factor proof is no longer valid — sign in again")
 				return
 			}
-		case !u.PasswordHash.Valid ||
-			bcrypt.CompareHashAndPassword([]byte(u.PasswordHash.String), []byte(body.Password)) != nil:
+		case !u.PasswordHash.Valid || !passhash.Verify(u.PasswordHash.String, body.Password):
 			h.loginFailure(ctx, &body, "bad_credentials")
 			APIError(w, http.StatusUnauthorized, "bad_password", "invalid email or password")
 			return
@@ -229,7 +227,7 @@ func (h *Handler) isBootstrapEmail(email string) bool {
 // verifyPassword implements POST /api/v1/auth/verify-password (REQ-API-123,
 // DEV-API-17): the side-effect-free verify step of the named-source
 // credential race (Authentication_Authorization_Design.md §2.9). It runs
-// Sequence C steps 0–1 only — the bcrypt hash check and the account-active
+// Sequence C steps 0–1 only — the argon2id hash check and the account-active
 // rule — and answers ok / bad_password / account_disabled / account_expired.
 // No last_login_at or auth_source write and no user object: that is what
 // makes it safe to fire alongside the LDAP binds of a race, with login
@@ -274,8 +272,7 @@ func (h *Handler) verifyPassword(w http.ResponseWriter, r *http.Request) {
 		errInternal(w)
 		return
 	}
-	if u == nil || !u.PasswordHash.Valid ||
-		bcrypt.CompareHashAndPassword([]byte(u.PasswordHash.String), []byte(body.Password)) != nil {
+	if u == nil || !u.PasswordHash.Valid || !passhash.Verify(u.PasswordHash.String, body.Password) {
 		// Count toward the lock and leave the audit trail (security finding
 		// F1); an unknown account counts identically, so neither outcome is
 		// distinguishable (§2.6). A rate_limited rejection never counts —

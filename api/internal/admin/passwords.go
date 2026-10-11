@@ -14,12 +14,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"golang.org/x/crypto/bcrypt"
-
 	"csms/api/internal/audit"
 	"csms/api/internal/authz"
 	"csms/api/internal/dataapi"
 	"csms/api/internal/db"
+	"csms/api/internal/passhash"
 )
 
 // registerPasswords mounts the password lifecycle of GD-22/GD-23: the three
@@ -40,8 +39,8 @@ func (h *Handler) registerPasswords(mux *http.ServeMux) {
 // --- password policy (security finding F12) ---
 
 const (
-	passwordMinLen   = 12 // characters
-	passwordMaxBytes = 72 // bcrypt's input limit — beyond it hashing fails with a 500
+	passwordMinLen   = 12   // characters
+	passwordMaxBytes = 1024 // argon2id takes any length; this only bounds the work one request can ask for
 )
 
 // passwordPolicyError returns the rejection message when pw violates the
@@ -109,7 +108,7 @@ func (h *Handler) mail(to, subject, body string) error {
 // purpose, expiry and single use — every failure answers the same 401
 // invalid_setup_token so unknown, expired, consumed and wrong-purpose tokens
 // are indistinguishable (REQ-API-120/121). On success it stores the new
-// bcrypt hash, consumes the token, invalidates every other outstanding
+// argon2id hash, consumes the token, invalidates every other outstanding
 // token of the account, and audits — all in one transaction.
 func (h *Handler) completeSetup(w http.ResponseWriter, r *http.Request, purpose, event string) {
 	var body struct {
@@ -144,7 +143,7 @@ func (h *Handler) completeSetup(w http.ResponseWriter, r *http.Request, purpose,
 		return
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(body.Password), bcrypt.DefaultCost)
+	hash, err := passhash.Hash(body.Password)
 	if err != nil {
 		errInternal(w)
 		return
@@ -163,7 +162,7 @@ func (h *Handler) completeSetup(w http.ResponseWriter, r *http.Request, purpose,
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE users SET password_hash = ? WHERE id = ?`, string(hash), target.ID); err != nil {
+		`UPDATE users SET password_hash = ? WHERE id = ?`, hash, target.ID); err != nil {
 		errInternal(w)
 		return
 	}
@@ -408,7 +407,7 @@ func (h *Handler) changeMyPassword(w http.ResponseWriter, r *http.Request) {
 			"this account has no local password — sign in through its identity provider")
 		return
 	}
-	if bcrypt.CompareHashAndPassword([]byte(current.PasswordHash.String), []byte(body.CurrentPassword)) != nil {
+	if !passhash.Verify(current.PasswordHash.String, body.CurrentPassword) {
 		h.loginFailure(ctx, fakeBody, "bad_password") // audited + counted toward the lockout
 		APIError(w, http.StatusUnauthorized, "bad_password", "the current password is not correct")
 		return
@@ -417,12 +416,12 @@ func (h *Handler) changeMyPassword(w http.ResponseWriter, r *http.Request) {
 		errBadRequest(w, msg) // the proof stood; only the new password is rejected
 		return
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(body.NewPassword), bcrypt.DefaultCost)
+	hash, err := passhash.Hash(body.NewPassword)
 	if err != nil {
 		errInternal(w)
 		return
 	}
-	if err := h.Store.SetUserPasswordHash(ctx, u.ID, sql.NullString{String: string(hash), Valid: true}); err != nil {
+	if err := h.Store.SetUserPasswordHash(ctx, u.ID, sql.NullString{String: hash, Valid: true}); err != nil {
 		errInternal(w)
 		return
 	}

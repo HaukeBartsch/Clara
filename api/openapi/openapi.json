@@ -270,7 +270,7 @@
         "tags": ["Admin: Session"],
         "operationId": "passwordResetComplete",
         "summary": "Set the new password with a reset token (REQ-API-120)",
-        "description": "Pre-authentication: service token only. Constant-time hash verification, purpose `reset`, expiry, single use; success stores the bcrypt hash, consumes the token, invalidates all outstanding tokens of the account and audits `password_reset_completed`. No temporary password exists (REQ-AUTH-062). Any failure — unknown, expired, consumed or wrong-purpose token — answers the generic 401 `invalid_setup_token` (causes are not distinguished).",
+        "description": "Pre-authentication: service token only. Constant-time hash verification, purpose `reset`, expiry, single use; success stores the argon2id hash, consumes the token, invalidates all outstanding tokens of the account and audits `password_reset_completed`. No temporary password exists (REQ-AUTH-062). Any failure — unknown, expired, consumed or wrong-purpose token — answers the generic 401 `invalid_setup_token` (causes are not distinguished).",
         "security": [ { "InternalServiceToken": [] } ],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["token", "password"], "additionalProperties": false, "properties": { "token": { "type": "string" }, "password": { "type": "string", "writeOnly": true } } } } } },
         "responses": {
@@ -311,7 +311,7 @@
         "tags": ["Admin: Users"],
         "operationId": "createUser",
         "summary": "Create or re-enable a user (REQ-API-047)",
-        "description": "Requires `is_admin`. A new account → 201; a disabled account with the same email is re-enabled → 200 (re-enabling resets the inactivity clock, REQ-AUTH-053). The optional password is stored only as a bcrypt hash (REQ-AUTH-050), never returned or logged. Audit `user_created` (`re_enabled` flag, `valid_until`).",
+        "description": "Requires `is_admin`. A new account → 201; a disabled account with the same email is re-enabled → 200 (re-enabling resets the inactivity clock, REQ-AUTH-053). The optional password is stored only as an argon2id hash (REQ-AUTH-050), never returned or logged. Audit `user_created` (`re_enabled` flag, `valid_until`).",
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateUserRequest" } } } },
         "responses": {
           "200": { "description": "A disabled account with this email was re-enabled.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } } },
@@ -361,7 +361,7 @@
         "tags": ["Admin: Users"],
         "operationId": "changeMyPassword",
         "summary": "Change my own password (REQ-API-118)",
-        "description": "Self-service. The current password is verified against `password_hash` first (failure → 401 `bad_password`, audit-logged, counted toward the REQ-AUTH-035 lockout), then the new bcrypt hash is stored. Accounts without a local credential → 409 `no_local_credential`. Sessions are not revoked (DEV-AUTH-13). Audit `password_changed`.",
+        "description": "Self-service. The current password is verified against `password_hash` first (failure → 401 `bad_password`, audit-logged, counted toward the REQ-AUTH-035 lockout), then the new argon2id hash is stored. Accounts without a local credential → 409 `no_local_credential`. Sessions are not revoked (DEV-AUTH-13). Audit `password_changed`.",
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["current_password", "new_password"], "additionalProperties": false, "properties": { "current_password": { "type": "string", "writeOnly": true }, "new_password": { "type": "string", "writeOnly": true } } } } } },
         "responses": {
           "200": { "description": "The password was changed.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OkResponse" } } } },
@@ -1669,7 +1669,7 @@
           "email": { "type": "string", "format": "email" },
           "display_name": { "type": "string" },
           "valid_days": { "type": "integer", "minimum": 0, "description": "≥ 0; `0` = indefinite (REQ-AUTH-052)." },
-          "password": { "type": "string", "writeOnly": true, "description": "Optional — stored only as a bcrypt hash (REQ-AUTH-050), never returned or logged." }
+          "password": { "type": "string", "writeOnly": true, "description": "Optional — stored only as an argon2id hash (REQ-AUTH-050), never returned or logged." }
         }
       },
       "UpdateUserRequest": {

@@ -46,7 +46,7 @@ Defines the complete configuration variable inventory, the defaults, and the sta
 |---|---|---|---|---|---|
 | `INTERNAL_SERVICE_TOKEN` | both (web sends, api verifies) | string (secret) | dev: `dev-internal-token` (accepted **only** when `APP_ENV=development`) | prod | shared secret for `X-Internal-Service-Token` (REQ-CFG-013, REQ-AUTH-011); no production default |
 | `ADMIN_BOOTSTRAP_EMAIL` | api | email | — | — | bootstrap administrator (GD-4, REQ-CFG-014); promoted on first login (REQ-AUTH-007) |
-| `ADMIN_BOOTSTRAP_PASSWORD` | api | string (secret) | — (no default) | if no OAuth2 provider **and** no LDAP server (§4.1) | local password of the bootstrap administrator (GD-18, REQ-CFG-025, REQ-AUTH-051); stored only as a bcrypt hash in `users.password_hash`; never logged (§4.4) |
+| `ADMIN_BOOTSTRAP_PASSWORD` | api | string (secret) | — (no default) | if no OAuth2 provider **and** no LDAP server (§4.1) | local password of the bootstrap administrator (GD-18, REQ-CFG-025, REQ-AUTH-051); stored only as an argon2id hash in `users.password_hash`; never logged (§4.4) |
 | `LOCAL_LOGIN_NAMES` | web | comma-separated display names | unset → implicit default set | — | names the table-based (local) source is selected by on the login page — the local kind exists at most once but may carry several names (master spec "Authentication order", REQ-CFG-032, REQ-AUTH-064; `Authentication_Authorization_Design.md` §2.9) |
 
 ### 3.4 OAuth2 (providers 1–3; at least one provider or one LDAP server required)

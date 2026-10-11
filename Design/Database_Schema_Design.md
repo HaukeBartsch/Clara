@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS users (               -- REQ-DB-008 (GD-18/GD-19)
     display_name  VARCHAR(255) NOT NULL,
     enabled       INTEGER NOT NULL DEFAULT 1,
     auth_source   VARCHAR(8)  NOT NULL,          -- oauth2 | ldap | local
-    password_hash VARCHAR(255),                  -- nullable; bcrypt; table-based auth (GD-18); never plaintext, never logged
+    password_hash VARCHAR(255),                  -- nullable; argon2id PHC string (DEV-AUTH-16); table-based auth (GD-18); never plaintext, never logged
     valid_until   DATE,                          -- nullable; NULL = indefinite (validity days 0); GD-19
     last_login_at DATETIME,                      -- nullable; UTC; set on every successful login; GD-19
     is_admin      INTEGER NOT NULL DEFAULT 0,    -- GD-4
@@ -439,7 +439,7 @@ Reference scale (REQ-DB-025): 100 projects × 10,000 records × 200 fields × 10
 | role level enums | `no_access`/`read_only`/`view_edit`; `export_none`/`export_de_identified`/`export_no_identifiers`/`export_full` (§4, REQ-AUTH-017) — `delete` and `edit_survey_responses` are no longer levels of the ladder but the two boolean rights of a grant (REQ-AUTH-070) |
 | per-pair grants | `role_grants(role_id, event_id, instrument_id, …)` under `role_arms`; an absent row is the arm default, never a permission; a design change materializes new pairs as `read_only`/`export_none`/rights off (REQ-DB-040, REQ-AUTH-069) |
 | simplified `projects` (master spec "Details", GD-17) | `projects` keeps name, organization, PI, DM, REK, dates, naming pattern (§4); removed attributes are ordinary instrument data if wanted (REQ-DB-032) |
-| table-based authentication (master spec "Details", GD-18) | `users.password_hash` (nullable, bcrypt) + `auth_source = local` (§4); plaintext never stored |
+| table-based authentication (master spec "Details", GD-18) | `users.password_hash` (nullable, argon2id) + `auth_source = local` (§4); plaintext never stored |
 | account validity and inactivity (master spec "Details", GD-19) | `users.valid_until` (NULL = indefinite) + `users.last_login_at` (§4); auto-disable rule in `Authentication_Authorization_Design.md` §4.4 |
 | two-factor authentication (master spec "Details", GD-21) | `user_two_factor` — one row per user, method/secret/replay step/pending-code hash/recovery hashes (§4); verification and enrollment in `Authentication_Authorization_Design.md` §2.7 |
 | account onboarding and password lifecycle (GD-22/GD-23) | `password_tokens` — single-use hashed invite/reset tokens (§4); issuance, email, and completion in `Authentication_Authorization_Design.md` §2.8 |

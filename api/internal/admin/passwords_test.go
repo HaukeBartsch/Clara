@@ -10,9 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"golang.org/x/crypto/bcrypt"
-
 	"csms/api/internal/db"
+	"csms/api/internal/passhash"
 )
 
 // Sequence H and the self-service change (GD-22/GD-23): invite, reset,
@@ -52,12 +51,12 @@ func (e *env) passwordHash(userID int64) string {
 
 func (e *env) mustLocalUser(email, password string) *db.User {
 	e.t.Helper()
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	hash, err := passhash.Hash(password)
 	if err != nil {
-		e.t.Fatalf("bcrypt: %v", err)
+		e.t.Fatalf("passhash: %v", err)
 	}
 	u := &db.User{Email: email, DisplayName: "User", Enabled: true,
-		PasswordHash: sql.NullString{String: string(hash), Valid: true}}
+		PasswordHash: sql.NullString{String: hash, Valid: true}}
 	id, err := e.Store.CreateUser(context.Background(), u)
 	if err != nil {
 		e.t.Fatalf("CreateUser: %v", err)
@@ -158,8 +157,8 @@ func TestInviteAndComplete(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("invite complete = %d %s, want 200", rec.Code, rec.Body.String())
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(e.passwordHash(target.ID)), []byte("s3cret-choice")); err != nil {
-		t.Errorf("stored hash does not verify the chosen password: %v", err)
+	if !passhash.Verify(e.passwordHash(target.ID), "s3cret-choice") {
+		t.Errorf("stored hash does not verify the chosen password")
 	}
 
 	types := e.auditTypes()
@@ -329,8 +328,8 @@ func TestResetCompletionInvalidatesOtherTokens(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("reset complete = %d %s, want 200", rec.Code, rec.Body.String())
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(e.passwordHash(member.ID)), []byte("a-brand-new-pw")); err != nil {
-		t.Errorf("new password not stored: %v", err)
+	if !passhash.Verify(e.passwordHash(member.ID), "a-brand-new-pw") {
+		t.Errorf("new password not stored")
 	}
 	rec = e.do(http.MethodPost, "/api/v1/auth/invite/complete",
 		map[string]string{"token": inviteToken, "password": "***"}, nil)
@@ -374,8 +373,8 @@ func TestChangeMyPassword(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("change = %d %s, want 200", rec.Code, rec.Body.String())
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(e.passwordHash(member.ID)), []byte(freshPW)); err != nil {
-		t.Errorf("new hash does not verify: %v", err)
+	if !passhash.Verify(e.passwordHash(member.ID), freshPW) {
+		t.Errorf("new hash does not verify")
 	}
 	if types := e.auditTypes(); !hasAudit(types, "password_changed") {
 		t.Errorf("audit = %v, want password_changed", types)
@@ -432,9 +431,10 @@ func TestPasswordPolicyOnSetupCompletion(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("short password = %d %s, want 400", rec.Code, rec.Body.String())
 	}
-	// Too long (bcrypt would fail with a 500 beyond 72 bytes): also a 400.
+	// Too long — beyond the 1,024-byte bound on what one request may ask the
+	// hash to process: also a 400.
 	rec = e.do(http.MethodPost, "/api/v1/auth/invite/complete",
-		map[string]string{"token": token, "password": strings.Repeat("x", 73)}, nil)
+		map[string]string{"token": token, "password": strings.Repeat("x", 1025)}, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("long password = %d %s, want 400", rec.Code, rec.Body.String())
 	}
@@ -473,8 +473,8 @@ func TestPasswordPolicyOnSelfServiceChange(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("short new password = %d %s, want 400", rec.Code, rec.Body.String())
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(e.passwordHash(member.ID)), []byte("old-password-long")); err != nil {
-		t.Errorf("rejected change must leave the stored hash intact: %v", err)
+	if !passhash.Verify(e.passwordHash(member.ID), "old-password-long") {
+		t.Errorf("rejected change must leave the stored hash intact")
 	}
 
 	// Compliant new password succeeds.
@@ -491,11 +491,12 @@ func TestValidatePasswordPolicy(t *testing.T) {
 	if err := ValidatePasswordPolicy("twelve-char!"); err != nil {
 		t.Errorf("12-char password rejected: %v", err)
 	}
-	if err := ValidatePasswordPolicy(strings.Repeat("x", 72)); err != nil {
-		t.Errorf("72-byte password rejected: %v", err)
+	// bcrypt's 72-byte ceiling is gone: the bound is 1,024 bytes.
+	if err := ValidatePasswordPolicy(strings.Repeat("x", 1024)); err != nil {
+		t.Errorf("1024-byte password rejected: %v", err)
 	}
-	if err := ValidatePasswordPolicy(strings.Repeat("x", 73)); err == nil {
-		t.Error("73-byte password accepted")
+	if err := ValidatePasswordPolicy(strings.Repeat("x", 1025)); err == nil {
+		t.Error("1025-byte password accepted")
 	}
 	if err := ValidatePasswordPolicy("eleven-ch"); err == nil {
 		t.Error("11-char password accepted")

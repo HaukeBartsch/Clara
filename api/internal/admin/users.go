@@ -6,10 +6,9 @@ import (
 	"net/http"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
-
 	"csms/api/internal/audit"
 	"csms/api/internal/db"
+	"csms/api/internal/passhash"
 )
 
 // registerUsers mounts §4.4: the user listing, creation (with re-enable),
@@ -62,7 +61,7 @@ func validUntilFromDays(days int, now time.Time) sql.NullString {
 
 // createUser creates an account, or re-enables a disabled one with the same
 // email (REQ-API-047). A live account with the email is a conflict. The
-// password is optional and stored only as a bcrypt hash (REQ-AUTH-050); it
+// password is optional and stored only as an argon2id hash (REQ-AUTH-050); it
 // never enters the audit trail (REQ-AUTH-036).
 func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 	u, ok := requireAdmin(w, r)
@@ -121,12 +120,12 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 			errBadRequest(w, msg) // security finding F12 — no policy-free back door
 			return
 		}
-		bh, err := bcrypt.GenerateFromPassword([]byte(*body.Password), bcrypt.DefaultCost)
+		ph, err := passhash.Hash(*body.Password)
 		if err != nil {
 			errInternal(w)
 			return
 		}
-		hash = sql.NullString{String: string(bh), Valid: true}
+		hash = sql.NullString{String: ph, Valid: true}
 	}
 
 	reEnabled := existing != nil // a disabled account with this email
@@ -299,13 +298,13 @@ func (h *Handler) updateUser(w http.ResponseWriter, r *http.Request) {
 				errBadRequest(w, msg) // security finding F12 — no policy-free back door
 				return
 			}
-			bh, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
+			ph, err := passhash.Hash(pw)
 			if err != nil {
 				errInternal(w)
 				return
 			}
 			writePw = true
-			writesPassword = sql.NullString{String: string(bh), Valid: true}
+			writesPassword = sql.NullString{String: ph, Valid: true}
 		}
 		changes["password_changed"] = true // never the value (REQ-AUTH-036)
 	}

@@ -3,7 +3,7 @@ package admin
 // The first-factor handle — how a two-factor challenge completes a local login
 // without the user typing their password twice and without anyone storing it.
 //
-// `POST /api/v1/auth/login` verifies the bcrypt hash on every call for
+// `POST /api/v1/auth/login` verifies the argon2id hash on every call for
 // source "local" (Sequence C step 0, REQ-AUTH-050) and the API holds no
 // challenge state of its own (GD-1), so the second submission a challenged
 // user makes has to carry a first-factor proof. The alternatives were worse:

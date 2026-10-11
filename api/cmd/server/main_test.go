@@ -3,15 +3,15 @@ package main
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"golang.org/x/crypto/bcrypt"
-
 	"csms/api/internal/config"
 	"csms/api/internal/db"
+	"csms/api/internal/passhash"
 	"csms/api/internal/testdb"
 )
 
@@ -117,7 +117,7 @@ func TestBootstrapAdminUnsetIsNoOp(t *testing.T) {
 
 // TestBootstrapAdminCreatesAccount proves the first-install path: the account
 // from ADMIN_BOOTSTRAP_EMAIL exists, is enabled and an administrator (GD-4,
-// REQ-AUTH-007), and its password is stored as a bcrypt hash of
+// REQ-AUTH-007), and its password is stored as an argon2id hash of
 // ADMIN_BOOTSTRAP_PASSWORD — never the plaintext (GD-18, REQ-CFG-025,
 // REQ-AUTH-036/050).
 func TestBootstrapAdminCreatesAccount(t *testing.T) {
@@ -161,14 +161,13 @@ func TestBootstrapAdminCreatesAccount(t *testing.T) {
 	if strings.Contains(stored, plaintext) {
 		t.Errorf("password_hash %q leaks the plaintext password", stored)
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(stored), []byte(plaintext)); err != nil {
-		t.Errorf("stored hash does not verify the configured password: %v", err)
+	if !passhash.Verify(stored, plaintext) {
+		t.Errorf("stored hash does not verify the configured password")
 	}
-	// Cost >= 10 (Authentication_Authorization_Design.md; bcrypt.DefaultCost).
-	if cost, err := bcrypt.Cost([]byte(stored)); err != nil {
-		t.Errorf("stored hash is not a valid bcrypt hash: %v", err)
-	} else if cost < 10 {
-		t.Errorf("bcrypt cost = %d, want >= 10", cost)
+	// Made at the current cost (Authentication_Authorization_Design.md §2.3).
+	want := fmt.Sprintf("$argon2id$v=19$m=%d,t=%d,p=%d$", passhash.Memory, passhash.Iterations, passhash.Parallelism)
+	if !strings.HasPrefix(stored, want) {
+		t.Errorf("stored hash %q is not an argon2id hash at the current cost (%s…)", stored, want)
 	}
 	if n := userCount(t, store); n != 1 {
 		t.Errorf("users after bootstrapAdmin = %d, want 1", n)
@@ -214,11 +213,11 @@ func TestBootstrapAdminIdempotent(t *testing.T) {
 
 	// A password changed after provisioning — e.g. an administrator rotating it
 	// in the UI — must survive a restart.
-	rotated, err := bcrypt.GenerateFromPassword([]byte("rotated-passphrase"), bcrypt.MinCost)
+	rotated, err := passhash.Hash("rotated-passphrase")
 	if err != nil {
-		t.Fatalf("bcrypt: %v", err)
+		t.Fatalf("passhash: %v", err)
 	}
-	if err := store.SetUserPasswordHash(ctx, first.ID, sql.NullString{String: string(rotated), Valid: true}); err != nil {
+	if err := store.SetUserPasswordHash(ctx, first.ID, sql.NullString{String: rotated, Valid: true}); err != nil {
 		t.Fatalf("SetUserPasswordHash: %v", err)
 	}
 	if err := bootstrapAdmin(ctx, store, cfg); err != nil {
@@ -228,10 +227,10 @@ func TestBootstrapAdminIdempotent(t *testing.T) {
 	if err != nil || after == nil {
 		t.Fatalf("GetUserByEmail after third run: %v", err)
 	}
-	if after.PasswordHash.String != string(rotated) {
+	if after.PasswordHash.String != rotated {
 		t.Errorf("restart overwrote a rotated password_hash (REQ-AUTH-050: changes go through the users API)")
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(after.PasswordHash.String), []byte(plaintext)); err == nil {
+	if passhash.Verify(after.PasswordHash.String, plaintext) {
 		t.Error("the bootstrap password still verifies after rotation — the hash was replaced")
 	}
 	if n := userCount(t, store); n != 1 {

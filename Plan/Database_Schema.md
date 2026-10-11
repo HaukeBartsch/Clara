@@ -31,7 +31,7 @@ User accounts, created and enabled by admin users.
 - display_name (String)
 - enabled (Boolean)
 - auth_source (String: oauth2 | ldap | local - GD-18 adds the table-based local password path)
-- password_hash (String, nullable - bcrypt hash, set only for `local` accounts; GD-18)
+- password_hash (String, nullable - argon2id hash, set only for `local` accounts; GD-18, DEV-AUTH-16)
 - valid_until (DateTime, nullable - account validity end from `valid_days`, `0`/null = indefinite; GD-19)
 - last_login_at (DateTime, nullable - drives the inactivity auto-disable; GD-19)
 - is_admin (Boolean)

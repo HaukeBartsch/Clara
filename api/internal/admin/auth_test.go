@@ -7,21 +7,20 @@ import (
 	"net/http"
 	"testing"
 
-	"golang.org/x/crypto/bcrypt"
-
 	"csms/api/internal/db"
+	"csms/api/internal/passhash"
 )
 
-// mustLocalUser inserts a user with a bcrypt password hash (GD-18).
+// mustLocalUser inserts a user with an argon2id password hash (GD-18).
 func mustLocalUser(t *testing.T, e *env, email, password string) *db.User {
 	t.Helper()
 	u := e.mustUser(email)
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.MinCost)
+	hash, err := passhash.Hash(password)
 	if err != nil {
-		t.Fatalf("bcrypt: %v", err)
+		t.Fatalf("passhash: %v", err)
 	}
 	if err := e.Store.SetUserPasswordHash(context.Background(), u.ID,
-		sql.NullString{String: string(hash), Valid: true}); err != nil {
+		sql.NullString{String: hash, Valid: true}); err != nil {
 		t.Fatalf("SetUserPasswordHash: %v", err)
 	}
 	return u

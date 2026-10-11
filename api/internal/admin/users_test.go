@@ -57,7 +57,7 @@ func TestCreateAndReEnableUser(t *testing.T) {
 		t.Fatalf("valid_until = %s, want %s", *created.ValidUntil, wantUntil)
 	}
 
-	// The password is stored only as a bcrypt hash.
+	// The password is stored only as an argon2id hash.
 	u, err := e.Store.GetUserByEmail(context.Background(), "new@example.org")
 	if err != nil || u == nil || !u.PasswordHash.Valid {
 		t.Fatalf("password hash: %v", err)
