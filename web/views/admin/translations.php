@@ -1,17 +1,18 @@
 <?php
 /**
- * Control Panel — Translations (§5.7, REQ-UI-030). The key universe is the English catalog in
- * code (Plan/Web_Implementation.md §5 "English array in code, DB overlay") plus any key only
- * the language's overlay carries; each row shows the English source, the language's text, and
- * a "missing" badge where the key falls back to English (REQ-DB-031, REQ-UI-008). One form
- * saves the whole table: PHP sends only the entries that changed, and an emptied text removes
- * the translation (REQ-API-100). Every string is escaped on render (§3.2, REQ-UI-004).
+ * Control Panel — Translations (§5.7, REQ-UI-030). The key table is a Tabulator-backed data
+ * region (AGENTS.md "use Tabulator"; REQ-UI-044): this page renders the language picker, the
+ * filter controls and an empty container, and `web/assets/js/translations.js` binds the rows
+ * from this route's JSON region — the key universe is the English catalog in code plus any
+ * key only the language's overlay carries, each with a "missing" badge where the key falls
+ * back to English (REQ-DB-031, REQ-UI-008). Edits are collected into the plain POST form on
+ * save: a CSRF-protected PRG mutation (§3.3), sending only changed entries, an emptied text
+ * removing the translation (REQ-API-100). Every string is escaped on render (§3.2, REQ-UI-004).
  */
 
 use Clara\View;
 
 /** @var list<array{code: string, display_name: string}> $languages */
-/** @var list<array{key: string, english: string, text: string, missing: bool}> $rows */
 ?>
 <h1 class="h4 mb-3"><?= View::e($view->t('admin.translations.title')) ?></h1>
 
@@ -29,52 +30,31 @@ use Clara\View;
             <?php endforeach; ?>
         </select>
     </div>
-    <div class="form-check mb-1">
-        <input class="form-check-input" type="checkbox" id="tr-missing" name="missing" value="1"<?= !empty($missingOnly) ? ' checked' : '' ?>>
-        <label class="form-check-label small" for="tr-missing"><?= View::e($view->t('admin.translations.missing_only', ['count' => (string) $missingCount])) ?></label>
-    </div>
     <button class="btn btn-sm btn-outline-primary" type="submit"><?= View::e($view->t('admin.translations.show')) ?></button>
 </form>
 
 <?php if ($language !== ''): ?>
-    <form method="post" action="/admin?section=translations&amp;action=save_translations">
+    <form method="post" action="/admin?section=translations&amp;action=save_translations" id="tr-form">
         <?= $view->csrfField() ?>
         <input type="hidden" name="language" value="<?= View::e($language) ?>">
-        <?php if (!empty($missingOnly)): ?>
-            <input type="hidden" name="missing" value="1">
-        <?php endif; ?>
-        <div class="table-responsive">
-            <table class="table table-sm align-middle clara-translations">
-                <thead>
-                <tr>
-                    <th scope="col"><?= View::e($view->t('admin.translations.key')) ?></th>
-                    <th scope="col"><?= View::e($view->t('admin.translations.english')) ?></th>
-                    <th scope="col"><?= View::e($view->t('admin.translations.text')) ?></th>
-                </tr>
-                </thead>
-                <tbody>
-                <?php if ($rows === []): ?>
-                    <tr><td colspan="3" class="clara-region-empty"><?= View::e($view->t('admin.translations.empty')) ?></td></tr>
-                <?php endif; ?>
-                <?php foreach ($rows as $i => $row): ?>
-                    <tr class="<?= $row['missing'] ? 'clara-missing' : '' ?>">
-                        <td class="small"><code><?= View::e($row['key']) ?></code>
-                            <?php if ($row['missing']): ?>
-                                <span class="badge text-bg-warning ms-1"><?= View::e($view->t('admin.translations.missing')) ?></span>
-                            <?php endif; ?>
-                        </td>
-                        <td class="small text-body-secondary"><?= View::e($row['english']) ?></td>
-                        <td>
-                            <label class="visually-hidden" for="tr-<?= $i ?>"><?= View::e($row['key']) ?></label>
-                            <input class="form-control form-control-sm" type="text" id="tr-<?= $i ?>"
-                                   name="text[<?= View::e($row['key']) ?>]" value="<?= View::e($row['text']) ?>">
-                        </td>
-                    </tr>
-                <?php endforeach; ?>
-                </tbody>
-            </table>
+
+        <div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+            <label class="visually-hidden" for="tr-search"><?= View::e($view->t('admin.translations.search')) ?></label>
+            <input class="form-control form-control-sm w-auto flex-grow-1" id="tr-search" type="search"
+                   placeholder="<?= View::e($view->t('admin.translations.search')) ?>" autocomplete="off">
+            <div class="form-check mb-0">
+                <input class="form-check-input" type="checkbox" id="tr-missing" value="1"<?= !empty($missingOnly) ? ' checked' : '' ?>>
+                <label class="form-check-label small" for="tr-missing"><?= View::e($view->t('admin.translations.missing_only')) ?></label>
+            </div>
+            <span class="small text-body-secondary" id="tr-status"></span>
+            <button class="btn btn-sm btn-primary ms-auto" type="submit" id="tr-save" disabled><?= View::e($view->t('action.save')) ?></button>
         </div>
-        <p class="small text-body-secondary"><?= View::e($view->t('admin.translations.help')) ?></p>
-        <button class="btn btn-sm btn-primary" type="submit"><?= View::e($view->t('action.save')) ?></button>
+
+        <div id="clara-translations" data-region="translations"
+             data-language="<?= View::e($language) ?>"<?= !empty($missingOnly) ? ' data-missing-only="1"' : '' ?>>
+            <div class="clara-region-empty py-3"><?= View::e($view->t('js.loading')) ?></div>
+        </div>
+
+        <p class="small text-body-secondary mt-2"><?= View::e($view->t('admin.translations.help')) ?></p>
     </form>
 <?php endif; ?>

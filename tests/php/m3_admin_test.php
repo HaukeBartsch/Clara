@@ -236,15 +236,56 @@ describe('Control Panel — Audits (§5.6, REQ-UI-016)', function (): void {
 });
 
 describe('Control Panel — Translations (§5.7, REQ-UI-030)', function (): void {
-    it('lists the code catalog with the missing badge and saves only changed entries', function (): void {
+    it('renders the editor shell; the key table is this route\'s data region (REQ-UI-044)', function (): void {
         sign_in(['is_admin' => 1]);
         queue_shell();
-        api_route('/api/v1/i18n/strings', [['key' => 'login.heading', 'text' => 'Logg inn', 'missing' => false]]);
+        api_route('/api/v1/i18n/strings', [
+            ['key' => 'login.heading', 'text' => 'Logg inn', 'missing' => false],
+            ['key' => 'overlay.only.key', 'text' => 'Kun overlay', 'missing' => false],
+        ]);
         api_route('/api/v1/i18n/languages', [['code' => 'en', 'display_name' => 'English'], ['code' => 'nb', 'display_name' => 'Norsk bokmål']]);
 
         $page = router_for(http_request('GET', '/admin', browser_headers(), [], ['section' => 'translations', 'language' => 'nb']))->dispatch();
-        assert_contains('value="Logg inn"', $page->body());
-        assert_contains('name="text[nav.sign_out]"', $page->body(), 'a code key without a translation is listed');
+        // The Tabulator table binds rows client-side: the page carries the container, the
+        // section module and the library stylesheet — not a server-rendered input per key.
+        assert_contains('data-region="translations"', $page->body());
+        assert_contains('/assets/js/translations.js', $page->body());
+        assert_contains('/assets/vendor/tabulator/', $page->body());
+
+        // The data region is the universe the rendered table would show: every catalog key
+        // with its current text and missing flag, plus any key only the overlay carries.
+        $json = router_for(http_request('GET', '/admin', json_headers(), [], ['section' => 'translations', 'language' => 'nb']))->dispatch();
+        assert_same(200, $json->status());
+        assert_contains('application/json', $json->headers()['Content-Type']);
+        $payload = json_decode($json->body(), true);
+        assert_same('nb', $payload['language']);
+        $byKey = [];
+        foreach ($payload['rows'] as $row) {
+            $byKey[$row['key']] = $row;
+        }
+        assert_same('Logg inn', $byKey['login.heading']['text']);
+        assert_same(false, $byKey['login.heading']['missing']);
+        // A code key without a translation is listed as missing (§5.7).
+        assert_same(true, $byKey['nav.sign_out']['missing']);
+        assert_same('', $byKey['nav.sign_out']['text']);
+        // A key only the overlay carries still shows up, so it can be cleared.
+        assert_same('Kun overlay', $byKey['overlay.only.key']['text']);
+        assert_same(false, $byKey['overlay.only.key']['missing']);
+    });
+
+    it('has no data region for the other sections — they answer 406 (REQ-UI-044)', function (): void {
+        sign_in(['is_admin' => 1]);
+        queue_shell();
+
+        $response = router_for(http_request('GET', '/admin', json_headers(), [], ['section' => 'users']))->dispatch();
+
+        assert_same(406, $response->status());
+    });
+
+    it('saves only changed entries through the unchanged PRG mutation (§3.3)', function (): void {
+        sign_in(['is_admin' => 1]);
+        queue_shell();
+        api_route('/api/v1/i18n/strings', [['key' => 'login.heading', 'text' => 'Logg inn', 'missing' => false]]);
 
         m3_post('/admin', ['language' => 'nb', 'text' => [
             'login.heading' => 'Logg inn', // unchanged → not sent

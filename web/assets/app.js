@@ -154,6 +154,25 @@ export function notice(colspan, message, modifier) {
   return el("tr", { class: "clara-region-notice" }, cell)
 }
 
+/**
+ * The Tabulator options every table shares (§3.7): one capped-height, virtualised,
+ * column-fitted grid — 660-key lists stay responsive without a build step (AGENTS.md
+ * "use Tabulator") — with the caller's overrides last. The translated empty-state text
+ * (§3.6) is passed in by the section module; app.js itself never imports the library,
+ * so only pages that render a table load it.
+ */
+export function tabulatorOptions(overrides) {
+  return Object.assign({
+    height: "560px",
+    layout: "fitColumns",
+    index: "key",
+    groupBy: null,
+    movableColumns: false,
+    placeholder: "",
+    columnDefaults: { resizable: true },
+  }, overrides || {})
+}
+
 function appendAll(node, children) {
   if (children === null || children === undefined) {
     return

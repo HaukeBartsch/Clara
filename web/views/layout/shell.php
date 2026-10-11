@@ -51,6 +51,11 @@ $controlPanel = $view->isAdmin() && Navigation::controlPanelExists();
          (REQ-UI-040). app.css is hand-written and theme-independent. -->
     <link rel="stylesheet" href="<?= View::e($view->stylesheetHref()) ?>">
     <link rel="stylesheet" href="/assets/app.css">
+    <?php foreach ($view->styles() as $href): ?>
+        <!-- Page-specific library CSS, theme-independent (§3.8); only the pages that
+             use the library link it. -->
+        <link rel="stylesheet" href="<?= View::e($href) ?>">
+    <?php endforeach; ?>
 
     <?php if ($view->isAuthenticated()): ?>
         <!-- Read by the shared runtime for the X-CSRF-Token header (REQ-UI-005). -->

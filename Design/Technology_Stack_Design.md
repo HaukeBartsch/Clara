@@ -43,6 +43,7 @@ The OpenAPI document is a hand-maintained `openapi/openapi.json` (OpenAPI 3.1) n
 | Component | Module / package | Pinned version + integrity hash | Role | Security review |
 |---|---|---|---|---|
 | Go | `golang.org/x/crypto` (package `bcrypt` only) | `v0.57.0`, `h1:3ZVCjf8Ggz7zneR/EHRVx68Ctf+2pmIMP2UFhh9cC6M=` (per `api/go.sum`) | bcrypt hashing/verification for table-based authentication (GD-18, REQ-AUTH-050; `Authentication_Authorization_Design.md` §7) — cost ≥ 10, constant-time verify | 2026-09-28 |
+| JavaScript | `tabulator-tables` (vendored ESM + `tabulator_bootstrap5` CSS under `web/assets/vendor/tabulator/`) | `6.6.1`, JS `sha256:4d133538a58b5d4c8c344f5b02dc618cfc31adf01eed86b4632b5233d811948c`, CSS `sha256:f1fe11a28e4f1a1ecd690b3ed32d8665534a7970b1c6a37d97a6dccc5537c437` | performant client-rendered data tables (AGENTS.md "use Tabulator"; shared defaults in `app.js`, §3.7; first surface `User_Interface_Design.md` §5.7) — vendored per REQ-TECH-001/ASM-TECH-2, MIT licence shipped alongside | 2026-10-11 |
 
 Additional candidates (e.g. a vetted OAuth2 client or an i18n formatter for PHP/JS) are admitted by adding a row here — the stack decision itself is settled.
 

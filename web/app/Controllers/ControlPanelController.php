@@ -77,9 +77,12 @@ final class ControlPanelController extends Controller
     /**
      * Renders one section inside the Control Panel shell: the left panel marks it active
      * (the path alone cannot, §2.1), and the shared admin module wires confirmations and
-     * copy buttons (§3.5).
+     * copy buttons (§3.5). `$extras` adds a section's own scripts, stylesheets and
+     * JS-string keys — only the sections that use them pay for them (REQ-UI-045).
+     *
+     * @param array{scripts?: list<string>, styles?: list<string>, jsKeys?: list<string>} $extras
      */
-    private function section(string $key, string $template, string $titleKey, array $data): Response
+    private function section(string $key, string $template, string $titleKey, array $data, array $extras = []): Response
     {
         return $this->page($template, $data + [
             'pageTitle' => $this->i18n->t($titleKey),
@@ -96,8 +99,12 @@ final class ControlPanelController extends Controller
             ],
         ], [
             'titleKey' => '',
-            'scripts' => ['/assets/app.js', '/assets/js/admin.js'],
-            'jsKeys' => ['admin.confirm.title', 'action.cancel', 'admin.confirm.ok', 'tfa.copied'],
+            'scripts' => array_merge(['/assets/app.js', '/assets/js/admin.js'], $extras['scripts'] ?? []),
+            'styles' => $extras['styles'] ?? [],
+            'jsKeys' => array_merge(
+                ['admin.confirm.title', 'action.cancel', 'admin.confirm.ok', 'tfa.copied'],
+                $extras['jsKeys'] ?? []
+            ),
         ]);
     }
 
@@ -449,7 +456,54 @@ final class ControlPanelController extends Controller
 
     // --- Translations (§5.7, REQ-UI-030) ----------------------------------------
 
+    /**
+     * The page renders the shell of the editor — language picker, filter controls and an
+     * empty data-region container; the key table itself is a Tabulator-backed data region
+     * bound by `web/assets/js/translations.js` from this route's JSON (§5.7, REQ-UI-044,
+     * AGENTS.md "use Tabulator"). Saving stays the plain PRG form POST below (§3.3).
+     */
     private function translationsPage(string $error = ''): Response
+    {
+        [$languages, $language] = $this->translationLanguages();
+
+        return $this->section('translations', 'admin/translations', 'admin.translations.title', [
+            'languages' => $languages,
+            'language' => $language,
+            'missingOnly' => $this->request->query('missing') === '1',
+            'error' => $error,
+        ], [
+            'scripts' => ['/assets/js/translations.js'],
+            'styles' => ['/assets/vendor/tabulator/tabulator_bootstrap5.min.css'],
+            'jsKeys' => [
+                'js.loading', 'js.load_failed', 'js.retry',
+                // The three column titles: the rows left the page for the data region, so the
+                // header text now comes from the injected block rather than the PHP view.
+                'admin.translations.key', 'admin.translations.english', 'admin.translations.text',
+                'admin.translations.empty', 'admin.translations.missing', 'admin.translations.missing_status',
+                'admin.translations.edited',
+            ],
+        ]);
+    }
+
+    /**
+     * The data region of `GET /admin` for `Accept: application/json` (§2.1, REQ-UI-044):
+     * the Translations section's key rows — exactly what its rendered table would show,
+     * nothing more. Every other section carries no region and answers 406.
+     */
+    public function data(): Response
+    {
+        $section = Navigation::resolveAdminSection($this->request->query('section'));
+        if (($section['key'] ?? '') !== 'translations') {
+            return Response::notAcceptable();
+        }
+
+        [, $language] = $this->translationLanguages();
+
+        return Response::json(['language' => $language, 'rows' => $this->translationRows($language)]);
+    }
+
+    /** The enabled languages and the one selected for editing (§5.7). */
+    private function translationLanguages(): array
     {
         $languages = $this->api->get('/api/v1/i18n/languages');
         $languages = is_array($languages) ? array_values(array_filter($languages, 'is_array')) : [];
@@ -460,28 +514,33 @@ final class ControlPanelController extends Controller
             $language = array_values(array_diff($codes, ['en']))[0] ?? ($codes[0] ?? '');
         }
 
-        $rows = [];
-        if ($language !== '') {
-            $current = $this->currentStrings($language);
-            foreach ($this->i18n->englishCatalog() as $key => $english) {
-                $rows[$key] = ['key' => $key, 'english' => $english, 'text' => $current[$key] ?? '', 'missing' => !isset($current[$key])];
-            }
-            // A key only the overlay carries still shows up, so it can be cleared.
-            foreach ($current as $key => $text) {
-                $rows[$key] ??= ['key' => $key, 'english' => '', 'text' => $text, 'missing' => false];
-            }
-            ksort($rows);
-        }
-        $missingOnly = $this->request->query('missing') === '1';
+        return [$languages, $language];
+    }
 
-        return $this->section('translations', 'admin/translations', 'admin.translations.title', [
-            'languages' => $languages,
-            'language' => $language,
-            'rows' => array_values($missingOnly ? array_filter($rows, static fn (array $r): bool => $r['missing']) : $rows),
-            'missingCount' => count(array_filter($rows, static fn (array $r): bool => $r['missing'])),
-            'missingOnly' => $missingOnly,
-            'error' => $error,
-        ]);
+    /**
+     * The key universe: the English catalog in code (REQ-DB-031) merged with the
+     * language's overlay — every key carries its current text and missing flag, and a
+     * key only the overlay carries still shows up so it can be cleared. Sorted by key.
+     *
+     * @return list<array{key: string, english: string, text: string, missing: bool}>
+     */
+    private function translationRows(string $language): array
+    {
+        if ($language === '') {
+            return [];
+        }
+
+        $current = $this->currentStrings($language);
+        $rows = [];
+        foreach ($this->i18n->englishCatalog() as $key => $english) {
+            $rows[$key] = ['key' => $key, 'english' => $english, 'text' => $current[$key] ?? '', 'missing' => !isset($current[$key])];
+        }
+        foreach ($current as $key => $text) {
+            $rows[$key] ??= ['key' => $key, 'english' => '', 'text' => $text, 'missing' => false];
+        }
+        ksort($rows);
+
+        return array_values($rows);
     }
 
     /** @return array<string, string> key → text the language has (no row = missing) */

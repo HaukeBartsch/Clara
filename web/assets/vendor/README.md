@@ -84,12 +84,32 @@ be removed** — the SIL Open Font License requires the licence to accompany the
 font files. Only the TTFs are available here (the upstream Fontsource package
 also offers WOFF2); they are served locally either way.
 
-## Not vendored yet: Tabulator
+## Tabulator 6.6.1
 
-`AGENTS.md` fixes Tabulator for performant table rendering, but nothing in this
-tree renders a table yet — the dashboard's project rows are server-rendered
-(`Design/User_Interface_Design.md` §4). It is therefore admitted when the first
-table ships (M3 administration lists at the earliest), and that admission should
-be recorded as a row in `Design/Technology_Stack_Design.md` §3 with its pinned
-version, integrity hash and security-review date (`REQ-TECH-026`) rather than
-appearing here unannounced.
+| | |
+|---|---|
+| Source | unpkg `tabulator-tables@6.6.1` (npm, MIT — `LICENSE` taken along) |
+| Files taken | `dist/js/tabulator_esm.min.js`, `dist/css/tabulator_bootstrap5.min.css`, `LICENSE` |
+| Version pin | 6.6.1 (`Design/Technology_Stack_Design.md` §3 carries the integrity hashes and review date) |
+
+```sh
+mkdir -p web/assets/vendor/tabulator
+curl -sf https://unpkg.com/tabulator-tables@6.6.1/dist/js/tabulator_esm.min.js \
+  -o web/assets/vendor/tabulator/tabulator_esm.min.js
+curl -sf https://unpkg.com/tabulator-tables@6.6.1/dist/css/tabulator_bootstrap5.min.css \
+  -o web/assets/vendor/tabulator/tabulator_bootstrap5.min.css
+curl -sf https://unpkg.com/tabulator-tables@6.6.1/LICENSE \
+  -o web/assets/vendor/tabulator/LICENSE
+```
+
+The **ESM build** is taken because section modules import it by relative path
+(`import { TabulatorFull } from "../vendor/tabulator/tabulator_esm.min.js"`) —
+no script tag, no import map, no bundler (`REQ-UI-045`, `REQ-TECH-001`). Only
+the `tabulator_bootstrap5` stylesheet is taken: one theme matching the
+application's Bootstrap 5.3 markup; it is theme-independent of the Bootswatch
+choice (§3.8 in `Design/User_Interface_Design.md`) and a page links it only
+when it renders a table. Neither file carries a fetch reference to an external
+host (verified against the CI ASM-TECH-2 pattern), so nothing reaches the
+network (`ASM-TECH-2`). The first table is the Control Panel's Translations
+key list (§5.7, `web/assets/js/translations.js`); its shared defaults live in
+`web/assets/app.js` (`REQ-UI-045`, `User_Interface_Design.md` §3.7).

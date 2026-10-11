@@ -19,6 +19,9 @@ final class View
     /** @var list<string> module paths for <script type="module"> */
     private array $scripts = [];
 
+    /** @var list<string> page-specific stylesheet paths (theme-independent extras) */
+    private array $styles = [];
+
     /** @var list<string> UI-string keys the page's modules need */
     private array $jsKeys = [];
 
@@ -55,11 +58,12 @@ final class View
      * Renders a page template inside a layout.
      *
      * @param array<string, mixed> $data     variables the template reads
-     * @param array{layout?: string|null, titleKey?: string, scripts?: list<string>, jsKeys?: list<string>} $options
+     * @param array{layout?: string|null, titleKey?: string, scripts?: list<string>, styles?: list<string>, jsKeys?: list<string>} $options
      */
     public function render(string $template, array $data = [], array $options = []): Response
     {
         $this->scripts = $options['scripts'] ?? [];
+        $this->styles = $options['styles'] ?? [];
         $this->jsKeys = $options['jsKeys'] ?? [];
 
         $content = $this->capture($template, $data);
@@ -222,6 +226,17 @@ final class View
     public function scripts(): array
     {
         return $this->scripts;
+    }
+
+    /**
+     * Page-specific stylesheets beyond the one Bootstrap file and app.css — always
+     * theme-independent library CSS (Tabulator, §3.8), never a second theme.
+     *
+     * @return list<string>
+     */
+    public function styles(): array
+    {
+        return $this->styles;
     }
 
     /** The absolute path of a view template, or null when it does not exist. */
