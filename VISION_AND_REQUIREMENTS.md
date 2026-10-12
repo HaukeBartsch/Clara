@@ -418,14 +418,14 @@ A project should only be visible to a user if they are in the administrator grou
 
 Support two export formats. a) "Export as csv (raw)" and b) "Export as csv (labels)". For the raw format multiple-choice fields should export with their numeric values. For export type "labels" instead save the text of the field choice. 
 
-To save a multi-valued field such as a checkbox type field (multiple answers) save one column for each choice. Use the fields name (lower-case with underscores and warning if over 26 characters) followed by two underscores and the numeric value. Here an example. A checkbox field called "demo_habits" with two choices coding 
+To save a multi-valued field such as a checkbox type field (multiple answers) save one column for each choice. Use the fields name (lower-case with underscores and warning if over 26 characters) followed by three underscores and the numeric value (the three-underscore notation, see "Corrections for interface"). Here an example. A checkbox field called "demo_habits" with two choices coding 
 
 ```
 1, smoking
 2, drinking
 ```
 
-would be written in the csv exported file as one column "demo_habits__1" and a second column "demo_habits__2" for the two choices (1/0 coding, export type "raw").
+would be written in the csv exported file as one column "demo_habits___1" and a second column "demo_habits___2" for the two choices (1/0 coding, export type "raw"; export type "labels" writes the choice text when checked and nothing otherwise).
 
 # User interface details
 
@@ -805,3 +805,35 @@ Check if other functionality in the api/ (golang) can be implemented by using of
 Does the export correctly uses double quotes for double quoted strings and string that contain commas? Is there an option to export using semi-colons (';') instead of commas? Export as semi-colon should be a default if the language is nb/nn (european languages use comma instead of dot for numeric values, also taken care of?).
 
 **Status:** Done 2026-10-11. Quoting already followed standard CSV rules (Go `encoding/csv`), and the export page already offered a semicolon delimiter. Added: REDCap's `decimalCharacter` on both API surfaces (REQ-EXP-015); an optional UTF-8 byte-order mark on the UI download so Excel reads `æøå` correctly (REQ-EXP-016); semicolon, decimal comma and the mark pre-selected on the export page for `nb`/`nn`, while the API keeps REDCap's defaults (REQ-UI-020). Fixed on the way: `csvDelimiter` is limited to REDCap's set, including `tab` by name (the data API had read `tab` as the letter `t`), and label headers now get formula neutralization (REQ-EXP-013, DEV-EXP-6).
+
+
+## Corrections for interface
+
+Add a new field type for Design that is "Checkboxes" (next to Dropdown and Radio buttons). For checkboxes several columns need to be exported using the three underscores notation (checkbox01___1 for the first choice field).
+
+In the Designer the "Add field" form warns the user if "Field name" uses uppercase characters ("Match the requested format"). Instead change the field name to a working field name by making everything lowercase and replace special characters with underscores.
+
+In mode production I got an error message "Something went wrong. Please try again; if it continues, contact your administrator." after pressing "Commit staged changes". I am adding two more fields in Design for an instrument "demographics". The dialog "Commit the staged changes" shows:
+"Non-breaking changes    field_added demographics.features_1   field_added demographics.homested". There was already one field in the form with "#" "-2" (dropdown). The new fields are text (homested) and radio (features_1).
+
+The "Section header" is currently a field property (next to field note). This should instead be a field type "descriptive". Such a field only has a field name and a field label (no value). Use a larger font when displaying the field label on an instrument (both normal and survey forms).
+
+Trying to make another field the first field in the first instrument I get an error message: "The form contains invalid values: reordering would move the record identifier field (GD-8)". Make this not an error but a warning dialog that the user can "accept". Risk is that already collected data becomes orphaned in the database. It should work to undo this again by moving the original field (identified by its field name) back to position 1.
+
+Does starting the e2e/dev.. script check if there is already a running api golang executable?
+
+Currently uploading the provided translations (nn.json and nb.json) can only be done by the API. Allow the admin on the Control Panel's "Translations" page to export and import a spreadsheet for a target language. Uploading a new table should overwrite the included translation but keep entries that are not in the uploaded table. A table should only add to the Translation column (not to the key column).
+
+A project feature (permissions project admin) should be either "Auto-name" (using numeric ids) or "type record_id". This changes the type of the first field in the first instrument. In both modes the record_id field should be unique in the project (also across arms). The Record Status Dashboard should show the correct field based on this project setting (not both).
+
+Renaming the first arm in a project (no other arm exists) to "no_treatment" I get an error: "Something went wrong. Please try again; if it continues, contact your administrator.".
+
+For error message in the web interface "Something went wrong. Please try again; if it continues, contact your administrator." provide more detailed error information to support debugging.
+
+Add a field type "yesno" that provides two radio buttons for yes and no answer.
+
+Add a field type "notes" that provides a larger text area notebox as a value field.
+
+Add a list of properties for each field. The only property currently is "@READONLY". If a field has such a property as "Field Annotation" the API can still enter values. The user (form and survey) can only see but not change/enter the content (inactive).
+
+The Record Status Dashboard (after creating a new record) should allow the user to get the survey link for the currently selected event (copy), if the instrument is enabled as a survey.

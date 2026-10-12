@@ -50,7 +50,7 @@ The master spec's \"CSV raw / CSV labels\" pair is the `rawOrLabel` axis on the 
 - `type=flat` is normative — one row per (record, event); `type=wide` is the compatibility mode of DEV-API-1.
 - Each row carries the record identifier's value under its field name (GD-8), `redcap_event_name` for projects with events (flat), and empty strings for missing values.
 - `description`/`header` fields carry no values and never appear.
-- Multi-valued fields: the master spec's per-choice columns (`demo_habits__1`, `demo_habits__2`) are realized by the matrix expansion of REQ-DB-014 — each matrix row is an ordinary expanded field (`<name>__<n>`) with its own column (D-6). An unselected row is an empty string (REQ-API-028); there is no separate 1/0 coding — callers that want it define the row choices as `1/0` (D-6).
+- Multi-valued fields: a `checkbox` field exports one column per choice in the three-underscore notation — `<field_name>___<choice_code>` directly after the parent's dictionary position (REQ-DB-042, REQ-EXP-053). Raw encoding writes `1` for a checked box and `0` for an unchecked one; `rawOrLabel=label` writes the choice's text when checked and nothing otherwise; a `rawOrLabelHeaders=label|both` header reads `<Field Label>, <Choice Label>`. The `fields[]` filter matches the parent name (every choice column) or a derived name. Choice columns inherit the parent's sensitivity but are never hashed — the stored value carries nothing beyond checked/unchecked (§4.1). (The historic reading of the master spec's per-choice example via matrix rows with `1/0` choices stands for existing projects, D-6; an unselected matrix row stays an empty string.)
 
 ### 3.3 CSV mechanics (REQ-API-029, REQ-TECH-011)
 

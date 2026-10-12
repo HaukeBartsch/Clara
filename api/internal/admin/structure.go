@@ -163,6 +163,9 @@ func (h *Handler) loadDesign(ctx context.Context, projectID int64) (*designCtx, 
 	for _, f := range fields {
 		d.fields[f.FieldName] = f
 	}
+	// Checkbox value columns join the view as derived entries so that stored
+	// names and expression references resolve (REQ-DB-042).
+	expandCheckboxFields(d.fields)
 	eventID := make(map[int64]string, len(events))
 	for _, e := range events {
 		d.events[e.UniqueEventName] = e
@@ -187,7 +190,12 @@ func (h *Handler) loadDesign(ctx context.Context, projectID int64) (*designCtx, 
 // field at a time re-read every earlier field on every call (§4.11).
 func (h *Handler) designForFields(ctx context.Context, projectID int64, fs []*db.Field) (*designCtx, error) {
 	for _, f := range fs {
-		if f.Calculation.String != "" || f.BranchingLogic.String != "" {
+		// A checkbox proposal needs the full dictionary: its choice columns are
+		// checked for collisions against every stored field and its subs against
+		// every stored checkbox (REQ-DB-042). A name carrying the separator can
+		// collide with a checkbox's choice column the same way.
+		if f.Calculation.String != "" || f.BranchingLogic.String != "" ||
+			f.FieldType == "checkbox" || strings.Contains(f.FieldName, db.CheckboxSubSep) {
 			return h.loadDesign(ctx, projectID)
 		}
 	}
@@ -2479,8 +2487,56 @@ var (
 
 // fieldTypes is the §1 schema vocabulary of fields.field_type.
 var fieldTypes = map[string]bool{
-	"text": true, "dropdown": true, "radio": true, "matrix": true,
+	"text": true, "dropdown": true, "radio": true, "checkbox": true, "matrix": true,
 	"description": true, "header": true, "calculated": true,
+}
+
+// checkboxSubs returns the value-column names a checkbox field expands into —
+// <field_name>___<choice_code> per choice (REQ-DB-042).
+func checkboxSubs(f db.Field) []string {
+	if f.FieldType != "checkbox" {
+		return nil
+	}
+	codes := validate.ChoiceCodes(f.Choices.String)
+	subs := make([]string, 0, len(codes))
+	for _, c := range codes {
+		subs = append(subs, db.CheckboxSubName(f.FieldName, c))
+	}
+	return subs
+}
+
+// expandCheckboxFields adds the derived value-column entries of every checkbox
+// field to a design map. The entries carry the parent's id — so the parent's
+// own edits never collide with its subs — and Choices "1$<label>", the coding
+// of one checked box; instrument membership and expression resolution then see
+// `base___<code>` exactly as stored data names it (REQ-DB-042).
+func expandCheckboxFields(fields map[string]db.Field) {
+	var subs []db.Field
+	for _, f := range fields {
+		if f.FieldType != "checkbox" {
+			continue
+		}
+		for _, pair := range strings.Split(f.Choices.String, "##") {
+			if pair == "" {
+				continue
+			}
+			kv := strings.SplitN(pair, "$", 2)
+			label := kv[0]
+			if len(kv) == 2 {
+				label = kv[1]
+			}
+			subs = append(subs, db.Field{
+				ID: f.ID, ProjectID: f.ProjectID, InstrumentID: f.InstrumentID,
+				FieldName: db.CheckboxSubName(f.FieldName, kv[0]), FieldType: "checkbox",
+				Choices: sql.NullString{String: "1$" + label, Valid: true},
+			})
+		}
+	}
+	for _, s := range subs {
+		if _, taken := fields[s.FieldName]; !taken {
+			fields[s.FieldName] = s
+		}
+	}
 }
 
 // builtinValidationTypes are the four built-in structured types (§4).
@@ -2518,6 +2574,19 @@ func (h *Handler) validateFieldDesign(ctx context.Context, f *db.Field, selfID i
 	if f.Choices.String != "" {
 		if derr := validateChoices(f.Choices.String); derr != nil {
 			return nil, derr
+		}
+	}
+	if f.FieldType == "checkbox" {
+		// A checkbox without choices would expand to no value column at all
+		// (REQ-DB-042). Its choice columns must not collide with any other
+		// dictionary entry — two entries may never address one data column.
+		if f.Choices.String == "" {
+			return nil, validationf("a checkbox field requires at least one choice")
+		}
+		for _, sub := range checkboxSubs(*f) {
+			if dupe, taken := d.fields[sub]; taken && dupe.ID != selfID {
+				return nil, conflictf("field_name %q already exists in this project (choice column of checkbox %q)", sub, f.FieldName)
+			}
 		}
 	}
 	vt := f.ValidationType.String
@@ -3303,12 +3372,25 @@ func (h *Handler) updateField(w http.ResponseWriter, r *http.Request) {
 		}
 		if rename != "" {
 			// The stored values and every inbound dependency reference follow
-			// the new name atomically (REQ-VAL-014, DEV-VAL-4).
+			// the new name atomically (REQ-VAL-014, DEV-VAL-4). A checkbox's
+			// choice columns follow too — mapped by the OLD choices, so a code
+			// dropped in the same write leaves its orphan row exactly as a
+			// dropped radio option does today (REQ-DB-042).
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE data SET field_name = ? WHERE project_id = ? AND field_name = ?`,
 				rename, projectID, old.FieldName); err != nil {
 				errInternal(w)
 				return
+			}
+			if old.FieldType == "checkbox" {
+				for _, code := range validate.ChoiceCodes(old.Choices.String) {
+					if _, err := tx.ExecContext(ctx,
+						`UPDATE data SET field_name = ? WHERE project_id = ? AND field_name = ?`,
+						db.CheckboxSubName(rename, code), projectID, db.CheckboxSubName(old.FieldName, code)); err != nil {
+						errInternal(w)
+						return
+					}
+				}
 			}
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE calculated_dependencies SET ref_field_name = ?
@@ -3583,18 +3665,28 @@ func (h *Handler) deleteField(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback()
-	var removed int64
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM data WHERE project_id = ? AND field_name = ?`,
-		projectID, f.FieldName).Scan(&removed); err != nil {
-		errInternal(w)
-		return
+	// A checkbox's values live under its derived choice columns (REQ-DB-042);
+	// they leave with the field exactly as the parent-named rows do.
+	names := []string{f.FieldName}
+	for _, sub := range checkboxSubs(*f) {
+		names = append(names, sub)
 	}
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM data WHERE project_id = ? AND field_name = ?`,
-		projectID, f.FieldName); err != nil {
-		errInternal(w)
-		return
+	var removed int64
+	for _, name := range names {
+		var n int64
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM data WHERE project_id = ? AND field_name = ?`,
+			projectID, name).Scan(&n); err != nil {
+			errInternal(w)
+			return
+		}
+		removed += n
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM data WHERE project_id = ? AND field_name = ?`,
+			projectID, name); err != nil {
+			errInternal(w)
+			return
+		}
 	}
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM calculated_dependencies WHERE project_id = ? AND calculated_field_id = ?`,

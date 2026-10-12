@@ -65,6 +65,11 @@ type dictInstrument struct {
 // structure generation and shares it read-only across calls.
 type projectDict struct {
 	fields      []recField
+	// expanded is the dictionary with every checkbox field followed inline by
+	// its derived choice columns `base___<code>` (REQ-DB-042) — the order the
+	// export columns and import validation walk. byName resolves those names
+	// too; fields stays the pure design-order list.
+	expanded    []recField
 	byName      map[string]recField
 	instruments []dictInstrument // position order (drives the _complete columns)
 	events      []eventRow       // canonical per-arm order (GD-15)
@@ -74,12 +79,39 @@ type projectDict struct {
 	instrEvents map[int64][]string // instrument id -> mapped unique event names
 }
 
+// checkboxColumns returns the derived value-column entries a checkbox field
+// expands into (REQ-DB-042). Each carries the parent's instrument and
+// sensitivity flags; its Choices are the one coding of a checked box
+// ("1$<choice label>"), which is what label export and value validation read.
+func checkboxColumns(p recField) []recField {
+	if p.FieldType != "checkbox" {
+		return nil
+	}
+	var out []recField
+	for _, pair := range strings.Split(p.Choices.String, "##") {
+		if pair == "" {
+			continue
+		}
+		kv := strings.SplitN(pair, "$", 2)
+		label := kv[0]
+		if len(kv) == 2 {
+			label = kv[1]
+		}
+		sub := p.Field
+		sub.FieldName = db.CheckboxSubName(p.FieldName, kv[0])
+		sub.FieldType = "checkbox"
+		sub.Choices = sql.NullString{String: "1$" + label, Valid: true}
+		out = append(out, recField{Field: sub, Instrument: p.Instrument})
+	}
+	return out
+}
+
 // valueFieldsByInstrument maps each instrument id to the names of its
 // value-carrying fields — the derived "has data" test of REQ-API-134 runs
 // against every stored value, independent of which columns an export keeps.
 func (d *projectDict) valueFieldsByInstrument() map[int64]map[string]bool {
 	out := make(map[int64]map[string]bool, len(d.instruments))
-	for _, f := range d.fields {
+	for _, f := range d.expanded { // includes checkbox choice columns (REQ-DB-042)
 		if f.FieldType == "description" || f.FieldType == "header" {
 			continue
 		}
@@ -189,6 +221,16 @@ func (h *Handler) buildDict(ctx context.Context, projectID int64) (*projectDict,
 		rf := recField{Field: f, Instrument: formOf[f.InstrumentID]}
 		d.fields = append(d.fields, rf)
 		d.byName[f.FieldName] = rf
+		d.expanded = append(d.expanded, rf)
+		// A checkbox's stored values live under its derived choice columns;
+		// resolving those names here is what lets import, permissions, audit
+		// grouping and branching treat them as ordinary fields (REQ-DB-042).
+		for _, sub := range checkboxColumns(rf) {
+			if _, taken := d.byName[sub.FieldName]; !taken {
+				d.byName[sub.FieldName] = sub
+			}
+			d.expanded = append(d.expanded, sub)
+		}
 	}
 	if len(d.fields) > 0 {
 		d.identifier = d.fields[0].FieldName

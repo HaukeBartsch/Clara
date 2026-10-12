@@ -11,8 +11,29 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
+
+// CheckboxSubSep separates a checkbox field name from its choice code in the
+// three-underscore notation (REQ-DB-042).
+const CheckboxSubSep = "___"
+
+// CheckboxSubName returns the value-column name of one checkbox choice:
+// <field_name>___<choice_code> (REQ-DB-042).
+func CheckboxSubName(base, code string) string { return base + CheckboxSubSep + code }
+
+// SplitCheckboxSub splits a value name at its separator into parent field name
+// and trailing segment. ok is false when the name carries no separator; it
+// does not assert that the parent is a checkbox field — callers resolve the
+// parent in the dictionary (REQ-DB-042).
+func SplitCheckboxSub(name string) (base, code string, ok bool) {
+	i := strings.LastIndex(name, CheckboxSubSep)
+	if i <= 0 || i+len(CheckboxSubSep) >= len(name) {
+		return "", "", false
+	}
+	return name[:i], name[i+len(CheckboxSubSep):], true
+}
 
 // Projects (REQ-DB-006, GD-17 simplified).
 type Project struct {
@@ -132,7 +153,7 @@ type Field struct {
 	InstrumentID        int64
 	FieldName           string
 	FieldLabel          sql.NullString
-	FieldType           string // text | dropdown | radio | matrix | description | header | calculated
+	FieldType           string // text | dropdown | radio | checkbox | matrix | description | header | calculated
 	SectionHeader       sql.NullString
 	Choices             sql.NullString
 	FieldNote           sql.NullString

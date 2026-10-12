@@ -460,9 +460,9 @@ Data: `GET …/instruments/{iid}/fields` (fields in position order, all data-dic
 |---|---|---|
 | `field_name` | text | `^[a-z0-9_]+$`, unique in the project (409 on duplicate); **a warning — not an error — when > 26 characters** (REQ-VAL-013, REQ-UI-021); reserved names `redcap_event_name`/`redcap_repeat_instrument`/`redcap_repeat_instance` rejected (`Data_Validation_Design.md` §9) |
 | `field_label` | text | the question/description |
-| `field_type` | select: `text` / `dropdown` / `radio` / `matrix` / `description` / `header` / `calculated` | type-specific sub-controls below |
+| `field_type` | select: `text` / `dropdown` / `radio` / `checkbox` / `matrix` / `description` / `header` / `calculated` | type-specific sub-controls below |
 | `section_header` | text | group heading in the form |
-| `choices` | list editor: `code`/`label` rows | for `dropdown`/`radio`/`matrix` — the `code$label##…` encoding (REQ-VAL-022); codes numeric and unique |
+| `choices` | list editor: `code`/`label` rows | for `dropdown`/`radio`/`checkbox`/`matrix` — the `code$label##…` encoding (REQ-VAL-022); codes numeric and unique; a `checkbox` requires at least one choice and exports one `___<code>` column per choice (REQ-DB-042) |
 | `field_note` | text | help text |
 | `validation_type` | select: empty / built-in `integer` / `floating point` / `date` / `datetime` / every entry of the validation-type registry (`email`, `MRN`, `international phone`, `national phone`, … — listed from `GET /api/v1/validationTypes`, REQ-API-104) | + `validation_format` for date/datetime (§4.1 of `Data_Validation_Design.md`); `validation_min`/`max` for integer/float only (REQ-VAL-015/016/020); unknown names rejected at design time (REQ-VAL-010/042) |
 | `required` | checkbox | REQ-VAL-028 |

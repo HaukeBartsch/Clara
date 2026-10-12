@@ -91,6 +91,7 @@ This section is the date-shift consistency semantics referenced by REQ-DB-023.
 | REQ-EXP-050 | Every export on either surface MUST be audit-logged with the applied sensitivity level and the filters supplied (REQ-AUD-011, BR-008); data-API invocations MUST additionally write a record-view row regardless of initiator (REQ-AUD-013). |
 | REQ-EXP-051 | Neither the audit trail nor the application logs MAY contain exported or transformed values, or the anonymization salt (REQ-AUD-014, REQ-CFG-021/022, REQ-TECH-017). |
 | REQ-EXP-052 | Branching logic MUST NOT affect export (GD-13): it is display-only and MUST NOT change which values are returned or how they are transformed. |
+| REQ-EXP-053 | A `checkbox` field (REQ-DB-042) exports as one column per choice, named `<field_name>___<choice_code>` in choice order directly after the field's dictionary position. Raw export writes `1` for a checked box and `0` for an unchecked one; label export writes the choice's text when checked and nothing otherwise. The `fields[]` filter matches either the parent name (selecting every choice column) or an individual derived name. Choice columns inherit the parent field's sensitivity: they are never hashed (the stored value carries no information beyond checked/unchecked). Data-dictionary exports (`content=metadata`, `exportFieldNames`) show the checkbox as its single parent row with its choices, not as derived rows. |
 
 ## 8. Assumptions
 

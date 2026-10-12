@@ -24,6 +24,7 @@ import (
 	"database/sql"
 	"strconv"
 
+	"csms/api/internal/db"
 	"csms/api/internal/validate"
 )
 
@@ -343,6 +344,7 @@ func (a *applyState) instrumentsAndFields(active, staged *stagedDesign) error {
 	type fieldRename struct {
 		id       int64
 		from, to string
+		codes    []string // checkbox choice codes; their ___columns park and settle with the parent (REQ-DB-042)
 	}
 	var fieldRenames []fieldRename
 	for _, si := range staged.Instruments {
@@ -358,7 +360,11 @@ func (a *applyState) instrumentsAndFields(active, staged *stagedDesign) error {
 			if !ok || xf.FieldName == sf.FieldName {
 				continue
 			}
-			fieldRenames = append(fieldRenames, fieldRename{id: sf.ID, from: xf.FieldName, to: sf.FieldName})
+			fr := fieldRename{id: sf.ID, from: xf.FieldName, to: sf.FieldName}
+			if xf.FieldType == "checkbox" {
+				fr.codes = validate.ChoiceCodes(xf.Choices.String)
+			}
+			fieldRenames = append(fieldRenames, fr)
 			temp := stagedRenamePrefix + strconv.FormatInt(sf.ID, 10)
 			if _, err := a.tx.ExecContext(a.ctx,
 				`UPDATE fields SET field_name = ? WHERE id = ?`, temp, sf.ID); err != nil {
@@ -368,6 +374,13 @@ func (a *applyState) instrumentsAndFields(active, staged *stagedDesign) error {
 				`UPDATE data SET field_name = ? WHERE project_id = ? AND field_name = ?`,
 				temp, a.projectID, xf.FieldName); err != nil {
 				return err
+			}
+			for _, code := range fr.codes {
+				if _, err := a.tx.ExecContext(a.ctx,
+					`UPDATE data SET field_name = ? WHERE project_id = ? AND field_name = ?`,
+					db.CheckboxSubName(temp, code), a.projectID, db.CheckboxSubName(xf.FieldName, code)); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -483,6 +496,13 @@ func (a *applyState) instrumentsAndFields(active, staged *stagedDesign) error {
 			`UPDATE data SET field_name = ? WHERE project_id = ? AND field_name = ?`,
 			r.to, a.projectID, temp); err != nil {
 			return err
+		}
+		for _, code := range r.codes {
+			if _, err := a.tx.ExecContext(a.ctx,
+				`UPDATE data SET field_name = ? WHERE project_id = ? AND field_name = ?`,
+				db.CheckboxSubName(r.to, code), a.projectID, db.CheckboxSubName(temp, code)); err != nil {
+				return err
+			}
 		}
 		if _, err := a.tx.ExecContext(a.ctx,
 			`UPDATE calculated_dependencies SET ref_field_name = ?
@@ -692,10 +712,21 @@ func (a *applyState) deleteFieldsAndInstruments(active, staged *stagedDesign) er
 			} else if referenced {
 				return conflictf("field %s is referenced by an active expression", xf.FieldName)
 			}
-			if _, err := a.tx.ExecContext(a.ctx,
-				`DELETE FROM data WHERE project_id = ? AND field_name = ?`,
-				a.projectID, xf.FieldName); err != nil {
-				return err
+			// A checkbox's values live under its derived choice columns; they
+			// leave with the field exactly as the parent-named rows do
+			// (REQ-DB-042).
+			names := []string{xf.FieldName}
+			if xf.FieldType == "checkbox" {
+				for _, code := range validate.ChoiceCodes(xf.Choices.String) {
+					names = append(names, db.CheckboxSubName(xf.FieldName, code))
+				}
+			}
+			for _, name := range names {
+				if _, err := a.tx.ExecContext(a.ctx,
+					`DELETE FROM data WHERE project_id = ? AND field_name = ?`,
+					a.projectID, name); err != nil {
+					return err
+				}
 			}
 			if _, err := a.tx.ExecContext(a.ctx,
 				`DELETE FROM calculated_dependencies WHERE project_id = ? AND calculated_field_id = ?`,

@@ -341,9 +341,12 @@ func classifyFieldChange(
 	}
 	if removed, recoded, changed := diffChoices(old, next); changed {
 		// A re-coded option always matters — the label is what the stored code
-		// meant. A dropped one matters only if a value still uses it.
+		// meant. A dropped one matters only if a value still uses it. A
+		// checkbox's usage lives under its derived choice column rather than
+		// as a code under the parent name (REQ-DB-042): the choice is used when
+		// any record holds its `base___<code>` row.
 		var used []string
-		if len(removed) > 0 {
+		if len(removed) > 0 && old.FieldType != "checkbox" {
 			var err error
 			used, err = probe.fieldValues(ctx, old.FieldName)
 			if err != nil {
@@ -358,7 +361,15 @@ func classifyFieldChange(
 			})
 		}
 		for _, code := range removed {
-			if usesCode(used, code) {
+			inUse := usesCode(used, code)
+			if old.FieldType == "checkbox" && len(removed) > 0 {
+				held, err := probe.holdsFieldData(ctx, []string{db.CheckboxSubName(old.FieldName, code)})
+				if err != nil {
+					return nil, err
+				}
+				inUse = held
+			}
+			if inUse {
 				choiceChanges = append(choiceChanges, stagedChange{
 					Kind: "choice_removed", Object: object + " option " + code, Breaking: true,
 					Reason: "stored values using this code lose their label and meaning",
@@ -489,7 +500,7 @@ func classifyMapping(active, staged *stagedDesign) ([]stagedChange, error) {
 
 func choiceBearing(fieldType string) bool {
 	switch fieldType {
-	case "dropdown", "radio", "matrix":
+	case "dropdown", "radio", "checkbox", "matrix":
 		return true
 	}
 	return false

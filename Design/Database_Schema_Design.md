@@ -190,9 +190,9 @@ CREATE TABLE IF NOT EXISTS fields (              -- REQ-DB-013, REQ-DB-014
     instrument_id       INTEGER NOT NULL REFERENCES instruments(id) ON DELETE CASCADE,
     field_name          VARCHAR(255) NOT NULL,   -- lower-case alnum + underscore; unique per project
     field_label         VARCHAR(255),
-    field_type          VARCHAR(16) NOT NULL,    -- text | dropdown | radio | matrix | description | header | calculated
+    field_type          VARCHAR(16) NOT NULL,    -- text | dropdown | radio | checkbox | matrix | description | header | calculated
     section_header      VARCHAR(255),
-    choices             TEXT,                    -- code$label##code$label (dropdown/radio/matrix)
+    choices             TEXT,                    -- code$label##code$label (dropdown/radio/checkbox/matrix)
     field_note          TEXT,
     validation_type     VARCHAR(32),             -- empty | built-in (integer | floating point | date | datetime) | validation_types.name (REQ-VAL-010/042)
     validation_format   VARCHAR(32),             -- accepted input format for date/datetime (e.g. Y-m-d, m-d-Y, Y-m-d H:i); see Data_Validation_Design.md
@@ -246,7 +246,7 @@ CREATE TABLE IF NOT EXISTS project_staging (
 );
 ```
 
-Notes: matrix rows are ordinary `fields` rows sharing `matrix_group`/`choices`/validation (REQ-DB-014); the record identifier is the first field of the first instrument by `position` (GD-8 — enforced by the API, not the schema). `validation_type` resolves against `validation_types` at validation time; the four built-in structured types are validated by code and cannot be shadowed by a registry row (§4.2). The API presets `direct_identifier = 1` when a field's validation type is `email`, `MRN`, `international phone` or `national phone`; the user may set or clear it on any field (REQ-EXP-020). **Event order (GD-15, REQ-DB-011):** within an arm, events with a `period` sort by it ascending (ties by `position`); events with `period = NULL` sort by `position` after them. `position` is set by the API at creation (end of list) and by the events-order endpoint (REQ-API-103); the canonical order is computed by the API (the schema stores the inputs only) and applies to the UI event table, the record-status dashboard, `content=event`, and `content=formEventMapping`.
+Notes: matrix rows are ordinary `fields` rows sharing `matrix_group`/`choices`/validation (REQ-DB-014); **checkbox fields** hold one row with their choices and expand at API load into value columns `<field_name>___<choice_code>` — data rows are keyed by these derived names (checked stores `1`, unchecked stores nothing), the derived names are never stored in `fields`, they inherit the parent's instrument, permission pair and sensitivity flags, and no field name may collide with one (REQ-DB-042); the record identifier is the first field of the first instrument by `position` (GD-8 — enforced by the API, not the schema). `validation_type` resolves against `validation_types` at validation time; the four built-in structured types are validated by code and cannot be shadowed by a registry row (§4.2). The API presets `direct_identifier = 1` when a field's validation type is `email`, `MRN`, `international phone` or `national phone`; the user may set or clear it on any field (REQ-EXP-020). **Event order (GD-15, REQ-DB-011):** within an arm, events with a `period` sort by it ascending (ties by `position`); events with `period = NULL` sort by `position` after them. `position` is set by the API at creation (end of list) and by the events-order endpoint (REQ-API-103); the canonical order is computed by the API (the schema stores the inputs only) and applies to the UI event table, the record-status dashboard, `content=event`, and `content=formEventMapping`.
 
 ## 6. Data (EAV) and Record Entities
 

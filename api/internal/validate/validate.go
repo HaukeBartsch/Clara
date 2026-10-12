@@ -112,7 +112,7 @@ func (v Violation) Error() string { return string(v.Code) + ": " + v.Message }
 // relevant columns from its own field type into this.
 type Field struct {
 	Name           string
-	Type           string // text | dropdown | radio | matrix | description | header | calculated
+	Type           string // text | dropdown | radio | checkbox | matrix | description | header | calculated
 	ValidationType string // "" | integer | floating point | email | MRN | date | datetime
 	ValidationMin  string
 	ValidationMax  string
@@ -287,6 +287,11 @@ func choiceCodes(s string) []string {
 	}
 	return out
 }
+
+// ChoiceCodes is the exported view of the stored encoding's choice codes in
+// order — the dictionary expansion of a checkbox field into its `___<code>`
+// value columns (REQ-DB-042).
+func ChoiceCodes(s string) []string { return choiceCodes(s) }
 
 // LabelForCode returns the label of code within the stored choices encoding,
 // or "" when the code is absent (raw/label export mapping, REQ-API-027).

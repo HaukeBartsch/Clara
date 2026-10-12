@@ -524,6 +524,10 @@ func (d *stagedDesign) designContext(projectID int64) *designCtx {
 	for _, f := range fields {
 		ctx.fields[f.FieldName] = f
 	}
+	// Checkbox value columns join the snapshot view as derived entries, so a
+	// staged expression resolves `base___<code>` exactly as the live tables do
+	// (REQ-DB-042).
+	expandCheckboxFields(ctx.fields)
 	for _, e := range events {
 		ctx.events[e.UniqueEventName] = e
 	}
