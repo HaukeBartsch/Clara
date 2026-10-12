@@ -3,9 +3,10 @@
 // project export — CSV or JSON, codes or labels, the header style, the CSV delimiter, decimal
 // separator and byte-order mark, and the arms to include — and, on `?download=1`, the file
 // itself, proxied from `GET /api/v1/projects/{id}/export` piece by piece so a large export
-// never sits in PHP's memory (REQ-TECH-011). Beside it, `?download=dictionary` answers with
-// the project's data dictionary as `instrument.csv`: the field definitions read through the
-// data API's own `content=metadata` (REQ-API-019), design only and no record values.
+// never sits in PHP's memory (REQ-TECH-011). Beside it, `?download=dictionary` streams the
+// project's data dictionary as the API's REDCap instrument ZIP (REQ-API-153): instrument.csv
+// in REDCap's headings, every instrument named in Form Name, design only and no record values
+// — the file the Design page's import reads (§7.6).
 //
 // The CSV options start from the user's UI language: a language whose spreadsheets read the
 // comma as decimal separator gets semicolon, decimal comma and the byte-order mark
@@ -51,21 +52,6 @@ final class ExportController extends ProjectPageController
 
     /** What a downloaded file may be labelled as; anything else goes out as a plain download. */
     private const CONTENT_TYPES = ['text/csv', 'application/json'];
-
-    /** The fixed name of the data dictionary download (REQ-UI-020). */
-    public const DICTIONARY_FILENAME = 'instrument.csv';
-
-    /**
-     * The `content=metadata` row keys as the dictionary's CSV columns, in the order the
-     * data API renders them (REQ-API-019) — both surfaces produce the same file.
-     */
-    private const DICTIONARY_COLUMNS = [
-        'field_name', 'form_name', 'section_header', 'field_type', 'field_label', 'field_note',
-        'select_choices_or_calculations', 'choice_codes', 'choice_labels',
-        'validation_type', 'validation_min', 'validation_max',
-        'required_field', 'branching_logic', 'matrix_group_name',
-        'record_identifier', 'direct_identifier',
-    ];
 
     private const JS_KEYS = [
         'export.level.export_full', 'export.level.export_no_identifiers', 'export.level.export_de_identified',
@@ -300,54 +286,47 @@ final class ExportController extends ProjectPageController
     }
 
     /**
-     * The data dictionary download (`?download=dictionary`, REQ-UI-020): the field
-     * definitions read through the data API's `content=metadata` with the member's own
-     * token (§8.6) and rendered as CSV in that call's column order (REQ-API-019). Design
-     * only — no record values — so it carries none of the data form's options, and a
-     * refusal becomes a flash line on the page like any other failure.
+     * The data dictionary download (`?download=dictionary`, REQ-UI-020): the API's REDCap
+     * instrument ZIP of the project (`GET …/instruments/export`, REQ-API-153), streamed under
+     * the name the API gives it — `<project>_<YYYY-MM-DD>_<HHMM>.zip`. Design only, no record
+     * values, so it carries none of the data form's options; a refusal arrives before any byte
+     * and becomes a flash line on the page like any other failure.
      */
     private function downloadDictionary(int $projectId): Response
     {
         $back = '/projects/' . $projectId . '/export';
-        try {
-            $rows = $this->api->dataApi()->forMember($projectId, ['content' => 'metadata']);
-        } catch (ApiException $e) {
-            $this->logger->info('dictionary download refused', ['code' => $e->code(), 'status' => $e->status()]);
-            $this->flashDanger($this->apiFailureMessage($e));
+        $path = '/api/v1/projects/' . $projectId . '/instruments/export';
 
-            return Response::redirect($back, 303);
-        }
-
-        return Response::html(self::dictionaryCsv($rows))
-            ->withHeader('Content-Type', 'text/csv; charset=UTF-8')
-            ->withHeader('Content-Disposition', 'attachment; filename="' . self::DICTIONARY_FILENAME . '"');
+        return Response::stream(function (StreamSink $sink) use ($path, $back): void {
+            try {
+                $this->api->stream($path, [],
+                    static function (int $status, array $upstream) use ($sink): void {
+                        Session::close();
+                        $sink->begin(200, [
+                            'Content-Type' => 'application/zip',
+                            'Content-Disposition' => 'attachment; filename="'
+                                . self::dictionaryFilename($upstream['content-disposition'] ?? '') . '"',
+                            'Cache-Control' => 'no-store',
+                        ]);
+                    },
+                    static fn (string $chunk) => $sink->write($chunk)
+                );
+            } catch (ApiException $e) {
+                $this->logger->info('dictionary download refused', ['code' => $e->code(), 'status' => $e->status()]);
+                Session::flash('danger', $this->apiFailureMessage($e));
+                $sink->begin(303, ['Location' => $back, 'Cache-Control' => 'no-store']);
+            }
+        });
     }
 
-    /** The metadata rows as CSV, quoted the way a spreadsheet reads it (§3.1 conventions). */
-    public static function dictionaryCsv(array $rows): string
+    /**
+     * The archive's name as the API's Content-Disposition gives it (REQ-API-153); a name of
+     * any other shape is not passed on to the browser.
+     */
+    public static function dictionaryFilename(string $disposition): string
     {
-        $handle = fopen('php://temp', 'rb+');
-        if ($handle === false) {
-            throw new ApiException('internal', '', 500);
-        }
-        // The empty escape character: quotes are doubled, never backslash-escaped —
-        // the same quoting Go's encoding/csv produces for the API's own dictionary.
-        fputcsv($handle, self::DICTIONARY_COLUMNS, ',', '"', '');
-        foreach ($rows as $row) {
-            if (!is_array($row)) {
-                continue;
-            }
-            $line = [];
-            foreach (self::DICTIONARY_COLUMNS as $column) {
-                $line[] = (string) ($row[$column] ?? '');
-            }
-            fputcsv($handle, $line, ',', '"', '');
-        }
-        rewind($handle);
-        $csv = (string) stream_get_contents($handle);
-        fclose($handle);
-
-        return $csv;
+        return preg_match('/filename="([A-Za-z0-9._-]{1,120}\.zip)"/', $disposition, $m) === 1
+            ? $m[1] : 'data_dictionary.zip';
     }
 
     /** `<project>_<YYYY-MM-DD>.<ext>` with nothing a header could misread. */

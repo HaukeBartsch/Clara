@@ -38,6 +38,7 @@ func (h *Handler) registerStructure(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/projects/{id}/instruments", h.createInstrument)
 	mux.HandleFunc("PUT /api/v1/projects/{id}/instruments/order", h.orderInstruments)
 	mux.HandleFunc("POST /api/v1/projects/{id}/instruments/import", h.importInstruments)
+	mux.HandleFunc("GET /api/v1/projects/{id}/instruments/export", h.exportInstruments)
 	mux.HandleFunc("PUT /api/v1/projects/{id}/instruments/{iid}", h.updateInstrument)
 	mux.HandleFunc("DELETE /api/v1/projects/{id}/instruments/{iid}", h.deleteInstrumentHTTP)
 

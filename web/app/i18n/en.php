@@ -819,7 +819,7 @@ return [
     'export.download' => 'Download data',
     'export.audit_note' => 'Every download is recorded in the audit log with the level applied.',
     'export.dictionary_title' => 'Data dictionary',
-    'export.dictionary_intro' => 'The project\'s field definitions — one row per field, the same description the API gives programs. Design only: the file contains no record values.',
+    'export.dictionary_intro' => 'The project\'s data dictionary as a REDCap instrument ZIP: instrument.csv with every field, each row naming its instrument. The Design page imports it into another project. Design only: the file contains no record values.',
     'export.dictionary_download' => 'Download data dictionary',
     'export.none_here' => 'None of this project\'s instruments at their events are open to you for export. Ask a project administrator for an export.',
     // Stated on the card rather than hidden (§6.4, REQ-UI-020): a partly permitted

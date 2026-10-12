@@ -626,7 +626,7 @@ The API derives `unique_event_name = <label>_arm_<n>` (REQ-DB-011); a duplicate 
 
 Writes `position` (1…n) for the arm's events; the canonical order of GD-15 then governs the display (timepoint events by `period`, ties and no-timepoint events by the written `position`). 200. Audit `event_reordered` with the new order (REQ-API-103, `Audit_Logging_Design.md` §3.3).
 
-### 4.10 Instruments (REQ-API-064…066, REQ-API-101, REQ-API-130, REQ-API-152)
+### 4.10 Instruments (REQ-API-064…066, REQ-API-101, REQ-API-130, REQ-API-152, REQ-API-153)
 
 **`GET /api/v1/projects/{id}/instruments`** — data access ≥ `read_only`. 200:
 
@@ -728,6 +728,27 @@ Validation types (REDCap name → `validation_type` + `validation_format`):
 | `number`, `number_1dp` … `number_4dp` | `floating point` (`converted` for the `_dp` forms: the decimal count is not enforced) |
 | `email` | `email` |
 | any other name | the registry entry of that name when one exists (§4.2 of `Data_Validation_Design.md`); otherwise dropped with a warning — the field stays free text (`dropped_attribute`). This covers REDCap's `datetime_seconds_*`, `time` and `phone`, which have no counterpart |
+
+**`GET /api/v1/projects/{id}/instruments/export`** — data access ≥ `read_only` (REQ-API-153). The project's data dictionary as a REDCap instrument ZIP: `application/zip` with `Content-Disposition: attachment; filename="<project>_<YYYY-MM-DD>_<HHMM>.zip"` — the project name with every character outside `[A-Za-z0-9._-]` replaced by `_`, the time in UTC (GD-7). The archive holds `instrument.csv` and `OriginID.txt`, the host of `WEB_PUBLIC_URL` (`clara` when unset), as REDCap's instrument export does. The design is the **active** one, the live tables: an open staging set is not exported, as data collection does not use it either (REQ-API-107). The file carries design only, no record values.
+
+`instrument.csv` starts with REDCap's header line exactly as REDCap writes it and has one row per field — instruments by position, fields by position, so the record identifier (GD-8) is the first row. Its conversion is the import's tables above, run backwards:
+
+| Field attribute | REDCap column |
+|---|---|
+| `field_name` | `Variable / Field Name` |
+| the instrument's name | `Form Name` |
+| `section_header`, `field_label`, `field_note` | `Section Header`, `Field Label`, `Field Note`, as stored — line breaks kept |
+| `field_type` | `Field Type`: `text`, `notes`, `dropdown`, `radio`, `checkbox`, `yesno` as they are; `matrix` → `radio` with its `matrix_group` in `Matrix Group Name`; `description` and `header` → `descriptive`; `calculated` → `calc` |
+| `choices` | `Choices, Calculations, OR Slider Labels`: `code, label \| code, label` for the choice types; empty for `yesno`, whose coding is fixed (REQ-DB-043); the expression for `calc` |
+| `validation_type` + `validation_format` | `Text Validation Type OR Show Slider Number`: `integer` → `integer`; `floating point` → `number`; `date` / `datetime` → `date_ymd`, `date_dmy`, `date_mdy` / `datetime_ymd`, … by the order of `Y`, `m`, `d` in the format (`Y-m-d` when unset); a registry type by its name |
+| `validation_min` / `validation_max` | `Text Validation Min` / `Max` |
+| `direct_identifier` | `Identifier?` → `y` |
+| `branching_logic` | `Branching Logic (Show field only if...)`, as stored |
+| `required` | `Required Field?` → `y` |
+| `field_annotation` | `Field Annotation` |
+| — | `Custom Alignment`, `Question Number (surveys only)`, `Matrix Ranking?` empty |
+
+Importing the file into a project whose first instrument is empty (step 2 above) recreates the same fields. REDCap's format has no column for the rest, which therefore does not travel: the `personal_information` and `export_approved` flags; an instrument's survey flag and branching logic; events and the instrument–event mapping. A `header` field comes back as a `description`, and a date format whose tokens are not in the order `Y-m-d`, `d-m-Y` or `m-d-Y` comes back as `Y-m-d`. Calculations keep their event-qualified references, which the import leaves as written.
 
 ### 4.11 Fields (designer) (REQ-API-067…071, REQ-API-096, REQ-API-132)
 

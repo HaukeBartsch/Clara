@@ -5,7 +5,8 @@ import { expect, test, type APIRequestContext, type Browser, type Page } from "@
 // protective of the selected arms, REQ-EXP-003), and the file streams through the PHP route
 // (REQ-TECH-011) as an attachment in the chosen format — for CSV with the chosen delimiter,
 // decimal separator and byte-order mark (REQ-EXP-013/015/016). Beside it, a second control
-// downloads the data dictionary as instrument.csv: the metadata shape, design only.
+// downloads the data dictionary as a REDCap instrument ZIP, design only — the file the
+// instrument import reads, which a fresh project here takes whole (REQ-API-153).
 //
 // The structure is seeded through the administration API with the development service token
 // of e2e/dev-stack.sh — what this spec asserts is the page, not the designer. Every name is
@@ -120,19 +121,22 @@ test.describe("export (M6)", () => {
     const rows = JSON.parse(await (await json.createReadStream()).toArray().then((parts) => Buffer.concat(parts).toString("utf8")))
     expect(rows.map((row: Record<string, string>) => row.record_id).sort()).toEqual(["E001", "E002"])
 
-    // --- the second download: the data dictionary as instrument.csv, design only (REQ-UI-020) ---
+    // --- the second download: the data dictionary as a REDCap instrument ZIP (REQ-UI-020, REQ-API-153) ---
     const [dictionary] = await Promise.all([page.waitForEvent("download"), page.locator("[data-clara-dictionary-download]").click()])
-    expect(dictionary.suggestedFilename()).toBe("instrument.csv")
-    const dictText = await (await dictionary.createReadStream()).toArray().then((parts) => Buffer.concat(parts).toString("utf8"))
-    const [dictHeader, ...dictRows] = dictText.trim().split(/\r?\n/)
-    expect(dictHeader.split(",")).toEqual(["field_name", "form_name", "section_header", "field_type", "field_label",
-      "field_note", "select_choices_or_calculations", "choice_codes", "choice_labels", "validation_type",
-      "validation_min", "validation_max", "required_field", "branching_logic", "matrix_group_name",
-      "record_identifier", "direct_identifier"]) // the content=metadata shape (REQ-API-019)
-    expect(dictRows).toHaveLength(4) // one row per designed field, not per record
-    expect(dictRows.join("\n")).toContain("age,instrument,,text,Age")
-    expect(dictRows.join("\n")).toContain("radio")
-    expect(dictRows.join("\n")).not.toContain("E001") // no record values; a choice label may read like one's answer
+    expect(dictionary.suggestedFilename()).toMatch(/^M6_export_\d+_\d{4}-\d{2}-\d{2}_\d{4}\.zip$/)
+    const archive = await (await dictionary.createReadStream()).toArray().then((parts) => Buffer.concat(parts))
+    expect(archive.subarray(0, 4).toString("binary")).toBe("PK\x03\x04")
+    // The file the instrument import reads: a fresh project takes it whole — every designed
+    // field, the record identifier first — and it carries no record (design only).
+    const copy = await admin(request, "POST", "/api/v1/projects",
+      { project_name: `M6 export copy ${tag}`, organization: "Org", participant_names: "C[0-9][0-9][0-9]" })
+    const preview = await admin(request, "POST", `/api/v1/projects/${copy.id}/instruments/import`,
+      { files: [{ name: dictionary.suggestedFilename(), content: archive.toString("base64") }], dry_run: true })
+    expect(preview.importable).toBe(true)
+    expect(preview.record_identifier).toEqual({ field: "record_id", instrument: "instrument", moved: true })
+    const copied = preview.instruments.flatMap((i: { fields: Array<{ field_name: string }> }) => i.fields.map((f) => f.field_name))
+    expect(copied).toHaveLength(4) // one row per designed field, not per record
+    expect(copied).toContain("age")
 
     // --- the member: the most protective selected level is stated, and it follows the selection ---
     const member = await newPage(browser)

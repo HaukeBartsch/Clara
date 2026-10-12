@@ -598,6 +598,27 @@ func TestImportFionaProjectSetup(t *testing.T) {
 			if s, ok := shape[folder.Name()]; ok && strings.Join(got, " ") != s {
 				t.Errorf("instruments = %s, want %s", strings.Join(got, " "), s)
 			}
+
+			// The project's own dictionary export imports back as the same fields
+			// (REQ-API-153).
+			exported := e.do("GET", "/api/v1/projects/"+itoa(projectID)+"/instruments/export", nil, admin)
+			if exported.Code != http.StatusOK {
+				t.Fatalf("export: %d %s", exported.Code, exported.Body.String())
+			}
+			copyID := e.createProjectViaAPI(admin, folder.Name()+" copy")
+			if rec := e.do("POST", "/api/v1/projects/"+itoa(copyID)+"/instruments/import",
+				importRequest(false, importFile{"export.zip", exported.Body.Bytes()}), admin); rec.Code != http.StatusCreated {
+				t.Fatalf("re-import of the export: %d %s", rec.Code, rec.Body.String())
+			}
+			want, have := e.designShape(projectID), e.designShape(copyID)
+			if len(want) != len(have) {
+				t.Fatalf("the copy has %d fields, the original %d", len(have), len(want))
+			}
+			for name, s := range want {
+				if have[name] != s {
+					t.Errorf("%s differs after export and re-import:\n  original %s\n  copy     %s", name, s, have[name])
+				}
+			}
 		})
 	}
 }
@@ -618,4 +639,54 @@ func hasFieldNote(notes []importNote, code, field string) bool {
 		}
 	}
 	return false
+}
+
+// A problem never hides the rest of the preview: the dry run still lists every
+// instrument and field it would create, so the person sees the whole import
+// beside what blocks it (§7.6).
+func TestImportPreviewKeepsInstrumentsWithProblems(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	projectID := e.createProjectViaAPI(admin, "Preview Problems")
+	path := "/api/v1/projects/" + itoa(projectID) + "/instruments/import"
+	preview := func(csv string) importResult {
+		t.Helper()
+		rec := e.do("POST", path, importRequest(true, importFile{"dictionary.csv", []byte(csv)}), admin)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("dry run: %d %s", rec.Code, rec.Body.String())
+		}
+		var res importResult
+		e.decode(rec, &res)
+		return res
+	}
+	shape := func(res importResult) string {
+		var parts []string
+		for _, in := range res.Instruments {
+			parts = append(parts, in.Name+":"+itoa(int64(len(in.Fields))))
+		}
+		return strings.Join(parts, " ")
+	}
+
+	// An unsupported row in an otherwise good file: the identifier still moves.
+	res := preview(redcapHeader + `id,a,,text,"ID",,,,,,,,,,,,,
+x,a,,sql,"X","select 1",,,,,,,,,,,,
+y,b,,text,"Y",,,,,,,,,,,,,
+`)
+	if res.Importable || !hasNote(res.Problems, "unsupported_type", "") {
+		t.Fatalf("problems: %+v", res.Problems)
+	}
+	if shape(res) != "instrument:1 b:1" || res.RecordIdentifier == nil || !res.RecordIdentifier.Moved {
+		t.Errorf("preview = %s, identifier %+v", shape(res), res.RecordIdentifier)
+	}
+
+	// A first field that cannot be the identifier: nothing moves, the rest is listed.
+	res = preview(redcapHeader + `intro,a,,descriptive,"Intro",,,,,,,,,,,,,
+name,a,,text,"Name",,,,,,,,,,,,,
+`)
+	if res.Importable || !hasNote(res.Problems, "identifier_not_value", "") {
+		t.Fatalf("problems: %+v", res.Problems)
+	}
+	if shape(res) != "a:2" {
+		t.Errorf("preview = %s", shape(res))
+	}
 }

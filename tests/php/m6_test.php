@@ -307,7 +307,7 @@ describe('export download (REQ-TECH-011)', function (): void {
     });
 });
 
-describe('data dictionary download (REQ-UI-020, REQ-API-019)', function (): void {
+describe('data dictionary download (REQ-UI-020, REQ-API-153)', function (): void {
     it('offers the dictionary beside the data download', function (): void {
         sign_in();
         m6_queue(m6_detail([1 => ['view_edit', 'export_full']]));
@@ -321,48 +321,45 @@ describe('data dictionary download (REQ-UI-020, REQ-API-019)', function (): void
         assert_contains('Download data dictionary', $body);
     });
 
-    it('answers download=dictionary with instrument.csv in the metadata shape', function (): void {
+    it('streams the API\'s REDCap instrument ZIP under the name the API gives it (REQ-API-153)', function (): void {
         sign_in();
-        m6_queue(m6_detail([1 => ['view_edit', 'export_full']]), 'production',
-            [['/api/v1/projects/3/users/7/token', ['token' => 'tok-1']]]);
-        api_route('data:content=metadata', [
-            m6_meta('record_id', 'text', ['form_name' => 'intake', 'record_identifier' => 'Y']),
-            m6_meta('sex', 'radio', ['form_name' => 'intake', 'field_label' => 'Sex, at birth',
-                'select_choices_or_calculations' => '1, Male | 2, Female', 'required_field' => 'Y']),
+        $zip = "PK\x03\x04" . str_repeat("instrument.csv\n", 900);
+        // Queued before the shared routes: the fake transport answers the first fragment it finds.
+        api_route('/api/v1/projects/3/instruments/export', $zip, 200, [
+            'Content-Type' => 'application/zip',
+            'Content-Disposition' => 'attachment; filename="8DISC_study_2026_2026-10-12_2040.zip"',
         ]);
+        m6_queue(m6_detail([1 => ['view_edit', 'export_full']]));
 
         $response = m6_get('/projects/3/export', ['download' => 'dictionary']);
+        assert_true($response->isStream(), 'passed on piece by piece like the data download');
+        $sink = m6_stream($response);
 
-        assert_true(!$response->isStream(), 'the dictionary is small: one body, no streaming');
-        assert_same('text/csv; charset=UTF-8', $response->headers()['Content-Type']);
-        assert_same('attachment; filename="instrument.csv"', $response->headers()['Content-Disposition']);
-
-        $sent = data_api_body('content=metadata');
-        assert_same('tok-1', $sent['token'], 'the member\'s own token reads the dictionary (§8.6)');
-
-        $lines = preg_split('/\r?\n/', trim($response->body()));
-        assert_same(['field_name', 'form_name', 'section_header', 'field_type', 'field_label', 'field_note',
-            'select_choices_or_calculations', 'choice_codes', 'choice_labels', 'validation_type', 'validation_min',
-            'validation_max', 'required_field', 'branching_logic', 'matrix_group_name', 'record_identifier',
-            'direct_identifier'], str_getcsv($lines[0], ',', '"', ''), 'the API\'s own column order (REQ-API-019)');
-        assert_same(3, count($lines));
-        $row = str_getcsv($lines[2], ',', '"', '');
-        assert_same('sex', $row[0]);
-        assert_same('Sex, at birth', $row[4], 'a label with a comma survives quoting');
-        assert_same('1, Male | 2, Female', $row[6]);
-        assert_same('Y', $row[12], 'required_field');
+        assert_same(200, $sink->status);
+        assert_same('application/zip', $sink->headers['Content-Type']);
+        assert_same('attachment; filename="8DISC_study_2026_2026-10-12_2040.zip"', $sink->headers['Content-Disposition']);
+        assert_same($zip, $sink->body());
+        assert_same(0, data_api_calls('content=metadata'), 'the dictionary is the API\'s export, not a metadata read');
     });
 
-    it('turns a refused metadata read into a line on the page', function (): void {
-        sign_in(['csrf_token' => M6_CSRF]);
-        m6_queue(m6_detail([1 => ['view_edit', 'export_full']]), 'production',
-            [['/api/v1/projects/3/users/7/token', ['token' => 'tok-1']]]);
-        api_route('data:content=metadata', ['error' => 'Permission denied'], 403);
+    it('passes on only a file name of the shape the API writes', function (): void {
+        assert_same('Incoming_2026-10-12_0905.zip',
+            ExportController::dictionaryFilename('attachment; filename="Incoming_2026-10-12_0905.zip"'));
+        assert_same('data_dictionary.zip', ExportController::dictionaryFilename('attachment; filename="../x.zip"'));
+        assert_same('data_dictionary.zip', ExportController::dictionaryFilename('attachment; filename="a.exe"'));
+        assert_same('data_dictionary.zip', ExportController::dictionaryFilename(''));
+    });
 
-        $response = m6_get('/projects/3/export', ['download' => 'dictionary']);
+    it('turns a refused dictionary export into a line on the page', function (): void {
+        sign_in();
+        api_route('/api/v1/projects/3/instruments/export', ['error' => 'forbidden', 'message' => 'forbidden', 'status' => 403], 403);
+        m6_queue(m6_detail([1 => ['view_edit', 'export_full']]));
 
-        assert_same(303, $response->status());
-        assert_same('/projects/3/export', $response->headers()['Location']);
+        $sink = m6_stream(m6_get('/projects/3/export', ['download' => 'dictionary']));
+
+        assert_same(303, $sink->status);
+        assert_same('/projects/3/export', $sink->headers['Location']);
+        assert_same('', $sink->body(), 'no partial file');
         assert_contains('You do not have permission', $_SESSION['_flash'][0]['text']);
     });
 });

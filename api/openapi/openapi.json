@@ -999,6 +999,43 @@
         }
       }
     },
+    "/api/v1/projects/{id}/instruments/export": {
+      "get": {
+        "tags": [
+          "Admin: Structure"
+        ],
+        "operationId": "exportInstruments",
+        "summary": "The project's data dictionary as a REDCap instrument ZIP (REQ-API-153)",
+        "description": "Data access ≥ `read_only`. `instrument.csv` with REDCap's data-dictionary headings — one row per field, instruments by position then fields by position, each naming its instrument in `Form Name` — and `OriginID.txt` (this installation's host). The active design; the import's conversion (API_Endpoints_Design.md §4.10) run backwards, so the file imports into another project (POST …/instruments/import) as the same fields. Design only, no record values.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ProjectId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "`<project>_<YYYY-MM-DD>_<HHMM>.zip` (UTC), as `Content-Disposition: attachment`.",
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "type": "string",
+                  "contentMediaType": "application/zip"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedServiceToken"
+          },
+          "403": {
+            "$ref": "#/components/responses/AdminForbidden"
+          },
+          "404": {
+            "description": "Unknown project."
+          }
+        }
+      }
+    },
     "/api/v1/projects/{id}/instruments/{iid}/fields/bulk": {
       "post": {
         "tags": ["Admin: Structure"],

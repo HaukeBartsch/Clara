@@ -366,7 +366,9 @@ func (h *Handler) applyImport(ctx context.Context, projectID int64, d *stagedDes
 	}
 
 	// Step 2: an empty first instrument receives the import's first field,
-	// which becomes the record identifier (GD-8).
+	// which becomes the record identifier (GD-8). A first field that cannot be
+	// the identifier is a failure; nothing moves then, but every instrument is
+	// still placed so the preview shows the whole import with its problems.
 	instruments := sortedInstruments(d.Instruments)
 	firstInst := instruments[0]
 	moved := len(firstInst.Fields) == 0
@@ -376,12 +378,11 @@ func (h *Handler) applyImport(ctx context.Context, projectID int64, d *stagedDes
 		case !first.kept:
 			res.Problems = append(res.Problems, importNote{File: first.file, Row: first.row, Field: first.name, Code: "identifier_not_value",
 				Message: fmt.Sprintf("field %q would become the record identifier, but a %s field is not imported — import another file first", first.name, first.kind)})
+			moved = false
 		case !identifierType(first.kind):
 			res.Problems = append(res.Problems, importNote{File: first.file, Row: first.row, Field: first.name, Code: "identifier_not_value",
 				Message: fmt.Sprintf("field %q would become the record identifier, but a %s field carries no value of its own — import another file first", first.name, first.kind)})
-		}
-		if len(res.Problems) > 0 {
-			return res
+			moved = false
 		}
 	} else if fields := sortedFields(firstInst.Fields); len(fields) > 0 {
 		res.RecordIdentifier = &importIdentifierOut{Field: fields[0].FieldName, Instrument: firstInst.Name}
