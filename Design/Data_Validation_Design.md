@@ -85,7 +85,7 @@ Regex validation types live in the system-wide table `validation_types(name, reg
 
 ## 5. Free-form Text Content Policy (REQ-VAL-030/031/032)
 
-A single, centralized policy is applied to every free-form text value (a `text` field with no `validation_type`, and the free-text portion of any value) at the storage choke point, identically on all entry paths (REQ-VAL-001/004). It runs after the type validator (step 6 of §2) and before the write. It is deterministic and stateless.
+A single, centralized policy is applied to every free-form text value (a `text` field with no `validation_type`, every `notes` field — REQ-DB-044 —, and the free-text portion of any value) at the storage choke point, identically on all entry paths (REQ-VAL-001/004). It runs after the type validator (step 6 of §2) and before the write. It is deterministic and stateless.
 
 
 ### 5.1 Pipeline
@@ -230,7 +230,7 @@ No cycle rule applies: branching logic produces no value, so no dependency graph
 
 The semantics below are the single normative definition; every evaluator (data entry form, survey page) MUST implement them (REQ-VAL-004).
 
-- **Operand resolution.** A reference resolves to the record's stored value (empty if absent at the referenced event); a shorthand `[field]` reference (§7.1) resolves at the project's first event in canonical order GD-15. A string constant that exactly matches a choice label of a choice field (dropdown/radio/matrix row) is resolved to that choice's code before comparison — the stored value remains the code (REQ-VAL-022). A radio reference used by itself evaluates to `1` when selected (a value is present) and `0` when not (REQ-VAL-029). A checkbox is referenced per box, `[field___code]` (REQ-DB-042): a checked box stores `1` and an unchecked one nothing, so the box reads `1` or empty — used by itself it is `1`/`0`, `is_blank` tests an unchecked box, and like any missing value an unchecked box compares as `0` for every operator.
+- **Operand resolution.** A reference resolves to the record's stored value (empty if absent at the referenced event); a shorthand `[field]` reference (§7.1) resolves at the project's first event in canonical order GD-15. A string constant that exactly matches a choice label of a choice field (dropdown/radio/yesno/matrix row) is resolved to that choice's code before comparison — the stored value remains the code (REQ-VAL-022). A radio reference used by itself evaluates to `1` when selected (a value is present) and `0` when not (REQ-VAL-029). A `yesno` field is a radio with the fixed choices `1$Yes##0$No` (REQ-DB-043): `[ev][consent] = "Yes"` and `[ev][consent] = 1` both test for Yes, while `[ev][consent]` by itself is `1` for either answer. A checkbox is referenced per box, `[field___code]` (REQ-DB-042): a checked box stores `1` and an unchecked one nothing, so the box reads `1` or empty — used by itself it is `1`/`0`, `is_blank` tests an unchecked box, and like any missing value an unchecked box compares as `0` for every operator.
 - **Comparison.** If either operand is a missing/empty referenced value → `0` for every operator (ASM-VAL-6). Otherwise: both numeric → numeric comparison; both valid dates/date-times (in the reference's `validation_format` or canonical form, §4.1) → chronological comparison of **absolute instants** (each value's wall time interpreted with its stored collection offset — GD-16, REQ-VAL-041); otherwise → lexicographic (byte-wise UTF-8) comparison.
 - **Truthiness.** A reference used outside a comparison: empty → `0`; non-empty → `1` (ASM-VAL-6). For choice fields this is exactly "selected → `1`, not selected → `0`" (REQ-VAL-029), regardless of the code value; for numeric text fields the value `0`/`0.0` → `0`.
 - **Functions.** `is_blank(ref)` → `1` if the referenced value is missing/empty, else `0`; `is_not_blank(ref)` → its negation; `text_contains(ref, s)` → `1` if `s` is a substring of the referenced value, else `0` (missing/empty → `0`).
@@ -255,9 +255,9 @@ When creating or updating a field (REQ-API-068/069) or instrument (REQ-API-065/1
 | Attribute | Rule |
 |---|------|
 | `field_name` | `^[a-z0-9_]+$` (REQ-VAL-011); unique within the project (REQ-VAL-012); longer than 26 characters accepted — the warning after 26 is UI-only (REQ-VAL-013); reserved (design decision — the flat export row would otherwise be ambiguous, REQ-API-028): `redcap_event_name`, `redcap_repeat_instrument`, `redcap_repeat_instance` MUST NOT be used |
-| `validation_type` | empty, a built-in structured type (`integer`, `floating point`, `date`, `datetime`), or an existing validation-type registry name whose pattern compiles (§4.2; REQ-VAL-010/042) |
+| `validation_type` | always empty for `yesno` and `notes` (REQ-DB-043/044 — a supplied one is dropped, like `validation_min`/`max` elsewhere); otherwise empty, a built-in structured type (`integer`, `floating point`, `date`, `datetime`), or an existing validation-type registry name whose pattern compiles (§4.2; REQ-VAL-010/042) |
 | `validation_min`/`max` | if present, a valid number per the field's type (integer → §4 integer grammar; floating point → decimal grammar) and min ≤ max; ignored for other types (REQ-VAL-020) |
-| `choices` | `code$label##code$label` (schema §1); codes non-empty, unique, numeric (REQ-VAL-022); labels non-empty |
+| `choices` | `code$label##code$label` (schema §1); codes non-empty, unique, numeric (REQ-VAL-022); labels non-empty. A `yesno` field always stores `1$Yes##0$No` whatever is supplied (REQ-DB-043); a `notes` field stores none (REQ-DB-044) |
 | `validation_format` | (date/datetime) composed of the §4.1 tokens — `Y`, `m`, `d`, plus `H`, `i` for datetime — with the specified separators; empty → the §4.1 defaults |
 | `calculation` | present and validated per §6.2 for `calculated` fields; empty for all other types |
 | `branching_logic` | if present, validated per §7.2 |

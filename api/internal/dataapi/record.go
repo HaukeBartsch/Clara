@@ -538,7 +538,7 @@ func categorize(f recField, identifier string) exportCategory {
 		return catStructured
 	case f.PersonalInformation:
 		return catPersonal
-	case f.FieldType == "text":
+	case f.FieldType == "text" || f.FieldType == "notes": // REQ-DB-044
 		return catFreeText
 	default:
 		return catStructured

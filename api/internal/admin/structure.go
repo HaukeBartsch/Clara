@@ -2508,7 +2508,7 @@ var (
 
 // fieldTypes is the §1 schema vocabulary of fields.field_type.
 var fieldTypes = map[string]bool{
-	"text": true, "dropdown": true, "radio": true, "checkbox": true, "matrix": true,
+	"text": true, "notes": true, "dropdown": true, "radio": true, "checkbox": true, "yesno": true, "matrix": true,
 	"description": true, "header": true, "calculated": true,
 }
 
@@ -2854,6 +2854,7 @@ func (h *Handler) decodeFieldInput(w http.ResponseWriter, r *http.Request) (*fie
 // apply overlays the present attributes onto the proposed field state and
 // reports which attributes actually changed (audit "changes" keys).
 func (in *fieldInput) apply(f *db.Field) map[string]any {
+	orig := *f
 	changes := map[string]any{}
 	setStr := func(key string, src *string, dst *sql.NullString) {
 		if src == nil || dst.String == *src {
@@ -2887,7 +2888,43 @@ func (in *fieldInput) apply(f *db.Field) map[string]any {
 	setBool("required", in.Required, &f.Required)
 	setBool("personal_information", in.PersonalInformation, &f.PersonalInformation)
 	setBool("direct_identifier", in.DirectIdentifier, &f.DirectIdentifier)
+	if fixTypeAttrs(f) {
+		// The audit names what is stored, not what the request sent.
+		for key, pair := range map[string][2]sql.NullString{
+			"choices":           {orig.Choices, f.Choices},
+			"validation_type":   {orig.ValidationType, f.ValidationType},
+			"validation_format": {orig.ValidationFormat, f.ValidationFormat},
+			"validation_min":    {orig.ValidationMin, f.ValidationMin},
+			"validation_max":    {orig.ValidationMax, f.ValidationMax},
+		} {
+			if pair[0].String == pair[1].String {
+				delete(changes, key)
+			} else {
+				changes[key] = map[string]any{"old": pair[0].String, "new": pair[1].String}
+			}
+		}
+	}
 	return changes
+}
+
+// fixTypeAttrs sets the attributes a yesno or notes field cannot choose: a
+// yesno field is the radio pair 1 = Yes, 0 = No (REQ-DB-043), a notes field
+// free text without choices (REQ-DB-044), and neither keeps a validation type —
+// dropped like min/max are for the types they do not apply to (§9). It runs
+// before the direct-identifier preset reads the validation type, and reports
+// whether f is one of the two types.
+func fixTypeAttrs(f *db.Field) bool {
+	switch f.FieldType {
+	case "yesno":
+		f.Choices = sql.NullString{String: validate.YesNoChoices, Valid: true}
+	case "notes":
+		f.Choices = sql.NullString{}
+	default:
+		return false
+	}
+	f.ValidationType, f.ValidationFormat = sql.NullString{}, sql.NullString{}
+	f.ValidationMin, f.ValidationMax = sql.NullString{}, sql.NullString{}
+	return true
 }
 
 // createField appends a field to an instrument. project_admin.

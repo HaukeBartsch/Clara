@@ -16,13 +16,17 @@ This document outlines the validation rules for the clinical study management sy
 
 ### 2. Choice Fields (Dropdowns / Radio Buttons)
 - Validation: Value must match one of the predefined numeric codes.
+- Yes/No fields (`yesno`, REQ-DB-043) are radio buttons with the fixed codes `1` = Yes and `0` = No.
 - Checkboxes store one value per choice under `<field_name>___<code>` (REQ-DB-042): `1` checks a box, `0` or empty clears it; any other value is rejected.
 - In a calculation an unchecked box reads as `0`, so a sum of boxes counts the checked ones (REQ-VAL-038).
 
 ### 3. Matrix Fields
 - Validation: Each row must have a valid selection from the shared choices.
 
-### 4. Non-Value Fields
+### 4. Notes Fields
+- A `notes` field (REQ-DB-044) takes multi-line free text: no validation type, the same content policy as a free-text `text` field.
+
+### 5. Non-Value Fields
 - Description and header fields carry text only and are not validated for values.
 
 ## Field Names

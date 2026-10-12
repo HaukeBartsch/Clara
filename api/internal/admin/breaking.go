@@ -500,7 +500,7 @@ func classifyMapping(active, staged *stagedDesign) ([]stagedChange, error) {
 
 func choiceBearing(fieldType string) bool {
 	switch fieldType {
-	case "dropdown", "radio", "checkbox", "matrix":
+	case "dropdown", "radio", "checkbox", "yesno", "matrix":
 		return true
 	}
 	return false

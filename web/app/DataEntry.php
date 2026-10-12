@@ -16,7 +16,7 @@ namespace Clara;
 final class DataEntry
 {
     /** Field types that take a value in the form (§8.2); description, header, calculated never do. */
-    public const ENTERABLE_TYPES = ['text', 'dropdown', 'radio', 'checkbox', 'matrix'];
+    public const ENTERABLE_TYPES = ['text', 'notes', 'dropdown', 'radio', 'checkbox', 'yesno', 'matrix'];
 
     /** Separates a checkbox's name from a choice code in its value columns (REQ-DB-042). */
     public const CHOICE_SEPARATOR = '___';
@@ -80,10 +80,36 @@ final class DataEntry
         return preg_match('/^' . preg_quote($field . self::CHOICE_SEPARATOR, '/') . '[0-9]+$/', $name) === 1;
     }
 
-    /** A free-text field: `text` without a validation type (Data_Validation_Design.md §5). */
+    /**
+     * A free-text field: `text` without a validation type, or `notes` — multi-line free text
+     * (Data_Validation_Design.md §5, REQ-DB-044).
+     */
     public static function isFreeText(array $field): bool
     {
-        return ($field['field_type'] ?? '') === 'text' && (string) ($field['validation_type'] ?? '') === '';
+        $type = $field['field_type'] ?? '';
+
+        return $type === 'notes' || ($type === 'text' && (string) ($field['validation_type'] ?? '') === '');
+    }
+
+    /**
+     * The choices a form shows for a field: a yesno field's fixed coding (`1` = Yes, `0` = No)
+     * carries the labels of the interface language (REQ-DB-043) — `$t` translates a key — and
+     * every other field its stored labels.
+     *
+     * @param callable(string): string $t
+     * @return list<array{code: string, label: string}>
+     */
+    public static function shownChoices(array $field, callable $t): array
+    {
+        $choices = self::choices((string) ($field['choices'] ?? ''));
+        if (($field['field_type'] ?? '') !== 'yesno') {
+            return $choices;
+        }
+
+        return array_map(static fn (array $choice): array => [
+            'code' => $choice['code'],
+            'label' => match ($choice['code']) { '1' => $t('record.yes'), '0' => $t('record.no'), default => $choice['label'] },
+        ], $choices);
     }
 
     /**
@@ -229,7 +255,10 @@ final class DataEntry
      *
      * `$was` is each field's prefill (§8.3) as the form carried it; the comparison is done
      * here rather than only in the browser so the rule holds with JavaScript off as well.
-     * Only names in field syntax are taken, and never an import row key (§3.7.1).
+     * Only names in field syntax are taken, and never an import row key (§3.7.1). A text area
+     * posts its line breaks as CRLF (the HTML form encoding); they go on as LF, the form
+     * `Data_Validation_Design.md` §5.1 step 2 stores, so an untouched `notes` value
+     * (REQ-DB-044) arrives exactly as it is stored.
      *
      * @param array<string, string> $values posted values
      * @param array<string, string> $was    posted prefill
@@ -243,7 +272,7 @@ final class DataEntry
             if (preg_match('/^[a-z0-9_]{1,100}$/', $name) !== 1 || in_array($name, self::RESERVED_KEYS, true)) {
                 continue;
             }
-            $value = $values[$name] ?? '';
+            $value = str_replace("\r\n", "\n", $values[$name] ?? '');
             if ($value !== '') {
                 $out[$name] = $value;
             } elseif (($was[$name] ?? '') !== '') {

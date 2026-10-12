@@ -456,6 +456,28 @@ describe('Instrument Designer (§7, REQ-UI-021…023)', function (): void {
         assert_same('1$Smoking##2$Drinking', $sent['choices']);
     });
 
+    it('offers Notes and Yes / No without a choice editor, the API fixing their choices (REQ-DB-043/044)', function (): void {
+        sign_in();
+        m4_queue();
+        $body = m4_get('/projects/3/design/instruments/7', ['field' => 'new'])->body();
+        assert_contains('<option value="notes">Notes (multi-line text)</option>', $body);
+        assert_contains('<option value="yesno">Yes / No</option>', $body);
+        $at = static fn (string $type): int => (int) strpos($body, '<option value="' . $type . '"');
+        assert_true($at('text') < $at('notes') && $at('notes') < $at('dropdown'), 'notes right after text');
+        assert_true($at('checkbox') < $at('yesno') && $at('yesno') < $at('matrix'), 'yes/no after the checkboxes');
+        assert_contains('data-clara-for-types="dropdown|radio|checkbox|matrix"', $body, 'no choice editor for either');
+        assert_contains('data-clara-for-types="text|dropdown|radio|matrix"', $body, 'no validation type for either');
+
+        api_route('/api/v1/projects/3/instruments/7/fields', ['id' => 33], 201);
+        m4_post('/projects/3/design/instruments/7', [
+            'field_id' => '0', 'field_name' => 'consent', 'field_type' => 'yesno',
+            'choice_code' => ['1', ''], 'choice_label' => ['Left over', ''],
+        ], 'save_field');
+        $sent = m4_body('POST', '/instruments/7/fields');
+        assert_same('yesno', $sent['field_type']);
+        assert_same('', $sent['choices'], 'rows left in the hidden editor are not sent');
+    });
+
     it('leaves direct_identifier to the API preset on a new identifier-typed field, unless cleared', function (): void {
         sign_in();
         api_route('/api/v1/projects/3/instruments/7/fields', ['id' => 31], 201);

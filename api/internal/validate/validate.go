@@ -107,12 +107,17 @@ type Violation struct {
 
 func (v Violation) Error() string { return string(v.Code) + ": " + v.Message }
 
+// YesNoChoices is the fixed coding of a yesno field, REDCap's: 1 = Yes,
+// 0 = No (REQ-DB-043). The API stores it as the field's choices, so values,
+// label export and branching treat the field as a radio with these choices.
+const YesNoChoices = "1$Yes##0$No"
+
 // Field is the minimal, store-independent view of a data-dictionary entry the
 // validators need (Data_Validation_Design.md §4/§9). The data API copies the
 // relevant columns from its own field type into this.
 type Field struct {
 	Name           string
-	Type           string // text | dropdown | radio | checkbox | matrix | description | header | calculated
+	Type           string // text | notes | dropdown | radio | checkbox | yesno | matrix | description | header | calculated
 	ValidationType string // "" | integer | floating point | email | MRN | date | datetime
 	ValidationMin  string
 	ValidationMax  string

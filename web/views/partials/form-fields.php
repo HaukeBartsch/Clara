@@ -2,6 +2,7 @@
 /**
  * The fields of one instrument form, in position order (§8.2, REQ-UI-025): single fields,
  * matrix groups with the coding stated once, checkbox groups (one value per box, REQ-DB-042),
+ * yes/no pairs labelled in the interface language (REQ-DB-043), text areas for notes (REQ-DB-044),
  * section headings, descriptions and headers, calculated values read-only. Shared by the record view (§8) and the public survey page
  * (§8.8) so the two render one instrument the same way — the evaluator they both run
  * (branching.js, §8.4) reads the same `data-clara-*` attributes from this markup.
@@ -14,6 +15,9 @@
 
 use Clara\DataEntry;
 use Clara\View;
+
+/** Translates a key in the interface language — a yesno field's labels (REQ-DB-043). */
+$t = static fn (string $key): string => $view->t($key);
 
 $shown = static fn (string $name): string => $draft !== null && array_key_exists($name, $draft)
     ? (string) $draft[$name] : (string) ($prefill[$name] ?? '');
@@ -30,11 +34,11 @@ $isChecked = static fn (string $box): bool => $draft !== null
  * The display text of a stored value: a choice's label (with its code), a free-text value as
  * its stored allowlist HTML (§3.2 — the only escape hatch), anything else escaped.
  */
-$display = static function (array $field, string $value): string {
+$display = static function (array $field, string $value) use ($t): string {
     if ($value === '') {
         return '<span class="text-body-secondary">—</span>';
     }
-    foreach (DataEntry::choices((string) ($field['choices'] ?? '')) as $choice) {
+    foreach (DataEntry::shownChoices($field, $t) as $choice) {
         if ($choice['code'] === $value) {
             return View::e($choice['label']) . ' <span class="text-body-secondary small">(' . View::e($value) . ')</span>';
         }
@@ -152,7 +156,7 @@ $fieldAttrs = static function (array $field, ?string $staticValue = null) use ($
     <div class="mb-3 clara-field<?= $error !== '' ? ' clara-field-invalid' : '' ?>"<?= $fieldAttrs($field, $static) ?>>
         <div class="d-flex align-items-start gap-2">
             <div class="flex-grow-1">
-                <?php if (in_array($type, ['radio', 'checkbox'], true) && $canEdit && !$isIdentifier): ?>
+                <?php if (in_array($type, ['radio', 'yesno', 'checkbox'], true) && $canEdit && !$isIdentifier): ?>
                     <div class="form-label mb-1" id="<?= View::e($id) ?>-label"><?= View::e($label !== '' ? $label : $name) ?><?php if (!empty($field['required'])): ?><span class="clara-required" aria-hidden="true"> *</span><?php endif; ?></div>
                 <?php else: ?>
                     <label class="form-label mb-1" for="<?= View::e($id) ?>"><?= View::e($label !== '' ? $label : $name) ?><?php if (!empty($field['required'])): ?><span class="clara-required" aria-hidden="true"> *</span><?php endif; ?></label>
@@ -177,7 +181,7 @@ $fieldAttrs = static function (array $field, ?string $staticValue = null) use ($
                         <?php if (!$anyChecked): ?><span class="text-body-secondary">—</span><?php endif; ?>
                     </div>
                 <?php elseif (!$canEdit): ?>
-                    <div class="form-control-plaintext py-0 clara-value" id="<?= View::e($id) ?>"><?= $display($field, $value) ?></div>
+                    <div class="form-control-plaintext py-0 clara-value<?= $type === 'notes' ? ' clara-notes' : '' ?>" id="<?= View::e($id) ?>"><?= $display($field, $value) ?></div>
                 <?php elseif ($type === 'dropdown'): ?>
                     <select class="form-select form-select-sm" id="<?= View::e($id) ?>" name="value[<?= View::e($name) ?>]">
                         <option value=""></option>
@@ -188,9 +192,10 @@ $fieldAttrs = static function (array $field, ?string $staticValue = null) use ($
                             <option value="<?= View::e($value) ?>" selected><?= View::e($value) ?></option>
                         <?php endif; ?>
                     </select>
-                <?php elseif ($type === 'radio'): ?>
+                <?php elseif ($type === 'radio' || $type === 'yesno'): ?>
+                    <!-- A yesno field is this pair with the fixed coding 1 = Yes, 0 = No (REQ-DB-043). -->
                     <div role="radiogroup" aria-labelledby="<?= View::e($id) ?>-label" class="d-flex flex-wrap gap-3">
-                        <?php foreach ($item['choices'] as $i => $choice): ?>
+                        <?php foreach (DataEntry::shownChoices($field, $t) as $i => $choice): ?>
                             <div class="form-check mb-0">
                                 <input class="form-check-input" type="radio" id="<?= View::e($id . '-' . $i) ?>" name="value[<?= View::e($name) ?>]"
                                        value="<?= View::e($choice['code']) ?>"<?= $value === $choice['code'] ? ' checked' : '' ?>>
@@ -213,6 +218,12 @@ $fieldAttrs = static function (array $field, ?string $staticValue = null) use ($
                             </div>
                         <?php endforeach; ?>
                     </div>
+                <?php elseif ($type === 'notes'): ?>
+                    <!-- Multi-line free text (REQ-DB-044). The newline after the tag is the one a
+                         parser drops, so a value that starts with a line break keeps it. -->
+                    <textarea class="form-control form-control-sm<?= $error !== '' ? ' is-invalid' : '' ?>" id="<?= View::e($id) ?>"
+                              name="value[<?= View::e($name) ?>]" rows="4">
+<?= View::e($value) ?></textarea>
                 <?php else: ?>
                     <?php
                     $vt = (string) ($field['validation_type'] ?? '');

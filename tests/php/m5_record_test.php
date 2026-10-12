@@ -777,3 +777,88 @@ describe('checkboxes in data entry (REQ-DB-042, REQ-UI-025)', function (): void 
         assert_contains('field=habits', $GLOBALS['api_calls'][count($GLOBALS['api_calls']) - 1]['url']);
     });
 });
+
+/** intake with a yes/no `consent` and a notes field `remarks` after its other fields (REQ-DB-043/044). */
+function m5_yesno_notes_fields(): array
+{
+    return array_merge(m5_fields(), [
+        m5_field(7, 'consent', 'yesno', ['choices' => '1$Yes##0$No']),
+        m5_field(8, 'remarks', 'notes'),
+    ]);
+}
+
+function m5_yesno_notes_history(): array
+{
+    return m5_history([
+        m5_entry('update', 'baseline_arm_1', ['consent' => [null, '0'], 'remarks' => [null, "Line one\nline <two>"]]),
+    ]);
+}
+
+describe('yes/no and notes fields in data entry (REQ-DB-043/044, REQ-UI-025)', function (): void {
+    it('treats both as enterable, notes as free text, and labels yes/no in the interface language', function (): void {
+        $consent = m5_field(7, 'consent', 'yesno', ['choices' => '1$Yes##0$No']);
+        assert_true(DataEntry::isEnterable($consent) && DataEntry::isEnterable(m5_field(8, 'remarks', 'notes')));
+        assert_true(DataEntry::isFreeText(m5_field(8, 'remarks', 'notes')));
+        assert_true(!DataEntry::isFreeText($consent));
+        $nb = static fn (string $key): string => ['record.yes' => 'Ja', 'record.no' => 'Nei'][$key];
+        assert_same([['code' => '1', 'label' => 'Ja'], ['code' => '0', 'label' => 'Nei']], DataEntry::shownChoices($consent, $nb));
+        $radio = m5_field(3, 'sex', 'radio', ['choices' => '1$Male##2$Female']);
+        assert_same(DataEntry::choices('1$Male##2$Female'), DataEntry::shownChoices($radio, $nb), 'other fields keep their labels');
+    });
+
+    it('renders yes/no as a radio pair and notes as a text area, filled as the history left them', function (): void {
+        sign_in();
+        api_route('/instruments/7/fields', m5_yesno_notes_fields());
+        m5_queue(history: m5_yesno_notes_history());
+
+        $body = m5_get('/projects/3/records/8DISC001', ['event' => 'baseline_arm_1', 'instrument' => 'intake'])->body();
+
+        assert_contains('role="radiogroup" aria-labelledby="f-consent-label"', $body);
+        assert_contains('name="value[consent]"' . "\n" . '                                       value="1">', $body);
+        assert_contains('name="value[consent]"' . "\n" . '                                       value="0" checked>', $body, 'No is an answer');
+        assert_contains('for="f-consent-0">Yes</label>', $body);
+        assert_contains('for="f-consent-1">No</label>', $body);
+        assert_contains('data-clara-field="consent" data-clara-type="yesno"', $body);
+        assert_contains('data-clara-choices="1$Yes##0$No"', $body, 'branching resolves the stored labels');
+        assert_contains('name="value[remarks]" rows="4">' . "\n" . "Line one\nline &lt;two&gt;</textarea>", $body);
+        assert_contains('name="was[remarks]" value="Line one' . "\n" . 'line &lt;two&gt;"', $body);
+    });
+
+    it('labels the pair in Norwegian for a Norwegian session', function (): void {
+        sign_in(['ui_language' => 'nb']);
+        api_route('/api/v1/i18n/bundle', ['language' => 'nb', 'strings' => ['record.yes' => 'Ja', 'record.no' => 'Nei']]);
+        api_route('/instruments/7/fields', m5_yesno_notes_fields());
+        m5_queue(history: m5_yesno_notes_history());
+
+        $body = m5_get('/projects/3/records/8DISC001', ['event' => 'baseline_arm_1', 'instrument' => 'intake'])->body();
+
+        assert_contains('for="f-consent-0">Ja</label>', $body);
+        assert_contains('for="f-consent-1">Nei</label>', $body);
+    });
+
+    it('shows a read_only member the translated answer and the note with its line breaks', function (): void {
+        sign_in();
+        api_route('/instruments/7/fields', m5_yesno_notes_fields());
+        m5_queue('read_only', history: m5_yesno_notes_history());
+
+        $body = m5_get('/projects/3/records/8DISC001', ['event' => 'baseline_arm_1', 'instrument' => 'intake'])->body();
+
+        assert_not_contains('name="value[consent]"', $body);
+        assert_contains('id="f-consent">No <span class="text-body-secondary small">(0)</span>', $body);
+        assert_contains('class="form-control-plaintext py-0 clara-value clara-notes" id="f-remarks"', $body);
+    });
+
+    it('sends a text area\'s CRLF line breaks as LF, so an untouched note arrives as stored', function (): void {
+        sign_in(['csrf_token' => M5_CSRF]);
+        api_route('/instruments/7/fields', m5_yesno_notes_fields());
+        m5_queue();
+        api_route('data:action=import', [['record_id' => '8DISC001', 'form_name' => 'intake', 'import_record_id' => 2, 'import_form_name' => 'intake']]);
+
+        m5_post('/projects/3/records/8DISC001',
+            m5_save_fields(['consent' => '1', 'remarks' => "Line one\r\nline two"], ['consent' => '0', 'remarks' => "Line one\nline two"]), 'save');
+
+        $row = data_api_body('action=import')['data'][0];
+        assert_same('1', $row['consent']);
+        assert_same("Line one\nline two", $row['remarks']);
+    });
+});

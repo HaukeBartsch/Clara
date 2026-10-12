@@ -20,8 +20,11 @@ use Clara\Session;
 
 final class DesignController extends StructureController
 {
-    /** The field types of §7.2, in the order the type select lists them. */
-    public const FIELD_TYPES = ['text', 'dropdown', 'radio', 'checkbox', 'matrix', 'description', 'header', 'calculated'];
+    /**
+     * The field types of §7.2, in the order the type select lists them. `yesno` and `notes`
+     * (REQ-DB-043/044) have no choice editor: the API fixes their choices.
+     */
+    public const FIELD_TYPES = ['text', 'notes', 'dropdown', 'radio', 'checkbox', 'yesno', 'matrix', 'description', 'header', 'calculated'];
 
     /**
      * Types that carry choices (the `code$label##…` encoding, REQ-VAL-022). A checkbox stores

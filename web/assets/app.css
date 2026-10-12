@@ -327,6 +327,11 @@ h1 .clara-mode-badge {
   color: var(--bs-danger-text-emphasis);
 }
 
+/* A notes value shown read-only keeps its line breaks (REQ-DB-044). */
+.clara-notes {
+  white-space: pre-wrap;
+}
+
 .clara-matrix th[scope="row"] {
   min-width: 12rem;
 }

@@ -153,7 +153,7 @@ type Field struct {
 	InstrumentID        int64
 	FieldName           string
 	FieldLabel          sql.NullString
-	FieldType           string // text | dropdown | radio | checkbox | matrix | description | header | calculated
+	FieldType           string // text | notes | dropdown | radio | checkbox | yesno | matrix | description | header | calculated
 	SectionHeader       sql.NullString
 	Choices             sql.NullString
 	FieldNote           sql.NullString

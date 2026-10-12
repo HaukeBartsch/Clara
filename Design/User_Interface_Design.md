@@ -464,7 +464,7 @@ Data: `GET …/instruments/{iid}/fields` (fields in position order, all data-dic
 |---|---|---|
 | `field_name` | text | `^[a-z0-9_]+$`, unique in the project (409 on duplicate); **a warning — not an error — when > 26 characters** (REQ-VAL-013, REQ-UI-021); reserved names `redcap_event_name`/`redcap_repeat_instrument`/`redcap_repeat_instance` rejected (`Data_Validation_Design.md` §9) |
 | `field_label` | text | the question/description |
-| `field_type` | select: `text` / `dropdown` / `radio` / `checkbox` / `matrix` / `description` / `header` / `calculated` | type-specific sub-controls below |
+| `field_type` | select: `text` / `notes` / `dropdown` / `radio` / `checkbox` / `yesno` / `matrix` / `description` / `header` / `calculated` | type-specific sub-controls below; `yesno` (REQ-DB-043) and `notes` (REQ-DB-044) show neither the choice editor nor the validation type — the API fixes both |
 | `section_header` | text | group heading in the form |
 | `choices` | list editor: `code`/`label` rows | for `dropdown`/`radio`/`checkbox`/`matrix` — the `code$label##…` encoding (REQ-VAL-022); codes numeric and unique; a `checkbox` requires at least one choice and exports one `___<code>` column per choice (REQ-DB-042) |
 | `field_note` | text | help text |
@@ -516,9 +516,11 @@ The instrument's fields for the selected (record, event) render in position orde
 
 | `field_type` | Control | Notes |
 |---|---|---|
-| `text` | `<input type=text>` (or `<textarea>` for free-text) | free-text values render as their allowlist HTML on display (§3.2); validation type drives input hints (built-in integer/float/date/datetime; registry types — email, phone, … — drive the advisory `pattern` from the client-side copy of the registry, never trusted server-side, REQ-VAL-002) |
+| `text` | `<input type=text>` (multi-line free text is a `notes` field) | free-text values render as their allowlist HTML on display (§3.2); validation type drives input hints (built-in integer/float/date/datetime; registry types — email, phone, … — drive the advisory `pattern` from the client-side copy of the registry, never trusted server-side, REQ-VAL-002) |
 | `dropdown` | `<select>` | choices as `code`/`label` (stored value = code, REQ-VAL-022) |
+| `notes` | `<textarea>` | multi-line free text (REQ-DB-044); renders as allowlist HTML on display like free-text `text` (§3.2) |
 | `radio` | radio group | one input per choice |
+| `yesno` | radio group of two | Yes (`1`) and No (`0`) — the fixed coding of REQ-DB-043 — labelled in the interface language; read-only, the answer shows in that language too |
 | `checkbox` | checkbox group | one box per choice, each its own value column `<field_name>___<code>` (REQ-DB-042): a checked box posts `1`, an unchecked one nothing — a stored box the user unchecked is sent as an explicit empty under §8.6's policy. Read-only, the checked choices are listed. Branching reads a box as `1` while checked and empty otherwise (`Data_Validation_Design.md` §7.3); a required checkbox is empty while no box is checked |
 | `matrix` | a row per matrix sub-field (rows expanded, REQ-DB-014), sharing the group's choices/validation | the matrix header states the coding once (master spec) |
 | `description` | static text (no input) | does not accept values (REQ-VAL `NON_VALUE_FIELD`) |

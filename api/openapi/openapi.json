@@ -1981,7 +1981,7 @@
           "id": { "type": "integer", "format": "int64" },
           "field_name": { "type": "string", "description": "Lower-case alphanumeric + underscore, unique within the project." },
           "field_label": { "type": "string" },
-          "field_type": { "type": "string", "description": "text, notes, dropdown, radio, checkbox, matrix, calculated, date fields, …" },
+          "field_type": { "type": "string", "description": "text, notes, dropdown, radio, checkbox, yesno, matrix, description, header or calculated (REQ-DB-013). A yesno field always stores the choices 1$Yes##0$No (REQ-DB-043); yesno and notes keep no validation type (REQ-DB-044)." },
           "section_header": { "type": "string" },
           "choices": { "type": "string", "description": "Stored `code$label##code$label` encoding for choice fields." },
           "field_note": { "type": "string" },
