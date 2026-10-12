@@ -15,7 +15,8 @@ This document outlines the validation rules for the clinical study management sy
 - Extensible: Additional validation types can be added as named regular expressions stored in the database (validation_types table); email, MRN, and both phone types are seeded entries of that registry.
 
 ### 2. Choice Fields (Dropdowns / Radio Buttons)
-- Validation: Value must match one of the predefined numeric codes.
+- Validation: Value must match one of the predefined codes. Codes may be text — letters, digits, `-` and `_` (REDCap projects use codes such as `PECTMRI`); checkbox codes only lower-case letters, digits and `_`.
+- A choice list may be written in REDCap's form `code, label | code, label` (split on `|`) wherever it is supplied as text; it is stored in this system's encoding.
 - Yes/No fields (`yesno`, REQ-DB-043) are radio buttons with the fixed codes `1` = Yes and `0` = No.
 - Checkboxes store one value per choice under `<field_name>___<code>` (REQ-DB-042): `1` checks a box, `0` or empty clears it; any other value is rejected.
 - In a calculation an unchecked box reads as `0`, so a sum of boxes counts the checked ones (REQ-VAL-038).
@@ -28,6 +29,10 @@ This document outlines the validation rules for the clinical study management sy
 
 ### 5. Non-Value Fields
 - Description and header fields carry text only and are not validated for values.
+
+### 6. Branching Logic
+- REDCap's spellings work as written: `'value'`, `and` / `or`, `<>`, `[field(code)]` for a checkbox box; `[field]` and `[event][field]` both work, `[field]` meaning the first event.
+- As in REDCap, `[field] = ''` is true when the field is blank, and an unchecked checkbox box reads as `0`.
 
 ## Field Names
 - Lower-case alphanumeric with underscores; a warning is shown after 26 characters.

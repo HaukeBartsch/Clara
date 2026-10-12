@@ -830,10 +830,10 @@ Renaming the first arm in a project (no other arm exists) to "no_treatment" I ge
 
 For error message in the web interface "Something went wrong. Please try again; if it continues, contact your administrator." provide more detailed error information to support debugging.
 
-Add a field type "yesno" that provides two radio buttons for yes and no answer.
-
-Add a field type "notes" that provides a larger text area notebox as a value field.
-
 Add a list of properties for each field. The only property currently is "@READONLY". If a field has such a property as "Field Annotation" the API can still enter values. The user (form and survey) can only see but not change/enter the content (inactive).
 
-The Record Status Dashboard (after creating a new record) should allow the user to get the survey link for the currently selected event (copy), if the instrument is enabled as a survey.
+For project Export there should be two buttons. One to download the Data Dictionary for a project (download as a named zip file with an instrument.csv inside). A second export type should be for the data (records with all values) in the project.
+
+On the Record Status Dashboard I get an error message: "Nothing was saved: some values are not valid. The reasons are shown below each field.". Nothing is displayed below any of the fields.
+
+On the Design page (lists instruments) add a button to each instrument to enable this instrument as a "Repeating Instrument" for one or more events. In the Record Status Dashboard such a repeating instrument can be opened with "+" and filled out a second time (as repeating_instance == 2, first form is repeating_instance == 1 etc.).

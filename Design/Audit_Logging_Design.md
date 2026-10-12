@@ -81,11 +81,11 @@ Rules: `old` is `null` for `create`; for `delete`, `new` is `null` and the `old`
 | `event_updated` | REQ-API-063 | `{"event_id":7,"changes":{"label":{"old":"…","new":"…"},"period_days":{"old":0,"new":14}}}`; with `"last_event_reset":true` when deleting the last remaining event reset it to `baseline` (REQ-API-133) |
 | `event_deleted` | REQ-API-133 | `{"event_id":9,"unique_event_name":"follow_up_arm_1"}` |
 | `event_reordered` | `PUT …/events/order` (REQ-API-103) | `{"arm_num":1,"order":[9,4,7]}` |
-| `instrument_created` | REQ-API-065 | `{"name":"intake","position":1}` |
+| `instrument_created` | REQ-API-065, REQ-API-152 | `{"name":"intake","position":1}`; an import adds `"imported_from":{"file":"Series_2026-10-12_1141.zip","origin":"fiona.ihelse.net"}` and, after the `_2` rule, `"renamed_from":"series"` |
 | `instrument_updated` | REQ-API-101, REQ-API-130 | `{"name":"…","changes":{"is_survey":{"old":0,"new":1}}}`; a rename adds `"name":{"old":"…","new":"…"}` to `changes` (REQ-API-130); with `"last_instrument_reset":true,"fields_removed":N,"values_removed":M` when deleting the last instrument deleted only its fields and renamed it to `instrument` (REQ-API-127) |
 | `instrument_deleted` | REQ-API-127 | `{"instrument_id":5,"name":"…","fields_removed":3,"values_removed":42}` |
 | `instrument_reordered` | REQ-API-066 | `{"order":["intake","follow_up"]}` |
-| `field_created` | REQ-API-068 | `{"instrument":"intake","field":"age","type":"text"}` |
+| `field_created` | REQ-API-068, REQ-API-132, REQ-API-152 | `{"instrument":"intake","field":"age","type":"text"}`; an import adds `"imported_from"` as above and, after the `_2` rule, `"renamed_from":"record_id"` |
 | `field_updated` | REQ-API-069 | `{"instrument":"…","field":"…","changes":{"validation_max":{"old":null,"new":"120"}}}` |
 | `field_deleted` | REQ-API-070 | `{"instrument":"…","field":"…","values_removed":1234}` (DEV-API-5) |
 | `field_reordered` | REQ-API-071 | `{"instrument":"…","order":["a","b","c"]}` |

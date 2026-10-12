@@ -139,6 +139,7 @@ Requires data access ≥ `read_only`. JSON response: one object per field, matri
     "required_field": "Y",
     "branching_logic": "",
     "matrix_group_name": "",
+    "field_annotation": "",
     "record_identifier": "Y",
     "direct_identifier": "Y"
   },
@@ -155,7 +156,7 @@ Requires data access ≥ `read_only`. JSON response: one object per field, matri
 ]
 ```
 
-`record_identifier` is `"Y"` on the record-identifier field (position 1 of instrument position 1, GD-8) and empty elsewhere. `direct_identifier` is this system's key (`"Y"`/`""`, REQ-DB-013, REQ-EXP-020 — an additional key beyond the REDCap shape, tolerated by naive parsers per REQ-API-018). `choice_codes`/`choice_labels` are comma-joined from the stored `code$label##code$label` encoding. `forms[]` restricts the response to those instruments when supplied — the mechanism §3.10 uses so a survey link sees its own instrument's definitions and no other (REQ-API-083).
+`record_identifier` is `"Y"` on the record-identifier field (position 1 of instrument position 1, GD-8) and empty elsewhere. `direct_identifier` is this system's key (`"Y"`/`""`, REQ-DB-013, REQ-EXP-020 — an additional key beyond the REDCap shape, tolerated by naive parsers per REQ-API-018). `choice_codes`/`choice_labels` are comma-joined from the stored `code$label##code$label` encoding. `field_annotation` is REDCap's own metadata key — the field's annotation as stored, `@READONLY` and any other text (REQ-DB-046). `forms[]` restricts the response to those instruments when supplied — the mechanism §3.10 uses so a survey link sees its own instrument's definitions and no other (REQ-API-083).
 
 ### 3.5 `event`, `formEventMapping`, `exportFieldNames`, `generateNextRecordName`
 
@@ -208,7 +209,7 @@ An explicit `action=export` may accompany the call and changes nothing; a `data`
 
 #### 3.6.3 `filterLogic` (REQ-API-025)
 
-Minimum normative support: equality on string fields, `[field]="value"`, and compound conditions with `&&` / `||` and parentheses — the full grammar (value comparisons `=`, `!=`, `<`, `>`, `<=`, `>=`, numeric/chronological/string comparison semantics, `text_contains`, `is_blank`, `is_not_blank`, precedence) is the branching-logic grammar of `Data_Validation_Design.md` §7, evaluated against the record's stored values. A single-segment reference `[field]` names no event and falls back to the project's **first event** in canonical order GD-15 (`Data_Validation_Design.md` §7.1). `filterLogic` filters which **records** are returned; it never changes the sensitivity level.
+Minimum normative support: equality on string fields, `[field]="value"`, and compound conditions with `&&` / `||` and parentheses — the full grammar (value comparisons `=`, `!=`, `<`, `>`, `<=`, `>=`, numeric/chronological/string comparison semantics, `text_contains`, `is_blank`, `is_not_blank`, precedence) is the branching-logic grammar of `Data_Validation_Design.md` §7, evaluated against the record's stored values. A single-segment reference `[field]` names no event and falls back to the project's **first event** in canonical order GD-15 (`Data_Validation_Design.md` §7.1). REDCap's own spellings — `'value'`, `and`/`or`, `<>`, `[field(code)]` — and its blank test `[field] = ''` are part of that grammar (REQ-VAL-044), so a filter copied from a REDCap caller means what it meant there. `filterLogic` filters which **records** are returned; it never changes the sensitivity level.
 
 ### 3.7 Record import — `content=record` with `data` (REQ-API-012)
 
@@ -625,7 +626,7 @@ The API derives `unique_event_name = <label>_arm_<n>` (REQ-DB-011); a duplicate 
 
 Writes `position` (1…n) for the arm's events; the canonical order of GD-15 then governs the display (timepoint events by `period`, ties and no-timepoint events by the written `position`). 200. Audit `event_reordered` with the new order (REQ-API-103, `Audit_Logging_Design.md` §3.3).
 
-### 4.10 Instruments (REQ-API-064…066, REQ-API-101, REQ-API-130)
+### 4.10 Instruments (REQ-API-064…066, REQ-API-101, REQ-API-130, REQ-API-152)
 
 **`GET /api/v1/projects/{id}/instruments`** — data access ≥ `read_only`. 200:
 
@@ -648,6 +649,86 @@ The record-identifier invariant MUST hold after reordering (GD-8: the first fiel
 
 **`DELETE /api/v1/projects/{id}/instruments/{iid}`** — `project_admin`. Removes the instrument together with its fields, their stored values (same transaction, like REQ-API-070) and its mapping pairs; losing recorded values makes the change breaking in analysis mode (§4.21). An expression that survives the change naming a doomed field → 409 `conflict` — references inside the deleted design go with it, which is what commit checks against the post-change design too. 204. Audit `instrument_deleted` with the removed field and value counts (REQ-API-127). **A project always keeps at least one instrument**: deleting the last remaining one only deletes its fields and renames the shell to `instrument` — id, position, survey flag and branching logic stay — answering 200 with the object and auditing `instrument_updated` with `last_instrument_reset` (VISION "Arms, events and instruments": "only the fields in that instrument should be deleted. The instrument should be renamed to 'instrument'").
 
+**`POST /api/v1/projects/{id}/instruments/import`** — `project_admin` (REQ-API-152). Creates instruments and their fields from REDCap dictionaries: an **instrument ZIP** (REDCap's instrument export — `instrument.csv` plus `OriginID.txt`, the exporting server's name) or a bare **data-dictionary CSV** (one or several forms). Body — the files in import order, each base64-encoded:
+
+```json
+{ "files": [ { "name": "IncomingStudies_2026-10-12_1141.zip", "content": "UEsDBBQ…" },
+             { "name": "Series_2026-10-12_1141.zip", "content": "UEsDBBQ…" } ],
+  "dry_run": true }
+```
+
+A file whose content starts with the ZIP signature `PK\x03\x04` is an archive (`archive/zip`): only `instrument.csv` and `OriginID.txt` are read — anything else (REDCap's `attachments/` folder) is ignored with a warning, and an archive without `instrument.csv` is a failure; `instrument.csv` is read through a 16 MiB limit, so a compressed archive cannot expand without bound. Any other file is the CSV itself. The CSV is UTF-8 (a leading byte-order mark is dropped; invalid UTF-8 is a failure), parsed by `encoding/csv` — quoted cells may span lines. Its header row names REDCap's columns; `Variable / Field Name`, `Form Name`, `Field Type` and `Field Label` are required, and the dictionaries of older REDCap versions, which lack `Matrix Ranking?` and `Field Annotation`, are accepted. Unknown attributes, an empty `files` list or a missing `name`/`content` → 400 `invalid_request`; the request body is bounded by REQ-TECH-011.
+
+**Processing**, as one import over all files in list order:
+
+1. **Rows → instruments.** Each distinct `Form Name` becomes one instrument, named after it and appended to the instrument list in order of first appearance; a form's fields keep their row order. The rows of a form MUST be contiguous: a form that reappears after another is a failure naming the first out-of-place row (`form_not_contiguous`). An empty `Form Name` is a failure. A row is numbered as a spreadsheet shows it — the header is row 1, and a quoted cell spanning lines stays one row.
+2. **Empty first instrument.** When the project's first instrument (position 1) has no fields, the import's first field is created **in that instrument** — it becomes the record identifier (GD-8) — and the rest of its form becomes a new instrument as in step 1 (none, when the form held only that field). The first instrument keeps its name. A first field that cannot carry a value (`descriptive`, or a `file` field, which is skipped) is a failure (`identifier_not_value`) — the preview asks for another file order. When the first instrument already has fields, nothing moves and the record identifier is unchanged.
+3. **Conversion** per the table below. `file` fields are skipped with a warning (`skipped`); a branching expression that names a skipped field is a failure.
+4. **Names.** A field name already in use — by the project, by a derived checkbox name (REQ-DB-042), or by an earlier row of this import — gets `_2`, `_3`, … appended, the first suffix that is free; an instrument name already in use gets the same treatment. Each rename is a warning (`renamed`) naming the old and new name. Every reference to a renamed field in the imported branching logic is rewritten to the new name — `[f]`, `[event][f]` and `[f(code)]` alike, while references to fields the import did not rename stay as written. A field name that breaks REQ-VAL-011 is a failure; one longer than 26 characters is a warning (REQ-VAL-013).
+5. **Validation.** Every converted field passes the design-time rules of a designer write (`Data_Validation_Design.md` §9), against one design view that already holds the earlier rows — exactly as in the bulk call (§4.11). A rejection is a failure naming its file, row and reason.
+6. **Write.** Without failures, the instruments and fields are written in **one transaction** (all-or-nothing, as REQ-API-132); in production mode they apply to the open staging set as one change (§4.21; no open set → 409), in analysis mode `acknowledge_breaking` is read from the top level as for every structure write. **No instrument–event mapping is created**: the imported instruments collect no data until they are mapped (REQ-DB-012, §4.12).
+
+**Response.** The dry run (`"dry_run": true`) writes nothing and answers 200 with the result, failures included, so the caller can show all of them at once; the import itself answers 201 with the same shape, the created ids filled in, and a failure answers 400 `validation_error` with the same `problems` list.
+
+```json
+{ "dry_run": true, "importable": true,
+  "record_identifier": { "field": "study_instance_uid", "instrument": "instrument", "moved": true },
+  "instruments": [
+    { "id": null, "name": "incoming_studies", "renamed_from": null,
+      "file": "IncomingStudies_2026-10-12_1141.zip", "origin": "fiona.ihelse.net",
+      "fields": [ { "row": 3, "field_name": "study_institution_name", "renamed_from": null,
+                    "source_type": "text", "field_type": "text",
+                    "validation_type": "", "validation_format": null } ] } ],
+  "warnings": [ { "file": "Projects_2026-10-12_1139.zip", "row": 31, "field": "project_end_data",
+                  "code": "skipped", "message": "file fields are not supported; the field is not imported" } ],
+  "problems": [] }
+```
+
+`code` ∈ `renamed`, `skipped`, `dropped_attribute`, `converted`, `long_name`, `ignored_entry` for warnings; `form_not_contiguous`, `identifier_not_value`, `unsupported_type`, `invalid_csv`, `missing_column`, `missing_instrument_csv`, `validation_error` for problems. **Audit** (REQ-AUD-010): `instrument_created` per instrument and `field_created` per field, in the same transaction, each carrying `"imported_from": { "file": …, "origin": … }` and — after a rename — `"renamed_from"` (`Audit_Logging_Design.md` §3.3).
+
+**Conversion** (normative). Columns:
+
+| REDCap column | Becomes |
+|---|---|
+| `Variable / Field Name` | `field_name` (step 4) |
+| `Form Name` | the instrument (step 1) |
+| `Section Header` | `section_header`; `<br>`, `<br/>`, `<br />` become a line break |
+| `Field Type` | `field_type`, per the type table |
+| `Field Label` | `field_label`; `<br>` variants become a line break; any other markup stays as written and renders escaped (REQ-VAL-031) |
+| `Choices, Calculations, OR Slider Labels` | for choice types the `choices` in REDCap's form — split on `\|` between choices and on the first comma inside a choice (REQ-VAL-022); for `calc` the `calculation` (type table); otherwise ignored |
+| `Field Note` | `field_note` |
+| `Text Validation Type OR Show Slider Number` | `validation_type` + `validation_format`, per the validation table |
+| `Text Validation Min` / `Max` | `validation_min` / `validation_max` for `integer` and `floating point`; elsewhere dropped (`dropped_attribute`, REQ-VAL-020) |
+| `Identifier?` | `y` → `direct_identifier` (REDCap removes identifiers from de-identified exports, as REQ-EXP-020 does) |
+| `Branching Logic (Show field only if...)` | `branching_logic`, as written — REDCap's spelling is part of the grammar (REQ-VAL-044); only renamed references are rewritten (step 4) |
+| `Required Field?` | `y` → `required` |
+| `Field Annotation` | `field_annotation`, as written (REQ-DB-046) |
+| `Matrix Group Name` | `matrix_group`; a `radio` row with a group becomes a `matrix` row (REQ-DB-014) |
+| `Custom Alignment`, `Question Number (surveys only)`, `Matrix Ranking?` | no counterpart — dropped with a warning when not empty (`dropped_attribute`) |
+
+Field types:
+
+| REDCap `Field Type` | `field_type` |
+|---|---|
+| `text`, `notes`, `dropdown`, `radio`, `checkbox`, `yesno` | the same type (a `checkbox` code outside `^[a-z0-9_]+$` is a failure, REQ-VAL-022) |
+| `truefalse` | `radio` with the choices `1, True \| 0, False` (`converted`) |
+| `descriptive` | `description` |
+| `calc` | `calculated`; a `[field]` reference is qualified with the project's first event in canonical order (GD-15), because the calculation grammar takes `[event][field]` only (§6.1 of `Data_Validation_Design.md`); an expression outside that grammar (REDCap functions such as `round()` or `if()`) is a failure |
+| `slider` | `text` with validation `integer` 0–100 — REDCap's stored slider value (`converted`) |
+| `file` | skipped with a warning (`skipped`) — also with REDCap's `signature` validation |
+| `sql`, any other | a failure (`unsupported_type`) |
+
+Validation types (REDCap name → `validation_type` + `validation_format`):
+
+| REDCap | This system |
+|---|---|
+| `date_ymd`, `date_dmy`, `date_mdy` | `date` + `Y-m-d` / `d-m-Y` / `m-d-Y` |
+| `datetime_ymd`, `datetime_dmy`, `datetime_mdy` | `datetime` + `Y-m-d H:i` / `d-m-Y H:i` / `m-d-Y H:i` |
+| `integer` | `integer` |
+| `number`, `number_1dp` … `number_4dp` | `floating point` (`converted` for the `_dp` forms: the decimal count is not enforced) |
+| `email` | `email` |
+| any other name | the registry entry of that name when one exists (§4.2 of `Data_Validation_Design.md`); otherwise dropped with a warning — the field stays free text (`dropped_attribute`). This covers REDCap's `datetime_seconds_*`, `time` and `phone`, which have no counterpart |
+
 ### 4.11 Fields (designer) (REQ-API-067…071, REQ-API-096, REQ-API-132)
 
 **`GET /api/v1/projects/{id}/instruments/{iid}/fields`** — data access ≥ `read_only`. 200 — the instrument's fields in position order, with all data-dictionary attributes (REQ-DB-013):
@@ -657,10 +738,10 @@ The record-identifier invariant MUST hold after reordering (GD-8: the first fiel
     "section_header": "", "choices": "", "field_note": "",
     "validation_type": "integer", "validation_format": null, "validation_min": "18", "validation_max": "99",
     "required": true, "branching_logic": "", "calculation": "", "matrix_group": "",
-    "personal_information": false, "position": 2 } ]
+    "field_annotation": "", "personal_information": false, "position": 2 } ]
 ```
 
-**`POST /api/v1/projects/{id}/instruments/{iid}/fields`** — `project_admin`. Body: the field object minus `id`/`position` (appended at the end of the list). The field name is lower-case alphanumeric + underscore, unique within the project (REQ-DB-013; a duplicate → 409 `conflict`); names longer than 26 characters are accepted — the warning after 26 is a UI concern (master spec). `validation_type` must be empty, one of the built-in structured types, or an existing `validation_types` name (`Data_Validation_Design.md` §4.2; anything else → 400 `validation_error`, REQ-VAL-010/042); `direct_identifier` is accepted for any field and defaults to `1` when the validation type is `email`, `MRN`, `international phone` or `national phone` (REQ-EXP-020). `calculation` is only allowed with `field_type = calculated`; the expression and the branching logic are validated at design time → 400 `validation_error` (REQ-VAL-029, REQ-VAL-033/034; `Data_Validation_Design.md` §6.2, §7.2). 201 — the field object. Audit `field_created`.
+**`POST /api/v1/projects/{id}/instruments/{iid}/fields`** — `project_admin`. Body: the field object minus `id`/`position` (appended at the end of the list). The field name is lower-case alphanumeric + underscore, unique within the project (REQ-DB-013; a duplicate → 409 `conflict`); names longer than 26 characters are accepted — the warning after 26 is a UI concern (master spec). `validation_type` must be empty, one of the built-in structured types, or an existing `validation_types` name (`Data_Validation_Design.md` §4.2; anything else → 400 `validation_error`, REQ-VAL-010/042); `direct_identifier` is accepted for any field and defaults to `1` when the validation type is `email`, `MRN`, `international phone` or `national phone` (REQ-EXP-020). `choices` is accepted in the stored `code$label##…` encoding or in REDCap's `code, label | code, label` form and always stored in the first (`Data_Validation_Design.md` §9, REQ-VAL-022); `field_annotation` is free text, stored as given (REQ-DB-046); `field_label` and `section_header` have no length limit (DEV-DB-15). `calculation` is only allowed with `field_type = calculated`; the expression and the branching logic are validated at design time → 400 `validation_error` (REQ-VAL-029, REQ-VAL-033/034; `Data_Validation_Design.md` §6.2, §7.2). 201 — the field object. Audit `field_created`.
 
 **`POST /api/v1/projects/{id}/instruments/{iid}/fields/bulk`** — `project_admin` (REQ-API-132). Body: `{ "fields": [ … ] }` — a non-empty array of field objects exactly as accepted by the single-field POST above; unknown attributes anywhere, an empty or missing array, or an entry without `field_name`/`field_type` → 400 `invalid_request`. All entries are validated against one shared dictionary view by the same §9 rules, so a name used twice inside the batch collides on its second occurrence like two consecutive single-field calls (→ 409), and a calculated entry may reference an earlier entry of the same call. The batch is **all-or-nothing**: any rejected entry creates nothing — the live path writes fields, calculation dependencies and audit entries in one transaction; in production mode the entries apply to the open staging set as one change (§4.21). Positions follow request order at the end of the instrument's list. `acknowledge_breaking` (analysis mode) is read from the top level of the body. 201 — the array of created field objects, in request order. Audit `field_created` per field, in the same transaction.
 

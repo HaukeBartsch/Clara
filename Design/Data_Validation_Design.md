@@ -57,7 +57,7 @@ A `validation_type` is either a **built-in structured type** (validated by dedic
 | `national phone` | registry (seeded) | `^[0-9]{8}$` | eight digits, no country code or separators — e.g. `55566777` (Norwegian national format; REQ-VAL-043) |
 | (empty) | — | any non-empty UTF-8 | free-form text, content policy applies (§5) (REQ-VAL-021) |
 
-`validation_min`/`validation_max` apply to `integer`/`floating point` only; ignored elsewhere — including every registry type (REQ-VAL-020). Choice fields (dropdown/radio/matrix rows) validate against the field's numeric codes regardless of type (REQ-VAL-022/023).
+`validation_min`/`validation_max` apply to `integer`/`floating point` only; ignored elsewhere — including every registry type (REQ-VAL-020). Choice fields (dropdown/radio/matrix rows) validate against the field's choice codes regardless of type (REQ-VAL-022/023; code grammar in §9).
 
 ### 4.1 Date and date-time formats
 
@@ -208,20 +208,21 @@ Branching logic is **display-only**: it decides which fields and which instrumen
 Tokens (whitespace ignored):
 
 - **Field reference:** `[<unique_event_name>][<field_name>]`, or the shorthand `[<field_name>]` — a single-segment reference names no event and resolves to the project's **first event** in canonical order (GD-15: arm_num ascending, then per arm timepoint events by period, ties and no-timepoint events by position). The shorthand is the minimum normative `filterLogic` form of `API_Endpoints_Design.md` §3.6.3; the calculated-field grammar (§6.1) keeps event-qualified references.
-- **Constants:** a numeric literal (§4 grammar) or a double-quoted string (backslash escapes `\"` and `\\` only)
-- **Comparison operators:** `=`, `!=`, `<`, `>`, `<=`, `>=`
+- **Checkbox box:** `[<field>___<code>]` (REQ-DB-042), or REDCap's `[<field>(<code>)]` — both also event-qualified, `[<unique_event_name>][<field>(<code>)]`; the two spellings name the same box (REQ-VAL-044)
+- **Constants:** a numeric literal (§4 grammar), a double-quoted string (backslash escapes `\"` and `\\` only), or a single-quoted string (REDCap's spelling — backslash escapes `\'` and `\\` only; REQ-VAL-044)
+- **Comparison operators:** `=`, `!=` (also written `<>`, REQ-VAL-044), `<`, `>`, `<=`, `>=`
 - **Functions:** `text_contains(ref, "substring")`, `is_blank(ref)`, `is_not_blank(ref)`
-- **Logical:** `&&` (AND), `||` (OR) — final per ASM-VAL-6
+- **Logical:** `&&` (AND) also written `and`, `||` (OR) also written `or` — the words in any letter case, as REDCap writes them (ASM-VAL-6, REQ-VAL-044); a field name never collides with them because a reference is always bracketed
 - **Grouping:** parentheses
 
-**Precedence** (tightest to loosest): function call → comparison → `&&` → `||`; parentheses override. Examples: `[ev][age] >= 18 && [ev][consent] = 1`; `([ev][status] = "done" || is_blank([ev][status]))`; `text_contains([ev][notes], "follow-up")`.
+**Precedence** (tightest to loosest): function call → comparison → `&&` → `||`; parentheses override. Examples: `[ev][age] >= 18 && [ev][consent] = 1`; `([ev][status] = "done" || is_blank([ev][status]))`; `text_contains([ev][notes], "follow-up")`; in REDCap's spelling `[project_annotation_type] = '2' or [project_annotation_type] = '4'` (FIONA's `projects` instrument) and `[routing_dest_project] <> ''`.
 
 ### 7.2 Design-time validation
 
 A field's or instrument's (REQ-VAL-040) branching expression is rejected with a machine-readable reason (REQ-VAL-029; the designer displays the reason, REQ-UI-021) if:
 
 1. it is not well-formed (parse error, unbalanced parentheses, misplaced operator); or
-2. a reference names a field that does not exist, is not value-carrying (description/header), or is not active at the referenced event (REQ-DB-012); or
+2. a reference names a field that does not exist, is not value-carrying (description/header), or is not active at the referenced event (REQ-DB-012) — or, written `[field(code)]`, names a field that is not a checkbox or a code the checkbox does not have (REQ-VAL-044); or
 3. a function is misspelled or has the wrong number of arguments.
 
 No cycle rule applies: branching logic produces no value, so no dependency graph arises.
@@ -230,8 +231,9 @@ No cycle rule applies: branching logic produces no value, so no dependency graph
 
 The semantics below are the single normative definition; every evaluator (data entry form, survey page) MUST implement them (REQ-VAL-004).
 
-- **Operand resolution.** A reference resolves to the record's stored value (empty if absent at the referenced event); a shorthand `[field]` reference (§7.1) resolves at the project's first event in canonical order GD-15. A string constant that exactly matches a choice label of a choice field (dropdown/radio/yesno/matrix row) is resolved to that choice's code before comparison — the stored value remains the code (REQ-VAL-022). A radio reference used by itself evaluates to `1` when selected (a value is present) and `0` when not (REQ-VAL-029). A `yesno` field is a radio with the fixed choices `1$Yes##0$No` (REQ-DB-043): `[ev][consent] = "Yes"` and `[ev][consent] = 1` both test for Yes, while `[ev][consent]` by itself is `1` for either answer. A checkbox is referenced per box, `[field___code]` (REQ-DB-042): a checked box stores `1` and an unchecked one nothing, so the box reads `1` or empty — used by itself it is `1`/`0`, `is_blank` tests an unchecked box, and like any missing value an unchecked box compares as `0` for every operator.
-- **Comparison.** If either operand is a missing/empty referenced value → `0` for every operator (ASM-VAL-6). Otherwise: both numeric → numeric comparison; both valid dates/date-times (in the reference's `validation_format` or canonical form, §4.1) → chronological comparison of **absolute instants** (each value's wall time interpreted with its stored collection offset — GD-16, REQ-VAL-041); otherwise → lexicographic (byte-wise UTF-8) comparison.
+- **Operand resolution.** A reference resolves to the record's stored value (empty if absent at the referenced event); a shorthand `[field]` reference (§7.1) resolves at the project's first event in canonical order GD-15. A string constant that exactly matches a choice label of a choice field (dropdown/radio/yesno/matrix row) is resolved to that choice's code before comparison — the stored value remains the code (REQ-VAL-022); a constant that exactly matches one of the field's **codes** is taken as that code and never resolved as a label, since codes may be text (a label equal to another choice's code cannot steal the comparison). A radio reference used by itself evaluates to `1` when selected (a value is present) and `0` when not (REQ-VAL-029). A `yesno` field is a radio with the fixed choices `1$Yes##0$No` (REQ-DB-043): `[ev][consent] = "Yes"` and `[ev][consent] = 1` both test for Yes, while `[ev][consent]` by itself is `1` for either answer. A checkbox is referenced per box, `[field___code]` or `[field(code)]` (REQ-DB-042, REQ-VAL-044): a checked box stores `1` and an unchecked one nothing, and an unchecked box **reads as `0`** — the REDCap reading, the same one calculations use (REQ-VAL-038). Used by itself a box is `1`/`0`; `[field___code] = 0` and `[field(code)] = '0'` test an unchecked box; a box is never blank, so `is_blank` and `= ''` are false for it.
+- **Comparison with the empty string.** When either operand is the empty string constant (`""` or `''`): `=` → `1` when the other operand is a missing or empty value (or the empty constant too), else `0`; `!=`/`<>` → the opposite; `<`, `>`, `<=`, `>=` → `0` (REQ-VAL-044 — REDCap's blank test, taking precedence over the next rule).
+- **Comparison.** Apart from that rule, if either operand is a missing/empty referenced value → `0` for every operator (ASM-VAL-6). Otherwise: both numeric → numeric comparison; both valid dates/date-times (in the reference's `validation_format` or canonical form, §4.1) → chronological comparison of **absolute instants** (each value's wall time interpreted with its stored collection offset — GD-16, REQ-VAL-041); otherwise → lexicographic (byte-wise UTF-8) comparison.
 - **Truthiness.** A reference used outside a comparison: empty → `0`; non-empty → `1` (ASM-VAL-6). For choice fields this is exactly "selected → `1`, not selected → `0`" (REQ-VAL-029), regardless of the code value; for numeric text fields the value `0`/`0.0` → `0`.
 - **Functions.** `is_blank(ref)` → `1` if the referenced value is missing/empty, else `0`; `is_not_blank(ref)` → its negation; `text_contains(ref, s)` → `1` if `s` is a substring of the referenced value, else `0` (missing/empty → `0`).
 - **Logical.** `&&` → `1` iff both sides are `1`; `||` → `1` if either side is `1`; sides that are not `1` coerce to `0`.
@@ -257,7 +259,9 @@ When creating or updating a field (REQ-API-068/069) or instrument (REQ-API-065/1
 | `field_name` | `^[a-z0-9_]+$` (REQ-VAL-011); unique within the project (REQ-VAL-012); longer than 26 characters accepted — the warning after 26 is UI-only (REQ-VAL-013); reserved (design decision — the flat export row would otherwise be ambiguous, REQ-API-028): `redcap_event_name`, `redcap_repeat_instrument`, `redcap_repeat_instance` MUST NOT be used |
 | `validation_type` | always empty for `yesno` and `notes` (REQ-DB-043/044 — a supplied one is dropped, like `validation_min`/`max` elsewhere); otherwise empty, a built-in structured type (`integer`, `floating point`, `date`, `datetime`), or an existing validation-type registry name whose pattern compiles (§4.2; REQ-VAL-010/042) |
 | `validation_min`/`max` | if present, a valid number per the field's type (integer → §4 integer grammar; floating point → decimal grammar) and min ≤ max; ignored for other types (REQ-VAL-020) |
-| `choices` | `code$label##code$label` (schema §1); codes non-empty, unique, numeric (REQ-VAL-022); labels non-empty. A `yesno` field always stores `1$Yes##0$No` whatever is supplied (REQ-DB-043); a `notes` field stores none (REQ-DB-044) |
+| `choices` | stored as `code$label##code$label` (schema §1); codes non-empty, unique, matching `^[A-Za-z0-9_-]+$` and compared case-sensitively — for a `checkbox` `^[a-z0-9_]+$`, so `<field>___<code>` is a valid field name (REQ-VAL-022, REQ-DB-042); labels non-empty. **Input forms:** a value that parses as the stored encoding is taken as such; any other value is read as REDCap's `code, label \| code, label` — split on `\|` between choices and on the first comma inside a choice, code and label trimmed — and stored in the stored encoding. The two cannot be confused: a REDCap list's first code is followed by a comma, and no code may contain `$`, `,` or a space. A `yesno` field always stores `1$Yes##0$No` whatever is supplied (REQ-DB-043); a `notes` field stores none (REQ-DB-044) |
+| `field_annotation` | any text, stored as given (REQ-DB-046); `@READONLY` — matched as a whole word, in any letter case, wherever it stands in the text — makes the field read-only in the form and on the survey page; nothing else in the text has an effect |
+| `field_label`, `section_header` | any text, no length limit (DEV-DB-15) |
 | `validation_format` | (date/datetime) composed of the §4.1 tokens — `Y`, `m`, `d`, plus `H`, `i` for datetime — with the specified separators; empty → the §4.1 defaults |
 | `calculation` | present and validated per §6.2 for `calculated` fields; empty for all other types |
 | `branching_logic` | if present, validated per §7.2 |

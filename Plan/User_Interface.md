@@ -33,7 +33,7 @@ A left panel appears only where it switches between sections. The **project over
     - Staging (production mode): Setup and Design pages show staging controls - start staging, a persistent "changes are staged" banner with commit/discard, and a commit dialog that lists breaking changes (each with its reason) and requires acknowledgement. In development mode setup edits apply directly; in analysis mode they do too, but a breaking change shows the same warning dialog and saves only on confirmation (REQ-UI-037).
     - Sections (presented in the left panel only if the user's role/permission allows them):
         - Setup (permission "project_admin"): Add/rename/remove arms (rename REQ-UI-048), instruments, events, and mappings between them; choose the project's record naming mode — Auto-name (numeric ids) or type record_id (REQ-UI-052).
-        - Design: Create a new instrument, edit fields in an existing instrument.
+        - Design: Create a new instrument, edit fields in an existing instrument. Import instruments from REDCap instrument ZIPs or data-dictionary CSVs — several files at once, in file-name order — after a preview that lists renames, skipped `file` fields, the record identifier and any problem by file and row; imported instruments collect no data until they are assigned to an event on Setup (REQ-UI-053).
         - Record status dashboard: Show the table of records and instruments by event.
         - Export: Export project data as CSV or JSON at the acting user's export level, with an arm selector and a visible sensitivity badge (REQ-UI-020). The applied level for a multi-arm export is the **lowest (most protective)** of the selected arms; deselecting an arm raises it for that download (REQ-EXP-003).
 

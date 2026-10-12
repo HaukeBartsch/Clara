@@ -47,7 +47,7 @@ Common conventions (REQ-UI-001…008), binding on every page:
 | `GET /projects/{id}` | project page — **entry**: resolves the first available section (§6.1) and redirects to it | project visibility (REQ-API-007) | `GET /api/v1/projects/{id}` (its permissions block decides the target, REQ-API-126) |
 | `GET /projects/{id}/overview` | project Overview — summary, metadata, mode (§6.1) | project visibility (REQ-API-007) | `GET /api/v1/projects/{id}` |
 | `GET /projects/{id}/setup` | setup page (§6.2) | `project_admin` | arms / events / instruments / mapping endpoints |
-| `GET /projects/{id}/design` | instrument designer (§7.1) | `project_admin` | instruments / fields endpoints |
+| `GET /projects/{id}/design` | instrument designer (§7.1) and instrument import (§7.6) | `project_admin` | instruments / fields endpoints; `POST …/instruments/import` (REQ-API-152) |
 | `GET /projects/{id}/design/instruments/{iid}` | field editor (§7.2) | `project_admin` | `GET/POST …/instruments/{iid}/fields`, `PUT/DELETE …/fields/{fid}`, `PUT …/fields/order` |
 | `GET /projects/{id}/record-status` | record status dashboard (§6.3) | data access ≥ `read_only` | `GET …/record-status` |
 | `GET /projects/{id}/members` | members and tokens (§5.3) | `is_admin` | `GET …/users`, `PUT …/users/{uid}`, `GET …/users/{uid}/token` (self), `PUT …/users/{uid}/data-access-groups` |
@@ -456,7 +456,7 @@ The dialog text is the same string set the production commit dialog uses (§6.7)
 
 ### 7.1 Instrument selection (`GET /projects/{id}/design`, REQ-UI-021)
 
-The designer lists the project's instruments in position order (`name`, `field_count`, `is_survey`, `branching_logic`); selecting one opens the field editor for it (§7.2, `GET /projects/{id}/design/instruments/{iid}`). Creation, reordering, and the survey/branching attributes are managed in §6.2 blocks C (structure) — the designer is where the **fields** of an instrument are edited (REQ-UI-021: "select an instrument and manage its fields").
+The designer lists the project's instruments in position order (`name`, `field_count`, `is_survey`, `branching_logic`); selecting one opens the field editor for it (§7.2, `GET /projects/{id}/design/instruments/{iid}`). Creation, reordering, and the survey/branching attributes are managed in §6.2 blocks C (structure) — the designer is where the **fields** of an instrument are edited (REQ-UI-021: "select an instrument and manage its fields"). The one exception is the **instrument import** below the list (§7.6), which creates whole instruments from REDCap dictionaries.
 
 ### 7.2 Field editor (`GET /projects/{id}/design/instruments/{iid}`, REQ-UI-021)
 
@@ -468,7 +468,7 @@ Data: `GET …/instruments/{iid}/fields` (fields in position order, all data-dic
 | `field_label` | text | the question/description |
 | `field_type` | select: `text` / `notes` / `dropdown` / `radio` / `checkbox` / `yesno` / `matrix` / `description` / `header` / `calculated` | type-specific sub-controls below; `yesno` (REQ-DB-043) and `notes` (REQ-DB-044) show neither the choice editor nor the validation type — the API fixes both |
 | `section_header` | text | group heading in the form |
-| `choices` | list editor: `code`/`label` rows | for `dropdown`/`radio`/`checkbox`/`matrix` — the `code$label##…` encoding (REQ-VAL-022); codes numeric and unique; a `checkbox` requires at least one choice and exports one `___<code>` column per choice (REQ-DB-042) |
+| `choices` | list editor: `code`/`label` rows | for `dropdown`/`radio`/`checkbox`/`matrix` — the `code$label##…` encoding (REQ-VAL-022); codes unique, letters, digits, `-`, `_` — a plain text input, no numeric keyboard — and for a `checkbox` lower-case letters, digits, `_` only; a `checkbox` requires at least one choice and exports one `___<code>` column per choice (REQ-DB-042) |
 | `field_note` | text | help text |
 | `validation_type` | select: empty / built-in `integer` / `floating point` / `date` / `datetime` / every entry of the validation-type registry (`email`, `MRN`, `international phone`, `national phone`, … — listed from `GET /api/v1/validationTypes`, REQ-API-104) | + `validation_format` for date/datetime (§4.1 of `Data_Validation_Design.md`); `validation_min`/`max` for integer/float only (REQ-VAL-015/016/020); unknown names rejected at design time (REQ-VAL-010/042) |
 | `required` | checkbox | REQ-VAL-028 |
@@ -476,6 +476,7 @@ Data: `GET …/instruments/{iid}/fields` (fields in position order, all data-dic
 | `direct_identifier` | checkbox on any field; preset when the validation type is `email`/`MRN`/phone; clearing such a preset requires an explicit action and shows a warning | removed at de-identified export (REQ-EXP-020/021, DEV-EXP-5) |
 | `matrix_group` | text | for `matrix` rows (REQ-DB-014) |
 | `branching_logic` | expression editor (§7.3) | display-only logic (GD-13) |
+| `field_annotation` | text area | REDCap action tags and notes, stored as given (REQ-DB-046); `@READONLY` makes the field read-only in the form and on the survey page (§8.2), other content has no effect |
 | `calculation` | expression editor (§7.3) | only when `field_type = calculated` |
 
 **Actions**: **Add** (append at end, `POST …/fields`), **Edit** (`PUT …/fields/{fid}` — idempotent; rename renames stored values in-transaction, REQ-VAL-014), **Remove** (confirmation stating stored values are removed in-transaction, DEV-API-5; a field referenced by an active expression → 409, §3.4), **Reorder** (up/down) → `PUT …/fields/order` with the full ordered id list; the GD-8 record-identifier invariant MUST hold after reordering (400 on violation, §3.4).
@@ -486,7 +487,7 @@ Every design-time rejection (ill-formed expression, unknown/inactive reference, 
 
 Both editors are the same component, configured per grammar:
 
-- **Branching logic** (GD-13, `Data_Validation_Design.md` §7.1): references `[event][field]` (or the shorthand `[field]`, which resolves at the project's first event in canonical order GD-15), string/numeric constants, comparisons `= != < > <= >=`, functions `text_contains` / `is_blank` / `is_not_blank`, logical `&&` / `||`, parentheses.
+- **Branching logic** (GD-13, `Data_Validation_Design.md` §7.1): references `[event][field]` (or the shorthand `[field]`, which resolves at the project's first event in canonical order GD-15), string/numeric constants, comparisons `= != < > <= >=`, functions `text_contains` / `is_blank` / `is_not_blank`, logical `&&` / `||`, parentheses — and REDCap's spellings `'…'`, `and` / `or`, `<>`, `[field(code)]` (REQ-VAL-044), which the highlighter colours like their counterparts.
 - **Calculation** (GD-11, `Data_Validation_Design.md` §6.1): references `[event][field]`, numeric constants, `+ - * /`, parentheses.
 
 Editor assistance (REQ-UI-021/022, "reference assistance"): a reference-picker that offers the project's **active** `[event][field]` references (from the data dictionary + mapping) for insertion, plus quick-insert buttons for the operators/functions of the active grammar. The editor is syntax-aware (highlighting references, constants, operators) but performs **no** validation — validation is the API's (design-time, REQ-VAL-029/034/035), and its rejection reason is shown inline (§3.4). Cycles in a calculation are rejected by the API (REQ-VAL-035).
@@ -503,6 +504,21 @@ Marking an instrument as a survey is the `is_survey` attribute in §6.2 block C 
 
 - Only survey-marked instruments can be filled via a public link (REQ-AUTH-038); the record view (§8.7) then offers the copy/revoke link actions for it.
 - On survey instruments the trailing completion field (§8.5) shows the completed state read-only — filled in automatically, no dropdown, no assignment (GD-9; master spec "Instrument level completion info").
+
+### 7.6 Instrument import (REQ-UI-053)
+
+An **Import instruments** card below the instrument list of §7.1 imports REDCap instrument ZIPs and data-dictionary CSVs through `POST …/instruments/import` (`API_Endpoints_Design.md` §4.10, REQ-API-152). It is present where the page offers edit controls (production: only while a staging set is open, §6.7) and follows the mode rules of every structure write (§6.8). FIONA's setup is one folder of ZIPs per project; the person imports a folder's ZIPs into the project named after it, all at once.
+
+1. **Choose files** — a multi-file picker (`accept=".zip,.csv"`) posted as `multipart/form-data` to `POST /projects/{id}/design?action=import_preview`. PHP reads the uploads, keeps them in the session until import or cancel, and calls the API with `"dry_run": true` and the files in **file-name order** — for FIONA's `Incoming` folder `IncomingStudies`, `Series`, `Transfers`.
+2. **Preview** — rendered from the dry run:
+   - the files in import order, each with up/down controls (`?action=import_reorder` — the order decides which field becomes the record identifier, so changing it runs the dry run again) and its origin (`OriginID.txt`, e.g. `fiona.ihelse.net`);
+   - one line on the **record identifier** (GD-8): "`study_instance_uid` moves into `instrument` and becomes the record identifier", or "The record identifier stays `record_id`";
+   - per instrument to be created, a condensed table (`table-sm`, §1) — row, field name, REDCap type → type here, validation, and a status: *new*, *converted*, *renamed from …*, *skipped* — with each warning's message beside its row;
+   - **problems** above everything else, each naming its file and row (e.g. "`dictionary.csv`, row 12: form `demographics` was interrupted by `followup` at row 9"); while any problem is listed the **Import** button is disabled and the person corrects the file and chooses it again.
+   Warnings need no acknowledgement.
+3. **Import** — `POST /projects/{id}/design?action=import_instruments` sends the stashed files in the shown order without `dry_run`. Success clears the stash and returns to the instrument list with the flash message: "Imported N instruments with M fields. They collect no data until they are assigned to an event on the Setup page" — with a link to Setup block D (§6.2). The import never ticks a mapping (REQ-API-152). A refused import shows the API's problems the way the preview does (§3.4).
+
+**Cancel** clears the stash. The stash holds the uploaded bytes only, never parsed content: the API is the only reader of the files (DEV-API-27).
 
 ## 8. Data Entry and Record View (`GET /projects/{id}/records/{record}`, REQ-UI-025…028)
 
@@ -523,13 +539,13 @@ The instrument's fields for the selected (record, event) render in position orde
 | `notes` | `<textarea>` | multi-line free text (REQ-DB-044); renders as allowlist HTML on display like free-text `text` (§3.2) |
 | `radio` | radio group | one input per choice |
 | `yesno` | radio group of two | Yes (`1`) and No (`0`) — the fixed coding of REQ-DB-043 — labelled in the interface language; read-only, the answer shows in that language too |
-| `checkbox` | checkbox group | one box per choice, each its own value column `<field_name>___<code>` (REQ-DB-042): a checked box posts `1`, an unchecked one nothing — a stored box the user unchecked is sent as an explicit empty under §8.6's policy. Read-only, the checked choices are listed. Branching reads a box as `1` while checked and empty otherwise (`Data_Validation_Design.md` §7.3); a required checkbox is empty while no box is checked |
+| `checkbox` | checkbox group | one box per choice, each its own value column `<field_name>___<code>` (REQ-DB-042): a checked box posts `1`, an unchecked one nothing — a stored box the user unchecked is sent as an explicit empty under §8.6's policy. Read-only, the checked choices are listed. Branching reads a box as `1` while checked and `0` otherwise (REQ-VAL-044, `Data_Validation_Design.md` §7.3); a required checkbox is empty while no box is checked |
 | `matrix` | a row per matrix sub-field (rows expanded, REQ-DB-014), sharing the group's choices/validation | the matrix header states the coding once (master spec) |
 | `description` | static text (no input) | does not accept values (REQ-VAL `NON_VALUE_FIELD`) |
 | `header` | section heading (no input) | |
 | `calculated` | **read-only** value display (REQ-VAL-036) | never an input; `CALCULATED_READONLY` if submitted (REQ-API-095) |
 
-**Required fields** are marked (label suffix + control styling) and checked before submission (REQ-VAL-028, REQ-UI-025). **Branching logic** (field and instrument level) shows/hides fields and whole instruments while the expression evaluates to 1 — evaluated client-side per §8.4, re-evaluated when a referenced value changes (GD-13, REQ-VAL-040). A hidden instrument hides all its fields (REQ-VAL-040).
+**Read-only fields.** A field whose annotation holds `@READONLY` (REQ-DB-046) renders its control disabled with the stored value shown — here and on the survey page (§8.8) — takes no part in the change tracking of §8.6, and PHP drops any value posted for it before the import (the browser is not trusted to honour `disabled`); the data API can still write it. **Line breaks** in labels, section headers and field notes are kept: the text is escaped, then each newline becomes `<br>` (§3.2). **Required fields** are marked (label suffix + control styling) and checked before submission (REQ-VAL-028, REQ-UI-025). **Branching logic** (field and instrument level) shows/hides fields and whole instruments while the expression evaluates to 1 — evaluated client-side per §8.4, re-evaluated when a referenced value changes (GD-13, REQ-VAL-040). A hidden instrument hides all its fields (REQ-VAL-040).
 
 ### 8.3 Current values and per-field history (REQ-UI-026)
 

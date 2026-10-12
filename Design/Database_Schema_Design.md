@@ -190,10 +190,10 @@ CREATE TABLE IF NOT EXISTS fields (              -- REQ-DB-013, REQ-DB-014
     project_id          INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     instrument_id       INTEGER NOT NULL REFERENCES instruments(id) ON DELETE CASCADE,
     field_name          VARCHAR(255) NOT NULL,   -- lower-case alnum + underscore; unique per project
-    field_label         VARCHAR(255),
+    field_label         TEXT,                    -- any length: REDCap labels exceed 255 characters (DEV-DB-15, migration 0014)
     field_type          VARCHAR(16) NOT NULL,    -- text | notes | dropdown | radio | checkbox | yesno | matrix | description | header | calculated
-    section_header      VARCHAR(255),
-    choices             TEXT,                    -- code$label##code$label (dropdown/radio/checkbox/matrix; yesno: fixed 1$Yes##0$No)
+    section_header      TEXT,                    -- any length (DEV-DB-15, migration 0014)
+    choices             TEXT,                    -- code$label##code$label (dropdown/radio/checkbox/matrix; yesno: fixed 1$Yes##0$No); code grammar Data_Validation_Design.md §9
     field_note          TEXT,
     validation_type     VARCHAR(32),             -- empty | built-in (integer | floating point | date | datetime) | validation_types.name (REQ-VAL-010/042)
     validation_format   VARCHAR(32),             -- accepted input format for date/datetime (e.g. Y-m-d, m-d-Y, Y-m-d H:i); see Data_Validation_Design.md
@@ -203,6 +203,7 @@ CREATE TABLE IF NOT EXISTS fields (              -- REQ-DB-013, REQ-DB-014
     branching_logic     TEXT,                    -- GD-13, REQ-VAL-029
     calculation         TEXT,                    -- GD-11, REQ-VAL-033 (type = calculated only)
     matrix_group        VARCHAR(255),            -- matrix rows share this (REQ-DB-014)
+    field_annotation    TEXT,                    -- REDCap action tags + notes, stored as given; @READONLY (REQ-DB-046, migration 0014)
     personal_information INTEGER NOT NULL DEFAULT 0,
     direct_identifier   INTEGER NOT NULL DEFAULT 0,   -- user-set on any field; preset by the API for email/MRN/phone types (REQ-EXP-020, DEV-EXP-5)
     export_approved     INTEGER NOT NULL DEFAULT 0,   -- DEV-DB-2 (free-text export approval)
