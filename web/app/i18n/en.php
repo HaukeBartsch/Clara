@@ -262,6 +262,13 @@ return [
     'admin.translations.help' => 'An empty translation falls back to English. Only changed entries are saved.',
     'admin.translations.saved' => '{count} translations saved.',
     'admin.translations.unchanged' => 'Nothing changed.',
+    'admin.translations.export' => 'Export CSV',
+    'admin.translations.import' => 'Import spreadsheet',
+    'admin.translations.import_applied' => '{count} translations applied from the file.',
+    'admin.translations.import_skipped' => '{count} rows skipped — key not found.',
+    'admin.translations.import_empty' => '{count} rows had no translation and were left unchanged.',
+    'admin.translations.import_nothing' => 'Nothing to apply — the file matches what is shown.',
+    'admin.translations.import_failed' => 'The file could not be read. Provide a CSV with "key" and "text" columns, or a JSON object mapping keys to texts.',
 
     // Project page — Members and tokens (§5.3, REQ-UI-013).
     'members.title' => 'Members',

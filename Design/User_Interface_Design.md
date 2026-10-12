@@ -324,6 +324,8 @@ Data: `GET /api/v1/i18n/strings?language=<code>` (after `GET /api/v1/i18n/langua
 - **Language select**: the enabled languages (code + display name).
 - **Key table**: one row per translation key — `key`, current `text`, and a **missing** badge (`missing = true` → the key falls back to English at render, REQ-DB-031, REQ-UI-008). Missing keys are visually distinct (the requirement's "MUST be visible in the list").
 - **Editor**: inline `text` editing per row (or a side form); empty `text` **removes** the translation (fallback to English). Save → `PUT /api/v1/i18n/strings` with `{ "language", "entries": [ { "key", "text" } ] }` (upsert; REQ-API-100).
+- **Export (REQ-UI-049)**: a client-side CSV download of the current table — `key,english,text`, RFC 4180 quoting, CRLF endings, UTF-8 BOM so spreadsheets open the Norwegian characters — named `clara-translations-<code>.csv`. No new route and no API call: the region already holds the data (REQ-UI-002 stays literally true).
+- **Import (REQ-UI-049)**: a file picker accepting CSV (header must name the `key` and `text` columns; extra columns such as the exported `english` are reference material, ignored) or the flat JSON key→text map of `tools/i18n/` seed files (`@`-prefixed metadata keys skipped, as the seeder skips them). Unknown keys are skipped — an import never adds a key; empty cells change nothing (clearing stays a grid edit plus Save); applied values become unsaved edits in the grid, diffed like inline edits and persisted by the same Save, so CSRF (§3.3) and the audit trail are unchanged. A result line reports applied / unknown-key-skipped / empty-skipped counts.
 - Translated strings are escaped on render (§3.2, REQ-UI-004).
 
 ### 5.8 Settings section (`GET /admin?section=settings`, `is_admin`)

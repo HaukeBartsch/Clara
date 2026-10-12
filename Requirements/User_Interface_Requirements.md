@@ -89,6 +89,7 @@ Defines the web user interface requirements: the views, the permission gating of
 |---|------|
 | REQ-UI-029 | The UI MUST offer a language selector listing the enabled languages (REQ-API-097); the choice MUST be persisted to the acting user's setting (REQ-API-098), apply from the next page load, and default to English for users without a setting. |
 | REQ-UI-030 | **Translation management (administration).** Per language: a list of translation keys with translated/missing status (REQ-API-099) and an editor to add, change, or clear translations (REQ-API-100); missing translations MUST be visible in the list and MUST fall back to English at render time (REQ-UI-008); translated strings MUST be escaped on render (REQ-UI-004). |
+| REQ-UI-049 | **Spreadsheet exchange for translations (administration).** The translation editor of REQ-UI-030 MUST offer export and import of a spreadsheet file for the selected language. The export MUST carry one row per key of the key universe with its English source text and current translation. An import MUST fill the Translation column only: a row whose key is not in the key universe is skipped without adding the key, entries absent from the file keep their stored translations, and an empty cell leaves the existing translation unchanged. Imported texts enter the editor as unsaved changes and persist through the same CSRF-protected save (REQ-UI-005) that inline edits use (REQ-API-100), so the audit trail is identical for imported and typed texts. |
 
 ## 9. Appearance (GD-26)
 

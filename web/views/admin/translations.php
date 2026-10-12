@@ -7,7 +7,10 @@
  * key only the language's overlay carries, each with a "missing" badge where the key falls
  * back to English (REQ-DB-031, REQ-UI-008). Edits are collected into the plain POST form on
  * save: a CSRF-protected PRG mutation (§3.3), sending only changed entries, an emptied text
- * removing the translation (REQ-API-100). Every string is escaped on render (§3.2, REQ-UI-004).
+ * removing the translation (REQ-API-100). The toolbar's Export/Import exchange the language as
+ * a spreadsheet file entirely client-side (REQ-UI-049) — imported values arrive in the table as
+ * unsaved edits and persist through that same save. Every string is escaped on render
+ * (§3.2, REQ-UI-004).
  */
 
 use Clara\View;
@@ -47,8 +50,13 @@ use Clara\View;
                 <label class="form-check-label small" for="tr-missing"><?= View::e($view->t('admin.translations.missing_only')) ?></label>
             </div>
             <span class="small text-body-secondary" id="tr-status"></span>
-            <button class="btn btn-sm btn-primary ms-auto" type="submit" id="tr-save" disabled><?= View::e($view->t('action.save')) ?></button>
+            <button class="btn btn-sm btn-outline-secondary ms-auto" type="button" id="tr-export" disabled><?= View::e($view->t('admin.translations.export')) ?></button>
+            <input type="file" id="tr-import-file" accept=".csv,.json,text/csv,application/json" class="visually-hidden" disabled>
+            <label class="btn btn-sm btn-outline-secondary" for="tr-import-file"><?= View::e($view->t('admin.translations.import')) ?></label>
+            <button class="btn btn-sm btn-primary" type="submit" id="tr-save" disabled><?= View::e($view->t('action.save')) ?></button>
         </div>
+
+        <div id="tr-message" aria-live="polite"></div>
 
         <div id="clara-translations" data-region="translations"
              data-language="<?= View::e($language) ?>"<?= !empty($missingOnly) ? ' data-missing-only="1"' : '' ?>>

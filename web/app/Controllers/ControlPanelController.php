@@ -499,6 +499,10 @@ final class ControlPanelController extends Controller
                 'admin.translations.key', 'admin.translations.english', 'admin.translations.text',
                 'admin.translations.empty', 'admin.translations.missing', 'admin.translations.missing_status',
                 'admin.translations.edited',
+                // The import result line (REQ-UI-049) is composed client-side over the staged rows.
+                'admin.translations.import_applied', 'admin.translations.import_skipped',
+                'admin.translations.import_empty', 'admin.translations.import_nothing',
+                'admin.translations.import_failed',
             ],
         ]);
     }
