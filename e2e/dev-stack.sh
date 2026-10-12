@@ -16,7 +16,9 @@
 # Everything is development-only: a fresh database under /tmp, the bootstrap administrator created by
 # the API itself, and no value here that could be mistaken for a production secret. The repository's
 # own .env is deliberately not read — the stack has to be reproducible on a clean checkout, and one
-# OAuth2 provider or theme in a developer's .env would silently change what the specs see.
+# OAuth2 provider or theme in a developer's .env would silently change what the specs see. The stack
+# refuses to start while either port is already taken (see the preflight section): an earlier run
+# still holding a port would leave the specs aimed at a stale server.
 #
 # Two of the three names point at directories that are not there (ports 1 and 2 never answer). That
 # is the fixture, not an oversight: an unreachable directory is the only way a browser can observe
@@ -60,6 +62,37 @@ cleanup() {
 trap cleanup INT TERM EXIT
 
 echo "==> state: $state"
+
+# --- preflight -----------------------------------------------------------------
+# Fail fast when something already listens on a port this stack wants — in practice an earlier
+# dev-stack still running. Without this the new server dies on "address already in use" while the
+# readiness probes below are answered by the stale process, so the script prints its banner and
+# quits moments later via `wait -n` with no explanation; and if only one port is taken, the specs
+# silently run against a mix of old and new servers. The trap only ever kills our own children,
+# so whatever holds the port survives either way — it has to be stopped on its own terms.
+listener_pid() {
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -ti "TCP:$1" -sTCP:LISTEN 2>/dev/null | head -n 1
+  elif command -v ss >/dev/null 2>&1; then
+    ss -lptnH "sport = :$1" 2>/dev/null | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | head -n 1
+  fi
+}
+
+require_free_port() {
+  # A bare TCP connect is enough: any listener, speaking HTTP or not, occupies the port.
+  if (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; then
+    local pid name
+    pid="$(listener_pid "$1" || true)"
+    [[ -n "$pid" ]] && name=" by PID $pid ($(ps -o comm= -p "$pid" 2>/dev/null))"
+    echo "port $1 ($2) is already in use${name:-}." >&2
+    echo "An earlier dev-stack (or another server) holds it — stop it and retry;" >&2
+    echo "running against a stale stack is how fresh API routes start answering 405." >&2
+    exit 1
+  fi
+}
+
+require_free_port "$api_port" "API"
+require_free_port "$web_port" "web"
 
 # --- the API -------------------------------------------------------------------
 # Built to a binary rather than `go run`: one process to stop, so no compiled child outlives the
