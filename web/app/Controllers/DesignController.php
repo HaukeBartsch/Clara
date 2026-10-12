@@ -271,7 +271,10 @@ final class DesignController extends StructureController
         $type = $this->request->field('field_type');
         $validationType = $this->request->field('validation_type');
         $body = [
-            'field_name' => trim($this->request->field('field_name')),
+            // The form turns the typed name into a working one (the JS does the same as the
+            // user types): lowercase, every other character an underscore — the shape the
+            // API enforces (`^[a-z0-9_]+$`).
+            'field_name' => preg_replace('/[^a-z0-9_]/', '_', strtolower(trim($this->request->field('field_name')))),
             'field_label' => $this->request->field('field_label'),
             'field_type' => $type,
             'section_header' => $this->request->field('section_header'),

@@ -102,7 +102,7 @@ $nullable = static fn (mixed $v): string => $v === null ? '' : (string) $v;
             <div class="col-md-4">
                 <label class="form-label mb-0 small" for="field-name"><?= View::e($view->t('design.field.name')) ?></label>
                 <input class="form-control form-control-sm font-monospace" type="text" id="field-name" name="field_name" required
-                       maxlength="100" pattern="[a-z0-9_]+" value="<?= View::e($name) ?>" data-clara-field-name>
+                       maxlength="100" value="<?= View::e($name) ?>" data-clara-field-name>
                 <!-- A warning, never a refusal: names over 26 characters are accepted (REQ-VAL-013). -->
                 <div class="form-text text-warning-emphasis<?= strlen($name) > 26 ? '' : ' d-none' ?>" data-clara-name-warning>
                     <?= View::e($view->t('design.name_long')) ?></div>

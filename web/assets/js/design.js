@@ -6,8 +6,9 @@
 // 1. Expression editors (§7.3): a reference picker filled from the page route's `references`
 //    data region on first use (REQ-UI-044), quick-insert buttons, and a highlighted read-back
 //    of the expression. Assistance only — the API validates at save (REQ-VAL-029).
-// 2. The field form (§7.2): shows the parts the chosen type and validation use, warns on
-//    names over 26 characters (REQ-VAL-013), presets the direct-identifier flag for
+// 2. The field form (§7.2): shows the parts the chosen type and validation use, turns a typed
+//    field name into a working one (lowercase, underscores — the API's ^[a-z0-9_]+$ shape),
+//    warns on names over 26 characters (REQ-VAL-013), presets the direct-identifier flag for
 //    identifier-shaped types and reports an explicit clear (REQ-EXP-020/021), and adds
 //    choice rows.
 
@@ -130,6 +131,20 @@ const wireFieldForm = (form) => {
   }
   type.addEventListener("change", sync)
   sync()
+
+  if (name) {
+    // A typed name is corrected, never refused: lowercase with underscores, the shape the
+    // API requires. The replacement keeps the length, so the caret position survives it.
+    const normalize = () => {
+      const value = name.value.toLowerCase().replace(/[^a-z0-9_]/g, "_")
+      if (value === name.value) return
+      const [start, end] = [name.selectionStart, name.selectionEnd]
+      name.value = value
+      name.setSelectionRange(start, end)
+    }
+    name.addEventListener("input", normalize)
+    form.addEventListener("submit", normalize)
+  }
 
   if (name && nameWarning) {
     name.addEventListener("input", () => nameWarning.classList.toggle("d-none", name.value.length <= 26))
