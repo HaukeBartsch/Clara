@@ -52,7 +52,7 @@ return [
 
     // --- login (User_Interface_Design.md §2.2) ---
     'login.title' => 'Sign in',
-    'login.heading' => 'Sign in to CLARA',
+    'login.heading' => 'Sign in to Clara',
     'login.source_help' => 'Choose your institution, then enter your credentials.',
     // One button per OAuth2 provider under the selected name (§2.2, REQ-AUTH-066). The
     // provider is named by its issuer host: no variable carries a display name for a

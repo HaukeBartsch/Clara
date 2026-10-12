@@ -147,7 +147,7 @@
 
 .clara-standalone-card {
   width: 100%;
-  max-width: 26rem;
+  max-width: 46rem;
 }
 
 /* --- source tiles: the login page's source-name picker (§2.2, REQ-UI-042) --- */
@@ -162,9 +162,10 @@
    VISION_AND_REQUIREMENTS.md, "Adjust login screen"), wrapping in the flex row above. */
 .clara-source {
   position: relative;
-  width: 18rem;
+  width: 12rem;
   max-width: 100%;
   margin: 0;
+  background-color: var(--bs-body-bg);
 }
 
 /* The real radio, invisible and covering the whole tile: clicks and taps land on it. */
@@ -196,11 +197,12 @@
 
 .clara-source-name {
   display: block;
-  font-size: 1rem;
-  font-weight: 500;
+  font-size: 1.5rem;
+  font-weight: 300;
   line-height: 1.2;
   overflow-wrap: break-word;
   hyphens: auto;
+  text-align: center;
 }
 
 .clara-source-input:hover + .clara-source-tile {
