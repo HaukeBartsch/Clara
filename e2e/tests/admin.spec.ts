@@ -95,4 +95,27 @@ test.describe("administration surface (M3)", () => {
     await expect(page.locator('[role="alert"]')).toContainText("removed")
     await expect(page.locator("table.clara-members")).not.toContainText(email)
   })
+
+  test("the participant name pattern follows the project name until it is edited by hand", async ({ page }) => {
+    const tag = Date.now()
+
+    await signInAsAdmin(page)
+    await page.locator('header a[href="/admin"]').click()
+    await page.locator('#clara-nav a[href="/admin?section=projects"]').click()
+    await page.locator("details.clara-create summary").click()
+
+    // Typing the name pre-fills the pattern: upper case, spaces to underscores, counter suffix.
+    await page.fill("#project-project_name", `Auto Pattern ${tag}`)
+    await expect(page.locator("#project-participant_names")).toHaveValue(`AUTO_PATTERN_${tag}_[0-9][0-9][0-9]`)
+
+    // A hand-typed pattern survives further name changes …
+    await page.fill("#project-participant_names", "HAND[0-9][0-9][0-9]")
+    await page.fill("#project-project_name", `Renamed ${tag}`)
+    await expect(page.locator("#project-participant_names")).toHaveValue("HAND[0-9][0-9][0-9]")
+
+    // … but an emptied one is derived again — "not entered yet" means empty.
+    await page.fill("#project-participant_names", "")
+    await page.fill("#project-project_name", `Renamed Again ${tag}`)
+    await expect(page.locator("#project-participant_names")).toHaveValue(`RENAMED_AGAIN_${tag}_[0-9][0-9][0-9]`)
+  })
 })

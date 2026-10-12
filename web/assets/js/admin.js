@@ -10,6 +10,8 @@
 // 3. Reopening (§6.7/§6.8): a server-rendered modal carrying data-clara-autoshow opens on load —
 //    the commit dialog after a refused commit, the breaking-change question after a save the
 //    API sent back for acknowledgement.
+// 4. Naming prefill (§5.2): on the Projects form an untouched participant name pattern follows
+//    the project name — uppercased, spaces to underscores, plus a three-digit counter suffix.
 
 import { el, ready, t } from "../app.js"
 
@@ -70,6 +72,12 @@ async function copyFrom(selector) {
   return document.execCommand("copy")
 }
 
+// The project-name-derived pattern: upper case, spaces to underscores, three-digit counter.
+function derivedPattern(name) {
+  const base = name.trim().toUpperCase().replace(/ /g, "_")
+  return base === "" ? "" : base + "_[0-9][0-9][0-9]"
+}
+
 ready(() => {
   document.addEventListener("submit", askFirst, true)
 
@@ -88,6 +96,19 @@ ready(() => {
       } catch (error) {
         // A refused clipboard needs no message: the value is on the page, selected.
       }
+    })
+  }
+
+  const projectName = document.getElementById("project-project_name")
+  const namePattern = document.getElementById("project-participant_names")
+  if (projectName && namePattern) {
+    let derived = ""
+    // The pattern follows the name only while it is empty or still holds the last derivation;
+    // anything typed into it by hand — and an edit's stored value — is left alone.
+    projectName.addEventListener("input", () => {
+      if (namePattern.value !== "" && namePattern.value !== derived) return
+      derived = derivedPattern(projectName.value)
+      namePattern.value = derived
     })
   }
 })
