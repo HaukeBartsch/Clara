@@ -45,7 +45,7 @@ $nullable = static fn (mixed $v): string => $v === null ? '' : (string) $v;
         <?php foreach ($fields as $i => $field): ?>
             <?php $fid = (int) ($field['id'] ?? 0); ?>
             <tr data-field="<?= View::e($field['field_name'] ?? '') ?>"<?= $selected !== null && (int) $selected['id'] === $fid ? ' class="table-active"' : '' ?>>
-                <td class="text-end"><?= (int) ($field['position'] ?? 0) ?></td>
+                <td class="text-end"><?= $i + 1 ?></td>
                 <td><code><?= View::e($field['field_name'] ?? '') ?></code></td>
                 <td><?= View::e($field['field_label'] ?? '') ?></td>
                 <td><?= View::e($field['field_type'] ?? '') ?><?php if (($field['validation_type'] ?? '') !== ''): ?>

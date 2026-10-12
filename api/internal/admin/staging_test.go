@@ -664,3 +664,79 @@ func TestAnalysisModeNonBreakingEditNeedsNoAcknowledgement(t *testing.T) {
 		t.Errorf("a non-breaking change recorded an acknowledgement: %v", details[0])
 	}
 }
+
+// TestStagingCommitKeepsFieldPositions covers the parked-position bug: a commit
+// must never leave a field sitting on its negative parking value — an unchanged
+// first field showed as position -2. A commit that adds one field keeps every
+// other row's position, and rows an earlier release corrupted are repaired
+// densely by the next commit.
+func TestStagingCommitKeepsFieldPositions(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	admin := e.mustAdmin("admin@example.org")
+	projectID := e.mustProject("Staging Positions")
+	f := e.seedDesign(projectID)
+	e.mustProduction(projectID, admin)
+
+	startSet := func() {
+		if code := e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/staging", nil, admin).Code; code != http.StatusCreated {
+			t.Fatalf("start: %d", code)
+		}
+	}
+	commit := func(label string) {
+		rec := e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/staging/commit", nil, admin)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s commit = %d, want 200 (%s)", label, rec.Code, rec.Body.String())
+		}
+	}
+
+	startSet()
+	e.stageEdit(t, projectID, func(d *stagedDesign) {
+		d.putField(f.instrumentA, newTextField("blood_pressure"))
+	})
+	commit("first")
+	e.expectDenseFieldPositions(t, projectID)
+
+	// A row parked by the old code (position 1 -> -2) is repaired on the next commit.
+	if _, err := e.Store.DB.ExecContext(ctx,
+		`UPDATE fields SET position = -2 WHERE project_id = ? AND field_name = 'blood_pressure'`,
+		projectID); err != nil {
+		t.Fatalf("corrupt position: %v", err)
+	}
+	startSet()
+	e.stageEdit(t, projectID, func(d *stagedDesign) {
+		d.putField(f.instrumentA, newTextField("heart_rate"))
+	})
+	commit("second")
+	e.expectDenseFieldPositions(t, projectID)
+}
+
+// expectDenseFieldPositions asserts every field of the project holds a positive
+// position and that each instrument's positions are exactly 1..n.
+func (e *env) expectDenseFieldPositions(t *testing.T, projectID int64) {
+	t.Helper()
+	rows, err := e.Store.DB.QueryContext(context.Background(),
+		`SELECT instrument_id, position FROM fields WHERE project_id = ? ORDER BY instrument_id, position`,
+		projectID)
+	if err != nil {
+		t.Fatalf("query positions: %v", err)
+	}
+	defer rows.Close()
+	var inst, want int64
+	for rows.Next() {
+		var i, p int64
+		if err := rows.Scan(&i, &p); err != nil {
+			t.Fatalf("scan positions: %v", err)
+		}
+		if i != inst {
+			inst, want = i, 1
+		}
+		if p != want {
+			t.Errorf("instrument %d field position = %d, want %d (dense 1..n)", i, p, want)
+		}
+		want++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read positions: %v", err)
+	}
+}

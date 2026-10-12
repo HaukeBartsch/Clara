@@ -378,6 +378,13 @@ func (a *applyState) instrumentsAndFields(active, staged *stagedDesign) error {
 		return err
 	}
 
+	// Positions park before the inserts: UNIQUE (project_id, instrument_id,
+	// position) means a new field can only take a slot once the existing field
+	// that vacates it has parked.
+	if err := a.parkFieldPositions(active, staged); err != nil {
+		return err
+	}
+
 	// Pass 3 — insert new instruments and fields.
 	for _, si := range staged.Instruments {
 		if si.ID >= 0 {
@@ -418,11 +425,8 @@ func (a *applyState) instrumentsAndFields(active, staged *stagedDesign) error {
 	}
 
 	// Pass 4 — settle existing rows: parked names and positions to their final
-	// values, then the attribute updates. Positions park negative first for
-	// UNIQUE (project_id, instrument_id, position).
-	if err := a.parkFieldPositions(active, staged); err != nil {
-		return err
-	}
+	// values, then the attribute updates. Only fields whose position changed
+	// parked (before the inserts); an unchanged row keeps its own value.
 	for _, si := range staged.Instruments {
 		oldInst, ok := lookupInstrument(active, si.ID)
 		if !ok || si.ID < 0 {
@@ -461,6 +465,15 @@ func (a *applyState) instrumentsAndFields(active, staged *stagedDesign) error {
 				return err
 			}
 		}
+	}
+
+	// Repair — rows an earlier parked-then-skipped write left at a non-positive
+	// position are renumbered densely (see repairFieldPositions).
+
+	// Repair — rows an earlier parked-then-skipped write left at a non-positive
+	// position are renumbered densely (see repairFieldPositions).
+	if err := a.repairFieldPositions(active, staged); err != nil {
+		return err
 	}
 
 	// Stored values follow the field renames that settled in pass 4.
@@ -566,19 +579,28 @@ func (a *applyState) settleField(instID int64, old, next stagedField) error {
 	return nil
 }
 
-// parkFieldPositions moves every field of the touched instruments to a negative
-// position, so the final ones can be written without colliding on
-// UNIQUE (project_id, instrument_id, position).
+// parkFieldPositions moves every field whose position changes within a live
+// instrument to a negative parking value, so the final positions can be written
+// without colliding on UNIQUE (project_id, instrument_id, position). A field
+// whose position is unchanged never parks: settleField skips a row identical to
+// its live state, so parking it would leave the row sitting on the parked
+// value — the bug that showed a first field as position -2.
 func (a *applyState) parkFieldPositions(active, staged *stagedDesign) error {
 	ids := map[int64]bool{}
 	for _, si := range staged.Instruments {
-		if _, ok := a.instID[si.ID]; !ok {
+		oldInst, ok := lookupInstrument(active, si.ID)
+		if !ok || si.ID < 0 {
 			continue // new instruments insert their fields at the final position
 		}
 		for _, sf := range si.Fields {
-			if sf.ID >= 0 {
-				ids[sf.ID] = true
+			if sf.ID < 0 {
+				continue
 			}
+			xf, ok := lookupField(oldInst, sf.ID)
+			if !ok || xf.Position == sf.Position {
+				continue // unchanged positions keep the value their row holds
+			}
+			ids[sf.ID] = true
 		}
 	}
 	if len(ids) == 0 {
@@ -588,10 +610,70 @@ func (a *applyState) parkFieldPositions(active, staged *stagedDesign) error {
 	for id := range ids {
 		list = append(list, id)
 	}
+	// Park below every position the project currently holds so no parked row can
+	// collide, on a not-yet-parked row's value, on UNIQUE (project_id,
+	// instrument_id, position).
+	var minPos, maxID int64
+	if err := a.tx.QueryRowContext(a.ctx,
+		`SELECT MIN(position), MAX(id) FROM fields WHERE project_id = ?`,
+		a.projectID).Scan(&minPos, &maxID); err != nil {
+		return err
+	}
 	_, err := a.tx.ExecContext(a.ctx,
-		`UPDATE fields SET position = -ABS(position) - 1 WHERE project_id = ? AND id IN (`+placeholders(len(list))+`)`,
-		append([]any{a.projectID}, list...)...)
+		`UPDATE fields SET position = ? - id WHERE project_id = ? AND id IN (`+placeholders(len(list))+`)`,
+		append([]any{minPos - maxID - 1, a.projectID}, list...)...)
 	return err
+}
+
+// repairFieldPositions renumbers an instrument's fields densely 1..n when live
+// rows sit at a non-positive position — the parked values an earlier release
+// left behind when it parked every field and then skipped settling the
+// unchanged ones. The ranks follow the snapshot's own list order, which is the
+// order the design view shows, so the repair keeps what the project admin sees
+// and only replaces the stored numbers with legal ones. Rows park by id first
+// so no rank can collide on UNIQUE (project_id, instrument_id, position),
+// including with a field this same commit inserted. The repair is invisible to
+// the applied counts: it touches no object the staged set named.
+func (a *applyState) repairFieldPositions(active, staged *stagedDesign) error {
+	for _, si := range staged.Instruments {
+		oldInst, ok := lookupInstrument(active, si.ID)
+		if !ok || si.ID < 0 {
+			continue
+		}
+		junk := false
+		for _, xf := range oldInst.Fields {
+			if xf.Position <= 0 {
+				junk = true
+				break
+			}
+		}
+		if !junk {
+			continue
+		}
+		instID := instIDof(a, si.ID)
+		// Park below every value the rows currently hold (the junk included), so
+		// no parked row can collide with a not-yet-parked one on the unique index.
+		var minPos, maxID int64
+		if err := a.tx.QueryRowContext(a.ctx,
+			`SELECT MIN(position), (SELECT MAX(id) FROM fields)
+			 FROM fields WHERE project_id = ? AND instrument_id = ?`,
+			a.projectID, instID).Scan(&minPos, &maxID); err != nil {
+			return err
+		}
+		if _, err := a.tx.ExecContext(a.ctx,
+			`UPDATE fields SET position = ? - id WHERE project_id = ? AND instrument_id = ?`,
+			minPos-maxID-1, a.projectID, instID); err != nil {
+			return err
+		}
+		for i, sf := range si.Fields {
+			if _, err := a.tx.ExecContext(a.ctx,
+				`UPDATE fields SET position = ? WHERE project_id = ? AND instrument_id = ? AND field_name = ?`,
+				i+1, a.projectID, instID, sf.FieldName); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // deleteFieldsAndInstruments removes the rows the staged design dropped. A field
