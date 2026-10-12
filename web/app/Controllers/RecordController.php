@@ -383,6 +383,9 @@ final class RecordController extends DataEntryController
             'instrument' => $instrument,
             'items' => DataEntry::layout($fields),
             'identifier' => $identifier,
+            // How the identifier presents (REQ-UI-052): auto mode shows it as text, manual
+            // mode as a read-only input — presentation only, never editable either way.
+            'recordNaming' => (string) ($detail['record_naming'] ?? 'manual'),
             'prefill' => $prefill,
             'draft' => $draft,
             'errors' => $errors,

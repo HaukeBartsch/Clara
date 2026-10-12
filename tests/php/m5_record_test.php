@@ -17,7 +17,7 @@ const M5_CSRF = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
  * default plus every mapped (instrument, event) pair resolved — here all at `$level`, with the
  * two rights (delete instrument values, edit collected surveys) when `$rights` (REQ-AUTH-069/070).
  */
-function m5_detail(string $level = 'view_edit', bool $projectAdmin = false, bool $rights = false): array
+function m5_detail(string $level = 'view_edit', bool $projectAdmin = false, bool $rights = false, ?string $naming = null): array
 {
     $grants = [];
     foreach ([['baseline_arm_1', 'intake'], ['follow_up_arm_1', 'intake'], ['baseline_arm_1', 'scores']] as [$event, $instrument]) {
@@ -27,6 +27,8 @@ function m5_detail(string $level = 'view_edit', bool $projectAdmin = false, bool
 
     return [
         'id' => 3, 'project_name' => '8DISC', 'organization' => 'NAT EU', 'record_count' => 1,
+        // The record naming mode the detail carries (REQ-API-151), default manual.
+        'record_naming' => $naming ?? 'manual',
         'arms' => [['arm_num' => 1, 'name' => null, 'events' => [
             ['id' => 4, 'event_name' => 'baseline', 'unique_event_name' => 'baseline_arm_1', 'period' => 0, 'position' => 1],
             ['id' => 8, 'event_name' => 'follow up', 'unique_event_name' => 'follow_up_arm_1', 'period' => 30, 'position' => 2],
@@ -83,7 +85,7 @@ function m5_entry(string $action, string $event, array $fields, string $at = '20
 }
 
 /** Every read the two pages make, in fake-transport match order (specific before prefix). */
-function m5_queue(string $level = 'view_edit', string $mode = 'development', bool $projectAdmin = false, ?array $status = null, ?array $history = null, bool $rights = false, ?array $link = null): void
+function m5_queue(string $level = 'view_edit', string $mode = 'development', bool $projectAdmin = false, ?array $status = null, ?array $history = null, bool $rights = false, ?array $link = null, ?string $naming = null): void
 {
     queue_shell();
     api_route('/api/v1/projects/3/mode', ['mode' => $mode, 'staging_open' => false]);
@@ -113,7 +115,7 @@ function m5_queue(string $level = 'view_edit', string $mode = 'development', boo
     // project prefix below, which would otherwise answer it with a project detail.
     api_route('/survey-link', $link ?? ['state' => 'live', 'event' => 'baseline_arm_1',
         'url' => 'http://localhost:8000/s/link-token', 'collected_at' => null]);
-    api_route('/api/v1/projects/3', m5_detail($level, $projectAdmin, $rights));
+    api_route('/api/v1/projects/3', m5_detail($level, $projectAdmin, $rights, $naming));
 }
 
 function m5_get(string $path, array $query = [], ?array $headers = null): \Clara\Response
@@ -336,9 +338,49 @@ describe('Record Status Dashboard (§6.3, REQ-UI-019)', function (): void {
         m5_queue();
         assert_contains('value="8DISC002"', m5_get('/projects/3/record-status')->body());
     });
+
+    it('emits only the new-participant control of the project naming mode (REQ-UI-052)', function (): void {
+        sign_in();
+        m5_queue();
+        $manual = m5_get('/projects/3/record-status')->body();
+        assert_contains('action=new_record', $manual);
+        assert_not_contains('create_auto', $manual);
+
+        resetApi();
+        m5_queue(naming: 'auto');
+        $auto = m5_get('/projects/3/record-status')->body();
+        assert_contains('action=create_auto', $auto);
+        assert_not_contains('action=new_record', $auto);
+        assert_not_contains('name="record_id"', $auto, 'auto mode has no free-text field');
+    });
+
+    it('create_auto numbers the participant through the data API and opens the record at once', function (): void {
+        sign_in(['csrf_token' => M5_CSRF]);
+        m5_queue(naming: 'auto');
+        api_route('data:content=generateNextRecordName', [['next_record_name' => '7']]);
+
+        $response = m5_post('/projects/3/record-status', ['arm' => '1'], 'create_auto');
+
+        assert_same('/projects/3/records/7?arm=1', $response->headers()['Location']);
+        assert_same(1, data_api_calls('content=generateNextRecordName'));
+    });
 });
 
 describe('record view (§8, REQ-UI-025…027)', function (): void {
+    it('presents the identifier per naming mode — read-only input in manual, plain text in auto (REQ-UI-052)', function (): void {
+        sign_in();
+        m5_queue();
+        $manual = m5_get('/projects/3/records/8DISC001', ['event' => 'baseline_arm_1', 'instrument' => 'intake'])->body();
+        assert_contains('id="f-record_id" value="8DISC001" readonly', $manual);
+
+        resetApi();
+        m5_queue(naming: 'auto');
+        $auto = m5_get('/projects/3/records/8DISC001', ['event' => 'baseline_arm_1', 'instrument' => 'intake'])->body();
+        assert_not_contains('id="f-record_id" value=', $auto, 'no input in auto mode');
+        assert_contains('<div class="form-control-plaintext py-0 clara-value" id="f-record_id">8DISC001</div>', $auto);
+    });
+
+
     it('renders the form prefilled from the history, read newest-first (§8.3)', function (): void {
         sign_in();
         m5_queue();

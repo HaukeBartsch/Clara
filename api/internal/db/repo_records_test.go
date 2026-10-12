@@ -96,3 +96,75 @@ func TestMaxRecordIDIsScopedToProject(t *testing.T) {
 		t.Errorf("MaxRecordID(small) = %q, want R001 (other projects must not leak in)", got)
 	}
 }
+
+// MaxNumericRecordID drives the auto naming mode's next id (REQ-DB-045,
+// REQ-API-151): only all-digit ids count and they compare numerically, so a
+// wide numeric id wins over a lexicographically greater non-digit one.
+func TestMaxNumericRecordID(t *testing.T) {
+	s := migrateTestStore(t)
+	ctx := context.Background()
+	pid := seedProject(t, s, ctx)
+
+	for _, id := range []string{"8DISC002", "9", "42", "09"} {
+		if err := s.AddDataValue(ctx, &DataValue{ProjectID: pid, RecordID: id, FieldName: "record_id", Value: id}); err != nil {
+			t.Fatalf("AddDataValue %s: %v", id, err)
+		}
+	}
+	got, err := s.MaxNumericRecordID(ctx, pid)
+	if err != nil {
+		t.Fatalf("MaxNumericRecordID: %v", err)
+	}
+	// 42 > 9 numerically; "8DISC002" is not all digits and "09" is a form the
+	// counter never emits, so neither advances the value.
+	if got != 42 {
+		t.Errorf("MaxNumericRecordID = %d, want 42", got)
+	}
+}
+
+// A record belongs to the project, not to an arm: the same record id written
+// under two arms' events is one record (uniqueness per project, REQ-DB-029 —
+// the primary key carries no arm).
+func TestRecordIDsAreUniqueAcrossArms(t *testing.T) {
+	s := migrateTestStore(t)
+	ctx := context.Background()
+	pid := seedProject(t, s, ctx)
+
+	arm1, err := s.AddArm(ctx, &Arm{ProjectID: pid, ArmNum: 1})
+	if err != nil {
+		t.Fatalf("AddArm 1: %v", err)
+	}
+	arm2, err := s.AddArm(ctx, &Arm{ProjectID: pid, ArmNum: 2})
+	if err != nil {
+		t.Fatalf("AddArm 2: %v", err)
+	}
+	for _, e := range []*Event{
+		{ProjectID: pid, ArmID: arm1, EventName: "screening", UniqueEventName: "screening_arm_1"},
+		{ProjectID: pid, ArmID: arm2, EventName: "screening", UniqueEventName: "screening_arm_2"},
+	} {
+		if _, err := s.AddEvent(ctx, e); err != nil {
+			t.Fatalf("AddEvent %s: %v", e.UniqueEventName, err)
+		}
+	}
+	for _, ev := range []string{"screening_arm_1", "screening_arm_2"} {
+		if err := s.AddDataValue(ctx, &DataValue{ProjectID: pid, RecordID: "7", UniqueEventName: ev, FieldName: "record_id", Value: "7"}); err != nil {
+			t.Fatalf("AddDataValue %s: %v", ev, err)
+		}
+	}
+
+	ids, err := s.ListRecordIDs(ctx, pid, nil)
+	if err != nil {
+		t.Fatalf("ListRecordIDs: %v", err)
+	}
+	if len(ids) != 1 || ids[0] != "7" {
+		t.Errorf("ListRecordIDs = %v, want [7] — one record across both arms", ids)
+	}
+
+	// The identity table enforces the same guarantee at row level: one entity
+	// per (project, record), whichever arm touches it first.
+	if err := s.CreateRecordEntity(ctx, &RecordEntity{ProjectID: pid, RecordID: "7"}); err != nil {
+		t.Fatalf("CreateRecordEntity: %v", err)
+	}
+	if err := s.CreateRecordEntity(ctx, &RecordEntity{ProjectID: pid, RecordID: "7"}); err == nil {
+		t.Errorf("second CreateRecordEntity for the same record id succeeded, want a primary key violation")
+	}
+}

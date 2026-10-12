@@ -424,6 +424,51 @@ func TestGenerateNextRecordName(t *testing.T) {
 	}
 }
 
+// In auto naming mode the same content answers the next plain integer above
+// every numeric record id of the project (REQ-DB-045, REQ-API-151); non-digit
+// ids neither advance the counter nor collide with it.
+func TestGenerateNextRecordNameAutoMode(t *testing.T) {
+	h, full, _ := testHandler(t)
+	ctx := context.Background()
+	p, err := h.Store.GetProjectByName(ctx, "proj-"+t.Name())
+	if err != nil || p == nil {
+		t.Fatalf("GetProjectByName: %v", err)
+	}
+	if _, err := h.Store.DB.ExecContext(ctx,
+		`UPDATE projects SET record_naming = 'auto' WHERE id = ?`, p.ID); err != nil {
+		t.Fatalf("flip record_naming: %v", err)
+	}
+
+	next := func() string {
+		code, body := do(t, h, url.Values{"token": {full}, "content": {"generateNextRecordName"}, "format": {"json"}})
+		mustStatus(t, code, http.StatusOK, body)
+		out := decodeJSON(t, body)
+		if len(out) != 1 {
+			t.Fatalf("want 1 row, got %d", len(out))
+		}
+		s, _ := out[0]["next_record_name"].(string)
+		return s
+	}
+
+	// The seeded records 8DISC001/8DISC002 are not numeric, so the counter
+	// starts at 1 (REQ-API-151).
+	if got := next(); got != "1" {
+		t.Errorf("next_record_name = %q, want 1", got)
+	}
+
+	// Numeric ids advance the counter to max+1; "09" is a digit string but
+	// not one the counter emits, so it neither advances nor collides.
+	for _, id := range []string{"7", "42", "09"} {
+		dv := &db.DataValue{ProjectID: p.ID, RecordID: id, UniqueEventName: "baseline_arm_1", FieldName: "record_id", Value: id}
+		if err := h.Store.AddDataValue(ctx, dv); err != nil {
+			t.Fatalf("AddDataValue %s: %v", id, err)
+		}
+	}
+	if got := next(); got != "43" {
+		t.Errorf("next_record_name = %q, want 43", got)
+	}
+}
+
 // --- response format contracts (REQ-API-013, REQ-API-029) ---
 
 func TestCSVOutput(t *testing.T) {

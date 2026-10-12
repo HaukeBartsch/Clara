@@ -9,10 +9,11 @@
  * code: grey no data, amber some data, green finished (§6.3). No field value is ever on this
  * page (REQ-API-074).
  *
- * New participant (§6.3): a record name typed in or proposed by auto-name; present only for a
- * member with data access ≥ view_edit on some arm, and never in analysis mode (§8.1).
+ * New participant (§6.3): the control the project's naming mode offers — type a record ID, or
+ * one click that assigns the next number (REQ-UI-052), never both; present only for a member
+ * with data access ≥ view_edit on some arm, and never in analysis mode (§8.1).
  *
- * Reads: $arms, $newRecord (null | {arms, name, arm}), $statusUrl, $recordBase.
+ * Reads: $arms, $newRecord (null | {arms, name, arm, naming}), $statusUrl, $recordBase.
  */
 
 use Clara\View;
@@ -24,14 +25,19 @@ $activeArm = (int) ($arms[0]['arm_num'] ?? 0);
 <h1 class="h4 mb-3"><?= View::e($view->t('records.title')) ?></h1>
 
 <?php if ($newRecord !== null): ?>
-    <!-- New participant (§6.3): type a record name, or let the data API propose the next one. -->
-    <form method="post" action="<?= View::e($statusUrl) ?>?action=new_record" class="row g-2 align-items-end mb-3 clara-new-record">
+    <?php $autoNaming = ($newRecord['naming'] ?? 'manual') === 'auto'; ?>
+    <!-- New participant (§6.3), one control per naming mode and never both (REQ-UI-052):
+         type the record ID, or let auto-name number the participant in one click. -->
+    <form method="post" action="<?= View::e($statusUrl) ?>?action=<?= $autoNaming ? 'create_auto' : 'new_record' ?>"
+          class="row g-2 align-items-end mb-3 clara-new-record">
         <?= $view->csrfField() ?>
-        <div class="col-sm-5 col-md-4">
-            <label class="form-label mb-0 small" for="new-record-id"><?= View::e($view->t('records.new.label')) ?></label>
-            <input class="form-control form-control-sm" type="text" id="new-record-id" name="record_id" maxlength="100"
-                   value="<?= View::e($newRecord['name']) ?>" autocomplete="off">
-        </div>
+        <?php if (!$autoNaming): ?>
+            <div class="col-sm-5 col-md-4">
+                <label class="form-label mb-0 small" for="new-record-id"><?= View::e($view->t('records.new.label')) ?></label>
+                <input class="form-control form-control-sm" type="text" id="new-record-id" name="record_id" maxlength="100"
+                       value="<?= View::e($newRecord['name']) ?>" autocomplete="off">
+            </div>
+        <?php endif; ?>
         <?php if (count($newRecord['arms']) > 1): ?>
             <div class="col-sm-3 col-md-2">
                 <label class="form-label mb-0 small" for="new-record-arm"><?= View::e($view->t('records.new.arm')) ?></label>
@@ -46,12 +52,9 @@ $activeArm = (int) ($arms[0]['arm_num'] ?? 0);
             <input type="hidden" name="arm" value="<?= (int) $newRecord['arms'][0]['arm_num'] ?>">
         <?php endif; ?>
         <div class="col-auto d-flex gap-2">
-            <button class="btn btn-sm btn-primary" type="submit"><?= View::e($view->t('records.new.open')) ?></button>
-            <!-- Auto-name: the data API's generateNextRecordName (REQ-API-023), filled in on return. -->
-            <button class="btn btn-sm btn-outline-secondary" type="submit" formnovalidate
-                    formaction="<?= View::e($statusUrl) ?>?action=auto_name"><?= View::e($view->t('records.new.auto')) ?></button>
+            <button class="btn btn-sm btn-primary" type="submit"><?= View::e($view->t($autoNaming ? 'records.new.auto.add' : 'records.new.open')) ?></button>
         </div>
-        <div class="col-12 form-text mt-0"><?= View::e($view->t('records.new.help')) ?></div>
+        <div class="col-12 form-text mt-0"><?= View::e($view->t($autoNaming ? 'records.new.auto.help' : 'records.new.help')) ?></div>
     </form>
 <?php endif; ?>
 

@@ -114,8 +114,8 @@ test.describe("data entry and the record view (M5)", () => {
     // --- Record Status Dashboard: rows are the route's data region (REQ-UI-044) ---
     await page.locator("#clara-nav").getByRole("link", { name: "Record Status Dashboard" }).click()
     await expect(page.locator("tbody[data-region='records']")).toContainText("No records yet.")
-    await page.getByRole("button", { name: "Auto-name" }).click()
-    await expect(page.locator("#new-record-id")).toHaveValue("M5001")
+    // Manual naming mode (the project default, REQ-UI-052): the record ID is typed in.
+    await page.fill("#new-record-id", "M5001")
     await page.getByRole("button", { name: "Create" }).click()
     await expect(page).toHaveURL(/\/records\/M5001/)
     await expect(page.locator(".clara-record-new")).toBeVisible()

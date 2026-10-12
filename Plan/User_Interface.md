@@ -32,7 +32,7 @@ A left panel appears only where it switches between sections. The **project over
     - Overview: Number of records, instruments, and fields in the project; the read-only project metadata; the current project mode (development | production | analysis) as a badge. Installation admin users (is_admin) can change the mode; a project's own admin sees the badge only: development to production asks whether previously stored data is kept or deleted; other transitions confirm that all data is kept. The control is offered only while no staging set is open.
     - Staging (production mode): Setup and Design pages show staging controls - start staging, a persistent "changes are staged" banner with commit/discard, and a commit dialog that lists breaking changes (each with its reason) and requires acknowledgement. In development mode setup edits apply directly; in analysis mode they do too, but a breaking change shows the same warning dialog and saves only on confirmation (REQ-UI-037).
     - Sections (presented in the left panel only if the user's role/permission allows them):
-        - Setup (permission "project_admin"): Add/rename/remove arms (rename REQ-UI-048), instruments, events, and mappings between them.
+        - Setup (permission "project_admin"): Add/rename/remove arms (rename REQ-UI-048), instruments, events, and mappings between them; choose the project's record naming mode — Auto-name (numeric ids) or type record_id (REQ-UI-052).
         - Design: Create a new instrument, edit fields in an existing instrument.
         - Record status dashboard: Show the table of records and instruments by event.
         - Export: Export project data as CSV or JSON at the acting user's export level, with an arm selector and a visible sensitivity badge (REQ-UI-020). The applied level for a multi-arm export is the **lowest (most protective)** of the selected arms; deselecting an arm raises it for that download (REQ-EXP-003).
@@ -53,7 +53,7 @@ A left panel appears only where it switches between sections. The **project over
 
 ### 6. Record Status Dashboard
 - Purpose: Overview of data completion for a project.
-- Components: Lists all record_ids in a project with their instruments sorted by event and ordered based on the order of instruments in each arm. Each instrument is rendered with a small graphic in one of **three** states — grey (no field has a value), amber (some value present), green (the user marked the instrument finished at the end of its form) (REQ-UI-019/036, REQ-API-074/110). Grey and amber are derived from the stored values; only green is stored (or automatic on survey instruments), so the indicator can never claim completion the data contradicts (REQ-API-074, GD-9).
+- Components: Lists all record_ids in a project with their instruments sorted by event and ordered based on the order of instruments in each arm. Each instrument is rendered with a small graphic in one of **three** states — grey (no field has a value), amber (some value present), green (the user marked the instrument finished at the end of its form) (REQ-UI-019/036, REQ-API-074/110). Grey and amber are derived from the stored values; only green is stored (or automatic on survey instruments), so the indicator can never claim completion the data contradicts (REQ-API-074, GD-9). The new-participant affordance offers exactly one path per project naming mode — a typed record_id input (`manual`) or a single action that creates the participant under the next generated numeric name (`auto`) — never both (REQ-UI-052).
 
 ## UI Framework
 - Framework: Bootstrap

@@ -121,6 +121,8 @@ final class Router
             'handler' => 'deleteInstrument', 'guard' => 'login', 'action' => 'delete_instrument'],
         ['method' => 'POST', 'pattern' => '/projects/{id}/setup', 'controller' => Controllers\SetupController::class,
             'handler' => 'saveMapping', 'guard' => 'login', 'action' => 'save_mapping'],
+        ['method' => 'POST', 'pattern' => '/projects/{id}/setup', 'controller' => Controllers\SetupController::class,
+            'handler' => 'saveNaming', 'guard' => 'login', 'action' => 'save_naming'],
         // Staging (§6.7) is offered on every structure page and returns to the page it came from.
         ['method' => 'POST', 'pattern' => '/projects/{id}/setup', 'controller' => Controllers\SetupController::class,
             'handler' => 'startStaging', 'guard' => 'login', 'action' => 'staging_start'],
@@ -163,6 +165,8 @@ final class Router
             'handler' => 'create', 'guard' => 'login', 'action' => 'new_record'],
         ['method' => 'POST', 'pattern' => '/projects/{id}/record-status', 'controller' => Controllers\RecordStatusController::class,
             'handler' => 'autoName', 'guard' => 'login', 'action' => 'auto_name'],
+        ['method' => 'POST', 'pattern' => '/projects/{id}/record-status', 'controller' => Controllers\RecordStatusController::class,
+            'handler' => 'createAuto', 'guard' => 'login', 'action' => 'create_auto'],
         ['method' => 'GET', 'pattern' => '/projects/{id}/records/{record}', 'controller' => Controllers\RecordController::class,
             'handler' => 'view', 'guard' => 'login', 'region' => 'history'],
         ['method' => 'POST', 'pattern' => '/projects/{id}/records/{record}', 'controller' => Controllers\RecordController::class,

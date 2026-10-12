@@ -13,10 +13,12 @@ use Clara\Controllers\StructureController;
 
 const M4_CSRF = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
-function m4_detail(bool $projectAdmin = true): array
+function m4_detail(bool $projectAdmin = true, ?string $naming = null): array
 {
     return [
         'id' => 3, 'project_name' => '8DISC', 'organization' => 'NAT EU', 'record_count' => 1,
+        // The record naming mode the detail carries (REQ-API-151), default manual.
+        'record_naming' => $naming ?? 'manual',
         'arms' => [['arm_num' => 1, 'name' => '', 'events' => []]],
         'instruments' => [['id' => 7, 'name' => 'intake', 'position' => 1, 'field_count' => 2]],
         'permissions' => ['project_admin' => $projectAdmin,
@@ -62,7 +64,7 @@ function m4_fields(): array
 }
 
 /** The reads a structure page spends besides its own, in fake-transport match order. */
-function m4_queue(string $mode = 'development', bool $stagingOpen = false, bool $projectAdmin = true, ?array $instruments = null): void
+function m4_queue(string $mode = 'development', bool $stagingOpen = false, bool $projectAdmin = true, ?array $instruments = null, ?string $naming = null): void
 {
     queue_shell();
     api_route('/api/v1/projects/3/mode', ['mode' => $mode, 'staging_open' => $stagingOpen]);
@@ -79,7 +81,7 @@ function m4_queue(string $mode = 'development', bool $stagingOpen = false, bool 
         'intake' => ['baseline_arm_1', 'follow_up_arm_1'], 'scores' => []]]]);
     api_route('/api/v1/projects/3/record-status', [['record_id' => '8DISC001', 'events' => []], ['record_id' => '8DISC<2>', 'events' => []]]);
     api_route('/api/v1/validationTypes', [['name' => 'integer', 'regex' => '', 'builtin' => true], ['name' => 'email', 'regex' => '.+@.+', 'builtin' => false]]);
-    api_route('/api/v1/projects/3', m4_detail($projectAdmin));
+    api_route('/api/v1/projects/3', m4_detail($projectAdmin, $naming));
 }
 
 function m4_get(string $path, array $query = []): \Clara\Response
@@ -212,6 +214,36 @@ describe('Setup page (§6.2, REQ-UI-018)', function (): void {
 
         assert_same(['arm_num' => 1, 'mapping' => ['intake' => ['baseline_arm_1', 'screening_arm_1'], 'scores' => []]],
             m4_body('PUT', '/instrument-event-mapping'));
+    });
+
+    it('offers the record naming block with the project mode checked (REQ-UI-052)', function (): void {
+        sign_in();
+        m4_queue(naming: 'auto');
+
+        $body = m4_get('/projects/3/setup')->body();
+
+        assert_contains('action=save_naming', $body);
+        assert_contains('value="auto" checked', $body);
+        assert_not_contains('value="manual" checked', $body);
+    });
+
+    it('saves the naming mode as exactly record_naming on the project (REQ-API-151)', function (): void {
+        sign_in();
+        m4_queue();
+
+        m4_post('/projects/3/setup', ['record_naming' => 'auto'], 'save_naming');
+
+        assert_same(['record_naming' => 'auto'], m4_body('PUT', '/api/v1/projects/3'));
+    });
+
+    it('states the naming mode without controls while production has no open set (§6.7)', function (): void {
+        sign_in();
+        m4_queue('production', false, naming: 'auto');
+
+        $body = m4_get('/projects/3/setup')->body();
+
+        assert_not_contains('action=save_naming', $body);
+        assert_contains('clara-naming-mode', $body);
     });
 
     it('updates an instrument with exactly name, is_survey and branching_logic (§4.10)', function (): void {

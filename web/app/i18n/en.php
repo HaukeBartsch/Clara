@@ -572,6 +572,11 @@ return [
     'setup.move_up' => 'Move up',
     'setup.move_down' => 'Move down',
     'setup.reordered' => 'Order saved.',
+    'setup.naming' => 'Record naming',
+    'setup.naming.auto' => 'Auto-name (numeric record IDs)',
+    'setup.naming.manual' => 'Type record ID',
+    'setup.naming.help' => 'Which control the Record Status Dashboard offers for a new participant. Auto-name assigns the next free number; type-record-ID lets the user enter it. Existing records are never renamed.',
+    'setup.naming.saved' => 'Record naming mode saved.',
 
     // --- M4: instrument designer (§7, REQ-UI-021…023) ---
     'design.title' => 'Design',
@@ -652,6 +657,8 @@ return [
     'records.new.open' => 'Create',
     'records.new.auto' => 'Auto-name',
     'records.new.help' => 'Type a record ID or let the system propose the next free one. The record is stored when its first form is saved.',
+    'records.new.auto.add' => 'Add participant',
+    'records.new.auto.help' => 'Participants are numbered automatically: adding one assigns the next free number. The record is stored when its first form is saved.',
     'records.new.invalid' => 'A record ID must not be empty, longer than 100 characters, or contain a slash or control characters.',
 
     // --- M5: record view and data entry (§8) ---

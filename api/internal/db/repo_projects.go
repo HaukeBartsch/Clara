@@ -13,7 +13,7 @@ import (
 
 const projectColumns = `id, project_name, organization, pi_name, pi_email,
 	dm_name, dm_email, rek_number, rek_start_date, rek_end_date,
-	start_date, end_date, participant_names, creation_time, mode`
+	start_date, end_date, participant_names, creation_time, mode, record_naming`
 
 func scanProject(row interface{ Scan(dest ...any) error }) (Project, error) {
 	var (
@@ -29,7 +29,7 @@ func scanProject(row interface{ Scan(dest ...any) error }) (Project, error) {
 	)
 	err := row.Scan(&p.ID, &p.ProjectName, &p.Organization, &p.PIName, &p.PIEmail,
 		&dmName, &dmEmail, &rekNumber, &rekStart, &rekEnd,
-		&startDate, &endDate, &p.ParticipantNames, &creation, &p.Mode)
+		&startDate, &endDate, &p.ParticipantNames, &creation, &p.Mode, &p.RecordNaming)
 	if err != nil {
 		return p, err
 	}
@@ -81,9 +81,18 @@ func nullAnyString(v any) (string, bool) {
 	}
 }
 
+// The two record naming modes (REQ-DB-045): auto names new participants with
+// plain numeric ids (REQ-API-151), manual keeps the typed record_id — the
+// default every existing project keeps.
+const (
+	RecordNamingAuto   = "auto"
+	RecordNamingManual = "manual"
+)
+
 // CreateProject inserts a project row and returns the new id. Creation time
-// defaults to now when unset (REQ-DB-006) and the mode to development, the
-// starting mode of every new project (REQ-DB-034).
+// defaults to now when unset (REQ-DB-006), the mode to development, the
+// starting mode of every new project (REQ-DB-034), and the naming mode to
+// manual (REQ-DB-045).
 func (s *Store) CreateProject(ctx context.Context, p *Project) (int64, error) {
 	if p.CreationTime == "" {
 		p.CreationTime = nowUTC()
@@ -91,16 +100,19 @@ func (s *Store) CreateProject(ctx context.Context, p *Project) (int64, error) {
 	if p.Mode == "" {
 		p.Mode = ModeDevelopment
 	}
+	if p.RecordNaming == "" {
+		p.RecordNaming = RecordNamingManual
+	}
 	res, err := s.DB.ExecContext(ctx,
 		`INSERT INTO projects (project_name, organization, pi_name, pi_email,
 			dm_name, dm_email, rek_number, rek_start_date, rek_end_date,
-			start_date, end_date, participant_names, creation_time, mode)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			start_date, end_date, participant_names, creation_time, mode, record_naming)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.ProjectName, p.Organization, p.PIName, p.PIEmail,
 		nullStr(p.DMName), nullStr(p.DMEmail), nullStr(p.RekNumber),
 		nullStr(p.RekStartDate), nullStr(p.RekEndDate),
 		nullStr(p.StartDate), nullStr(p.EndDate), p.ParticipantNames, p.CreationTime,
-		p.Mode)
+		p.Mode, p.RecordNaming)
 	if err != nil {
 		return 0, err
 	}
@@ -153,21 +165,21 @@ func (s *Store) ListProjects(ctx context.Context) ([]Project, error) {
 
 // UpdateProject rewrites the mutable identity/ethics fields including the
 // name (PUT accepts project_name per API_Endpoints_Design.md §4.5 — callers
-// check uniqueness first); the creation time is fixed at creation and the
-// mode is deliberately absent — it changes only through the mode endpoint
-// (REQ-DB-034, SetProjectMode).
+// check uniqueness first) and the record naming mode (REQ-DB-045); the
+// creation time is fixed at creation and the mode is deliberately absent — it
+// changes only through the mode endpoint (REQ-DB-034, SetProjectMode).
 func (s *Store) UpdateProject(ctx context.Context, p *Project) error {
 	_, err := s.DB.ExecContext(ctx,
 		`UPDATE projects SET
 			project_name = ?, organization = ?, pi_name = ?, pi_email = ?,
 			dm_name = ?, dm_email = ?, rek_number = ?,
 			rek_start_date = ?, rek_end_date = ?, start_date = ?, end_date = ?,
-			participant_names = ?
+			participant_names = ?, record_naming = ?
 		 WHERE id = ?`,
 		p.ProjectName, p.Organization, p.PIName, p.PIEmail,
 		nullStr(p.DMName), nullStr(p.DMEmail), nullStr(p.RekNumber),
 		nullStr(p.RekStartDate), nullStr(p.RekEndDate),
-		nullStr(p.StartDate), nullStr(p.EndDate), p.ParticipantNames, p.ID)
+		nullStr(p.StartDate), nullStr(p.EndDate), p.ParticipantNames, p.RecordNaming, p.ID)
 	return err
 }
 

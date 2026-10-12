@@ -311,6 +311,65 @@ func TestProjectUpdate(t *testing.T) {
 	}
 }
 
+// TestProjectRecordNaming: the detail carries record_naming, 'manual' by
+// default (REQ-DB-045); PUT switches between the two modes and audits old
+// and new; any other value is 400; an idempotent repeat writes nothing
+// (REQ-API-151).
+func TestProjectRecordNaming(t *testing.T) {
+	e := newEnv(t)
+	member := e.mustUser("member@example.org")
+	pid := e.mustProject("8DISC")
+	mustMember(t, e, member.ID, pid)
+
+	rec := e.do("GET", "/api/v1/projects/"+itoa(pid), nil, member)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var d projectDetail
+	e.decode(rec, &d)
+	if d.RecordNaming != "manual" {
+		t.Errorf("record_naming = %q, want manual (REQ-DB-045)", d.RecordNaming)
+	}
+
+	rec = e.do("PUT", "/api/v1/projects/"+itoa(pid), map[string]any{"record_naming": "auto"}, member)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PUT auto status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	d = projectDetail{}
+	e.decode(rec, &d)
+	if d.RecordNaming != "auto" {
+		t.Errorf("record_naming after PUT = %q, want auto", d.RecordNaming)
+	}
+
+	var details string
+	if err := e.Store.DB.QueryRow(
+		`SELECT details FROM audit_events WHERE event_type = 'project_updated' ORDER BY id DESC LIMIT 1`).
+		Scan(&details); err != nil {
+		t.Fatalf("audit query: %v", err)
+	}
+	for _, want := range []string{`"record_naming"`, `"old":"manual"`, `"new":"auto"`} {
+		if !contains(details, want) {
+			t.Errorf("audit details = %s, want %s", details, want)
+		}
+	}
+
+	for _, bad := range []any{"sequential", "", 1, nil} {
+		rec := e.do("PUT", "/api/v1/projects/"+itoa(pid), map[string]any{"record_naming": bad}, member)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("record_naming %v status = %d, want 400 (REQ-API-151)", bad, rec.Code)
+		}
+	}
+
+	before := len(e.auditTypes())
+	rec = e.do("PUT", "/api/v1/projects/"+itoa(pid), map[string]any{"record_naming": "auto"}, member)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("idempotent PUT status = %d", rec.Code)
+	}
+	if len(e.auditTypes()) != before {
+		t.Error("no-op record_naming PUT wrote audit entries")
+	}
+}
+
 // TestProjectUpdateGuards: renaming onto an existing name is 409; a member
 // without project_admin and a non-member are both 403.
 func TestProjectUpdateGuards(t *testing.T) {

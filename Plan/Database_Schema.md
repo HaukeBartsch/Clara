@@ -19,6 +19,7 @@ Stores project-level metadata (see the project creation form in VISION_AND_REQUI
 - start_date (Date)
 - end_date (Date)
 - participant_names (String, participant naming pattern)
+- record_naming (String: auto | manual, default manual — the project's record naming mode, REQ-DB-045)
 - mode (String: development | production | analysis, default development - project modes)
 - creation_time (DateTime)
 

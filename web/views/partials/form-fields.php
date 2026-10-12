@@ -8,7 +8,8 @@
  * (branching.js, §8.4) reads the same `data-clara-*` attributes from this markup.
  *
  * Reads: $items (DataEntry::layout), $canEdit (inputs vs. read-only text), $exists (history
- * buttons), $identifier (the record-identifier field, shown read-only; '' for none), $record,
+ * buttons), $identifier (the record-identifier field, shown read-only; '' for none),
+ * $recordNaming ('auto' shows it as plain text, REQ-UI-052; default 'manual'), $record,
  * $prefill (stored values by field), $draft (a rejected submission's values, or null),
  * $errors (per-field reasons), $patterns (registry regexes), $formats (default date formats).
  */
@@ -163,8 +164,14 @@ $fieldAttrs = static function (array $field, ?string $staticValue = null) use ($
                 <?php endif; ?>
 
                 <?php if ($isIdentifier): ?>
-                    <!-- The record identifier (GD-8): the record's name, never edited here. -->
-                    <input class="form-control form-control-sm" type="text" id="<?= View::e($id) ?>" value="<?= View::e($value !== '' ? $value : $record) ?>" readonly>
+                    <?php if (($recordNaming ?? 'manual') === 'auto'): ?>
+                        <!-- The record identifier (GD-8) in auto naming mode (REQ-UI-052): the
+                             number is the record — text on the page, not a field. -->
+                        <div class="form-control-plaintext py-0 clara-value" id="<?= View::e($id) ?>"><?= View::e($value !== '' ? $value : $record) ?></div>
+                    <?php else: ?>
+                        <!-- The record identifier (GD-8): the record's name, never edited here. -->
+                        <input class="form-control form-control-sm" type="text" id="<?= View::e($id) ?>" value="<?= View::e($value !== '' ? $value : $record) ?>" readonly>
+                    <?php endif; ?>
                 <?php elseif ($type === 'calculated'): ?>
                     <!-- Calculated (REQ-VAL-036): a read-only value, recomputed by the API on import. -->
                     <output class="form-control form-control-sm bg-body-tertiary" id="<?= View::e($id) ?>"><?= $value === '' ? '<span class="text-body-secondary">—</span>' : View::e($value) ?></output>

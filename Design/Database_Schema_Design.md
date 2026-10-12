@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS projects (            -- REQ-DB-006 (simplified, GD-1
     start_date                  DATE,
     end_date                    DATE,
     participant_names           VARCHAR(255) NOT NULL,   -- naming pattern (REQ-DB-007)
+    record_naming               VARCHAR(16) NOT NULL DEFAULT 'manual',  -- auto | manual — record naming mode (REQ-DB-045)
     mode                        VARCHAR(16) NOT NULL DEFAULT 'development',  -- development | production | analysis (GD-20, REQ-DB-034); API allowlist
     creation_time               DATETIME NOT NULL
 );

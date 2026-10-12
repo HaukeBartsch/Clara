@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"csms/api/internal/db"
 )
 
 // projectInfo is the content=project object (API_Endpoints_Design.md
@@ -365,6 +367,18 @@ type nextNameRow struct {
 }
 
 func (h *Handler) contentGenerateNextRecordName(ctx context.Context, w http.ResponseWriter, enc string, sub *subject, p Params) {
+	// Auto naming mode answers the next plain integer above every numeric
+	// record id of the project (REQ-DB-045, REQ-API-151); manual mode keeps
+	// the pattern generator untouched (REQ-DB-007).
+	if sub.Project.RecordNaming == db.RecordNamingAuto {
+		maxNum, err := h.Store.MaxNumericRecordID(ctx, sub.Project.ID)
+		if err != nil {
+			h.storeError(w, enc)
+			return
+		}
+		render(w, enc, p.Delimiter(), []nextNameRow{{NextRecordName: strconv.FormatInt(maxNum+1, 10)}})
+		return
+	}
 	maxID, _, err := h.Store.MaxRecordID(ctx, sub.Project.ID)
 	if err != nil {
 		h.storeError(w, enc)

@@ -85,6 +85,9 @@ final class RecordStatusController extends DataEntryController
                 'arms' => $editableArms,
                 'name' => (string) ($proposed['name'] ?? ''),
                 'arm' => (int) ($proposed['arm'] ?? 0),
+                // The project's naming mode decides which control the form offers — never
+                // both (REQ-UI-052): type a name, or one click that numbers the participant.
+                'naming' => (string) ($detail['record_naming'] ?? 'manual'),
             ] : null,
         ], [
             'scripts' => ['/assets/app.js', '/assets/js/record-status.js'],
@@ -172,9 +175,7 @@ final class RecordStatusController extends DataEntryController
             return $back;
         }
 
-        // The JSON form answers a one-element list; the object form is accepted as well.
-        $row = isset($answer['next_record_name']) ? $answer : ($answer[0] ?? []);
-        $name = is_array($row) && is_scalar($row['next_record_name'] ?? null) ? (string) $row['next_record_name'] : '';
+        $name = self::generatedName($answer);
         if ($name === '') {
             $this->flashDanger($this->i18n->t('error.generic'));
 
@@ -183,5 +184,49 @@ final class RecordStatusController extends DataEntryController
         Session::stash('new_record', ['name' => $name, 'arm' => $arm]);
 
         return $back;
+    }
+
+    /**
+     * POST …/record-status?action=create_auto — the dashboard's one-click add in auto naming
+     * mode (REQ-UI-052): there is no free-text field, so the next number comes straight from
+     * `generateNextRecordName` (REQ-API-151) and the record view opens on it. Nothing is
+     * stored until the record's first import (REQ-API-033).
+     */
+    public function createAuto(): Response
+    {
+        $projectId = $this->projectIdFromPath();
+        $back = Response::redirect('/projects/' . $projectId . '/record-status');
+        $arm = $this->fieldId('arm');
+
+        try {
+            $answer = $this->dataCall($projectId, ['content' => 'generateNextRecordName']);
+        } catch (ApiException $e) {
+            $this->flashDanger($this->dataApiFailure($e));
+
+            return $back;
+        }
+
+        $name = self::generatedName($answer);
+        if ($name === '') {
+            $this->flashDanger($this->i18n->t('error.generic'));
+
+            return $back;
+        }
+        $target = self::recordUrl($projectId, $name);
+
+        return Response::redirect($arm > 0 ? $target . '?arm=' . $arm : $target);
+    }
+
+    /**
+     * The name of a `generateNextRecordName` answer: the JSON form answers a one-element
+     * list; the object form is accepted as well.
+     *
+     * @param array<array-key, mixed> $answer
+     */
+    private static function generatedName(array $answer): string
+    {
+        $row = isset($answer['next_record_name']) ? $answer : ($answer[0] ?? []);
+
+        return is_array($row) && is_scalar($row['next_record_name'] ?? null) ? (string) $row['next_record_name'] : '';
     }
 }

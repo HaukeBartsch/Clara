@@ -168,7 +168,7 @@ All require data access ≥ `read_only` except `generateNextRecordName` (≥ `vi
 | `exportFieldNames` (REQ-API-022) | `[ {"field_name":"record_id","form_name":"intake"}, … ]` — restricted to `forms[]` when supplied |
 | `generateNextRecordName` (REQ-API-023) | `{ "next_record_name": "8DISC042" }` |
 
-`generateNextRecordName` follows the project's naming pattern (REQ-DB-007) — digit-placeholder style (`8DISC[0-9][0-9][0-9]`) and counter-prefix style (`0001_01`, width preserved) — and MUST NOT return a name an existing record already holds (REQ-API-023). The next name is one counter step above the greatest existing name of the same shape (max + 1); names freed by deleted records are not reused (no gap-filling, REQ-API-023).
+`generateNextRecordName` follows the project's naming pattern (REQ-DB-007) — digit-placeholder style (`8DISC[0-9][0-9][0-9]`) and counter-prefix style (`0001_01`, width preserved) — and MUST NOT return a name an existing record already holds (REQ-API-023). The next name is one counter step above the greatest existing name of the same shape (max + 1); names freed by deleted records are not reused (no gap-filling, REQ-API-023). While the project's record naming mode is `auto` (REQ-DB-045) it answers the next plain integer strictly above every numeric record id of the project instead — the first name is `1`, and ids that are not all digits never advance the counter nor collide with it (REQ-API-151).
 
 ### 3.6 Record export — `content=record` without `data` (REQ-API-012)
 
@@ -475,7 +475,8 @@ Administrator (requires `is_admin`), REQ-API-116: `POST /api/v1/users/{id}/tfa/r
   "dm_name": "Lars Akslen", "dm_email": "lars.akslen@uib.no",
   "rek_number": "REK-2026/123", "rek_start_date": "2026-01-01", "rek_end_date": "2028-01-01",
   "start_date": "2026-01-01", "end_date": "2028-01-01",
-  "participant_names": "8DISC[0-9][0-9][0-9]"
+  "participant_names": "8DISC[0-9][0-9][0-9]",
+  "record_naming": "manual"
 }
 ```
 
@@ -504,7 +505,7 @@ The removed attributes — `end_provision`, the `option_*` flags, `agreed_to_end
 
 `permissions` is the effective evaluation of `Authentication_Authorization_Design.md` §4.1 for the acting user — the same result the boundary applies to every call — surfaced so the PHP layer can gate rendering with the control absent from the DOM (`User_Interface_Design.md` §3.1, REQ-UI-003). Rules: one `arms[]` entry per arm of the project in the arm order of the `arms` list above, carrying that arm's **default**; one `grants[]` entry per (instrument, event) pair mapped in an arm the caller may see, carrying the levels and rights **as they resolve for that pair** — its own grant where it has one, the arm default otherwise (REQ-AUTH-069). `is_admin` reports full levels and both rights everywhere and `project_admin: true` (REQ-AUTH-023); a role-less member likewise (REQ-AUTH-022); an ungranted arm reports `no_access` / `export_none` (REQ-AUTH-019), so nothing is ever absent from either list and the caller never infers a level from a missing entry. `grants[]` grows with the design's instrument × event count — the same cardinality as the record status dashboard it gates — and stays in the arm-then-event order of §4.8/§4.9 so the web layer can walk it without sorting. The vocabulary is the §4.7 one (`no_access | read_only | view_edit`, `export_none | export_de_identified | export_no_identifiers | export_full`, plus the two booleans). This read authorizes nothing — it discloses only the caller's own levels, under the same visibility gate as the rest of the response (REQ-API-007), and every endpoint re-checks at call time (REQ-AUTH-033).
 
-**`PUT /api/v1/projects/{id}`** — `project_admin` (an `is_admin` user is covered by REQ-AUTH-023). Body: any subset of the `POST` metadata fields — omitted fields are unchanged (idempotent, REQ-API-042). A duplicate `project_name` → 409 `conflict`. 200 — the updated project object (same shape as `GET`, `permissions` included — REQ-API-126). Metadata changes are audit-logged with old and new values (`project_updated`, `Audit_Logging_Design.md` §3.3; REQ-API-052, REQ-API-043).
+**`PUT /api/v1/projects/{id}`** — `project_admin` (an `is_admin` user is covered by REQ-AUTH-023). Body: any subset of the `POST` metadata fields — omitted fields are unchanged (idempotent, REQ-API-042) — plus `record_naming`, the project's record naming mode (`auto` | `manual`, REQ-DB-045; any other value → 400 `invalid_request`, REQ-API-151). A duplicate `project_name` → 409 `conflict`. 200 — the updated project object (same shape as `GET`, `permissions` included — REQ-API-126). Metadata changes are audit-logged with old and new values (`project_updated`, `Audit_Logging_Design.md` §3.3; REQ-API-052, REQ-API-043).
 
 ### 4.6 Members and Tokens (REQ-API-053…055, 102)
 

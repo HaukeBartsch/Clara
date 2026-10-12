@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"math/big"
+	"strconv"
 )
 
 // MaxRecordID returns the lexicographically greatest record id that holds at
@@ -27,6 +28,32 @@ func (s *Store) MaxRecordID(ctx context.Context, projectID int64) (string, bool,
 		return "", false, nil
 	}
 	return v.String, true, nil
+}
+
+// MaxNumericRecordID returns the greatest all-digit record id of the project
+// as an integer (0 when it has none). The auto naming mode derives the next
+// plain numeric name from it (REQ-DB-045, REQ-API-151); ids that are not all
+// digits never advance the counter. The same two sources as MaxRecordID,
+// filtered in Go so the comparison is numeric rather than lexicographic.
+func (s *Store) MaxNumericRecordID(ctx context.Context, projectID int64) (int64, error) {
+	ids, err := s.ListRecordIDs(ctx, projectID, nil)
+	if err != nil {
+		return 0, err
+	}
+	var max int64
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		n, err := strconv.ParseInt(id, 10, 64)
+		if err != nil || n < 0 || strconv.FormatInt(n, 10) != id {
+			continue // not all digits, or a leading-zero form the counter never emits
+		}
+		if n > max {
+			max = n
+		}
+	}
+	return max, nil
 }
 
 // RecordExists reports whether a record id is present in the project: an

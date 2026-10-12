@@ -52,6 +52,7 @@ type Project struct {
 	ParticipantNames string
 	CreationTime     string // DATETIME UTC "YYYY-MM-DD HH:MM:SS"
 	Mode             string // development | production | analysis (GD-20, REQ-DB-034)
+	RecordNaming     string // auto | manual — record naming mode (REQ-DB-045)
 }
 
 // Users (REQ-DB-008, GD-18/GD-19).

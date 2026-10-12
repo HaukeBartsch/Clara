@@ -41,6 +41,7 @@ type projectObject struct {
 	StartDate        *string `json:"start_date"`
 	EndDate          *string `json:"end_date"`
 	ParticipantNames string  `json:"participant_names"`
+	RecordNaming     string  `json:"record_naming"` // auto | manual (REQ-DB-045)
 	CreationTime     string  `json:"creation_time"`
 }
 
@@ -53,6 +54,7 @@ func newProjectObject(p *db.Project) projectObject {
 		RekStartDate: NullStrPtr(p.RekStartDate), RekEndDate: NullStrPtr(p.RekEndDate),
 		StartDate: NullStrPtr(p.StartDate), EndDate: NullStrPtr(p.EndDate),
 		ParticipantNames: p.ParticipantNames, CreationTime: p.CreationTime,
+		RecordNaming: p.RecordNaming,
 	}
 }
 
@@ -300,7 +302,7 @@ func (h *Handler) listProjects(w http.ResponseWriter, r *http.Request) {
 var projectAttrs = []string{
 	"project_name", "organization", "pi_name", "pi_email",
 	"dm_name", "dm_email", "rek_number", "rek_start_date", "rek_end_date",
-	"start_date", "end_date", "participant_names",
+	"start_date", "end_date", "participant_names", "record_naming",
 }
 
 // projectRequest is the POST body; PUT reuses it with presence checked in
@@ -318,6 +320,13 @@ type projectRequest struct {
 	StartDate        *string `json:"start_date"`
 	EndDate          *string `json:"end_date"`
 	ParticipantNames string  `json:"participant_names"`
+	RecordNaming     *string `json:"record_naming"` // auto | manual (REQ-DB-045)
+}
+
+// validRecordNaming accepts only the two naming modes (REQ-DB-045,
+// REQ-API-151); anything else is a 400 from the caller.
+func validRecordNaming(v string) bool {
+	return v == db.RecordNamingAuto || v == db.RecordNamingManual
 }
 
 // validDate checks the DATE layout "YYYY-MM-DD" of the schema (§4.5 body).
@@ -366,6 +375,14 @@ func (h *Handler) createProject(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	recordNaming := db.RecordNamingManual // the default mode (REQ-DB-045)
+	if body.RecordNaming != nil {
+		if !validRecordNaming(*body.RecordNaming) {
+			errBadRequest(w, "record_naming must be 'auto' or 'manual'")
+			return
+		}
+		recordNaming = *body.RecordNaming
+	}
 	dupe, err := h.Store.GetProjectByName(ctx, body.ProjectName)
 	if err != nil {
 		errInternal(w)
@@ -384,6 +401,7 @@ func (h *Handler) createProject(w http.ResponseWriter, r *http.Request) {
 		RekStartDate: toNullStr(body.RekStartDate), RekEndDate: toNullStr(body.RekEndDate),
 		StartDate: toNullStr(body.StartDate), EndDate: toNullStr(body.EndDate),
 		ParticipantNames: body.ParticipantNames,
+		RecordNaming:     recordNaming,
 	}
 	id, err := h.Store.CreateProject(ctx, p)
 	if err != nil {
@@ -585,6 +603,20 @@ func (h *Handler) updateProject(w http.ResponseWriter, r *http.Request) {
 		if !f.dst.Valid || f.dst.String != *v {
 			changes[f.key] = map[string]any{"old": old, "new": *v}
 			*f.dst = sql.NullString{String: *v, Valid: true}
+		}
+	}
+
+	// The record naming mode: an allowlisted string, audited like the other
+	// metadata (REQ-DB-045, REQ-API-151).
+	if raw, present := supplied["record_naming"]; present {
+		var v string
+		if json.Unmarshal(raw, &v) != nil || !validRecordNaming(v) {
+			errBadRequest(w, "record_naming must be 'auto' or 'manual'")
+			return
+		}
+		if v != p.RecordNaming {
+			changes["record_naming"] = map[string]any{"old": p.RecordNaming, "new": v}
+			p.RecordNaming = v
 		}
 	}
 

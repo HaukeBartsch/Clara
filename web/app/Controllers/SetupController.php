@@ -47,6 +47,8 @@ final class SetupController extends StructureController
         return $this->renderSection($detail, 'project/setup', 'setup.title', $state + [
             'setupUrl' => $setupUrl,
             'designUrl' => '/projects/' . $projectId . '/design',
+            // The record naming mode of the naming block (§6.2, REQ-UI-052).
+            'recordNaming' => (string) ($detail['record_naming'] ?? 'manual'),
             'arms' => array_map(static fn (array $arm): array => $arm + [
                 'events_display' => self::withMoveFlags(self::listOf($arm['events'] ?? [])),
             ], $arms),
@@ -302,6 +304,22 @@ final class SetupController extends StructureController
             $this->api->put($base . '/instrument-event-mapping',
                 $this->withAck(['arm_num' => $armNum, 'mapping' => (object) $mapping]));
         }, $this->i18n->t('setup.mapping.saved', ['arm' => (string) $armNum]));
+    }
+
+    // --- Record naming mode ---------------------------------------------------------
+
+    /**
+     * PUT /api/v1/projects/{id} with exactly `record_naming` (§6.2, REQ-API-151): the API
+     * refuses any value other than `auto`/`manual` with a 400 line, which structureWrite
+     * flashes like every other refusal.
+     */
+    public function saveNaming(): Response
+    {
+        $mode = trim($this->request->field('record_naming'));
+
+        return $this->structureWrite($this->setupUrl(), function (int $projectId) use ($mode): void {
+            $this->api->put('/api/v1/projects/' . $projectId, $this->withAck(['record_naming' => $mode]));
+        }, $this->i18n->t('setup.naming.saved'));
     }
 
     // --- helpers --------------------------------------------------------------------

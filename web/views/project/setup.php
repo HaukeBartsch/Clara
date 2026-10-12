@@ -11,7 +11,8 @@
  * list; events offer them only where their place is not fixed by a timepoint (GD-15).
  *
  * Reads: $arms (each with events_display), $instruments, $mapping, $activeArm, $editEvent,
- * $editInstrument, $canEdit, $setupUrl, $designUrl, and the structure-mode partial's inputs.
+ * $editInstrument, $canEdit, $recordNaming, $setupUrl, $designUrl, and the structure-mode
+ * partial's inputs.
  */
 
 use Clara\View;
@@ -391,4 +392,30 @@ $nullable = static fn (mixed $v): string => $v === null ? '' : (string) $v;
             </div>
         <?php endforeach; ?>
     </div>
+</section>
+
+<!-- Record naming mode (§6.2, REQ-UI-052) — which new-participant control the Record Status
+     Dashboard offers; a project-wide setting, so not tabbed. -->
+<section class="mb-4" aria-labelledby="setup-naming">
+    <h2 class="h6" id="setup-naming"><?= View::e($view->t('setup.naming')) ?></h2>
+    <?php if ($canEdit): ?>
+        <form method="post" action="<?= View::e($act('save_naming')) ?>" class="d-flex flex-wrap gap-3 align-items-center">
+            <?= $view->csrfField() ?>
+            <div class="form-check">
+                <input class="form-check-input" type="radio" name="record_naming" id="naming-auto"
+                       value="auto"<?= $recordNaming === 'auto' ? ' checked' : '' ?>>
+                <label class="form-check-label" for="naming-auto"><?= View::e($view->t('setup.naming.auto')) ?></label>
+            </div>
+            <div class="form-check">
+                <input class="form-check-input" type="radio" name="record_naming" id="naming-manual"
+                       value="manual"<?= $recordNaming === 'auto' ? '' : ' checked' ?>>
+                <label class="form-check-label" for="naming-manual"><?= View::e($view->t('setup.naming.manual')) ?></label>
+            </div>
+            <button class="btn btn-sm btn-primary" type="submit"><?= View::e($view->t('action.save')) ?></button>
+            <div class="form-text w-100"><?= View::e($view->t('setup.naming.help')) ?></div>
+        </form>
+    <?php else: ?>
+        <p class="small mb-0 clara-naming-mode">
+            <?= View::e($recordNaming === 'auto' ? $view->t('setup.naming.auto') : $view->t('setup.naming.manual')) ?></p>
+    <?php endif; ?>
 </section>

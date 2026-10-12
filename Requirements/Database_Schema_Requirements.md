@@ -25,6 +25,7 @@ Defines the persistent data model requirements. `Design/Database_Schema_Design.m
 |---|------|
 | REQ-DB-006 | Store the project's identity and ethics metadata: project name (unique), organization (the main supporting institution; enumerated: OTHER, VEST, HBE, SUS, FOR, FON, UIB, UIS, HVL, NAT EU), PI name/email, data manager name/email, REK number, REK start/end dates, start/end dates, participant naming pattern, creation time (GD-17). The option flags (radiology, pathology, pathology type, redcap-only, data collection from home), the end-user-contract flag, the end provision, and the initial `event_names` list are **not stored** — see REQ-DB-032. |
 | REQ-DB-007 | `participant_names` MUST support two pattern styles for `generateNextRecordName`: REDCap-style digit placeholders (`8DISC[0-9][0-9][0-9]`) and a numeric counter prefix (`0001_01` → next `0002_01`, width preserved). |
+| REQ-DB-045 | A project MUST store its **record naming mode** — `auto` (**Auto-name**: new participants receive plain numeric ids) or `manual` (**type record_id**: the person entering data supplies the id), default `manual` — beside the metadata of REQ-DB-006. The mode decides how a record id comes into being (REQ-API-151, REQ-UI-052); it does not replace `participant_names` (REQ-DB-007), which stays the generator for pattern-style callers. In both modes a record id is unique **per project** — never per arm (REQ-DB-020). |
 
 ### 2.2 Users and Administration
 
