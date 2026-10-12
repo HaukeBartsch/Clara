@@ -522,7 +522,7 @@ return [
 
     // --- M4: setup page (§6.2, REQ-UI-018) ---
     'setup.title' => 'Setup',
-    'setup.arms' => 'Arms',
+    'setup.arms' => 'Study Arms',
     'setup.arm.number' => 'Arm',
     'setup.arm.name' => 'Arm name',
     'setup.arm.add' => 'Add arm',
