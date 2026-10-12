@@ -90,8 +90,8 @@ test.describe("yes/no and notes fields (REQ-DB-043/044)", () => {
 
     // --- data entry: a Yes/No pair and a text area ---
     await page.locator("#clara-nav").getByRole("link", { name: "Record Status Dashboard" }).click()
-    await page.getByRole("button", { name: "Auto-name" }).click()
-    await expect(page.locator("#new-record-id")).toHaveValue("YN001")
+    // Manual naming mode (the project default, REQ-UI-052): the record ID is typed in.
+    await page.fill("#new-record-id", "YN001")
     await page.getByRole("button", { name: "Create" }).click()
     await expect(page).toHaveURL(/\/records\/YN001/)
 

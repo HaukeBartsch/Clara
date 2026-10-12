@@ -96,8 +96,8 @@ test.describe("checkbox fields (REQ-DB-042)", () => {
 
     // --- data entry: one box per choice ---
     await page.locator("#clara-nav").getByRole("link", { name: "Record Status Dashboard" }).click()
-    await page.getByRole("button", { name: "Auto-name" }).click()
-    await expect(page.locator("#new-record-id")).toHaveValue("CB001")
+    // Manual naming mode (the project default, REQ-UI-052): the record ID is typed in.
+    await page.fill("#new-record-id", "CB001")
     await page.getByRole("button", { name: "Create" }).click()
     await expect(page).toHaveURL(/\/records\/CB001/)
 
