@@ -228,6 +228,22 @@ func (d *designCtx) resolves(r validate.Ref) bool {
 	return d.activeAt[r.Event][f.InstrumentID]
 }
 
+// isBox reports whether name is a checkbox's choice column rather than a
+// stored dictionary row (REQ-DB-042): expandCheckboxFields adds such an entry
+// under a name of its own that carries its parent's id.
+func (d *designCtx) isBox(name string) bool {
+	f, ok := d.fields[name]
+	if !ok || f.FieldType != "checkbox" {
+		return false
+	}
+	base, _, ok := db.SplitCheckboxSub(name)
+	if !ok {
+		return false
+	}
+	p, ok := d.fields[base]
+	return ok && p.ID == f.ID
+}
+
 // valueCarrying excludes the description and header field types — they carry
 // no stored value and cannot be expression operands (§6.2).
 func valueCarrying(fieldType string) bool {
@@ -3437,7 +3453,7 @@ func (h *Handler) updateField(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if calcChanged {
-			if err := h.recomputeCalcField(ctx, tx, u, projectID, inst.Name, next); err != nil {
+			if err := h.recomputeCalcField(ctx, tx, u, projectID, inst.Name, next, design.isBox); err != nil {
 				errInternal(w)
 				return
 			}
@@ -3473,8 +3489,9 @@ func (h *Handler) updateField(w http.ResponseWriter, r *http.Request) {
 // stored values and auditing each change (§6.3 trigger row 2, ASM-VAL-4). The
 // audit entry names where the result is stored — instrument and event — so the
 // record history serves it beside the values it was computed from
-// (Audit_Logging_Design.md §3.2, REQ-API-079).
-func (h *Handler) recomputeCalcField(ctx context.Context, tx *sql.Tx, u *db.User, projectID int64, instrument string, f db.Field) error {
+// (Audit_Logging_Design.md §3.2, REQ-API-079). isBox names the checkbox
+// choice columns, whose absence reads as 0 (§6.3, REQ-DB-042).
+func (h *Handler) recomputeCalcField(ctx context.Context, tx *sql.Tx, u *db.User, projectID int64, instrument string, f db.Field, isBox func(string) bool) error {
 	rows, err := tx.QueryContext(ctx,
 		`SELECT DISTINCT e.unique_event_name
 		 FROM events e JOIN instrument_events ie ON ie.event_id = e.id
@@ -3519,10 +3536,10 @@ func (h *Handler) recomputeCalcField(ctx context.Context, tx *sql.Tx, u *db.User
 			return err
 		}
 		for _, eventName := range activeEvents {
-			value, _, err := validate.EvalCalc(f.Calculation.String, func(ref validate.Ref) (string, bool) {
+			value, _, err := validate.EvalCalc(f.Calculation.String, validate.UncheckedAsZero(func(ref validate.Ref) (string, bool) {
 				v, ok := vals[ref.Event+"|"+ref.Field]
 				return v, ok && v != ""
-			})
+			}, isBox))
 			if err != nil {
 				return err
 			}
@@ -4063,10 +4080,10 @@ func (h *Handler) testField(w http.ResponseWriter, r *http.Request) {
 		errInternal(w)
 		return
 	}
-	value, problems, err := validate.EvalCalc(expr, func(ref validate.Ref) (string, bool) {
+	value, problems, err := validate.EvalCalc(expr, validate.UncheckedAsZero(func(ref validate.Ref) (string, bool) {
 		v, ok := vals[ref.Event+"|"+ref.Field]
 		return v, ok && v != ""
-	})
+	}, d.isBox))
 	if err != nil {
 		errValidation(w, "expression is not well-formed: "+err.Error())
 		return

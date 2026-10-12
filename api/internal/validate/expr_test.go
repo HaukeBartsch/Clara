@@ -99,6 +99,30 @@ func TestEvalCalc(t *testing.T) {
 	}
 }
 
+// An unchecked checkbox box reads as 0, a checked one as its stored 1; any
+// other missing operand still empties the result (§6.3, REQ-DB-042).
+func TestEvalCalcUncheckedBoxReadsZero(t *testing.T) {
+	vals := map[Ref]string{{Event: "e", Field: "habits___1"}: "1", {Event: "e", Field: "a"}: "10"}
+	isBox := func(field string) bool { return strings.HasPrefix(field, "habits___") }
+	resolve := UncheckedAsZero(func(r Ref) (string, bool) { v, ok := vals[r]; return v, ok }, isBox)
+
+	for expr, want := range map[string]string{
+		"[e][habits___1] + [e][habits___2] + [e][habits___3]": "1",
+		"[e][habits___2] + [e][habits___3]":                   "0",
+		"[e][a] * [e][habits___2]":                            "0",
+		"[e][a] * [e][habits___1]":                            "10",
+	} {
+		got, problems, err := EvalCalc(expr, resolve)
+		if err != nil || got != want || len(problems) != 0 {
+			t.Errorf("eval %q = %q problems %+v err %v, want %q", expr, got, problems, err, want)
+		}
+	}
+	got, problems, _ := EvalCalc("[e][habits___2] + [e][missing]", resolve)
+	if got != "" || len(problems) != 1 || problems[0].Operand != "[e][missing]" || problems[0].Problem != ProblemMissingValue {
+		t.Errorf("missing non-box operand = %q %+v, want empty with one missing_value", got, problems)
+	}
+}
+
 func TestValidateBranching(t *testing.T) {
 	ok := map[Ref]bool{{Event: "e", Field: "yn"}: true, {Event: "e", Field: "txt"}: true, {Event: "e", Field: "age"}: true}
 	resolve := func(r Ref) bool { return ok[r] }

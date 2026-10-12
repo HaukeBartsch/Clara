@@ -85,7 +85,7 @@ Defines the validation requirements that apply to all data written into the syst
 | REQ-VAL-035 | The dependency graph of calculated fields MUST be acyclic: a creation or update that would introduce a cycle MUST be rejected. |
 | REQ-VAL-036 | A calculated field's value is system-managed: an import of a value into a calculated field MUST be rejected (REQ-API-095). |
 | REQ-VAL-037 | The value is stored at each (record, event, instrument, instance) position where the field is active (REQ-DB-030). These values MUST be recomputed in the same transaction whenever the value of a referenced (event, field) changes or is deleted; a change of the expression MUST trigger recomputation for all records of the project (ASM-VAL-4). |
-| REQ-VAL-038 | Evaluation: a missing/empty referenced value, a non-numeric operand, or division by zero MUST yield an empty value for the calculation; the triggering import itself MUST still succeed (its own value was valid); the evaluation failure MUST be application-logged (REQ-TECH-016). Every recomputation MUST be audit-logged with the triggering user, the record, the field, and old/new values (REQ-AUD-023). |
+| REQ-VAL-038 | Evaluation: a missing/empty referenced value, a non-numeric operand, or division by zero MUST yield an empty value for the calculation — except an unchecked checkbox box, which stores nothing and MUST read as `0` (absence is 0, REQ-DB-042); the triggering import itself MUST still succeed (its own value was valid); the evaluation failure MUST be application-logged (REQ-TECH-016). Every recomputation MUST be audit-logged with the triggering user, the record, the field, and old/new values (REQ-AUD-023). |
 
 ## 5. Record Identifier Rules (GD-8)
 

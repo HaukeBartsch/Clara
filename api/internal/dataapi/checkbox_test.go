@@ -211,6 +211,46 @@ func TestCheckboxDictionaryKeepsTheParentRow(t *testing.T) {
 	}
 }
 
+// A calculation over boxes counts the checked ones: an unchecked box reads as
+// 0, never as a missing operand that empties the result (§6.3, REQ-DB-042).
+func TestCheckboxCalculationReadsUncheckedAsZero(t *testing.T) {
+	f := newCheckboxFixture(t)
+	ctx := context.Background()
+	calc, err := f.s.GetInstrumentByName(ctx, f.pid, "calc")
+	if err != nil || calc == nil {
+		t.Fatalf("calc instrument: %v", err)
+	}
+	if _, err := f.s.AddField(ctx, &db.Field{ProjectID: f.pid, InstrumentID: calc.ID,
+		FieldName: "vices", FieldType: "calculated", Position: 2,
+		Calculation: sql.NullString{String: "[baseline_arm_1][habits___1] + [baseline_arm_1][habits___2]", Valid: true}}); err != nil {
+		t.Fatalf("seed vices: %v", err)
+	}
+	row := func(values map[string]string) {
+		t.Helper()
+		values["record_id"], values["form_name"], values["event_name"] = "8DISC010", "demo", "baseline_arm_1"
+		if res := f.importRows(t, importForm("tok-edit", values)); len(res) != 1 {
+			t.Fatalf("import = %+v", res)
+		}
+	}
+
+	row(map[string]string{"age": "40"})
+	if got := storedValue(t, f, "8DISC010", "baseline_arm_1", "vices"); got != "0" {
+		t.Errorf("no box checked: vices = %q, want 0", got)
+	}
+	row(map[string]string{"habits___2": "1"})
+	if got := storedValue(t, f, "8DISC010", "baseline_arm_1", "vices"); got != "1" {
+		t.Errorf("box 2 checked: vices = %q, want 1", got)
+	}
+	row(map[string]string{"habits___1": "1"})
+	if got := storedValue(t, f, "8DISC010", "baseline_arm_1", "vices"); got != "2" {
+		t.Errorf("both boxes checked: vices = %q, want 2", got)
+	}
+	row(map[string]string{"habits___1": "0", "habits___2": ""})
+	if got := storedValue(t, f, "8DISC010", "baseline_arm_1", "vices"); got != "0" {
+		t.Errorf("both boxes cleared: vices = %q, want 0", got)
+	}
+}
+
 func TestCheckboxDeleteByFieldTakesItsBoxes(t *testing.T) {
 	f := newCheckboxFixture(t)
 	f.importRows(t, importForm("tok-edit", map[string]string{

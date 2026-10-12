@@ -437,6 +437,23 @@ func EvalCalc(expr string, resolve func(Ref) (string, bool)) (value string, prob
 	return formatNumber(v), ev.problems, nil
 }
 
+// UncheckedAsZero wraps an EvalCalc resolver so that a checkbox box holding no
+// value reads as 0 (§6.3): an unchecked box stores nothing and its absence is
+// 0 (REQ-DB-042), not a missing answer — `[e][habits___1] + [e][habits___2]`
+// counts the checked boxes. isBox reports whether a field name is a checkbox's
+// choice column; every other reference resolves unchanged.
+func UncheckedAsZero(resolve func(Ref) (string, bool), isBox func(field string) bool) func(Ref) (string, bool) {
+	return func(r Ref) (string, bool) {
+		if v, ok := resolve(r); ok && v != "" {
+			return v, true
+		}
+		if isBox(r.Field) {
+			return "0", true
+		}
+		return "", false
+	}
+}
+
 // parseNumber accepts the §4 integer and floating-point grammars.
 func parseNumber(raw string) (float64, error) {
 	if integerRE.MatchString(raw) || floatRE.MatchString(raw) {

@@ -168,7 +168,7 @@ On acceptance the API (re)populates `calculated_dependencies` for the field (REQ
 
 Evaluation produces a single value (or empty) for one record, in the transaction that triggered it.
 
-1. **Resolve** each reference `[event][field]` to the record's stored value at that (record, event, instrument, instance) position — the instrument and instance of the calculated field being evaluated (empty string if absent).
+1. **Resolve** each reference `[event][field]` to the record's stored value at that (record, event, instrument, instance) position — the instrument and instance of the calculated field being evaluated (empty string if absent). A checkbox box `[event][field___code]` is the exception: an unchecked box stores nothing and its absence is `0` (REQ-DB-042), so it resolves to `0` — never a missing operand — and `[e1][habits___1] + [e1][habits___2]` counts the checked boxes (REQ-VAL-038).
 2. **Coerce** each operand to a number per the §4 grammars (integer or floating point); a choice field's stored code is used as-is (numeric by construction, REQ-VAL-022).
 3. **Evaluate** with the §6.1 precedence. If any operand is missing, empty, or non-numeric, or the divisor is 0, the result for that position is **empty** — not an error (REQ-VAL-038): the triggering import still succeeds (its own value was valid), and the evaluation problem is application-logged (REQ-TECH-016), never returned to the caller as an import failure.
 4. **Store** the result at each (record, event, instrument, instance) position where the calculated field is active (REQ-VAL-037, REQ-DB-030), overwriting the prior value. Format: the shortest exact decimal, no trailing zeros, no exponent (Go `strconv.FormatFloat(v, 'f', -1, 64)`); integer operands under `+ - *` yield an integer string.
@@ -184,7 +184,7 @@ The recomputation runs in the transaction that triggered it (REQ-VAL-037, REQ-AP
 | a calculated field's expression changes (REQ-API-069) | all records of the project, same transaction (ASM-VAL-4) |
 | a record is deleted (REQ-API-036) | none — the calculated values are removed with the record |
 
-**Worked examples** (record with `a = 5`, `b = 2`, `c = 0`, `d` unset, `n = "abc"`):
+**Worked examples** (record with `a = 5`, `b = 2`, `c = 0`, `d` unset, `n = "abc"`, checkbox `h` with box `h___1` checked and `h___2` unchecked):
 
 | Expression | Result |
 |---|------|
@@ -193,10 +193,11 @@ The recomputation runs in the transaction that triggered it (REQ-VAL-037, REQ-AP
 | `[e1][d] * 3` | empty (missing operand) |
 | `[e1][n] + 1` | empty (non-numeric operand) |
 | `[e1][a] / [e1][b]` | `2.5` |
+| `[e1][h___1] + [e1][h___2]` | `1` (an unchecked box reads as `0`) |
 
 ### 6.4 Design-time test (REQ-API-096)
 
-`POST /api/v1/projects/{id}/records/{record}/fields/{fid}/test` evaluates the field's expression — or a draft expression supplied in the body — against the record's current stored values and returns the result with explicit flags for each evaluation problem (missing/empty referenced value, non-numeric operand, division by zero); it MUST NOT store anything. It shares the evaluation semantics of §6.3 and is the designer's "test calculation" action (REQ-UI-021).
+`POST /api/v1/projects/{id}/records/{record}/fields/{fid}/test` evaluates the field's expression — or a draft expression supplied in the body — against the record's current stored values and returns the result with explicit flags for each evaluation problem (missing/empty referenced value, non-numeric operand, division by zero — an unchecked checkbox box reads as `0` and is no problem, §6.3); it MUST NOT store anything. It shares the evaluation semantics of §6.3 and is the designer's "test calculation" action (REQ-UI-021).
 
 ## 7. Branching Logic (GD-13, REQ-VAL-029/040)
 

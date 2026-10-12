@@ -654,9 +654,11 @@ func (*surveyUsedError) Error() string { return "survey already submitted" }
 // recomputeCalculated evaluates every calculated field of the project for
 // one record against its current values and stores changed results in tx,
 // returning each changed result with the event it is stored at (REQ-VAL-037).
+// An unchecked checkbox box reads as 0 (§6.3, REQ-DB-042).
 func (h *Handler) recomputeCalculated(ctx context.Context, tx *sql.Tx, projectID int64,
 	recordID string, rv recordValues, d *projectDict) ([]calculatedChange, error) {
 
+	isBox := func(name string) bool { f, ok := d.byName[name]; return ok && f.isChoiceColumn() }
 	var out []calculatedChange
 	for _, f := range d.fields {
 		if f.FieldType != "calculated" || !f.Calculation.Valid || f.Calculation.String == "" {
@@ -671,7 +673,7 @@ func (h *Handler) recomputeCalculated(ctx context.Context, tx *sql.Tx, projectID
 			targets = []string{""}
 		}
 		for _, event := range targets {
-			value, _, err := validate.EvalCalc(f.Calculation.String, func(ref validate.Ref) (string, bool) {
+			value, _, err := validate.EvalCalc(f.Calculation.String, validate.UncheckedAsZero(func(ref validate.Ref) (string, bool) {
 				if ref.Event != "" {
 					v := rv[ref.Event][ref.Field]
 					return v, v != ""
@@ -682,7 +684,7 @@ func (h *Handler) recomputeCalculated(ctx context.Context, tx *sql.Tx, projectID
 					}
 				}
 				return "", false
-			})
+			}, isBox))
 			if err != nil {
 				continue // malformed expression: never rewrite data with it
 			}

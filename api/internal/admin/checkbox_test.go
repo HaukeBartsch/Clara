@@ -8,6 +8,7 @@ package admin
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -141,6 +142,54 @@ func TestCheckboxSurveyReissueSeesBoxes(t *testing.T) {
 	e.mustValue(f.projectID, "R1", "v1_arm_1", "", "symptoms___2", "1")
 	if rec := e.do("POST", path, nil, admin); rec.Code != http.StatusConflict {
 		t.Errorf("issue over a checked box: got %d %s, want 409", rec.Code, rec.Body.String())
+	}
+}
+
+// The design-time test and the recomputation after an expression change both
+// read an unchecked box as 0 — no missing_value flag, no empty result (§6.3,
+// §6.4, REQ-DB-042).
+func TestCheckboxCalculationReadsUncheckedAsZero(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	p := newCheckboxProject(t, e, admin)
+	e.mustRecord(p.projectID, "R1")
+	e.mustValue(p.projectID, "R1", "baseline_arm_1", "", "habits___1", "1")
+	rec := e.do("POST", p.fieldsPath, map[string]any{
+		"field_name": "vices", "field_type": "calculated",
+		"calculation": "[baseline_arm_1][habits___1] + [baseline_arm_1][habits___2]",
+	}, admin)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("calc over boxes: %d %s", rec.Code, rec.Body.String())
+	}
+	var calc fieldObject
+	e.decode(rec, &calc)
+
+	testURL := "/api/v1/projects/" + itoa(p.projectID) + "/records/R1/fields/" + itoa(calc.ID) + "/test"
+	var out struct {
+		Value    string            `json:"value"`
+		Problems []json.RawMessage `json:"problems"`
+	}
+	for expr, want := range map[string]string{
+		"[baseline_arm_1][habits___1] + [baseline_arm_1][habits___2]": "1",
+		"[baseline_arm_1][habits___2] * 5":                            "0",
+	} {
+		rec = e.do("POST", testURL, map[string]any{"expression": expr}, admin)
+		e.decode(rec, &out)
+		if rec.Code != http.StatusOK || out.Value != want || len(out.Problems) != 0 {
+			t.Errorf("test %q: %d %s, want value %s and no problems", expr, rec.Code, rec.Body.String(), want)
+		}
+	}
+
+	rec = e.do("PUT", p.fieldsPath+"/"+itoa(calc.ID), map[string]any{
+		"calculation": "[baseline_arm_1][habits___2] * 5",
+	}, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expression change: %d %s", rec.Code, rec.Body.String())
+	}
+	var stored string
+	if err := e.Store.DB.QueryRow(`SELECT value FROM data WHERE project_id = ? AND record_id = 'R1' AND field_name = 'vices'`,
+		p.projectID).Scan(&stored); err != nil || stored != "0" {
+		t.Fatalf("recomputed vices = %q (%v), want 0", stored, err)
 	}
 }
 
