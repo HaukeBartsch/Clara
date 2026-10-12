@@ -3,7 +3,9 @@
 // project export — CSV or JSON, codes or labels, the header style, the CSV delimiter, decimal
 // separator and byte-order mark, and the arms to include — and, on `?download=1`, the file
 // itself, proxied from `GET /api/v1/projects/{id}/export` piece by piece so a large export
-// never sits in PHP's memory (REQ-TECH-011).
+// never sits in PHP's memory (REQ-TECH-011). Beside it, `?download=dictionary` answers with
+// the project's data dictionary as `instrument.csv`: the field definitions read through the
+// data API's own `content=metadata` (REQ-API-019), design only and no record values.
 //
 // The CSV options start from the user's UI language: a language whose spreadsheets read the
 // comma as decimal separator gets semicolon, decimal comma and the byte-order mark
@@ -50,6 +52,21 @@ final class ExportController extends ProjectPageController
     /** What a downloaded file may be labelled as; anything else goes out as a plain download. */
     private const CONTENT_TYPES = ['text/csv', 'application/json'];
 
+    /** The fixed name of the data dictionary download (REQ-UI-020). */
+    public const DICTIONARY_FILENAME = 'instrument.csv';
+
+    /**
+     * The `content=metadata` row keys as the dictionary's CSV columns, in the order the
+     * data API renders them (REQ-API-019) — both surfaces produce the same file.
+     */
+    private const DICTIONARY_COLUMNS = [
+        'field_name', 'form_name', 'section_header', 'field_type', 'field_label', 'field_note',
+        'select_choices_or_calculations', 'choice_codes', 'choice_labels',
+        'validation_type', 'validation_min', 'validation_max',
+        'required_field', 'branching_logic', 'matrix_group_name',
+        'record_identifier', 'direct_identifier',
+    ];
+
     private const JS_KEYS = [
         'export.level.export_full', 'export.level.export_no_identifiers', 'export.level.export_de_identified',
         'export.level_help.export_full', 'export.level_help.export_no_identifiers', 'export.level_help.export_de_identified',
@@ -70,6 +87,9 @@ final class ExportController extends ProjectPageController
 
         if ($this->request->query('download') === '1') {
             return $this->download($projectId, $this->projectName($detail), $arms);
+        }
+        if ($this->request->query('download') === 'dictionary') {
+            return $this->downloadDictionary($projectId);
         }
 
         return $this->renderSection($detail, 'project/export', 'export.title', [
@@ -277,6 +297,57 @@ final class ExportController extends ProjectPageController
                 $sink->begin(303, ['Location' => $back, 'Cache-Control' => 'no-store']);
             }
         });
+    }
+
+    /**
+     * The data dictionary download (`?download=dictionary`, REQ-UI-020): the field
+     * definitions read through the data API's `content=metadata` with the member's own
+     * token (§8.6) and rendered as CSV in that call's column order (REQ-API-019). Design
+     * only — no record values — so it carries none of the data form's options, and a
+     * refusal becomes a flash line on the page like any other failure.
+     */
+    private function downloadDictionary(int $projectId): Response
+    {
+        $back = '/projects/' . $projectId . '/export';
+        try {
+            $rows = $this->api->dataApi()->forMember($projectId, ['content' => 'metadata']);
+        } catch (ApiException $e) {
+            $this->logger->info('dictionary download refused', ['code' => $e->code(), 'status' => $e->status()]);
+            $this->flashDanger($this->apiFailureMessage($e));
+
+            return Response::redirect($back, 303);
+        }
+
+        return Response::html(self::dictionaryCsv($rows))
+            ->withHeader('Content-Type', 'text/csv; charset=UTF-8')
+            ->withHeader('Content-Disposition', 'attachment; filename="' . self::DICTIONARY_FILENAME . '"');
+    }
+
+    /** The metadata rows as CSV, quoted the way a spreadsheet reads it (§3.1 conventions). */
+    public static function dictionaryCsv(array $rows): string
+    {
+        $handle = fopen('php://temp', 'rb+');
+        if ($handle === false) {
+            throw new ApiException('internal', '', 500);
+        }
+        // The empty escape character: quotes are doubled, never backslash-escaped —
+        // the same quoting Go's encoding/csv produces for the API's own dictionary.
+        fputcsv($handle, self::DICTIONARY_COLUMNS, ',', '"', '');
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $line = [];
+            foreach (self::DICTIONARY_COLUMNS as $column) {
+                $line[] = (string) ($row[$column] ?? '');
+            }
+            fputcsv($handle, $line, ',', '"', '');
+        }
+        rewind($handle);
+        $csv = (string) stream_get_contents($handle);
+        fclose($handle);
+
+        return $csv;
     }
 
     /** `<project>_<YYYY-MM-DD>.<ext>` with nothing a header could misread. */

@@ -1,12 +1,14 @@
 <?php
 /**
- * Project page — Export (§6.4, REQ-UI-020): CSV or JSON, codes or labels, the header style,
- * the CSV delimiter, decimal separator and byte-order mark — pre-selected for the UI language
- * ($csvDefaults) — and the arms to include, with a badge stating the sensitivity level the
- * download will be delivered at. The form is a plain GET to this route with `download=1`,
- * which streams the file (REQ-TECH-011); export.js only recomputes the badge when the arm
- * selection changes — without it the badge states the level for all arms, which is what the
- * form sends by default.
+ * Project page — Export (§6.4, REQ-UI-020): two downloads. The data export — CSV or JSON,
+ * codes or labels, the header style, the CSV delimiter, decimal separator and byte-order
+ * mark — pre-selected for the UI language ($csvDefaults) — and the arms to include, with a
+ * badge stating the sensitivity level the download will be delivered at. Its form is a plain
+ * GET to this route with `download=1`, which streams the file (REQ-TECH-011); export.js only
+ * recomputes the badge when the arm selection changes — without it the badge states the level
+ * for all arms, which is what the form sends by default. Beside it, the data dictionary card
+ * links `download=dictionary`: the project's field definitions as `instrument.csv`, design
+ * only and no record values, so it carries none of the form's options (REQ-UI-020).
  *
  * Reads: $exportUrl, $arms (list of {arm_num, name, level, dropped}), $level, $dropped,
  * $formats, $values, $headers, $delimiters, $decimals, $csvDefaults.
@@ -132,3 +134,14 @@ $multiArm = count($arms) > 1;
         </div>
     </form>
 <?php endif; ?>
+
+<!-- The second download of the page (REQ-UI-020): the data dictionary, design only and no
+     record values — a plain link, since it carries none of the form's options. -->
+<div class="card card-body mt-4 clara-dictionary-export">
+    <h2 class="h6 mb-1"><?= View::e($view->t('export.dictionary_title')) ?></h2>
+    <p class="text-body-secondary small mb-3"><?= View::e($view->t('export.dictionary_intro')) ?></p>
+    <div>
+        <a class="btn btn-sm btn-outline-primary" data-clara-dictionary-download
+           href="<?= View::e($exportUrl . '?download=dictionary') ?>"><?= View::e($view->t('export.dictionary_download')) ?></a>
+    </div>
+</div>

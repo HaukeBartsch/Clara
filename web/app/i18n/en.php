@@ -785,7 +785,7 @@ return [
 
     // --- M6: export (§6.4) ---
     'export.title' => 'Export',
-    'export.intro' => 'Download the project\'s data as a file. What the file contains follows your export permissions; the level being applied is shown below before you download.',
+    'export.intro' => 'Download the project\'s data as a file, or its data dictionary below. What the data file contains follows your export permissions; the level being applied is shown below before you download.',
     'export.format' => 'Format',
     'export.format.csv' => 'CSV',
     'export.format.json' => 'JSON',
@@ -816,8 +816,11 @@ return [
     'export.level_help.export_no_identifiers' => 'Every identifier field is left out of the file.',
     'export.level_help.export_de_identified' => 'Direct identifiers are removed, personal fields are pseudonymised and dates are shifted.',
     'export.no_arm' => 'Choose at least one arm to export.',
-    'export.download' => 'Download',
+    'export.download' => 'Download data',
     'export.audit_note' => 'Every download is recorded in the audit log with the level applied.',
+    'export.dictionary_title' => 'Data dictionary',
+    'export.dictionary_intro' => 'The project\'s field definitions — one row per field, the same description the API gives programs. Design only: the file contains no record values.',
+    'export.dictionary_download' => 'Download data dictionary',
     'export.none_here' => 'None of this project\'s instruments at their events are open to you for export. Ask a project administrator for an export.',
     // Stated on the card rather than hidden (§6.4, REQ-UI-020): a partly permitted
     // scope says so, and the count is what the API records alongside the level.

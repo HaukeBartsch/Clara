@@ -4,7 +4,8 @@ import { expect, test, type APIRequestContext, type Browser, type Page } from "@
 // sensitivity level before the download starts, the level follows the arm selection (the most
 // protective of the selected arms, REQ-EXP-003), and the file streams through the PHP route
 // (REQ-TECH-011) as an attachment in the chosen format — for CSV with the chosen delimiter,
-// decimal separator and byte-order mark (REQ-EXP-013/015/016).
+// decimal separator and byte-order mark (REQ-EXP-013/015/016). Beside it, a second control
+// downloads the data dictionary as instrument.csv: the metadata shape, design only.
 //
 // The structure is seeded through the administration API with the development service token
 // of e2e/dev-stack.sh — what this spec asserts is the page, not the designer. Every name is
@@ -118,6 +119,20 @@ test.describe("export (M6)", () => {
     expect(json.suggestedFilename()).toMatch(/\.json$/)
     const rows = JSON.parse(await (await json.createReadStream()).toArray().then((parts) => Buffer.concat(parts).toString("utf8")))
     expect(rows.map((row: Record<string, string>) => row.record_id).sort()).toEqual(["E001", "E002"])
+
+    // --- the second download: the data dictionary as instrument.csv, design only (REQ-UI-020) ---
+    const [dictionary] = await Promise.all([page.waitForEvent("download"), page.locator("[data-clara-dictionary-download]").click()])
+    expect(dictionary.suggestedFilename()).toBe("instrument.csv")
+    const dictText = await (await dictionary.createReadStream()).toArray().then((parts) => Buffer.concat(parts).toString("utf8"))
+    const [dictHeader, ...dictRows] = dictText.trim().split(/\r?\n/)
+    expect(dictHeader.split(",")).toEqual(["field_name", "form_name", "section_header", "field_type", "field_label",
+      "field_note", "select_choices_or_calculations", "choice_codes", "choice_labels", "validation_type",
+      "validation_min", "validation_max", "required_field", "branching_logic", "matrix_group_name",
+      "record_identifier", "direct_identifier"]) // the content=metadata shape (REQ-API-019)
+    expect(dictRows).toHaveLength(4) // one row per designed field, not per record
+    expect(dictRows.join("\n")).toContain("age,instrument,,text,Age")
+    expect(dictRows.join("\n")).toContain("radio")
+    expect(dictRows.join("\n")).not.toContain("E001") // no record values; a choice label may read like one's answer
 
     // --- the member: the most protective selected level is stated, and it follows the selection ---
     const member = await newPage(browser)

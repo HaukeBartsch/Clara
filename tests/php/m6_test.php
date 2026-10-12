@@ -67,12 +67,17 @@ function m6_detail(array $arms, array $grants = []): array
         'permissions' => ['project_admin' => false, 'arms' => $permissionArms, 'grants' => $grants]];
 }
 
-function m6_queue(array $detail, string $mode = 'production'): void
+function m6_queue(array $detail, string $mode = 'production', array $extra = []): void
 {
     queue_shell();
     api_route('/api/v1/projects/3/mode', ['mode' => $mode, 'staging_open' => false]);
     api_route('/api/v1/projects/3/export', "record_id,age,sex\nE001,42,Female\nE002,37,Male\n", 200,
         ['Content-Type' => 'text/csv; charset=utf-8']);
+    // Reads the page under test makes beyond these, queued before the bare project prefix
+    // below: the fake transport answers the first fragment it finds in the URL.
+    foreach ($extra as [$fragment, $body]) {
+        api_route($fragment, $body);
+    }
     api_route('/api/v1/projects/3', $detail);
 }
 
@@ -299,6 +304,66 @@ describe('export download (REQ-TECH-011)', function (): void {
         assert_same('arm=1&arm=3&format=csv', ApiClient::queryString(['arm' => [1, 3], 'format' => 'csv']));
         assert_same('export_de_identified', ExportController::appliedLevel([
             ['level' => 'export_full'], ['level' => 'export_de_identified'], ['level' => 'export_no_identifiers']]));
+    });
+});
+
+describe('data dictionary download (REQ-UI-020, REQ-API-019)', function (): void {
+    it('offers the dictionary beside the data download', function (): void {
+        sign_in();
+        m6_queue(m6_detail([1 => ['view_edit', 'export_full']]));
+
+        $body = m6_get('/projects/3/export')->body();
+
+        assert_contains('data-clara-export-download', $body);
+        assert_contains('Download data</button>', $body, 'the form button says which of the two files it is');
+        assert_contains('clara-dictionary-export', $body);
+        assert_contains('href="/projects/3/export?download=dictionary"', $body);
+        assert_contains('Download data dictionary', $body);
+    });
+
+    it('answers download=dictionary with instrument.csv in the metadata shape', function (): void {
+        sign_in();
+        m6_queue(m6_detail([1 => ['view_edit', 'export_full']]), 'production',
+            [['/api/v1/projects/3/users/7/token', ['token' => 'tok-1']]]);
+        api_route('data:content=metadata', [
+            m6_meta('record_id', 'text', ['form_name' => 'intake', 'record_identifier' => 'Y']),
+            m6_meta('sex', 'radio', ['form_name' => 'intake', 'field_label' => 'Sex, at birth',
+                'select_choices_or_calculations' => '1, Male | 2, Female', 'required_field' => 'Y']),
+        ]);
+
+        $response = m6_get('/projects/3/export', ['download' => 'dictionary']);
+
+        assert_true(!$response->isStream(), 'the dictionary is small: one body, no streaming');
+        assert_same('text/csv; charset=UTF-8', $response->headers()['Content-Type']);
+        assert_same('attachment; filename="instrument.csv"', $response->headers()['Content-Disposition']);
+
+        $sent = data_api_body('content=metadata');
+        assert_same('tok-1', $sent['token'], 'the member\'s own token reads the dictionary (§8.6)');
+
+        $lines = preg_split('/\r?\n/', trim($response->body()));
+        assert_same(['field_name', 'form_name', 'section_header', 'field_type', 'field_label', 'field_note',
+            'select_choices_or_calculations', 'choice_codes', 'choice_labels', 'validation_type', 'validation_min',
+            'validation_max', 'required_field', 'branching_logic', 'matrix_group_name', 'record_identifier',
+            'direct_identifier'], str_getcsv($lines[0], ',', '"', ''), 'the API\'s own column order (REQ-API-019)');
+        assert_same(3, count($lines));
+        $row = str_getcsv($lines[2], ',', '"', '');
+        assert_same('sex', $row[0]);
+        assert_same('Sex, at birth', $row[4], 'a label with a comma survives quoting');
+        assert_same('1, Male | 2, Female', $row[6]);
+        assert_same('Y', $row[12], 'required_field');
+    });
+
+    it('turns a refused metadata read into a line on the page', function (): void {
+        sign_in(['csrf_token' => M6_CSRF]);
+        m6_queue(m6_detail([1 => ['view_edit', 'export_full']]), 'production',
+            [['/api/v1/projects/3/users/7/token', ['token' => 'tok-1']]]);
+        api_route('data:content=metadata', ['error' => 'Permission denied'], 403);
+
+        $response = m6_get('/projects/3/export', ['download' => 'dictionary']);
+
+        assert_same(303, $response->status());
+        assert_same('/projects/3/export', $response->headers()['Location']);
+        assert_contains('You do not have permission', $_SESSION['_flash'][0]['text']);
     });
 });
 
