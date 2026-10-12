@@ -601,4 +601,80 @@ describe('saving and deleting (§8.6, §8.7)', function (): void {
         assert_not_contains('Revoke link', $done);
         assert_contains('Get a new link', $done, 're-issue stays offered; the API refuses it over stored values');
     });
+
+    it('offers a not-yet-stored participant its survey link, with no report to read (REQ-UI-051)', function (): void {
+        sign_in();
+        m5_queue('view_edit');
+        $body = m5_get('/projects/3/records/8DISC009', ['event' => 'baseline_arm_1', 'instrument' => 'scores'])->body();
+
+        assert_contains('clara-survey-link', $body);
+        assert_contains('name="create_record" value="1"', $body);
+        assert_contains('Getting a link stores 8DISC009 as a participant first.', $body);
+        assert_contains('Store 8DISC009 as a new participant and issue a survey link for form scores at baseline?', $body);
+        assert_not_contains('Revoke link', $body);
+        assert_same(0, api_calls_to('/survey-link'), 'the API holds no link for a record it does not have');
+
+        // Not a survey, not view_edit on the pair, or analysis mode: nothing to offer.
+        foreach ([['view_edit', 'development', 'intake'], ['read_only', 'development', 'scores'],
+            ['view_edit', 'analysis', 'scores']] as [$level, $mode, $instrument]) {
+            resetApi();
+            m5_queue($level, $mode);
+            $closed = m5_get('/projects/3/records/8DISC009', ['event' => 'baseline_arm_1', 'instrument' => $instrument])->body();
+            assert_contains('clara-record-new', $closed, 'the view itself still renders');
+            assert_not_contains('action=survey_link', $closed, $level . '/' . $mode . '/' . $instrument);
+        }
+    });
+
+    it('stores a new participant with the identifier-only import, then issues its link (REQ-UI-051)', function (): void {
+        sign_in(['csrf_token' => M5_CSRF]);
+        m5_queue();
+        api_route('data:action=import', [['record_id' => '8DISC009', 'form_name' => 'scores', 'import_record_id' => 1, 'import_form_name' => 'scores']]);
+
+        $response = m5_post('/projects/3/records/8DISC009',
+            ['iid' => '12', 'event' => 'baseline_arm_1', 'instrument' => 'scores', 'create_record' => '1'], 'survey_link');
+
+        assert_same('/projects/3/records/8DISC009?event=baseline_arm_1&instrument=scores', $response->headers()['Location']);
+        // Exactly what a save of the empty form sends: the identifier at the selected event (GD-8).
+        assert_same(['record_id' => '8DISC009', 'form_name' => 'scores', 'event_name' => 'baseline_arm_1'],
+            data_api_body('action=import')['data'][0]);
+        $calls = array_values(array_filter($GLOBALS['api_calls'], static fn (array $c): bool =>
+            str_ends_with($c['url'], '/api/') || str_contains($c['url'], '/survey-link')));
+        assert_same(2, count($calls));
+        assert_true(str_ends_with($calls[0]['url'], '/api/') && $calls[1]['method'] === 'POST',
+            'the record is stored before its link is issued');
+        assert_contains('event=baseline_arm_1', $calls[1]['url']);
+        assert_contains('8DISC009 was stored as a participant', $_SESSION['_flash'][0]['text']);
+
+        // A stored record's re-issue never imports.
+        sign_in(['csrf_token' => M5_CSRF]);
+        resetApi();
+        m5_queue();
+        m5_post('/projects/3/records/8DISC001', ['iid' => '12', 'event' => 'baseline_arm_1', 'instrument' => 'scores'], 'survey_link');
+        assert_same(0, data_api_calls('action=import'));
+        assert_same(1, m4_count('POST', '/survey-link'));
+    });
+
+    it('issues no link when the new participant cannot be stored, and says why (REQ-UI-051)', function (): void {
+        sign_in(['csrf_token' => M5_CSRF]);
+        m5_queue();
+        api_route('data:action=import', [['record_id' => '8DISC009', 'form_name' => 'scores', 'import_record_id' => 0,
+            'import_form_name' => 'Validation error: record_id: PERMISSION_DENIED — the record belongs to another data access group']]);
+
+        m5_post('/projects/3/records/8DISC009',
+            ['iid' => '12', 'event' => 'baseline_arm_1', 'instrument' => 'scores', 'create_record' => '1'], 'survey_link');
+
+        assert_same(0, m4_count('POST', '/survey-link'));
+        assert_contains('8DISC009 could not be stored, so no survey link was issued', $_SESSION['_flash'][0]['text']);
+        assert_contains('belongs to another data access group', $_SESSION['_flash'][0]['text']);
+
+        // Analysis mode refuses the import itself (REQ-API-109): named, and still no link.
+        sign_in(['csrf_token' => M5_CSRF]);
+        resetApi();
+        m5_queue();
+        api_route('data:action=import', ['error' => 'Project in analysis mode'], 403);
+        m5_post('/projects/3/records/8DISC009',
+            ['iid' => '12', 'event' => 'baseline_arm_1', 'instrument' => 'scores', 'create_record' => '1'], 'survey_link');
+        assert_contains('analysis mode', $_SESSION['_flash'][0]['text']);
+        assert_same(0, m4_count('POST', '/survey-link'));
+    });
 });

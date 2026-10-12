@@ -160,4 +160,64 @@ test.describe("public survey page (M6)", () => {
     await expect(respondent.locator(".clara-survey-notice")).toContainText("no longer valid")
     await expect(respondent.locator(".clara-survey-form")).toHaveCount(0)
   })
+
+  // REQ-UI-051: a participant created on the Record Status Dashboard is not stored until
+  // something is imported for it, and the API holds no link for a record it does not have — so
+  // "Get link" on the new participant's survey form stores it first, then issues the link.
+  test("a new participant gets a survey link without saving a form first", async ({ browser, page, request, baseURL }) => {
+    test.setTimeout(120_000)
+    const tag = Date.now()
+
+    const project = await admin(request, "POST", "/api/v1/projects",
+      { project_name: `M6 new-participant survey ${tag}`, organization: "Org", participant_names: "S[0-9][0-9][0-9]" })
+    const base = `/api/v1/projects/${project.id}`
+    const [first] = await admin(request, "GET", `${base}/instruments`)
+    await admin(request, "POST", `${base}/instruments/${first.id}/fields`, { field_name: "record_id", field_type: "text" })
+    const survey = await admin(request, "POST", `${base}/instruments`, { name: "feedback" })
+    await admin(request, "PUT", `${base}/instruments/${survey.id}`, { is_survey: true })
+    await admin(request, "PUT", `${base}/instrument-event-mapping`,
+      { arm_num: 1, mapping: { instrument: ["baseline_arm_1"], feedback: ["baseline_arm_1"] } })
+    await admin(request, "POST", `${base}/instruments/${survey.id}/fields`,
+      { field_name: "happy", field_type: "radio", field_label: "Are you happy?", choices: "1$Yes##2$No" })
+    await admin(request, "PUT", `${base}/users/1`, { role: null })
+
+    await page.goto("/login")
+    await page.getByRole("radio", { name: "Local", exact: true }).check()
+    await page.fill("#login-email", ADMIN_EMAIL)
+    await page.fill("#login-password", ADMIN_PASSWORD)
+    await page.locator('form[action="/login?action=credentials"] button[type="submit"]').click()
+
+    // --- the dashboard's new-participant form opens the record view; nothing is stored yet ---
+    await page.goto(`/projects/${project.id}/record-status`)
+    await page.fill("#new-record-id", "S002")
+    await page.locator(".clara-new-record").getByRole("button", { name: "Create" }).click()
+    await expect(page.locator(".clara-record-new")).toBeVisible()
+    await page.locator(".clara-instrument-nav").getByRole("link", { name: /feedback/ }).click()
+
+    const section = page.locator(".clara-survey-link")
+    await expect(section).toContainText("Getting a link stores S002 as a participant first.")
+    await section.getByRole("button", { name: "Get link" }).click()
+    await expect(page.locator("#clara-confirm")).toContainText("Store S002 as a new participant")
+    await page.locator("#clara-confirm [data-clara-confirm-ok]").click()
+
+    // --- back on the same (record, event, instrument): stored, and the live link to copy ---
+    await expect(page.locator(".clara-record-new")).toHaveCount(0)
+    await expect(page.getByText("S002 was stored as a participant and a survey link was issued.")).toBeVisible()
+    await expect(page.locator("#record-event")).toHaveValue("baseline_arm_1")
+    const link = await page.locator("#clara-survey-url").inputValue()
+    expect(link.startsWith(`${baseURL}/s/`)).toBeTruthy()
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: baseURL })
+    await section.getByRole("button", { name: "Copy" }).click()
+    await expect(section.getByRole("button", { name: "Copied" })).toBeVisible()
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(link)
+
+    // The participant is on the dashboard now — stored by the link, not by a save.
+    await page.goto(`/projects/${project.id}/record-status`)
+    await expect(page.locator('tr[data-record="S002"]')).toBeVisible()
+
+    // --- and the link is a working survey for that participant ---
+    const respondent = await (await browser.newContext()).newPage()
+    expect((await respondent.goto(link))?.status()).toBe(200)
+    await expect(respondent.getByText("Are you happy?")).toBeVisible()
+  })
 })

@@ -260,12 +260,21 @@ final class RecordController extends DataEntryController
      * first, through the delete action beside it (REQ-UI-027), and `linkCall` surfaces that
      * message instead of swallowing it (REQ-UI-028). The URL itself comes from the state report
      * the next render reads — issuing here writes no session copy of it.
+     *
+     * A participant the dashboard opened but nothing has stored yet (§6.3) is stored first:
+     * the API holds no link for a record it does not have (§4.17), so the form of a new record
+     * carries `create_record` and the identifier-only import runs before the link (REQ-UI-051).
      */
     public function surveyLink(): Response
     {
+        $create = $this->request->field('create_record') === '1';
+        if ($create && ($refused = $this->storeForLink()) !== null) {
+            return $refused;
+        }
+
         return $this->linkCall(function (int $projectId, string $record, int $iid, string $event): void {
             $this->api->post($this->linkPath($projectId, $record, $iid), [], ['event' => $event]);
-        }, 'record.survey.issued');
+        }, $create ? 'record.survey.issued_new' : 'record.survey.issued');
     }
 
     /** POST …?action=revoke_link — `DELETE …/survey-link`, effective immediately (REQ-AUTH-040). */
@@ -352,9 +361,11 @@ final class RecordController extends DataEntryController
         // Survey-link actions: survey-marked instruments, data access ≥ view_edit on this pair
         // (REQ-API-082). The report then says which of the three the link's state offers (§8.7,
         // REQ-UI-028) — reading it is free, so the view shows the state instead of remembering
-        // that a button was pressed.
-        $canLink = $isSurvey && $exists && $permissions->canEditPair($uen, $instrumentName, $armNum);
-        $link = $canLink ? $this->linkReport($projectId, $record, $iid, $uen) : null;
+        // that a button was pressed. A participant not stored yet has no link to report; getting
+        // one stores it first, which analysis mode refuses like any import (REQ-UI-051/035).
+        $canLink = $isSurvey && ($exists || !$analysis) && $permissions->canEditPair($uen, $instrumentName, $armNum);
+        $link = !$canLink ? null : ($exists ? $this->linkReport($projectId, $record, $iid, $uen)
+            : ['state' => 'none', 'url' => '', 'collected_at' => '']);
 
         return $this->renderSection($detail, 'project/record', 'record.title', [
             'record' => $record,
@@ -643,10 +654,54 @@ final class RecordController extends DataEntryController
             return $back;
         }
         if ($successKey !== '') {
-            $this->flashSuccess($this->i18n->t($successKey));
+            $this->flashSuccess($this->i18n->t($successKey, ['record' => $record]));
         }
 
         return $back;
+    }
+
+    /**
+     * Stores a participant the record view opened but nothing has saved yet, so that its survey
+     * link has a record to belong to (REQ-UI-051). It is the import a save of the empty form
+     * sends — the record identifier alone, at the selected event (GD-8) — which creates the
+     * record in the member's active data access group and audits it like any first save
+     * (REQ-API-033/093). Answers the redirect that ends the request when the import was
+     * refused, so no link is issued for a record that is not there; null once it is stored.
+     */
+    private function storeForLink(): ?Response
+    {
+        $projectId = $this->projectIdFromPath();
+        $record = $this->recordFromPath();
+        $event = $this->request->field('event');
+        $instrument = $this->request->field('instrument');
+        $back = Response::redirect(self::recordUrl($projectId, $record, $event, $instrument));
+
+        if (!self::isName($event) || !self::isName($instrument)) {
+            $this->flashDanger($this->i18n->t('error.invalid_request'));
+
+            return $back;
+        }
+
+        try {
+            $result = $this->dataCall($projectId, ['content' => 'record', 'action' => 'import',
+                'data' => [['record_id' => $record, 'form_name' => $instrument, 'event_name' => $event]]]);
+        } catch (ApiException $e) {
+            $this->flashDanger($this->dataApiFailure($e));
+
+            return $back;
+        }
+
+        $outcome = is_array($result[0] ?? null) ? $result[0] : [];
+        $code = (int) ($outcome['import_record_id'] ?? 0);
+        if ($code !== 1 && $code !== 2) {
+            // The row-level reasons, as a save shows them beside its fields (§8.6).
+            $this->flashDanger($this->i18n->t('record.survey.store_failed', ['record' => $record,
+                'reason' => implode('; ', DataEntry::importErrors((string) ($outcome['import_form_name'] ?? '')))]));
+
+            return $back;
+        }
+
+        return null;
     }
 
     private function linkPath(int $projectId, string $record, int $iid): string

@@ -171,6 +171,10 @@ $stateBadge = [
                     ? $view->t('record.survey.state.submitted', ['date' => $link['collected_at']])
                     : $view->t('record.survey.state.' . $link['state'])) ?>
             </p>
+            <?php if (!$exists): ?>
+                <!-- A participant not stored yet: getting the link stores it first (REQ-UI-051). -->
+                <p class="small mb-2"><?= View::e($view->t('record.survey.new_record', ['record' => $record])) ?></p>
+            <?php endif; ?>
             <?php if ($link['url'] !== ''): ?>
                 <div class="input-group input-group-sm mb-2">
                     <input class="form-control" type="text" id="clara-survey-url" value="<?= View::e($link['url']) ?>" readonly
@@ -179,11 +183,20 @@ $stateBadge = [
                 </div>
             <?php endif; ?>
             <div class="d-flex flex-wrap gap-2">
-                <form method="post" action="<?= View::e($act('survey_link')) ?>"
-                      data-clara-confirm="<?= View::e($view->t('record.survey.confirm_get', ['record' => $record, 'instrument' => $instrumentName])) ?>">
-                    <?= $view->csrfField() ?><?= $hidden($here) ?>
-                    <button class="btn btn-sm btn-outline-primary" type="submit"><?= View::e($view->t('record.survey.get')) ?></button>
-                </form>
+                <?php if ($exists): ?>
+                    <form method="post" action="<?= View::e($act('survey_link')) ?>"
+                          data-clara-confirm="<?= View::e($view->t('record.survey.confirm_get', ['record' => $record, 'instrument' => $instrumentName])) ?>">
+                        <?= $view->csrfField() ?><?= $hidden($here) ?>
+                        <button class="btn btn-sm btn-outline-primary" type="submit"><?= View::e($view->t('record.survey.get')) ?></button>
+                    </form>
+                <?php else: ?>
+                    <form method="post" action="<?= View::e($act('survey_link')) ?>"
+                          data-clara-confirm="<?= View::e($view->t('record.survey.confirm_create',
+                              ['record' => $record, 'instrument' => $instrumentName, 'event' => (string) ($event['event_name'] ?? $uen)])) ?>">
+                        <?= $view->csrfField() ?><?= $hidden($here + ['create_record' => '1']) ?>
+                        <button class="btn btn-sm btn-primary" type="submit"><?= View::e($view->t('record.survey.get_first')) ?></button>
+                    </form>
+                <?php endif; ?>
                 <?php if ($link['state'] === 'live'): ?>
                     <form method="post" action="<?= View::e($act('revoke_link')) ?>"
                           data-clara-confirm="<?= View::e($view->t('record.survey.confirm_revoke', ['record' => $record, 'instrument' => $instrumentName])) ?>">

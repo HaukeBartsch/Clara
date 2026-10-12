@@ -655,7 +655,7 @@ return [
     'record.title' => 'Record',
     'record.heading' => 'Record {record}',
     'record.back' => '← Record Status Dashboard',
-    'record.new_notice' => 'New participant — nothing is stored until you save a form for the first time.',
+    'record.new_notice' => 'New participant — nothing is stored until you save a form or get a survey link for the first time.',
     'record.analysis_notice' => 'Analysis mode — data entry is closed. Values are shown read-only.',
     'record.event' => 'Event',
     'record.go' => 'Show',
@@ -709,6 +709,13 @@ return [
     'record.survey.confirm_revoke' => 'Revoke the survey link of {record} for {instrument}? It stops working immediately; "Get a new link" issues another one.',
     'record.survey.issued' => 'A new survey link was issued.',
     'record.survey.revoked' => 'The survey link was revoked.',
+    // A participant not stored yet (REQ-UI-051): getting its first link stores it, and every text
+    // around that control says so — the record appears on the dashboard from then on.
+    'record.survey.new_record' => 'Getting a link stores {record} as a participant first.',
+    'record.survey.get_first' => 'Get link',
+    'record.survey.confirm_create' => 'Store {record} as a new participant and issue a survey link for form {instrument} at {event}?',
+    'record.survey.issued_new' => '{record} was stored as a participant and a survey link was issued.',
+    'record.survey.store_failed' => '{record} could not be stored, so no survey link was issued: {reason}',
     'record.group.title' => 'Data access group',
     'record.group.label' => 'Assign the record to',
     'record.group.choose' => 'Choose a group…',
