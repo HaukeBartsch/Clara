@@ -136,7 +136,8 @@ final class DesignController extends StructureController
      * POST …?action=save_field — `POST …/fields` for a new field (appended at the end),
      * `PUT …/fields/{fid}` for an existing one. A rename renames the stored values in the same
      * transaction (REQ-VAL-014); a name over 26 characters is a warning in the form, never a
-     * refusal here (REQ-VAL-013).
+     * refusal here (REQ-VAL-013). A successful save returns to the field list — the form closes;
+     * a refused write keeps `?field=` so the draft re-renders.
      */
     public function saveField(): Response
     {
@@ -146,12 +147,18 @@ final class DesignController extends StructureController
         $name = (string) $body['field_name'];
         $editor = $this->editorUrl($iid);
         $savedId = $fieldId;
+        $stored = false;
 
         return $this->structureWrite(
-            static function () use ($editor, &$savedId): string {
+            static function () use ($editor, &$savedId, &$stored): string {
+                // A saved field closes the form; a rejected one re-opens it with the draft.
+                if ($stored) {
+                    return $editor;
+                }
+
                 return $editor . '?field=' . ($savedId === 0 ? 'new' : $savedId);
             },
-            function (int $projectId) use ($iid, $fieldId, $body, &$savedId): void {
+            function (int $projectId) use ($iid, $fieldId, $body, &$savedId, &$stored): void {
                 $path = '/api/v1/projects/' . $projectId . '/instruments/' . $iid . '/fields';
                 if ($fieldId === 0) {
                     $created = $this->api->post($path, $this->withAck($body));
@@ -159,6 +166,7 @@ final class DesignController extends StructureController
                 } else {
                     $this->api->put($path . '/' . $fieldId, $this->withAck($body));
                 }
+                $stored = true;
             },
             $this->i18n->t($fieldId === 0 ? 'design.field.added' : 'design.field.updated', ['name' => $name]),
             function () use ($fieldId, $body): void {
