@@ -27,6 +27,7 @@ var wantFiles = []string{
 	"0011_role_pair_grants.sql",
 	"0012_session_epoch.sql",
 	"0013_record_naming.sql",
+	"0014_field_annotation.sql",
 }
 
 var dialects = []string{"sqlite", "mariadb"}

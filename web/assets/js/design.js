@@ -16,15 +16,18 @@ import { el, fetchJson, ready, t } from "../app.js"
 
 // --- 1. expression editors ---
 
-const TOKEN = /\[[^\]]*\](?:\[[^\]]*\])?|"(?:[^"\\]|\\.)*"?|\d+(?:\.\d+)?|&&|\|\||!=|<=|>=|[=<>+\-*/()]|[A-Za-z_][A-Za-z0-9_]*|\s+|./gu
+// REDCap's spellings are part of the branching grammar (REQ-VAL-044) and colour like their
+// counterparts: 'single-quoted' strings, and / or, <>, and a box written [field(code)].
+const TOKEN = /\[[^\]]*\](?:\[[^\]]*\])?|"(?:[^"\\]|\\.)*"?|'(?:[^'\\]|\\.)*'?|\d+(?:\.\d+)?|&&|\|\||!=|<>|<=|>=|[=<>+\-*/()]|[A-Za-z_][A-Za-z0-9_]*|\s+|./gu
 
 const tokenClass = (text) => {
   if (text.startsWith("[")) return "clara-tok-ref"
-  if (text.startsWith('"')) return "clara-tok-str"
+  if (text.startsWith('"') || text.startsWith("'")) return "clara-tok-str"
   if (/^\d/.test(text)) return "clara-tok-num"
+  if (/^(and|or)$/i.test(text)) return "clara-tok-op"
   if (/^[A-Za-z_]/.test(text)) return "clara-tok-fn"
   if (/^\s+$/.test(text)) return ""
-  if (/^(&&|\|\||!=|<=|>=|[=<>+\-*/()])$/.test(text)) return "clara-tok-op"
+  if (/^(&&|\|\||!=|<>|<=|>=|[=<>+\-*/()])$/.test(text)) return "clara-tok-op"
   return "clara-tok-other"
 }
 

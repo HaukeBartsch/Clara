@@ -3,7 +3,9 @@
  * The fields of one instrument form, in position order (§8.2, REQ-UI-025): single fields,
  * matrix groups with the coding stated once, checkbox groups (one value per box, REQ-DB-042),
  * yes/no pairs labelled in the interface language (REQ-DB-043), text areas for notes (REQ-DB-044),
- * section headings, descriptions and headers, calculated values read-only. Shared by the record view (§8) and the public survey page
+ * section headings, descriptions and headers, calculated values read-only, and a field annotated
+ * `@READONLY` shown the way a member without edit rights sees it — its value, no input
+ * (REQ-DB-046). Labels, section headers and notes keep their line breaks. Shared by the record view (§8) and the public survey page
  * (§8.8) so the two render one instrument the same way — the evaluator they both run
  * (branching.js, §8.4) reads the same `data-clara-*` attributes from this markup.
  *
@@ -80,7 +82,7 @@ $fieldAttrs = static function (array $field, ?string $staticValue = null) use ($
 ?>
 <?php foreach ($items as $item): ?>
     <?php if ($item['section'] !== ''): ?>
-        <h2 class="h6 border-bottom pb-1 mt-3 clara-section-header"><?= View::e($item['section']) ?></h2>
+        <h2 class="h6 border-bottom pb-1 mt-3 clara-section-header"><?= View::lines($item['section']) ?></h2>
     <?php endif; ?>
 
     <?php if ($item['kind'] === 'matrix'): ?>
@@ -97,15 +99,15 @@ $fieldAttrs = static function (array $field, ?string $staticValue = null) use ($
                 </tr></thead>
                 <tbody>
                 <?php foreach ($item['fields'] as $field): ?>
-                    <?php $name = (string) $field['field_name']; $value = $shown($name); ?>
-                    <tr<?= $fieldAttrs($field, $canEdit ? null : $value) ?>>
+                    <?php $name = (string) $field['field_name']; $value = $shown($name); $rowEditable = $canEdit && !DataEntry::isReadonly($field); ?>
+                    <tr<?= $fieldAttrs($field, $rowEditable ? null : $value) ?>>
                         <th scope="row" class="fw-normal">
-                            <?= View::e($field['field_label'] ?? $name) ?><?php if (!empty($field['required'])): ?><span class="clara-required" aria-hidden="true"> *</span><?php endif; ?>
+                            <?= View::lines($field['field_label'] ?? $name) ?><?php if (!empty($field['required'])): ?><span class="clara-required" aria-hidden="true"> *</span><?php endif; ?>
                             <?php if (isset($errors[$name])): ?><div class="text-danger small" data-clara-error><?= View::e($errors[$name]) ?></div><?php endif; ?>
                         </th>
                         <?php foreach ($item['choices'] as $choice): ?>
                             <td class="text-center">
-                                <?php if ($canEdit): ?>
+                                <?php if ($rowEditable): ?>
                                     <input class="form-check-input" type="radio" name="value[<?= View::e($name) ?>]" value="<?= View::e($choice['code']) ?>"
                                            aria-label="<?= View::e(($field['field_label'] ?? $name) . ': ' . $choice['label']) ?>"<?= $value === $choice['code'] ? ' checked' : '' ?>>
                                 <?php elseif ($value === $choice['code']): ?>
@@ -114,7 +116,7 @@ $fieldAttrs = static function (array $field, ?string $staticValue = null) use ($
                             </td>
                         <?php endforeach; ?>
                         <td class="text-end text-nowrap">
-                            <?php if ($canEdit): ?>
+                            <?php if ($rowEditable): ?>
                                 <input type="hidden" name="was[<?= View::e($name) ?>]" value="<?= View::e($prefill[$name] ?? '') ?>">
                                 <button class="btn btn-sm btn-link p-0 me-1 d-none" type="button" data-clara-reset><?= View::e($view->t('record.reset')) ?></button>
                             <?php endif; ?>
@@ -139,28 +141,31 @@ $fieldAttrs = static function (array $field, ?string $staticValue = null) use ($
     $id = 'f-' . $name;
     $value = $shown($name);
     $isIdentifier = $name === $identifier;
+    // `@READONLY` (REQ-DB-046): shown, never an input — on the survey page as well.
+    $editable = $canEdit && !DataEntry::isReadonly($field);
     // A rejected box's reason belongs to its checkbox (REQ-DB-042).
     $error = implode('; ', array_values(array_intersect_key($errors,
         array_flip(array_merge([$name], $type === 'checkbox' ? DataEntry::valueNames($field) : [])))));
     ?>
     <?php if ($type === 'header'): ?>
-        <h2 class="h6 mt-3 clara-field-header"<?= $fieldAttrs($field) ?>><?= View::e($label) ?></h2>
+        <h2 class="h6 mt-3 clara-field-header"<?= $fieldAttrs($field) ?>><?= View::lines($label) ?></h2>
         <?php continue; ?>
     <?php endif; ?>
     <?php if ($type === 'description'): ?>
-        <p class="clara-field-description"<?= $fieldAttrs($field) ?>><?= View::e($label) ?>
-            <?php if (($field['field_note'] ?? '') !== ''): ?><span class="d-block form-text"><?= View::e($field['field_note']) ?></span><?php endif; ?></p>
+        <p class="clara-field-description"<?= $fieldAttrs($field) ?>><?= View::lines($label) ?>
+            <?php if (($field['field_note'] ?? '') !== ''): ?><span class="d-block form-text"><?= View::lines($field['field_note']) ?></span><?php endif; ?></p>
         <?php continue; ?>
     <?php endif; ?>
 
-    <?php $static = !$canEdit || $isIdentifier || $type === 'calculated' ? ($isIdentifier && $value === '' ? $record : $value) : null; ?>
+    <?php $static = !$editable || $isIdentifier || $type === 'calculated' ? ($isIdentifier && $value === '' ? $record : $value) : null; ?>
     <div class="mb-3 clara-field<?= $error !== '' ? ' clara-field-invalid' : '' ?>"<?= $fieldAttrs($field, $static) ?>>
         <div class="d-flex align-items-start gap-2">
             <div class="flex-grow-1">
-                <?php if (in_array($type, ['radio', 'yesno', 'checkbox'], true) && $canEdit && !$isIdentifier): ?>
-                    <div class="form-label mb-1" id="<?= View::e($id) ?>-label"><?= View::e($label !== '' ? $label : $name) ?><?php if (!empty($field['required'])): ?><span class="clara-required" aria-hidden="true"> *</span><?php endif; ?></div>
+                <?php if (in_array($type, ['radio', 'yesno', 'checkbox'], true) && $editable && !$isIdentifier): ?>
+                    <div class="form-label mb-1" id="<?= View::e($id) ?>-label"><?= View::lines($label !== '' ? $label : $name) ?><?php if (!empty($field['required'])): ?><span class="clara-required" aria-hidden="true"> *</span><?php endif; ?></div>
                 <?php else: ?>
-                    <label class="form-label mb-1" for="<?= View::e($id) ?>"><?= View::e($label !== '' ? $label : $name) ?><?php if (!empty($field['required'])): ?><span class="clara-required" aria-hidden="true"> *</span><?php endif; ?></label>
+                    <label class="form-label mb-1" for="<?= View::e($id) ?>"><?= View::lines($label !== '' ? $label : $name) ?><?php if (!empty($field['required'])): ?><span class="clara-required" aria-hidden="true"> *</span><?php endif; ?><?php if ($canEdit && !$editable): ?>
+                        <span class="badge text-bg-light border ms-1 clara-readonly"><?= View::e($view->t('record.readonly')) ?></span><?php endif; ?></label>
                 <?php endif; ?>
 
                 <?php if ($isIdentifier): ?>
@@ -175,7 +180,7 @@ $fieldAttrs = static function (array $field, ?string $staticValue = null) use ($
                 <?php elseif ($type === 'calculated'): ?>
                     <!-- Calculated (REQ-VAL-036): a read-only value, recomputed by the API on import. -->
                     <output class="form-control form-control-sm bg-body-tertiary" id="<?= View::e($id) ?>"><?= $value === '' ? '<span class="text-body-secondary">—</span>' : View::e($value) ?></output>
-                <?php elseif (!$canEdit && $type === 'checkbox'): ?>
+                <?php elseif (!$editable && $type === 'checkbox'): ?>
                     <!-- The checked boxes; every box carries its state for the evaluator (§8.4). -->
                     <div class="form-control-plaintext py-0 clara-value" id="<?= View::e($id) ?>">
                         <?php $anyChecked = false; ?>
@@ -187,7 +192,7 @@ $fieldAttrs = static function (array $field, ?string $staticValue = null) use ($
                         <?php endforeach; ?>
                         <?php if (!$anyChecked): ?><span class="text-body-secondary">—</span><?php endif; ?>
                     </div>
-                <?php elseif (!$canEdit): ?>
+                <?php elseif (!$editable): ?>
                     <div class="form-control-plaintext py-0 clara-value<?= $type === 'notes' ? ' clara-notes' : '' ?>" id="<?= View::e($id) ?>"><?= $display($field, $value) ?></div>
                 <?php elseif ($type === 'dropdown'): ?>
                     <select class="form-select form-select-sm" id="<?= View::e($id) ?>" name="value[<?= View::e($name) ?>]">
@@ -242,13 +247,13 @@ $fieldAttrs = static function (array $field, ?string $staticValue = null) use ($
                            <?= $format !== '' ? 'placeholder="' . View::e($format) . '"' : '' ?> autocomplete="off">
                 <?php endif; ?>
 
-                <?php if ($canEdit && !$isIdentifier && DataEntry::isEnterable($field)): ?>
+                <?php if ($editable && !$isIdentifier && DataEntry::isEnterable($field)): ?>
                     <?php foreach (DataEntry::valueNames($field) as $valueName): ?>
                         <input type="hidden" name="was[<?= View::e($valueName) ?>]" value="<?= View::e($prefill[$valueName] ?? '') ?>">
                     <?php endforeach; ?>
                 <?php endif; ?>
                 <?php if (($field['field_note'] ?? '') !== ''): ?>
-                    <div class="form-text"><?= View::e($field['field_note']) ?></div>
+                    <div class="form-text"><?= View::lines($field['field_note']) ?></div>
                 <?php endif; ?>
                 <?php if ($error !== ''): ?>
                     <div class="text-danger small" data-clara-error><?= View::e($error) ?></div>

@@ -570,7 +570,7 @@ func (s *Store) MaterializePairGrantsTx(ctx context.Context, tx *sql.Tx, project
 const fieldColumns = `id, project_id, instrument_id, field_name, field_label,
 	field_type, section_header, choices, field_note,
 	validation_type, validation_format, validation_min, validation_max,
-	required, branching_logic, calculation, matrix_group,
+	required, branching_logic, calculation, matrix_group, field_annotation,
 	personal_information, direct_identifier, export_approved, position`
 
 func scanField(row interface{ Scan(dest ...any) error }) (Field, error) {
@@ -588,6 +588,7 @@ func scanField(row interface{ Scan(dest ...any) error }) (Field, error) {
 		branchingLogic any
 		calculation    any
 		matrixGroup    any
+		annotation     any
 		personalInfo   int
 		directIdent    int
 		exportApproved int
@@ -595,7 +596,7 @@ func scanField(row interface{ Scan(dest ...any) error }) (Field, error) {
 	err := row.Scan(&f.ID, &f.ProjectID, &f.InstrumentID, &f.FieldName, &fieldLabel,
 		&f.FieldType, &sectionHeader, &choices, &fieldNote,
 		&validationType, &validationFmt, &validationMin, &validationMax,
-		&required, &branchingLogic, &calculation, &matrixGroup,
+		&required, &branchingLogic, &calculation, &matrixGroup, &annotation,
 		&personalInfo, &directIdent, &exportApproved, &f.Position)
 	if err != nil {
 		return f, err
@@ -637,6 +638,9 @@ func scanField(row interface{ Scan(dest ...any) error }) (Field, error) {
 	if v, ok := nullAnyString(matrixGroup); ok {
 		f.MatrixGroup = sql.NullString{String: v, Valid: true}
 	}
+	if v, ok := nullAnyString(annotation); ok {
+		f.FieldAnnotation = sql.NullString{String: v, Valid: true}
+	}
 	return f, nil
 }
 
@@ -645,9 +649,9 @@ func scanField(row interface{ Scan(dest ...any) error }) (Field, error) {
 const fieldInsertSQL = `INSERT INTO fields (project_id, instrument_id, field_name, field_label,
 	field_type, section_header, choices, field_note,
 	validation_type, validation_format, validation_min, validation_max,
-	required, branching_logic, calculation, matrix_group,
+	required, branching_logic, calculation, matrix_group, field_annotation,
 	personal_information, direct_identifier, export_approved, position)
-	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 func fieldInsertArgs(f *Field) []any {
 	return []any{
@@ -655,7 +659,7 @@ func fieldInsertArgs(f *Field) []any {
 		f.FieldType, nullStr(f.SectionHeader), nullStr(f.Choices), nullStr(f.FieldNote),
 		nullStr(f.ValidationType), nullStr(f.ValidationFormat), nullStr(f.ValidationMin), nullStr(f.ValidationMax),
 		boolToInt(f.Required), nullStr(f.BranchingLogic), nullStr(f.Calculation), nullStr(f.MatrixGroup),
-		boolToInt(f.PersonalInformation), boolToInt(f.DirectIdentifier), boolToInt(f.ExportApproved), f.Position,
+		nullStr(f.FieldAnnotation), boolToInt(f.PersonalInformation), boolToInt(f.DirectIdentifier), boolToInt(f.ExportApproved), f.Position,
 	}
 }
 

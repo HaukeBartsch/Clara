@@ -986,8 +986,9 @@ func TestFieldValidationRules(t *testing.T) {
 	if code := post(map[string]any{"field_name": "a", "field_type": "radio", "choices": "1$yes##2$"}); code != http.StatusBadRequest {
 		t.Fatalf("empty choice label: %d, want 400", code)
 	}
-	if code := post(map[string]any{"field_name": "a", "field_type": "radio", "choices": "1$yes##x$no"}); code != http.StatusBadRequest {
-		t.Fatalf("non-numeric choice code: %d, want 400", code)
+	// Codes may be text (REQ-VAL-022) but never hold a space or punctuation.
+	if code := post(map[string]any{"field_name": "a", "field_type": "radio", "choices": "1$yes##x y$no"}); code != http.StatusBadRequest {
+		t.Fatalf("choice code with a space: %d, want 400", code)
 	}
 	if code := post(map[string]any{"field_name": "a", "field_type": "text", "validation_type": "integer", "validation_min": "1.5"}); code != http.StatusBadRequest {
 		t.Fatalf("non-integer min: %d, want 400", code)

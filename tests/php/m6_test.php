@@ -385,6 +385,7 @@ describe('public survey page (§8.8, REQ-UI-028)', function (): void {
         // state, because the answer did arrive either way.
         resetApi();
         queue_shell();
+        api_route('data:content=metadata', [m6_meta('age', 'text')]);
         api_route('data:action=import', ['error' => 'Survey already submitted'], 410);
         $again = router_for(http_request('POST', M6_LINK, browser_headers(),
             ['value' => ['age' => '1'], 'was' => []]))->dispatch();
@@ -400,6 +401,8 @@ describe('public survey page (§8.8, REQ-UI-028)', function (): void {
     it('sends the answers alone and ends on the closing panel (§8.8, REQ-API-083)', function (): void {
         resetApi();
         queue_shell();
+        // The link's definitions come first: they say which fields take no answer (REQ-DB-046).
+        api_route('data:content=metadata', [m6_meta('happy', 'radio'), m6_meta('why', 'text'), m6_meta('age', 'text')]);
         api_route('data:action=import', [['record_id' => 'S001', 'form_name' => 'intake',
             'import_record_id' => 2, 'import_form_name' => 'intake']]);
 
@@ -481,9 +484,35 @@ describe('public survey page (§8.8, REQ-UI-028)', function (): void {
         assert_not_contains('symptoms___2: CHOICE_INVALID', $body, 'beside the checkbox, not in the general line');
     });
 
+    it('shows a @READONLY field without an input and never forwards a value posted for it (REQ-DB-046)', function (): void {
+        resetApi();
+        queue_shell();
+        $meta = [m6_meta('why', 'text'), m6_meta('status', 'text', ['field_annotation' => ' @READONLY']),
+            m6_meta('flags', 'checkbox', ['select_choices_or_calculations' => '1, A | 2, B', 'field_annotation' => '@readonly'])];
+        api_route('data:content=metadata', $meta);
+        $body = m6_get(M6_LINK)->body();
+        assert_contains('name="value[why]"', $body);
+        assert_not_contains('name="value[status]"', $body, 'a read-only field takes no answer');
+        assert_not_contains('name="value[flags___1]"', $body, 'nor do the boxes of a read-only checkbox');
+        assert_contains('clara-readonly', $body);
+
+        resetApi();
+        queue_shell();
+        api_route('data:content=metadata', $meta);
+        api_route('data:action=import', [['record_id' => 'S001', 'form_name' => 'feedback',
+            'import_record_id' => 2, 'import_form_name' => 'feedback']]);
+        router_for(http_request('POST', M6_LINK, browser_headers(), [
+            'value' => ['why' => 'fine', 'status' => 'forged', 'flags___1' => '1'],
+            'was' => ['status' => 'x'],
+        ]))->dispatch();
+        $row = data_api_body('action=import')['data'][0];
+        assert_same(['why' => 'fine'], $row, 'only the answer the respondent may give is sent');
+    });
+
     it('closes the survey in analysis mode and answers a revoked link with the one state (§8.8)', function (): void {
         resetApi();
         queue_shell();
+        api_route('data:content=metadata', [m6_meta('age', 'text')]);
         api_route('data:action=import', ['error' => 'Project in analysis mode'], 403);
 
         $response = router_for(http_request('POST', M6_LINK, browser_headers(),
@@ -496,6 +525,7 @@ describe('public survey page (§8.8, REQ-UI-028)', function (): void {
         // Revoked between opening the link and submitting: the same one state (REQ-AUTH-040).
         resetApi();
         queue_shell();
+        api_route('data:content=metadata', [m6_meta('age', 'text')]);
         api_route('data:action=import', ['error' => 'Permission denied'], 403);
         $revoked = router_for(http_request('POST', M6_LINK, browser_headers(),
             ['value' => ['age' => '1'], 'was' => []]))->dispatch();

@@ -532,14 +532,14 @@ func (a *applyState) insertField(instID int64, sf stagedField) error {
 		`INSERT INTO fields (project_id, instrument_id, field_name, field_label, field_type,
 			section_header, choices, field_note, validation_type, validation_format,
 			validation_min, validation_max, required, branching_logic, calculation,
-			matrix_group, personal_information, direct_identifier, export_approved, position)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			matrix_group, field_annotation, personal_information, direct_identifier, export_approved, position)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		a.projectID, instID, sf.FieldName, nullStr(sf.FieldLabel), sf.FieldType,
 		nullStr(sf.SectionHeader), nullStr(sf.Choices), nullStr(sf.FieldNote),
 		nullStr(sf.ValidationType), nullStr(sf.ValidationFormat),
 		nullStr(sf.ValidationMin), nullStr(sf.ValidationMax), boolToIntParam(sf.Required),
 		nullStr(sf.BranchingLogic), nullStr(sf.Calculation), nullStr(sf.MatrixGroup),
-		boolToIntParam(sf.PersonalInformation), boolToIntParam(sf.DirectIdentifier),
+		nullStr(sf.FieldAnnotation), boolToIntParam(sf.PersonalInformation), boolToIntParam(sf.DirectIdentifier),
 		boolToIntParam(sf.ExportApproved), max(sf.Position, 1))
 	if err != nil {
 		return err
@@ -570,7 +570,7 @@ func (a *applyState) settleField(instID int64, old, next stagedField) error {
 		`UPDATE fields SET field_name = ?, field_label = ?, field_type = ?,
 			section_header = ?, choices = ?, field_note = ?,
 			validation_type = ?, validation_format = ?, validation_min = ?, validation_max = ?,
-			required = ?, branching_logic = ?, calculation = ?, matrix_group = ?,
+			required = ?, branching_logic = ?, calculation = ?, matrix_group = ?, field_annotation = ?,
 			personal_information = ?, direct_identifier = ?, export_approved = ?, position = ?
 		 WHERE id = ?`,
 		next.FieldName, nullStr(next.FieldLabel), next.FieldType,
@@ -578,7 +578,7 @@ func (a *applyState) settleField(instID int64, old, next stagedField) error {
 		nullStr(next.ValidationType), nullStr(next.ValidationFormat),
 		nullStr(next.ValidationMin), nullStr(next.ValidationMax), boolToIntParam(next.Required),
 		nullStr(next.BranchingLogic), nullStr(next.Calculation), nullStr(next.MatrixGroup),
-		boolToIntParam(next.PersonalInformation), boolToIntParam(next.DirectIdentifier),
+		nullStr(next.FieldAnnotation), boolToIntParam(next.PersonalInformation), boolToIntParam(next.DirectIdentifier),
 		boolToIntParam(next.ExportApproved), next.Position, next.ID); err != nil {
 		return err
 	}

@@ -16,6 +16,7 @@ final class Request
      * @param array<string, string> $pathParams the `{name}` values the router matched,
      *                                          filled in by withPathParams()
      * @param string                $ref        the per-request correlation reference (REQ-UI-050)
+     * @param array<string, mixed>  $files      uploaded files as PHP received them ($_FILES)
      */
     public function __construct(
         private readonly string $method,
@@ -24,7 +25,8 @@ final class Request
         private readonly array $query,
         private readonly array $post,
         private readonly array $pathParams = [],
-        private readonly string $ref = ''
+        private readonly string $ref = '',
+        private readonly array $files = []
     ) {}
 
     public static function fromGlobals(): self
@@ -47,7 +49,8 @@ final class Request
             is_array($_GET) ? $_GET : [],
             is_array($_POST) ? $_POST : [],
             [],
-            bin2hex(random_bytes(4))
+            bin2hex(random_bytes(4)),
+            is_array($_FILES) ? $_FILES : []
         );
     }
 
@@ -91,7 +94,7 @@ final class Request
     /** This request with the router's matched placeholders attached (immutably). */
     public function withPathParams(array $pathParams): self
     {
-        return new self($this->method, $this->path, $this->headers, $this->query, $this->post, $pathParams, $this->ref);
+        return new self($this->method, $this->path, $this->headers, $this->query, $this->post, $pathParams, $this->ref, $this->files);
     }
 
     public function header(string $name): ?string
@@ -209,6 +212,35 @@ final class Request
         unset($fields['csrf_token']);
 
         return $fields;
+    }
+
+    /**
+     * The uploads of one file input — `name="key[]"` with `multiple`, or a single `name="key"`
+     * — as PHP received them: the client's file name, the temporary path PHP wrote it to, its
+     * size and PHP's UPLOAD_ERR_* code. The temporary path comes from PHP itself ($_FILES is
+     * never filled from request data), so a controller may read it.
+     *
+     * @return list<array{name: string, tmp_name: string, size: int, error: int}>
+     */
+    public function uploads(string $key): array
+    {
+        $entry = $this->files[$key] ?? null;
+        if (!is_array($entry) || !isset($entry['name'])) {
+            return [];
+        }
+        $names = is_array($entry['name']) ? $entry['name'] : [$entry['name']];
+        $out = [];
+        foreach ($names as $i => $name) {
+            $pick = static fn (string $part): mixed => is_array($entry[$part] ?? null) ? ($entry[$part][$i] ?? null) : ($entry[$part] ?? null);
+            $out[] = [
+                'name' => is_string($name) ? $name : '',
+                'tmp_name' => (string) ($pick('tmp_name') ?? ''),
+                'size' => (int) ($pick('size') ?? 0),
+                'error' => (int) ($pick('error') ?? UPLOAD_ERR_NO_FILE),
+            ];
+        }
+
+        return $out;
     }
 
     /** True when the request carries a body field at all (e.g. an empty password). */

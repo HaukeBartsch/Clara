@@ -588,6 +588,7 @@ describe('saving and deleting (§8.6, §8.7)', function (): void {
         sign_in(['csrf_token' => M5_CSRF, 'is_admin' => 1]);
         resetApi();
         queue_shell();
+        api_route('/api/v1/projects/3/instruments/7/fields', m5_fields());
         api_route('/users/7/token', ['error' => 'forbidden', 'message' => '', 'status' => 403], 403);
         m5_post('/projects/3/records/8DISC001', m5_save_fields(['age' => '43'], []), 'save');
         assert_contains('not a member of this project', $_SESSION['_flash'][0]['text']);
@@ -753,13 +754,39 @@ function m5_checkbox_history(): array
 }
 
 describe('checkboxes in data entry (REQ-DB-042, REQ-UI-025)', function (): void {
+    it('reads REDCap\'s spellings in the references a form fetches values for (REQ-VAL-044)', function (): void {
+        assert_same(['e1|a', 'ev|f___2', 'e1|g___1'],
+            DataEntry::references("[a] = '[x]' or [ev][f(2)] = \"[y]\" and [g(1)]", 'e1'));
+        assert_true(DataEntry::isReadonly(['field_annotation' => ' @READONLY']));
+        assert_true(DataEntry::isReadonly(['field_annotation' => '@DEFAULT="1" @readonly']));
+        assert_true(!DataEntry::isReadonly(['field_annotation' => '@READONLY-SURVEY']), 'another REDCap tag');
+        assert_true(!DataEntry::isReadonly(['field_annotation' => '0032,4000']));
+    });
+
+    it('drops a value posted for a @READONLY field before the import (REQ-DB-046)', function (): void {
+        sign_in(['csrf_token' => M5_CSRF]);
+        m5_queue();
+        $GLOBALS['api_routes']['/api/v1/projects/3/instruments/7/fields'] = [];
+        api_route('/api/v1/projects/3/instruments/7/fields', array_map(
+            static fn (array $f): array => $f['field_name'] === 'notes' ? $f + ['field_annotation' => '@READONLY'] : $f, m5_fields()));
+        api_route('data:action=import', [['record_id' => '8DISC001', 'form_name' => 'intake', 'event_name' => 'baseline_arm_1',
+            'import_record_id' => 2, 'import_form_name' => 'intake']]);
+        m5_post('/projects/3/records/8DISC001', m5_save_fields(['age' => '43', 'notes' => 'forged'], ['notes' => '<b>ok</b>']), 'save');
+        $row = data_api_body('action=import')['data'][0];
+        assert_same('43', $row['age']);
+        assert_true(!array_key_exists('notes', $row), 'neither the forged value nor a clear reaches the import');
+    });
+
     it('names a checkbox\'s values per box and recognises a box of its checkbox', function (): void {
         $habits = m5_field(7, 'habits', 'checkbox', ['choices' => '1$Smoking##12$Drinking']);
         assert_same(['habits___1', 'habits___12'], DataEntry::valueNames($habits));
         assert_same(['age'], DataEntry::valueNames(m5_field(2, 'age', 'text')));
         assert_true(DataEntry::isEnterable($habits));
         assert_true(DataEntry::isChoiceColumnOf('habits___12', 'habits'));
-        assert_true(!DataEntry::isChoiceColumnOf('habits___x', 'habits'), 'choice codes are numbers');
+        // A checkbox code is lower-case letters, digits and _ (REQ-VAL-022).
+        assert_true(DataEntry::isChoiceColumnOf('habits___x', 'habits'));
+        assert_true(!DataEntry::isChoiceColumnOf('habits___X', 'habits'), 'no upper case in a box code');
+        assert_true(!DataEntry::isChoiceColumnOf('habits___a-b', 'habits'), 'no hyphen in a box code');
         assert_true(!DataEntry::isChoiceColumnOf('habits_old___1', 'habits'));
         assert_true(!DataEntry::isChoiceColumnOf('habits', 'habits'));
     });

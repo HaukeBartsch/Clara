@@ -222,7 +222,7 @@ Tokens (whitespace ignored):
 A field's or instrument's (REQ-VAL-040) branching expression is rejected with a machine-readable reason (REQ-VAL-029; the designer displays the reason, REQ-UI-021) if:
 
 1. it is not well-formed (parse error, unbalanced parentheses, misplaced operator); or
-2. a reference names a field that does not exist, is not value-carrying (description/header), or is not active at the referenced event (REQ-DB-012) — or, written `[field(code)]`, names a field that is not a checkbox or a code the checkbox does not have (REQ-VAL-044); or
+2. a reference names a field that does not exist, is not value-carrying (description/header), or is not active at the referenced event (REQ-DB-012) — or, written `[field(code)]`, names a field that is not a checkbox or a code the checkbox does not have (REQ-VAL-044). The instrument import (REQ-API-152) holds a reference to a field it creates to existence and value-carrying only: it maps no instrument, so the active-at-event part applies once the instrument is mapped; or
 3. a function is misspelled or has the wrong number of arguments.
 
 No cycle rule applies: branching logic produces no value, so no dependency graph arises.

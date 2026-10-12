@@ -575,6 +575,7 @@ func attributeChanged(old, next stagedField) bool {
 		old.FieldNote != next.FieldNote ||
 		old.BranchingLogic != next.BranchingLogic ||
 		old.MatrixGroup != next.MatrixGroup ||
+		old.FieldAnnotation != next.FieldAnnotation ||
 		old.Required != next.Required ||
 		old.PersonalInformation != next.PersonalInformation ||
 		old.DirectIdentifier != next.DirectIdentifier ||

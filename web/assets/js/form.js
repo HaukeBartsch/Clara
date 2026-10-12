@@ -11,8 +11,9 @@
 //    to a field of this form reads its input; any other reads the current value the server
 //    put in the record-context block. A form that knows only its own fields (the survey
 //    page) sets `anyEvent`, so a reference to one of them reads the input whatever event it
-//    names. A checkbox box `[field___code]` reads 1 while checked and empty otherwise — what
-//    the API reads from the stored rows (REQ-DB-042).
+//    names. A checkbox box `[field___code]` — or REDCap's `[field(code)]` — reads 1 while
+//    checked and 0 otherwise, as REDCap reads it (REQ-DB-042, REQ-VAL-044): the boxes of this
+//    form are known from its markup, those elsewhere from the record context's `boxes`.
 // 2. Advisory validation (REQ-VAL-002): type, min/max, date format and registry pattern
 //    hints as the user types; the API decides (REQ-VAL-001).
 // 3. Required fields (REQ-VAL-028): a submit with visible required fields empty is held
@@ -78,6 +79,7 @@ export function wireBranching(form, context) {
       if (onForm(event) && fields.has(field)) return fields.get(field).dataset.claraChoices || ""
       return ""
     },
+    isBox: (event, field) => (onForm(event) && boxes.has(field)) || (context.boxes || []).includes(field),
   }
 
   const governed = []

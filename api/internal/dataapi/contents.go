@@ -159,7 +159,10 @@ type metaRow struct {
 	RequiredField               string `json:"required_field"`
 	BranchingLogic              string `json:"branching_logic"`
 	MatrixGroupName             string `json:"matrix_group_name"`
-	RecordIdentifier            string `json:"record_identifier"`
+	// REDCap's own key: the annotation as stored — @READONLY and any other
+	// action tag or note (REQ-DB-046).
+	FieldAnnotation  string `json:"field_annotation"`
+	RecordIdentifier string `json:"record_identifier"`
 	// This system's key beyond the REDCap shape (REQ-API-019): tolerated by
 	// naive parsers as an extra key, cf. REQ-API-018.
 	DirectIdentifier string `json:"direct_identifier"`
@@ -213,6 +216,7 @@ func (h *Handler) contentMetadata(ctx context.Context, w http.ResponseWriter, en
 			RequiredField:               yn(f.Required),
 			BranchingLogic:              f.BranchingLogic.String,
 			MatrixGroupName:             f.MatrixGroup.String,
+			FieldAnnotation:             f.FieldAnnotation.String,
 			// GD-8: the record identifier is the first field of the
 			// first instrument (ListFields is in that order).
 			RecordIdentifier: yn(i == 0),

@@ -73,11 +73,43 @@ final class DataEntry
 
     /**
      * True when `$name` is one of the value columns of a checkbox called `$field` — the shape a
-     * history entry of that checkbox carries (REQ-DB-042). Choice codes are numbers (REQ-VAL-022).
+     * history entry of that checkbox carries (REQ-DB-042). A checkbox code is lower-case
+     * letters, digits and `_` (REQ-VAL-022).
      */
     public static function isChoiceColumnOf(string $name, string $field): bool
     {
-        return preg_match('/^' . preg_quote($field . self::CHOICE_SEPARATOR, '/') . '[0-9]+$/', $name) === 1;
+        return preg_match('/^' . preg_quote($field . self::CHOICE_SEPARATOR, '/') . '[a-z0-9_]+$/', $name) === 1;
+    }
+
+    /**
+     * True for a field whose annotation carries `@READONLY` (REQ-DB-046): the form and the
+     * survey page show its value and take no input for it. The tag counts as a whole word in
+     * any letter case; REDCap's `@READONLY-FORM` and `@READONLY-SURVEY` are other tags.
+     */
+    public static function isReadonly(array $field): bool
+    {
+        return preg_match('/(?<![\w@-])@READONLY(?![\w-])/i', (string) ($field['field_annotation'] ?? '')) === 1;
+    }
+
+    /**
+     * Posted values without the read-only fields' value names (REQ-DB-046): the browser is not
+     * trusted to leave them out, so a value posted for one never reaches the import.
+     *
+     * @param array<string, string>      $values
+     * @param list<array<string, mixed>> $fields the instrument's fields
+     * @return array<string, string>
+     */
+    public static function withoutReadonly(array $values, array $fields): array
+    {
+        foreach ($fields as $field) {
+            if (self::isReadonly($field)) {
+                foreach (self::valueNames($field) as $name) {
+                    unset($values[$name]);
+                }
+            }
+        }
+
+        return $values;
     }
 
     /**
@@ -180,16 +212,30 @@ final class DataEntry
      */
     public static function references(string $expression, string $firstEvent): array
     {
-        $code = preg_replace('/"(?:[^"\\\\]|\\\\.)*"?/', '""', $expression) ?? '';
+        // String literals are text — double-quoted, or single-quoted in REDCap's spelling
+        // (REQ-VAL-044).
+        $code = preg_replace('/"(?:[^"\\\\]|\\\\.)*"?|\'(?:[^\'\\\\]|\\\\.)*\'?/', '""', $expression) ?? '';
         preg_match_all('/\[([^\]]*)\](?:\[([^\]]*)\])?/', $code, $matches, PREG_SET_ORDER);
 
         $keys = [];
         foreach ($matches as $m) {
-            $key = isset($m[2]) && $m[2] !== '' ? $m[1] . '|' . $m[2] : $firstEvent . '|' . $m[1];
+            $key = isset($m[2]) && $m[2] !== ''
+                ? $m[1] . '|' . self::boxField($m[2])
+                : $firstEvent . '|' . self::boxField($m[1]);
             $keys[$key] = true;
         }
 
         return array_keys($keys);
+    }
+
+    /**
+     * REDCap's checkbox spelling `field(code)` as the value column it names, `field___code`
+     * (REQ-VAL-044, REQ-DB-042); any other reference segment passes through.
+     */
+    public static function boxField(string $segment): string
+    {
+        return preg_match('/^([A-Za-z0-9_]+)\(([A-Za-z0-9_-]+)\)$/', $segment, $m) === 1
+            ? $m[1] . self::CHOICE_SEPARATOR . $m[2] : $segment;
     }
 
     /**

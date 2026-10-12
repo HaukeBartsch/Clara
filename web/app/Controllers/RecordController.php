@@ -110,6 +110,48 @@ final class RecordController extends DataEntryController
         return Response::json(['entries' => $entries, 'next_cursor' => is_string($next) && $next !== '' ? $next : null]);
     }
 
+    /**
+     * The references outside this form that name a checkbox box (REQ-DB-042): an unchecked box
+     * reads 0 in the evaluator (REQ-VAL-044), and only the dictionary tells a box from a field
+     * whose own name contains `___`. The dictionary is read only when such a reference exists;
+     * when it cannot be read, no box is announced and an unchecked one reads as empty.
+     *
+     * @param list<string> $keys `<event>|<field>` references
+     * @return list<string> field names
+     */
+    private function boxReferences(int $projectId, array $keys): array
+    {
+        $candidates = [];
+        foreach ($keys as $key) {
+            $field = substr($key, (int) strpos($key, '|') + 1);
+            if (str_contains($field, DataEntry::CHOICE_SEPARATOR)) {
+                $candidates[$field] = true;
+            }
+        }
+        if ($candidates === []) {
+            return [];
+        }
+        try {
+            $rows = $this->dataCall($projectId, ['content' => 'metadata']);
+        } catch (ApiException $e) {
+            $this->logger->info('metadata for box references unavailable', ['code' => $e->code()]);
+
+            return [];
+        }
+        $boxes = [];
+        foreach (SurveyController::fieldsFromMetadata($rows) as $field) {
+            if (($field['field_type'] ?? '') === 'checkbox') {
+                foreach (DataEntry::valueNames($field) as $name) {
+                    if (isset($candidates[$name])) {
+                        $boxes[] = $name;
+                    }
+                }
+            }
+        }
+
+        return $boxes;
+    }
+
     // --- writes -------------------------------------------------------------------------
 
     /**
@@ -135,8 +177,22 @@ final class RecordController extends DataEntryController
         }
 
         $values = $this->request->fieldMap('value');
+        $was = $this->request->fieldMap('was');
+        // A field annotated @READONLY never reaches the import from this form, whatever the
+        // browser posted (REQ-DB-046) — the data API can still write it.
+        if ($iid !== 0) {
+            try {
+                $fields = self::listOf($this->api->get('/api/v1/projects/' . $projectId . '/instruments/' . $iid . '/fields'));
+            } catch (ApiException $e) {
+                $this->flashDanger($this->apiFailureMessage($e));
+
+                return $back;
+            }
+            $values = DataEntry::withoutReadonly($values, $fields);
+            $was = DataEntry::withoutReadonly($was, $fields);
+        }
         $row = ['record_id' => $record, 'form_name' => $instrument, 'event_name' => $event]
-            + DataEntry::submission($values, $this->request->fieldMap('was'));
+            + DataEntry::submission($values, $was);
         $params = ['content' => 'record', 'action' => 'import', 'data' => [$row]];
         $tz = $this->request->field('tz');
         if (DataEntry::validTimezone($tz)) {
@@ -432,7 +488,8 @@ final class RecordController extends DataEntryController
             'groups' => $permissions->projectAdmin && $exists ? self::listOf($this->api->get($base . '/data-access-groups')) : null,
             'patterns' => $this->patternsFor($fields),
             'formats' => self::DEFAULT_FORMATS,
-            'clientContext' => ['firstEvent' => $firstEvent, 'event' => $uen, 'values' => (object) $context],
+            'clientContext' => ['firstEvent' => $firstEvent, 'event' => $uen, 'values' => (object) $context,
+                'boxes' => $this->boxReferences($projectId, array_diff(array_unique($refs), $own))],
             // The record view belongs to the Record Status Dashboard's entry of the left panel.
             'nav' => [
                 'headingKey' => 'nav.project_sections',

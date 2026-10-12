@@ -617,5 +617,287 @@
     "choices": null,
     "expected": false,
     "want_err": true
+  },
+  {
+    "name": "redcap_single_quote",
+    "expr": "[e1][t] = '2'",
+    "values": {
+      "e1|t": "2"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "redcap_or_word",
+    "expr": "[t] = '2' or [t] = '4'",
+    "values": {
+      "|t": "4"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "redcap_and_upper",
+    "expr": "[e1][a] = 1 AND [e1][b] = 2",
+    "values": {
+      "e1|a": "1",
+      "e1|b": "3"
+    },
+    "choices": null,
+    "expected": false
+  },
+  {
+    "name": "redcap_and_binds_tighter",
+    "expr": "[e1][a] = 1 or [e1][b] = 2 and [e1][c] = 3",
+    "values": {
+      "e1|a": "1"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "redcap_not_equal",
+    "expr": "[e1][a] \u003c\u003e 'x'",
+    "values": {
+      "e1|a": "y"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "redcap_single_quote_escape",
+    "expr": "[e1][x] = 'it\\'s'",
+    "values": {
+      "e1|x": "it's"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "redcap_double_quote_inside_single",
+    "expr": "[e1][x] = 'say \"hi\"'",
+    "values": {
+      "e1|x": "say \"hi\""
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "err_redcap_unterminated_single",
+    "expr": "[e1][x] = 'abc",
+    "values": {},
+    "choices": null,
+    "expected": false,
+    "want_err": true
+  },
+  {
+    "name": "err_and_without_operand",
+    "expr": "[e1][x] = 1 and",
+    "values": {},
+    "choices": null,
+    "expected": false,
+    "want_err": true
+  },
+  {
+    "name": "blank_eq_missing",
+    "expr": "[e1][x] = ''",
+    "values": {},
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "blank_eq_present",
+    "expr": "[e1][x] = ''",
+    "values": {
+      "e1|x": "5"
+    },
+    "choices": null,
+    "expected": false
+  },
+  {
+    "name": "blank_ne_missing",
+    "expr": "[e1][x] \u003c\u003e ''",
+    "values": {},
+    "choices": null,
+    "expected": false
+  },
+  {
+    "name": "blank_ne_present",
+    "expr": "[e1][x] != \"\"",
+    "values": {
+      "e1|x": "5"
+    },
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "blank_double_quote_missing",
+    "expr": "[e1][x] = \"\"",
+    "values": {},
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "blank_on_left",
+    "expr": "'' = [e1][x]",
+    "values": {},
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "blank_ordering_never",
+    "expr": "[e1][x] \u003c ''",
+    "values": {},
+    "choices": null,
+    "expected": false
+  },
+  {
+    "name": "blank_two_constants",
+    "expr": "'' = \"\"",
+    "values": {},
+    "choices": null,
+    "expected": true
+  },
+  {
+    "name": "blank_choice_unselected",
+    "expr": "[e1][sex] = ''",
+    "values": {},
+    "choices": {
+      "e1|sex": "1$Male##2$Female"
+    },
+    "expected": true
+  },
+  {
+    "name": "box_unchecked_eq_zero",
+    "expr": "[e1][f___1] = 0",
+    "values": {},
+    "choices": {
+      "e1|f___1": "1$A"
+    },
+    "boxes": [
+      "f___1"
+    ],
+    "expected": true
+  },
+  {
+    "name": "box_unchecked_redcap_spelling",
+    "expr": "[e1][f(1)] = '0'",
+    "values": {},
+    "choices": {
+      "e1|f___1": "1$A"
+    },
+    "boxes": [
+      "f___1"
+    ],
+    "expected": true
+  },
+  {
+    "name": "box_unchecked_bare_redcap_spelling",
+    "expr": "[f(1)] = '0'",
+    "values": {},
+    "choices": null,
+    "boxes": [
+      "f___1"
+    ],
+    "expected": true
+  },
+  {
+    "name": "box_unchecked_not_blank",
+    "expr": "[e1][f(1)] = ''",
+    "values": {},
+    "choices": null,
+    "boxes": [
+      "f___1"
+    ],
+    "expected": false
+  },
+  {
+    "name": "box_unchecked_is_blank_false",
+    "expr": "is_blank([e1][f___1])",
+    "values": {},
+    "choices": null,
+    "boxes": [
+      "f___1"
+    ],
+    "expected": false
+  },
+  {
+    "name": "box_unchecked_truthy",
+    "expr": "[e1][f___1]",
+    "values": {},
+    "choices": {
+      "e1|f___1": "1$A"
+    },
+    "boxes": [
+      "f___1"
+    ],
+    "expected": false
+  },
+  {
+    "name": "box_checked_truthy",
+    "expr": "[e1][f(1)]",
+    "values": {
+      "e1|f___1": "1"
+    },
+    "choices": {
+      "e1|f___1": "1$A"
+    },
+    "boxes": [
+      "f___1"
+    ],
+    "expected": true
+  },
+  {
+    "name": "box_checked_eq_one",
+    "expr": "[e1][f(1)] = '1' and [e1][f(2)] = '0'",
+    "values": {
+      "e1|f___1": "1"
+    },
+    "choices": null,
+    "boxes": [
+      "f___1",
+      "f___2"
+    ],
+    "expected": true
+  },
+  {
+    "name": "non_box_missing_stays_missing",
+    "expr": "[e1][g] = 0",
+    "values": {},
+    "choices": null,
+    "expected": false
+  },
+  {
+    "name": "code_beats_label",
+    "expr": "[e1][x] = \"A\"",
+    "values": {
+      "e1|x": "A"
+    },
+    "choices": {
+      "e1|x": "A$B##B$A"
+    },
+    "expected": true
+  },
+  {
+    "name": "text_code_label_resolves",
+    "expr": "[e1][r] = 'QC - NH Phantom'",
+    "values": {
+      "e1|r": "QC-NHPhantom"
+    },
+    "choices": {
+      "e1|r": "PECTMRI$PECTMRI##QC-NHPhantom$QC - NH Phantom"
+    },
+    "expected": true
+  },
+  {
+    "name": "text_code_direct",
+    "expr": "[e1][r] \u003c\u003e 'PECTMRI'",
+    "values": {
+      "e1|r": "QC-NHPhantom"
+    },
+    "choices": {
+      "e1|r": "PECTMRI$PECTMRI##QC-NHPhantom$QC - NH Phantom"
+    },
+    "expected": true
   }
 ]

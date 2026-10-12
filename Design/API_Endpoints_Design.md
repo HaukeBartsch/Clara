@@ -665,7 +665,7 @@ A file whose content starts with the ZIP signature `PK\x03\x04` is an archive (`
 2. **Empty first instrument.** When the project's first instrument (position 1) has no fields, the import's first field is created **in that instrument** — it becomes the record identifier (GD-8) — and the rest of its form becomes a new instrument as in step 1 (none, when the form held only that field). The first instrument keeps its name. A first field that cannot carry a value (`descriptive`, or a `file` field, which is skipped) is a failure (`identifier_not_value`) — the preview asks for another file order. When the first instrument already has fields, nothing moves and the record identifier is unchanged.
 3. **Conversion** per the table below. `file` fields are skipped with a warning (`skipped`); a branching expression that names a skipped field is a failure.
 4. **Names.** A field name already in use — by the project, by a derived checkbox name (REQ-DB-042), or by an earlier row of this import — gets `_2`, `_3`, … appended, the first suffix that is free; an instrument name already in use gets the same treatment. Each rename is a warning (`renamed`) naming the old and new name. Every reference to a renamed field in the imported branching logic is rewritten to the new name — `[f]`, `[event][f]` and `[f(code)]` alike, while references to fields the import did not rename stay as written. A field name that breaks REQ-VAL-011 is a failure; one longer than 26 characters is a warning (REQ-VAL-013).
-5. **Validation.** Every converted field passes the design-time rules of a designer write (`Data_Validation_Design.md` §9), against one design view that already holds the earlier rows — exactly as in the bulk call (§4.11). A rejection is a failure naming its file, row and reason.
+5. **Validation.** Every converted field passes the design-time rules of a designer write (`Data_Validation_Design.md` §9), against one design view that already holds **every** imported field — so a reference may point forward, as REDCap allows. One rule is relaxed: a reference to a field the same import creates is checked for existence and value-carrying only, because the import maps no instrument (step 6) and the active-at-event rule of §7.2 of `Data_Validation_Design.md` could never hold; it applies once a person maps the instrument. References to fields that existed before keep the full rule. A rejection is a failure naming its file, row and reason.
 6. **Write.** Without failures, the instruments and fields are written in **one transaction** (all-or-nothing, as REQ-API-132); in production mode they apply to the open staging set as one change (§4.21; no open set → 409), in analysis mode `acknowledge_breaking` is read from the top level as for every structure write. **No instrument–event mapping is created**: the imported instruments collect no data until they are mapped (REQ-DB-012, §4.12).
 
 **Response.** The dry run (`"dry_run": true`) writes nothing and answers 200 with the result, failures included, so the caller can show all of them at once; the import itself answers 201 with the same shape, the created ids filled in, and a failure answers 400 `validation_error` with the same `problems` list.
@@ -674,7 +674,7 @@ A file whose content starts with the ZIP signature `PK\x03\x04` is an archive (`
 { "dry_run": true, "importable": true,
   "record_identifier": { "field": "study_instance_uid", "instrument": "instrument", "moved": true },
   "instruments": [
-    { "id": null, "name": "incoming_studies", "renamed_from": null,
+    { "id": null, "name": "incoming_studies", "renamed_from": null, "existing": false,
       "file": "IncomingStudies_2026-10-12_1141.zip", "origin": "fiona.ihelse.net",
       "fields": [ { "row": 3, "field_name": "study_institution_name", "renamed_from": null,
                     "source_type": "text", "field_type": "text",
@@ -684,7 +684,7 @@ A file whose content starts with the ZIP signature `PK\x03\x04` is an archive (`
   "problems": [] }
 ```
 
-`code` ∈ `renamed`, `skipped`, `dropped_attribute`, `converted`, `long_name`, `ignored_entry` for warnings; `form_not_contiguous`, `identifier_not_value`, `unsupported_type`, `invalid_csv`, `missing_column`, `missing_instrument_csv`, `validation_error` for problems. **Audit** (REQ-AUD-010): `instrument_created` per instrument and `field_created` per field, in the same transaction, each carrying `"imported_from": { "file": …, "origin": … }` and — after a rename — `"renamed_from"` (`Audit_Logging_Design.md` §3.3).
+`existing` marks the project's empty first instrument, listed with the one field it receives (step 2). `code` ∈ `renamed`, `skipped`, `dropped_attribute`, `converted`, `long_name`, `ignored_entry` for warnings; `form_not_contiguous`, `identifier_not_value`, `unsupported_type`, `invalid_csv`, `invalid_archive`, `missing_column`, `missing_instrument_csv`, `validation_error` for problems. **Audit** (REQ-AUD-010): `instrument_created` per instrument and `field_created` per field, in the same transaction, each carrying `"imported_from": { "file": …, "origin": … }` and — after a rename — `"renamed_from"` (`Audit_Logging_Design.md` §3.3).
 
 **Conversion** (normative). Columns:
 
@@ -696,7 +696,7 @@ A file whose content starts with the ZIP signature `PK\x03\x04` is an archive (`
 | `Field Type` | `field_type`, per the type table |
 | `Field Label` | `field_label`; `<br>` variants become a line break; any other markup stays as written and renders escaped (REQ-VAL-031) |
 | `Choices, Calculations, OR Slider Labels` | for choice types the `choices` in REDCap's form — split on `\|` between choices and on the first comma inside a choice (REQ-VAL-022); for `calc` the `calculation` (type table); otherwise ignored |
-| `Field Note` | `field_note` |
+| `Field Note` | `field_note`; `<br>` variants become a line break |
 | `Text Validation Type OR Show Slider Number` | `validation_type` + `validation_format`, per the validation table |
 | `Text Validation Min` / `Max` | `validation_min` / `validation_max` for `integer` and `floating point`; elsewhere dropped (`dropped_attribute`, REQ-VAL-020) |
 | `Identifier?` | `y` → `direct_identifier` (REDCap removes identifiers from de-identified exports, as REQ-EXP-020 does) |

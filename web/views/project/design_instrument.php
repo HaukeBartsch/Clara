@@ -109,7 +109,9 @@ $nullable = static fn (mixed $v): string => $v === null ? '' : (string) $v;
             </div>
             <div class="col-md-5">
                 <label class="form-label mb-0 small" for="field-label"><?= View::e($view->t('design.field.label')) ?></label>
-                <input class="form-control form-control-sm" type="text" id="field-label" name="field_label" value="<?= View::e($selected['field_label'] ?? '') ?>">
+                <!-- A text area: an imported REDCap label may run over several lines, which a
+                     one-line input would silently join (§8.2). -->
+                <textarea class="form-control form-control-sm" id="field-label" name="field_label" rows="1"><?= View::e($selected['field_label'] ?? '') ?></textarea>
             </div>
             <div class="col-md-3">
                 <label class="form-label mb-0 small" for="field-type"><?= View::e($view->t('design.field.type')) ?></label>
@@ -122,11 +124,11 @@ $nullable = static fn (mixed $v): string => $v === null ? '' : (string) $v;
 
             <div class="col-md-6">
                 <label class="form-label mb-0 small" for="field-section"><?= View::e($view->t('design.field.section_header')) ?></label>
-                <input class="form-control form-control-sm" type="text" id="field-section" name="section_header" value="<?= View::e($selected['section_header'] ?? '') ?>">
+                <textarea class="form-control form-control-sm" id="field-section" name="section_header" rows="1"><?= View::e($selected['section_header'] ?? '') ?></textarea>
             </div>
             <div class="col-md-6">
                 <label class="form-label mb-0 small" for="field-note"><?= View::e($view->t('design.field.note')) ?></label>
-                <input class="form-control form-control-sm" type="text" id="field-note" name="field_note" value="<?= View::e($selected['field_note'] ?? '') ?>">
+                <textarea class="form-control form-control-sm" id="field-note" name="field_note" rows="1"><?= View::e($selected['field_note'] ?? '') ?></textarea>
             </div>
 
             <!-- Choices (dropdown / radio / checkbox / matrix): code + label rows, sent as code$label##… -->
@@ -140,7 +142,7 @@ $nullable = static fn (mixed $v): string => $v === null ? '' : (string) $v;
                     <tbody data-clara-choice-rows>
                     <?php foreach (array_merge($choiceRows, [['code' => '', 'label' => ''], ['code' => '', 'label' => '']]) as $row): ?>
                         <tr>
-                            <td><input class="form-control form-control-sm" type="text" inputmode="numeric" name="choice_code[]"
+                            <td><input class="form-control form-control-sm font-monospace" type="text" name="choice_code[]"
                                        aria-label="<?= View::e($view->t('design.choice.code')) ?>" value="<?= View::e($row['code']) ?>"></td>
                             <td><input class="form-control form-control-sm" type="text" name="choice_label[]"
                                        aria-label="<?= View::e($view->t('design.choice.label')) ?>" value="<?= View::e($row['label']) ?>"></td>
@@ -204,6 +206,13 @@ $nullable = static fn (mixed $v): string => $v === null ? '' : (string) $v;
                 </div>
             </div>
 
+            <div class="col-12">
+                <label class="form-label mb-0 small" for="field-annotation"><?= View::e($view->t('design.field.annotation')) ?></label>
+                <!-- REDCap action tags and notes (REQ-DB-046): @READONLY makes the field read-only in
+                     the form and on the survey page; anything else is kept and has no effect. -->
+                <textarea class="form-control form-control-sm font-monospace" id="field-annotation" name="field_annotation" rows="1"><?= View::e($selected['field_annotation'] ?? '') ?></textarea>
+                <div class="form-text"><?= View::e($view->t('design.field.annotation_help')) ?></div>
+            </div>
             <div class="col-12">
                 <?php
                 $exprId = 'field-branching';

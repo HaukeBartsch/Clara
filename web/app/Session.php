@@ -698,6 +698,29 @@ final class Session
         $_SESSION['_stash'][$key] = $value;
     }
 
+    /**
+     * Holds a value across renders until it is forgotten — an instrument import's uploaded
+     * files and its preview between the preview and the import (§7.6). Unlike stash(),
+     * reading it leaves it in place.
+     */
+    public static function keep(string $key, array $value): void
+    {
+        $_SESSION['_keep'][$key] = $value;
+    }
+
+    /** A kept value, or null when none is held. */
+    public static function kept(string $key): ?array
+    {
+        $value = $_SESSION['_keep'][$key] ?? null;
+
+        return is_array($value) ? $value : null;
+    }
+
+    public static function forget(string $key): void
+    {
+        unset($_SESSION['_keep'][$key]);
+    }
+
     /** Takes a stashed value (and forgets it), or null when none was left. */
     public static function take(string $key): ?array
     {

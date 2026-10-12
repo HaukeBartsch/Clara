@@ -462,7 +462,7 @@ describe('Instrument Designer (§7, REQ-UI-021…023)', function (): void {
         $body = m4_body('POST', '/instruments/7/fields');
         assert_same(['field_name', 'field_label', 'field_type', 'section_header', 'choices', 'field_note',
             'validation_type', 'validation_format', 'validation_min', 'validation_max', 'required',
-            'branching_logic', 'calculation', 'matrix_group', 'personal_information', 'direct_identifier'], array_keys($body));
+            'branching_logic', 'calculation', 'matrix_group', 'field_annotation', 'personal_information', 'direct_identifier'], array_keys($body));
         assert_same('1$Male##2$Female', $body['choices']);
         assert_same('', $body['calculation']);
         assert_same('', $body['matrix_group']);
@@ -659,5 +659,139 @@ describe('mode card (§6.6, REQ-UI-033)', function (): void {
 
         assert_true($response->status() >= 300, 'not handled');
         assert_same(0, m4_count('PUT', '/mode'));
+    });
+});
+
+/**
+ * Posts files to the Design page the way a browser's multiple file input does: PHP's $_FILES
+ * shape, each file written to a temporary path first.
+ *
+ * @param array<string, string> $files name → content
+ */
+function m4_upload(string $path, array $files, string $action): \Clara\Response
+{
+    queue_shell();
+    $entry = ['name' => [], 'tmp_name' => [], 'size' => [], 'error' => []];
+    foreach ($files as $name => $content) {
+        $tmp = (string) tempnam(sys_get_temp_dir(), 'clara-import-');
+        file_put_contents($tmp, $content);
+        $entry['name'][] = $name;
+        $entry['tmp_name'][] = $tmp;
+        $entry['size'][] = strlen($content);
+        $entry['error'][] = UPLOAD_ERR_OK;
+    }
+    $request = new \Clara\Request('POST', $path, browser_headers(), ['action' => $action],
+        ['csrf_token' => M4_CSRF], [], '', ['import_files' => $entry]);
+    try {
+        return router_for($request)->dispatch();
+    } finally {
+        foreach ($entry['tmp_name'] as $tmp) {
+            @unlink($tmp);
+        }
+    }
+}
+
+/** A dry run's answer (API §4.10) for the preview tests. */
+function m4_import_result(bool $importable = true): array
+{
+    return [
+        'dry_run' => true, 'importable' => $importable,
+        'record_identifier' => ['field' => 'study_uid', 'instrument' => 'instrument', 'moved' => true],
+        'instruments' => [
+            ['id' => null, 'name' => 'instrument', 'renamed_from' => null, 'existing' => true, 'file' => 'Studies.zip', 'origin' => 'fiona.example.org',
+                'fields' => [['id' => null, 'row' => 2, 'field_name' => 'study_uid', 'renamed_from' => null, 'source_type' => 'text', 'field_type' => 'text', 'validation_type' => '', 'validation_format' => null]]],
+            ['id' => null, 'name' => 'series_2', 'renamed_from' => 'series', 'existing' => false, 'file' => 'Studies.zip', 'origin' => 'fiona.example.org',
+                'fields' => [['id' => null, 'row' => 3, 'field_name' => 'series_date', 'renamed_from' => null, 'source_type' => 'text', 'field_type' => 'text', 'validation_type' => 'date', 'validation_format' => 'Y-m-d']]],
+        ],
+        'warnings' => [
+            ['file' => 'Studies.zip', 'row' => 3, 'field' => 'series_date', 'code' => 'converted', 'message' => 'validation date_ymd becomes date'],
+            ['file' => 'Studies.zip', 'row' => 4, 'field' => 'scan', 'code' => 'skipped', 'message' => 'file fields are not supported; the field is not imported'],
+        ],
+        'problems' => $importable ? [] : [['file' => 'dictionary.csv', 'row' => 12, 'field' => 'c', 'code' => 'form_not_contiguous',
+            'message' => 'form "demographics" continues here after form "followup"']],
+    ];
+}
+
+describe('instrument import (§7.6, REQ-UI-053)', function (): void {
+    it('previews the chosen files in file-name order through the dry run, writing nothing', function (): void {
+        sign_in();
+        api_route('/api/v1/projects/3/instruments/import', m4_import_result());
+
+        $response = m4_upload('/projects/3/design', ['Series.zip' => "PK\x03\x04series", 'IncomingStudies.zip' => "PK\x03\x04studies"], 'import_preview');
+
+        assert_same('/projects/3/design#import', $response->headers()['Location']);
+        $body = m4_body('POST', '/instruments/import');
+        assert_same(true, $body['dry_run'], 'the preview is the dry run');
+        assert_same(['IncomingStudies.zip', 'Series.zip'], array_column($body['files'], 'name'), 'file-name order');
+        assert_same("PK\x03\x04studies", base64_decode($body['files'][0]['content']));
+        assert_same(['IncomingStudies.zip', 'Series.zip'], array_column($_SESSION['_keep']['import']['files'], 'name'));
+    });
+
+    it('renders the preview: order, identifier, renames, notes, and an Import that says nothing is mapped', function (): void {
+        sign_in();
+        $_SESSION['_keep']['import'] = ['files' => [['name' => 'Studies.zip', 'content' => 'eA==']], 'result' => m4_import_result()];
+        m4_queue();
+
+        $body = m4_get('/projects/3/design')->body();
+        assert_contains('Studies.zip', $body);
+        assert_contains('fiona.example.org', $body);
+        assert_contains('study_uid moves into instrument and becomes the record identifier.', $body);
+        assert_contains('renamed from series', $body);
+        assert_contains('receives the first field', $body);
+        assert_contains('validation date_ymd becomes date', $body, 'a field\'s note stands beside its row');
+        assert_contains('file fields are not supported', $body, 'a skipped field is listed below');
+        assert_contains('collect no data until you assign them on the Setup page', $body);
+        assert_true(preg_match('/<button class="btn btn-sm btn-primary" type="submit">Import<\/button>/', $body) === 1, 'Import is enabled');
+        assert_not_contains('name="import_files[]"', $body, 'the upload form gives way to the preview');
+    });
+
+    it('keeps Import disabled while the preview lists a problem, naming its file and row', function (): void {
+        sign_in();
+        $_SESSION['_keep']['import'] = ['files' => [['name' => 'dictionary.csv', 'content' => 'eA==']], 'result' => m4_import_result(false)];
+        m4_queue();
+
+        $body = m4_get('/projects/3/design')->body();
+        assert_contains('dictionary.csv, row 12', $body);
+        assert_contains('continues here after form', $body);
+        assert_true(preg_match('/type="submit" disabled>Import<\/button>/', $body) === 1, 'Import is disabled');
+    });
+
+    it('imports the held files in the shown order and drops them afterwards', function (): void {
+        sign_in();
+        $files = [['name' => 'a.zip', 'content' => 'YQ=='], ['name' => 'b.zip', 'content' => 'Yg==']];
+        $_SESSION['_keep']['import'] = ['files' => $files, 'result' => m4_import_result()];
+        api_route('/api/v1/projects/3/instruments/import', ['dry_run' => false, 'importable' => true, 'instruments' => []], 201);
+
+        $response = m4_post('/projects/3/design', [], 'import_instruments');
+
+        assert_same('/projects/3/design', $response->headers()['Location']);
+        $body = m4_body('POST', '/instruments/import');
+        assert_same($files, $body['files']);
+        assert_true(!array_key_exists('dry_run', $body), 'the import itself is no dry run');
+        assert_true(!isset($_SESSION['_keep']['import']), 'a done import holds nothing');
+        assert_contains('instruments created: 1, fields: 2', $_SESSION['_flash'][0]['text']);
+        assert_contains('collect no data until they are assigned to an event', $_SESSION['_flash'][0]['text']);
+    });
+
+    it('moves a file up and runs the dry run again; cancel drops everything', function (): void {
+        sign_in();
+        $_SESSION['_keep']['import'] = ['files' => [['name' => 'a.zip', 'content' => 'YQ=='], ['name' => 'b.zip', 'content' => 'Yg==']],
+            'result' => m4_import_result()];
+        api_route('/api/v1/projects/3/instruments/import', m4_import_result());
+
+        m4_post('/projects/3/design', ['index' => '1', 'direction' => 'up'], 'import_reorder');
+        assert_same(['b.zip', 'a.zip'], array_column(m4_body('POST', '/instruments/import')['files'], 'name'));
+        assert_same(['b.zip', 'a.zip'], array_column($_SESSION['_keep']['import']['files'], 'name'));
+
+        m4_post('/projects/3/design', [], 'import_cancel');
+        assert_true(!isset($_SESSION['_keep']['import']));
+    });
+
+    it('offers the field annotation in the field editor and sends it (REQ-DB-046)', function (): void {
+        sign_in();
+        m4_queue();
+        $body = m4_get('/projects/3/design/instruments/7', ['field' => 'new'])->body();
+        assert_contains('name="field_annotation"', $body);
+        assert_not_contains('inputmode="numeric" name="choice_code[]"', $body, 'choice codes may be text (REQ-VAL-022)');
     });
 });

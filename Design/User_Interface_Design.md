@@ -465,11 +465,11 @@ Data: `GET …/instruments/{iid}/fields` (fields in position order, all data-dic
 | Attribute | Control | Notes |
 |---|---|---|
 | `field_name` | text | `^[a-z0-9_]+$`, unique in the project (409 on duplicate); **a warning — not an error — when > 26 characters** (REQ-VAL-013, REQ-UI-021); reserved names `redcap_event_name`/`redcap_repeat_instrument`/`redcap_repeat_instance` rejected (`Data_Validation_Design.md` §9) |
-| `field_label` | text | the question/description |
+| `field_label` | text area (one row) | the question/description; a text area so a label over several lines — as REDCap's imported labels are — keeps its line breaks (§8.2) |
 | `field_type` | select: `text` / `notes` / `dropdown` / `radio` / `checkbox` / `yesno` / `matrix` / `description` / `header` / `calculated` | type-specific sub-controls below; `yesno` (REQ-DB-043) and `notes` (REQ-DB-044) show neither the choice editor nor the validation type — the API fixes both |
-| `section_header` | text | group heading in the form |
+| `section_header` | text area (one row) | group heading in the form; keeps line breaks |
 | `choices` | list editor: `code`/`label` rows | for `dropdown`/`radio`/`checkbox`/`matrix` — the `code$label##…` encoding (REQ-VAL-022); codes unique, letters, digits, `-`, `_` — a plain text input, no numeric keyboard — and for a `checkbox` lower-case letters, digits, `_` only; a `checkbox` requires at least one choice and exports one `___<code>` column per choice (REQ-DB-042) |
-| `field_note` | text | help text |
+| `field_note` | text area (one row) | help text; keeps line breaks |
 | `validation_type` | select: empty / built-in `integer` / `floating point` / `date` / `datetime` / every entry of the validation-type registry (`email`, `MRN`, `international phone`, `national phone`, … — listed from `GET /api/v1/validationTypes`, REQ-API-104) | + `validation_format` for date/datetime (§4.1 of `Data_Validation_Design.md`); `validation_min`/`max` for integer/float only (REQ-VAL-015/016/020); unknown names rejected at design time (REQ-VAL-010/042) |
 | `required` | checkbox | REQ-VAL-028 |
 | `personal_information` | checkbox | feeds anonymized export (REQ-DB-013) |
@@ -545,7 +545,7 @@ The instrument's fields for the selected (record, event) render in position orde
 | `header` | section heading (no input) | |
 | `calculated` | **read-only** value display (REQ-VAL-036) | never an input; `CALCULATED_READONLY` if submitted (REQ-API-095) |
 
-**Read-only fields.** A field whose annotation holds `@READONLY` (REQ-DB-046) renders its control disabled with the stored value shown — here and on the survey page (§8.8) — takes no part in the change tracking of §8.6, and PHP drops any value posted for it before the import (the browser is not trusted to honour `disabled`); the data API can still write it. **Line breaks** in labels, section headers and field notes are kept: the text is escaped, then each newline becomes `<br>` (§3.2). **Required fields** are marked (label suffix + control styling) and checked before submission (REQ-VAL-028, REQ-UI-025). **Branching logic** (field and instrument level) shows/hides fields and whole instruments while the expression evaluates to 1 — evaluated client-side per §8.4, re-evaluated when a referenced value changes (GD-13, REQ-VAL-040). A hidden instrument hides all its fields (REQ-VAL-040).
+**Read-only fields.** A field whose annotation holds `@READONLY` (REQ-DB-046) renders the way a member without edit rights sees it — the stored value as text, no input, marked *read-only* — here and on the survey page (§8.8). It takes no part in the change tracking of §8.6, and PHP drops any value posted for it before the import, reading the instrument's fields (record view) or the link's metadata (survey) to know which (the browser is not trusted); the data API can still write it. **Line breaks** in labels, section headers and field notes are kept: the text is escaped, then each newline becomes `<br>` (§3.2). **Required fields** are marked (label suffix + control styling) and checked before submission (REQ-VAL-028, REQ-UI-025). **Branching logic** (field and instrument level) shows/hides fields and whole instruments while the expression evaluates to 1 — evaluated client-side per §8.4, re-evaluated when a referenced value changes (GD-13, REQ-VAL-040). A hidden instrument hides all its fields (REQ-VAL-040).
 
 ### 8.3 Current values and per-field history (REQ-UI-026)
 

@@ -343,7 +343,9 @@ func valuesIndex(dvs []db.DataValue) recordValues {
 
 // eval returns the filterLogic/branching evaluator over these values
 // (§7.3): a bare [field] reference (empty Event) falls back to the project's
-// first event in canonical order GD-15; choices come from the dictionary.
+// first event in canonical order GD-15; choices come from the dictionary, and
+// so does which names are checkbox boxes — an unchecked one reads 0
+// (REQ-VAL-044).
 func (rv recordValues) eval(d *projectDict) validate.LogicEval {
 	firstEvent := ""
 	if len(d.events) > 0 {
@@ -361,6 +363,10 @@ func (rv recordValues) eval(d *projectDict) validate.LogicEval {
 				return f.Choices.String
 			}
 			return ""
+		},
+		IsBox: func(ref validate.Ref) bool {
+			f, ok := d.byName[ref.Field]
+			return ok && f.isChoiceColumn()
 		},
 	}
 }

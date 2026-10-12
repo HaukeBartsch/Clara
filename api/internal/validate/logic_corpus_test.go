@@ -20,6 +20,7 @@ type corpusCase struct {
 	Expr     string            `json:"expr"`
 	Values   map[string]string `json:"values"`
 	Choices  map[string]string `json:"choices"`
+	Boxes    []string          `json:"boxes,omitempty"` // field names that are checkbox boxes (REQ-DB-042)
 	Expected bool              `json:"expected"`
 	WantErr  bool              `json:"want_err,omitempty"`
 }
@@ -161,14 +162,65 @@ func corpusInputs() []corpusCase {
 		{Name: "err_unterminated_ref", Expr: `[e1][x = 1`, Values: map[string]string{}, WantErr: true},
 		{Name: "err_bare_identifier", Expr: `foo`, Values: map[string]string{}, WantErr: true},
 		{Name: "err_arithmetic_in_branching", Expr: `[e1][a] + 1`, Values: map[string]string{}, WantErr: true},
+		// REDCap's spellings (REQ-VAL-044): single quotes, and/or in any case, <>.
+		{Name: "redcap_single_quote", Expr: `[e1][t] = '2'`, Values: map[string]string{"e1|t": "2"}, Expected: true},
+		{Name: "redcap_or_word", Expr: `[t] = '2' or [t] = '4'`, Values: map[string]string{"|t": "4"}, Expected: true},
+		{Name: "redcap_and_upper", Expr: `[e1][a] = 1 AND [e1][b] = 2`, Values: map[string]string{"e1|a": "1", "e1|b": "3"}, Expected: false},
+		{Name: "redcap_and_binds_tighter", Expr: `[e1][a] = 1 or [e1][b] = 2 and [e1][c] = 3`, Values: map[string]string{"e1|a": "1"}, Expected: true},
+		{Name: "redcap_not_equal", Expr: `[e1][a] <> 'x'`, Values: map[string]string{"e1|a": "y"}, Expected: true},
+		{Name: "redcap_single_quote_escape", Expr: `[e1][x] = 'it\'s'`, Values: map[string]string{"e1|x": "it's"}, Expected: true},
+		{Name: "redcap_double_quote_inside_single", Expr: `[e1][x] = 'say "hi"'`, Values: map[string]string{"e1|x": `say "hi"`}, Expected: true},
+		{Name: "err_redcap_unterminated_single", Expr: `[e1][x] = 'abc`, Values: map[string]string{}, WantErr: true},
+		{Name: "err_and_without_operand", Expr: `[e1][x] = 1 and`, Values: map[string]string{}, WantErr: true},
+		// The blank test: a comparison with '' or "" asks whether the other side is blank.
+		{Name: "blank_eq_missing", Expr: `[e1][x] = ''`, Values: map[string]string{}, Expected: true},
+		{Name: "blank_eq_present", Expr: `[e1][x] = ''`, Values: map[string]string{"e1|x": "5"}, Expected: false},
+		{Name: "blank_ne_missing", Expr: `[e1][x] <> ''`, Values: map[string]string{}, Expected: false},
+		{Name: "blank_ne_present", Expr: `[e1][x] != ""`, Values: map[string]string{"e1|x": "5"}, Expected: true},
+		{Name: "blank_double_quote_missing", Expr: `[e1][x] = ""`, Values: map[string]string{}, Expected: true},
+		{Name: "blank_on_left", Expr: `'' = [e1][x]`, Values: map[string]string{}, Expected: true},
+		{Name: "blank_ordering_never", Expr: `[e1][x] < ''`, Values: map[string]string{}, Expected: false},
+		{Name: "blank_two_constants", Expr: `'' = ""`, Values: map[string]string{}, Expected: true},
+		{Name: "blank_choice_unselected", Expr: `[e1][sex] = ''`, Values: map[string]string{}, Choices: map[string]string{"e1|sex": "1$Male##2$Female"}, Expected: true},
+		// Checkbox boxes: an unchecked box reads 0 and is never blank.
+		{Name: "box_unchecked_eq_zero", Expr: `[e1][f___1] = 0`, Values: map[string]string{}, Choices: map[string]string{"e1|f___1": "1$A"}, Boxes: []string{"f___1"}, Expected: true},
+		{Name: "box_unchecked_redcap_spelling", Expr: `[e1][f(1)] = '0'`, Values: map[string]string{}, Choices: map[string]string{"e1|f___1": "1$A"}, Boxes: []string{"f___1"}, Expected: true},
+		{Name: "box_unchecked_bare_redcap_spelling", Expr: `[f(1)] = '0'`, Values: map[string]string{}, Boxes: []string{"f___1"}, Expected: true},
+		{Name: "box_unchecked_not_blank", Expr: `[e1][f(1)] = ''`, Values: map[string]string{}, Boxes: []string{"f___1"}, Expected: false},
+		{Name: "box_unchecked_is_blank_false", Expr: `is_blank([e1][f___1])`, Values: map[string]string{}, Boxes: []string{"f___1"}, Expected: false},
+		{Name: "box_unchecked_truthy", Expr: `[e1][f___1]`, Values: map[string]string{}, Choices: map[string]string{"e1|f___1": "1$A"}, Boxes: []string{"f___1"}, Expected: false},
+		{Name: "box_checked_truthy", Expr: `[e1][f(1)]`, Values: map[string]string{"e1|f___1": "1"}, Choices: map[string]string{"e1|f___1": "1$A"}, Boxes: []string{"f___1"}, Expected: true},
+		{Name: "box_checked_eq_one", Expr: `[e1][f(1)] = '1' and [e1][f(2)] = '0'`, Values: map[string]string{"e1|f___1": "1"}, Boxes: []string{"f___1", "f___2"}, Expected: true},
+		{Name: "non_box_missing_stays_missing", Expr: `[e1][g] = 0`, Values: map[string]string{}, Expected: false},
+		// Text choice codes (REQ-VAL-022): an exact code wins over a label.
+		{
+			Name: "code_beats_label", Expr: `[e1][x] = "A"`,
+			Values: map[string]string{"e1|x": "A"}, Choices: map[string]string{"e1|x": "A$B##B$A"},
+			Expected: true,
+		},
+		{
+			Name: "text_code_label_resolves", Expr: `[e1][r] = 'QC - NH Phantom'`,
+			Values: map[string]string{"e1|r": "QC-NHPhantom"}, Choices: map[string]string{"e1|r": "PECTMRI$PECTMRI##QC-NHPhantom$QC - NH Phantom"},
+			Expected: true,
+		},
+		{
+			Name: "text_code_direct", Expr: `[e1][r] <> 'PECTMRI'`,
+			Values: map[string]string{"e1|r": "QC-NHPhantom"}, Choices: map[string]string{"e1|r": "PECTMRI$PECTMRI##QC-NHPhantom$QC - NH Phantom"},
+			Expected: true,
+		},
 	}
 }
 
 func runCorpusCase(t *testing.T, cs corpusCase) (bool, error) {
 	t.Helper()
+	boxes := map[string]bool{}
+	for _, b := range cs.Boxes {
+		boxes[b] = true
+	}
 	ev := LogicEval{
 		Value:   func(r Ref) string { return cs.Values[r.Event+"|"+r.Field] },
 		Choices: func(r Ref) string { return cs.Choices[r.Event+"|"+r.Field] },
+		IsBox:   func(r Ref) bool { return boxes[r.Field] },
 	}
 	return EvalLogic(cs.Expr, ev)
 }

@@ -20,6 +20,10 @@ const FUNCTIONS = {
 }
 
 // --- tokenizer (mirrors expr.go tokenize with bareRefs = true) ---
+//
+// REDCap's own spellings are part of the grammar (REQ-VAL-044): 'single-quoted'
+// strings, and / or in any letter case, <> for !=, and a checkbox box written
+// [field(code)], which names the value column field___code (REQ-DB-042).
 
 const TWO_CHAR_OPS = ["&&", "||", "!=", "<=", ">="]
 const ONE_CHAR_OPS = ["+", "-", "*", "/", "=", "<", ">"]
@@ -35,6 +39,37 @@ function matchOperator(runes, i) {
     if (runes[i] === op) return op
   }
   return ""
+}
+
+const BOX_REF = /^([A-Za-z0-9_]+)\(([A-Za-z0-9_-]+)\)$/
+
+// REDCap's box spelling field(code) → the stored value-column name field___code.
+const boxField = (segment) => {
+  const m = BOX_REF.exec(segment)
+  return m ? m[1] + "___" + m[2] : segment
+}
+
+// A string literal opening at runes[i]: double-quoted, or single-quoted in REDCap's
+// spelling. A backslash escapes the opening quote or a backslash, nothing else.
+function scanString(runes, i) {
+  const quote = runes[i]
+  let value = ""
+  let j = i + 1
+  while (j < runes.length) {
+    if (runes[j] === "\\") {
+      const next = runes[j + 1]
+      if (next !== quote && next !== "\\") {
+        throw new Error(`invalid escape in string at offset ${j}`)
+      }
+      value += next
+      j += 2
+      continue
+    }
+    if (runes[j] === quote) return { value, next: j + 1 }
+    value += runes[j]
+    j += 1
+  }
+  throw new Error("unterminated string literal")
 }
 
 function tokenize(source) {
@@ -57,38 +92,18 @@ function tokenize(source) {
         const close2 = runes.indexOf("]", j + 1)
         if (close2 < 0) throw new Error(`unterminated field reference at offset ${j}`)
         const field = runes.slice(j + 1, close2).join("")
-        tokens.push({ kind: "ref", ref: { event, field }, text: `[${event}][${field}]` })
+        tokens.push({ kind: "ref", ref: { event, field: boxField(field) }, text: `[${event}][${field}]` })
         i = close2 + 1
       } else {
         // Single-segment [field]: names no event; the caller resolves it
         // against the project's first event in canonical order (GD-15).
-        tokens.push({ kind: "ref", ref: { event: "", field: event }, text: `[${event}]` })
+        tokens.push({ kind: "ref", ref: { event: "", field: boxField(event) }, text: `[${event}]` })
         i = j
       }
-    } else if (c === '"') {
-      let value = ""
-      let closed = false
-      i += 1
-      while (i < runes.length) {
-        if (runes[i] === "\\") {
-          const next = runes[i + 1]
-          if (next !== '"' && next !== "\\") {
-            throw new Error(`invalid escape in string at offset ${i}`)
-          }
-          value += next
-          i += 2
-          continue
-        }
-        if (runes[i] === '"') {
-          closed = true
-          i += 1
-          break
-        }
-        value += runes[i]
-        i += 1
-      }
-      if (!closed) throw new Error("unterminated string literal")
+    } else if (c === '"' || c === "'") {
+      const { value, next } = scanString(runes, i)
       tokens.push({ kind: "str", str: value })
+      i = next
     } else if (c === "(") {
       tokens.push({ kind: "lparen" })
       i += 1
@@ -111,8 +126,15 @@ function tokenize(source) {
       while (j < runes.length && (isDigit(runes[j]) || isLetter(runes[j]) || runes[j] === "_")) {
         j += 1
       }
-      tokens.push({ kind: "ident", text: runes.slice(i, j).join("") })
+      const word = runes.slice(i, j).join("")
+      const lower = word.toLowerCase()
+      if (lower === "and") tokens.push({ kind: "op", text: "&&" })
+      else if (lower === "or") tokens.push({ kind: "op", text: "||" })
+      else tokens.push({ kind: "ident", text: word })
       i = j
+    } else if (c === "<" && runes[i + 1] === ">") {
+      tokens.push({ kind: "op", text: "!=" }) // REDCap's not-equal
+      i += 2
     } else {
       const op = matchOperator(runes, i)
       if (op === "") throw new Error(`unexpected character ${c} at offset ${i}`)
@@ -261,8 +283,15 @@ function formatNumber(v) {
 
 // --- comparison inputs (mirrors expr.go logicOperand.resolve) ---
 
+// A checkbox box (REQ-DB-042) stores nothing while unchecked and reads "0", as REDCap
+// reads it (REQ-VAL-044); env.isBox tells a box from any other reference.
+const isBox = (o, env) => o.kind === "ref" && !!env.isBox && env.isBox(o.ref.event, o.ref.field)
+
 function operandValue(o, env) {
-  if (o.kind === "ref") return env.value(o.ref.event, o.ref.field) ?? ""
+  if (o.kind === "ref") {
+    const v = env.value(o.ref.event, o.ref.field) ?? ""
+    return v === "" && isBox(o, env) ? "0" : v
+  }
   if (o.kind === "num") return formatNumber(o.num)
   return o.str
 }
@@ -288,9 +317,22 @@ function codeForLabel(choices, label) {
   return ""
 }
 
+// A constant that already is one of the field's codes stays that code — codes may be
+// text (REQ-VAL-022), so a label equal to another choice's code must not win (§7.3).
+function isChoiceCode(choices, value) {
+  for (const pair of choices.split("##")) {
+    if (pair === "") continue
+    const k = pair.indexOf("$")
+    if ((k >= 0 ? pair.slice(0, k) : pair) === value) return true
+  }
+  return false
+}
+
 function resolveChoiceLabel(env, o, other, val, isNum) {
   if (o.kind !== "str" || other.kind !== "ref" || !env.choices) return [val, isNum]
-  const code = codeForLabel(env.choices(other.ref.event, other.ref.field) ?? "", val)
+  const choices = env.choices(other.ref.event, other.ref.field) ?? ""
+  if (isChoiceCode(choices, val)) return [val, isNum]
+  const code = codeForLabel(choices, val)
   return code !== "" ? [code, false] : [val, isNum]
 }
 
@@ -351,7 +393,17 @@ function parseCanonicalInstant(s) {
   return seconds
 }
 
+const isEmptyString = (o) => o.kind === "str" && o.str === ""
+
 function evalCmp(node, env) {
+  // REDCap's blank test (REQ-VAL-044): a comparison with '' or "" asks whether the
+  // other side is missing or empty; it takes precedence over the missing-value rule.
+  if (isEmptyString(node.l) || isEmptyString(node.r)) {
+    const blank = operandValue(node.l, env) === "" && operandValue(node.r, env) === ""
+    if (node.op === "=") return blank ? 1 : 0
+    if (node.op === "!=") return blank ? 0 : 1
+    return 0
+  }
   const left = operandResolve(node.l, env)
   const right = operandResolve(node.r, env)
   // A missing/empty referenced value makes every operator 0 (ASM-VAL-6).
@@ -374,6 +426,7 @@ function truthiness(o, env) {
   if (o.kind === "num") return o.num !== 0 ? 1 : 0
   const v = operandValue(o, env)
   if (v === "") return 0
+  if (isBox(o, env)) return v !== "0" ? 1 : 0 // a box is 1 while checked (REQ-VAL-044)
   if (o.kind === "ref" && env.choices && (env.choices(o.ref.event, o.ref.field) ?? "") !== "") {
     return 1
   }
@@ -410,7 +463,8 @@ function evalNode(node, env) {
  * be evaluated against many records. The environment resolves references the
  * way Go's LogicEval does: value(event, field) returns the stored value (""
  * when absent), choices(event, field) the code$label##… encoding ("" for
- * non-choice fields). A reference with an empty event is the [field] shorthand
+ * non-choice fields), and the optional isBox(event, field) whether the
+ * reference names a checkbox box — an unchecked one reads "0" (REQ-VAL-044). A reference with an empty event is the [field] shorthand
  * — the caller resolves it to the project's first event in canonical order
  * (GD-15) before lookup. Throws on a malformed expression (§7.2 rules 1/3).
  */

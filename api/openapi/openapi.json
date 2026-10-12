@@ -110,7 +110,7 @@
                   },
                   "metadata": {
                     "summary": "content=metadata (REQ-API-019)",
-                    "value": [{ "field_name": "record_id", "form_name": "intake", "section_header": "", "field_type": "text", "field_label": "Record ID", "field_note": "", "select_choices_or_calculations": "", "choice_codes": "", "choice_labels": "", "validation_type": "", "validation_min": "", "validation_max": "", "required_field": "Y", "branching_logic": "", "matrix_group_name": "", "record_identifier": "Y", "direct_identifier": "Y" }]
+                    "value": [{ "field_name": "record_id", "form_name": "intake", "section_header": "", "field_type": "text", "field_label": "Record ID", "field_note": "", "select_choices_or_calculations": "", "choice_codes": "", "choice_labels": "", "validation_type": "", "validation_min": "", "validation_max": "", "required_field": "Y", "branching_logic": "", "matrix_group_name": "", "field_annotation": "", "record_identifier": "Y", "direct_identifier": "Y" }]
                   },
                   "event": {
                     "summary": "content=event (REQ-API-020, canonical per-arm order GD-15)",
@@ -893,6 +893,109 @@
           "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
           "403": { "$ref": "#/components/responses/AdminForbidden" },
           "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/instruments/import": {
+      "post": {
+        "tags": [
+          "Admin: Structure"
+        ],
+        "operationId": "importInstruments",
+        "summary": "Import instruments from REDCap instrument ZIPs or data-dictionary CSVs (REQ-API-152)",
+        "description": "`project_admin`. The files are processed in list order as one import (API_Endpoints_Design.md §4.10): every distinct Form Name becomes an instrument; when the project's first instrument has no fields, the import's first field moves into it and becomes the record identifier (GD-8); a field or instrument name already in use gets `_2`, `_3`, … with the imported branching logic following the renames; `file` fields are skipped; a form whose rows are not contiguous fails, naming the row. All-or-nothing; in production mode it applies to the open staging set (409 without one). No instrument-event mapping is created. With `dry_run` nothing is written and the result — failures included — answers 200. Audit `instrument_created` / `field_created` with `imported_from`.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ProjectId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "files"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "files": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "name",
+                        "content"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "content": {
+                          "type": "string",
+                          "contentEncoding": "base64",
+                          "description": "A ZIP archive (instrument.csv + OriginID.txt) or the CSV itself; instrument.csv is read up to 16 MiB."
+                        }
+                      }
+                    }
+                  },
+                  "dry_run": {
+                    "type": "boolean"
+                  },
+                  "acknowledge_breaking": {
+                    "type": "boolean",
+                    "description": "Analysis mode only (REQ-API-111)."
+                  }
+                }
+              },
+              "example": {
+                "files": [
+                  {
+                    "name": "Series_2026-10-12_1141.zip",
+                    "content": "UEsDBBQ…"
+                  }
+                ],
+                "dry_run": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The dry run's result (`dry_run` true); `importable` says whether the import would succeed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstrumentImportResult"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "The import's result, with the created ids (provisional while a staging set is open).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstrumentImportResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed request (`invalid_request`), or a refused import (`validation_error`) naming its first problem, with `problems` and `warnings` listed."
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedServiceToken"
+          },
+          "403": {
+            "$ref": "#/components/responses/AdminForbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
         }
       }
     },
@@ -1983,7 +2086,7 @@
           "field_label": { "type": "string" },
           "field_type": { "type": "string", "description": "text, notes, dropdown, radio, checkbox, yesno, matrix, description, header or calculated (REQ-DB-013). A yesno field always stores the choices 1$Yes##0$No (REQ-DB-043); yesno and notes keep no validation type (REQ-DB-044)." },
           "section_header": { "type": "string" },
-          "choices": { "type": "string", "description": "Stored `code$label##code$label` encoding for choice fields." },
+          "choices": { "type": "string", "description": "Stored `code$label##code$label` encoding for choice fields; codes are letters, digits, - and _ (a checkbox: lower-case letters, digits and _). Writes also accept REDCap's `code, label | code, label` form (REQ-VAL-022)." },
           "field_note": { "type": "string" },
           "validation_type": { "type": "string", "description": "Empty, a built-in structured type, or a validation_types registry name (REQ-VAL-010/042)." },
           "validation_format": { "type": ["string", "null"] },
@@ -1993,11 +2096,12 @@
           "branching_logic": { "type": "string" },
           "calculation": { "type": "string", "description": "Only with field_type = calculated (REQ-VAL-033/034)." },
           "matrix_group": { "type": "string" },
+          "field_annotation": { "type": "string", "description": "REDCap action tags and notes, stored as given; @READONLY makes the field read-only in forms and surveys (REQ-DB-046)." },
           "personal_information": { "type": "boolean" },
           "direct_identifier": { "type": "boolean", "description": "Defaults to true for email, MRN, international phone, national phone (REQ-EXP-020)." },
           "position": { "type": "integer" }
         },
-        "example": { "id": 11, "field_name": "age", "field_label": "Age", "field_type": "text", "section_header": "", "choices": "", "field_note": "", "validation_type": "integer", "validation_format": null, "validation_min": "18", "validation_max": "99", "required": false, "branching_logic": "", "calculation": "", "matrix_group": "", "personal_information": false, "direct_identifier": false, "position": 2 }
+        "example": { "id": 11, "field_name": "age", "field_label": "Age", "field_type": "text", "section_header": "", "choices": "", "field_note": "", "validation_type": "integer", "validation_format": null, "validation_min": "18", "validation_max": "99", "required": false, "branching_logic": "", "calculation": "", "matrix_group": "", "field_annotation": "", "personal_information": false, "direct_identifier": false, "position": 2 }
       },
       "FieldInput": {
         "type": "object",
@@ -2018,6 +2122,7 @@
           "branching_logic": { "type": "string" },
           "calculation": { "type": "string" },
           "matrix_group": { "type": "string" },
+          "field_annotation": { "type": "string", "description": "REDCap action tags and notes, stored as given; @READONLY makes the field read-only in forms and surveys (REQ-DB-046)." },
           "personal_information": { "type": "boolean" },
           "direct_identifier": { "type": "boolean" }
         }
@@ -2041,9 +2146,159 @@
           "branching_logic": { "type": "string" },
           "calculation": { "type": "string" },
           "matrix_group": { "type": "string" },
+          "field_annotation": { "type": "string", "description": "REDCap action tags and notes, stored as given; @READONLY makes the field read-only in forms and surveys (REQ-DB-046)." },
           "personal_information": { "type": "boolean" },
           "direct_identifier": { "type": "boolean" },
           "acknowledge_breaking": { "type": "boolean", "description": "Analysis mode only (REQ-API-111): re-send after a 409 naming the breaking change." }
+        }
+      },
+      "InstrumentImportResult": {
+        "type": "object",
+        "description": "The §4.10 import result. Warning codes: renamed, skipped, dropped_attribute, converted, long_name, ignored_entry. Problem codes: form_not_contiguous, identifier_not_value, unsupported_type, invalid_csv, invalid_archive, missing_column, missing_instrument_csv, validation_error.",
+        "properties": {
+          "dry_run": {
+            "type": "boolean"
+          },
+          "importable": {
+            "type": "boolean"
+          },
+          "record_identifier": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "field": {
+                "type": "string"
+              },
+              "instrument": {
+                "type": "string"
+              },
+              "moved": {
+                "type": "boolean"
+              }
+            }
+          },
+          "instruments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "name": {
+                  "type": "string"
+                },
+                "renamed_from": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "existing": {
+                  "type": "boolean",
+                  "description": "The project's empty first instrument, which receives the first field."
+                },
+                "file": {
+                  "type": "string"
+                },
+                "origin": {
+                  "type": "string"
+                },
+                "fields": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ]
+                      },
+                      "row": {
+                        "type": "integer"
+                      },
+                      "field_name": {
+                        "type": "string"
+                      },
+                      "renamed_from": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "source_type": {
+                        "type": "string"
+                      },
+                      "field_type": {
+                        "type": "string"
+                      },
+                      "validation_type": {
+                        "type": "string"
+                      },
+                      "validation_format": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "file": {
+                  "type": "string"
+                },
+                "row": {
+                  "type": "integer"
+                },
+                "field": {
+                  "type": "string"
+                },
+                "code": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "problems": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "file": {
+                  "type": "string"
+                },
+                "row": {
+                  "type": "integer"
+                },
+                "field": {
+                  "type": "string"
+                },
+                "code": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
+              }
+            }
+          }
         }
       },
       "FieldBulkRequest": {

@@ -35,6 +35,12 @@ final class DesignController extends StructureController
     /** Validation types that preset `direct_identifier` (REQ-EXP-020, API §4.11). */
     public const IDENTIFIER_TYPES = ['email', 'MRN', 'international phone', 'national phone'];
 
+    /**
+     * The most an instrument import takes in one go, all files together (§7.6): the files ride
+     * in the session between preview and import, and base64 in the API body (REQ-TECH-011).
+     */
+    public const IMPORT_LIMIT = 8 * 1024 * 1024;
+
     /** GET /projects/{id}/design — the instrument list (§7.1). */
     public function index(): Response
     {
@@ -48,7 +54,171 @@ final class DesignController extends StructureController
             'designUrl' => $designUrl,
             'setupUrl' => '/projects/' . $projectId . '/setup',
             'instruments' => self::listOf($this->api->get('/api/v1/projects/' . $projectId . '/instruments')),
+            'import' => self::importView(Session::kept('import')),
         ], ['scripts' => self::SCRIPTS, 'jsKeys' => self::JS_KEYS], $state['mode']);
+    }
+
+    // --- instrument import (§7.6, REQ-UI-053) ------------------------------------------
+
+    /**
+     * POST …?action=import_preview — the chosen files, in file-name order, through the API's
+     * dry run (`POST …/instruments/import`, REQ-API-152). The files stay in the session until
+     * the import or a cancel; the page shows the preview from the result. PHP never reads the
+     * files: the API is their only reader (DEV-API-27).
+     */
+    public function importPreview(): Response
+    {
+        $projectId = $this->projectIdFromPath();
+        $back = Response::redirect('/projects/' . $projectId . '/design#import');
+        $files = [];
+        $total = 0;
+        foreach ($this->request->uploads('import_files') as $upload) {
+            if ($upload['error'] === UPLOAD_ERR_NO_FILE) {
+                continue;
+            }
+            $name = basename(str_replace('\\', '/', $upload['name']));
+            $content = $upload['error'] === UPLOAD_ERR_OK && is_file($upload['tmp_name'])
+                ? file_get_contents($upload['tmp_name']) : false;
+            if ($content === false) {
+                $this->flashDanger($this->i18n->t('design.import.upload_failed', ['name' => $name]));
+
+                return $back;
+            }
+            $total += strlen($content);
+            if ($total > self::IMPORT_LIMIT) {
+                $this->flashDanger($this->i18n->t('design.import.too_large', ['limit' => (string) (self::IMPORT_LIMIT >> 20)]));
+
+                return $back;
+            }
+            $files[] = ['name' => $name, 'content' => base64_encode($content)];
+        }
+        if ($files === []) {
+            $this->flashDanger($this->i18n->t('design.import.none'));
+
+            return $back;
+        }
+        usort($files, static fn (array $a, array $b): int => strcmp($a['name'], $b['name']));
+
+        return $this->previewImport($projectId, $files);
+    }
+
+    /** POST …?action=import_reorder — one file up or down, then the dry run again. */
+    public function importReorder(): Response
+    {
+        $projectId = $this->projectIdFromPath();
+        $kept = Session::kept('import');
+        if ($kept === null) {
+            $this->flashDanger($this->i18n->t('design.import.expired'));
+
+            return Response::redirect('/projects/' . $projectId . '/design#import');
+        }
+        $files = array_values($kept['files'] ?? []);
+        $index = (int) $this->request->field('index');
+        $target = $this->request->field('direction') === 'up' ? $index - 1 : $index + 1;
+        if (isset($files[$index], $files[$target])) {
+            [$files[$index], $files[$target]] = [$files[$target], $files[$index]];
+        }
+
+        return $this->previewImport($projectId, $files);
+    }
+
+    /**
+     * POST …?action=import_instruments — the previewed files, in the shown order, imported for
+     * real; a structure write like any other (§6.7/§6.8), so a breaking change is asked about
+     * and replayed. The import maps no instrument, which the success line says.
+     */
+    public function importInstruments(): Response
+    {
+        $projectId = $this->projectIdFromPath();
+        $designUrl = '/projects/' . $projectId . '/design';
+        $kept = Session::kept('import');
+        if ($kept === null) {
+            $this->flashDanger($this->i18n->t('design.import.expired'));
+
+            return Response::redirect($designUrl . '#import');
+        }
+        $view = self::importView($kept);
+
+        return $this->structureWrite($designUrl, function (int $projectId) use ($kept): void {
+            $this->api->post('/api/v1/projects/' . $projectId . '/instruments/import', $this->withAck(['files' => $kept['files']]));
+            Session::forget('import');
+        }, $this->i18n->t('design.import.done', [
+            'instruments' => (string) ($view['created'] ?? 0),
+            'fields' => (string) ($view['fieldCount'] ?? 0),
+        ]));
+    }
+
+    /** POST …?action=import_cancel — drops the held files and their preview. */
+    public function importCancel(): Response
+    {
+        Session::forget('import');
+
+        return Response::redirect('/projects/' . $this->projectIdFromPath() . '/design');
+    }
+
+    /** @param list<array{name: string, content: string}> $files */
+    private function previewImport(int $projectId, array $files): Response
+    {
+        $back = Response::redirect('/projects/' . $projectId . '/design#import');
+        try {
+            $result = $this->api->post('/api/v1/projects/' . $projectId . '/instruments/import',
+                ['files' => $files, 'dry_run' => true]);
+        } catch (ApiException $e) {
+            $this->logger->info('import preview rejected', ['code' => $e->code(), 'status' => $e->status()]);
+            $this->flashDanger($this->apiFailureMessage($e));
+            Session::forget('import');
+
+            return $back;
+        }
+        Session::keep('import', ['files' => $files, 'result' => is_array($result) ? $result : []]);
+
+        return $back;
+    }
+
+    /**
+     * The preview the page renders from a held import: the file names in import order, the
+     * dry run's result, each field's notes by file and row, and the counts the import line
+     * names. Null when nothing is held.
+     *
+     * @param array<string, mixed>|null $kept
+     * @return array<string, mixed>|null
+     */
+    public static function importView(?array $kept): ?array
+    {
+        if ($kept === null) {
+            return null;
+        }
+        $result = is_array($kept['result'] ?? null) ? $kept['result'] : [];
+        $notes = [];
+        foreach ((is_array($result['warnings'] ?? null) ? $result['warnings'] : []) as $note) {
+            if (is_array($note) && (int) ($note['row'] ?? 0) > 0) {
+                $notes[($note['file'] ?? '') . '|' . (int) $note['row']][] = $note;
+            }
+        }
+        $created = 0;
+        $fieldCount = 0;
+        $origins = [];
+        foreach ((is_array($result['instruments'] ?? null) ? $result['instruments'] : []) as $instrument) {
+            if (!is_array($instrument)) {
+                continue;
+            }
+            if (empty($instrument['existing'])) {
+                $created++;
+            }
+            $fieldCount += count(is_array($instrument['fields'] ?? null) ? $instrument['fields'] : []);
+            if (($instrument['origin'] ?? '') !== '') {
+                $origins[(string) $instrument['file']] = (string) $instrument['origin'];
+            }
+        }
+
+        return [
+            'files' => array_map(static fn (array $f): string => (string) ($f['name'] ?? ''), $kept['files'] ?? []),
+            'origins' => $origins,
+            'result' => $result,
+            'notes' => $notes,
+            'created' => $created,
+            'fieldCount' => $fieldCount,
+        ];
     }
 
     /** GET /projects/{id}/design/instruments/{iid} — the field editor (§7.2). */
@@ -296,6 +466,7 @@ final class DesignController extends StructureController
             'branching_logic' => trim($this->request->field('branching_logic')),
             'calculation' => $type === 'calculated' ? trim($this->request->field('calculation')) : '',
             'matrix_group' => $type === 'matrix' ? trim($this->request->field('matrix_group')) : '',
+            'field_annotation' => trim($this->request->field('field_annotation')),
             'personal_information' => $this->request->field('personal_information') === '1',
         ];
 

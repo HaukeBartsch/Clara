@@ -37,6 +37,7 @@ func (h *Handler) registerStructure(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/projects/{id}/instruments", h.listInstruments)
 	mux.HandleFunc("POST /api/v1/projects/{id}/instruments", h.createInstrument)
 	mux.HandleFunc("PUT /api/v1/projects/{id}/instruments/order", h.orderInstruments)
+	mux.HandleFunc("POST /api/v1/projects/{id}/instruments/import", h.importInstruments)
 	mux.HandleFunc("PUT /api/v1/projects/{id}/instruments/{iid}", h.updateInstrument)
 	mux.HandleFunc("DELETE /api/v1/projects/{id}/instruments/{iid}", h.deleteInstrumentHTTP)
 
@@ -116,6 +117,12 @@ type designCtx struct {
 	// no-timepoint events by position). A bare [field] reference resolves as
 	// if it named this event (§7.1).
 	firstEvent string
+	// imported names the fields an instrument import is creating (REQ-API-152),
+	// box columns included. The import maps no instrument to an event, so a
+	// reference to one of these fields is held to existence and value-carrying
+	// only — the active-at-event rule applies once a person maps the
+	// instrument (Data_Validation_Design.md §7.2). nil everywhere else.
+	imported map[string]bool
 }
 
 func (h *Handler) loadDesign(ctx context.Context, projectID int64) (*designCtx, error) {
@@ -225,7 +232,7 @@ func (d *designCtx) resolves(r validate.Ref) bool {
 	if !ok || !valueCarrying(f.FieldType) {
 		return false
 	}
-	return d.activeAt[r.Event][f.InstrumentID]
+	return d.activeAt[r.Event][f.InstrumentID] || d.imported[r.Field]
 }
 
 // isBox reports whether name is a checkbox's choice column rather than a
@@ -2479,6 +2486,7 @@ type fieldObject struct {
 	BranchingLogic      string  `json:"branching_logic"`
 	Calculation         string  `json:"calculation"`
 	MatrixGroup         string  `json:"matrix_group"`
+	FieldAnnotation     string  `json:"field_annotation"`
 	PersonalInformation bool    `json:"personal_information"`
 	DirectIdentifier    bool    `json:"direct_identifier"`
 	Position            int     `json:"position"`
@@ -2493,6 +2501,7 @@ func newFieldObject(f db.Field) fieldObject {
 		ValidationMin: NullStrPtr(f.ValidationMin), ValidationMax: NullStrPtr(f.ValidationMax),
 		Required: f.Required, BranchingLogic: f.BranchingLogic.String,
 		Calculation: f.Calculation.String, MatrixGroup: f.MatrixGroup.String,
+		FieldAnnotation:     f.FieldAnnotation.String,
 		PersonalInformation: f.PersonalInformation, DirectIdentifier: f.DirectIdentifier,
 		Position: f.Position,
 	}
@@ -2500,7 +2509,6 @@ func newFieldObject(f db.Field) fieldObject {
 
 var (
 	fieldNameRE   = regexp.MustCompile(`^[a-z0-9_]+$`)
-	choiceCodeRE  = regexp.MustCompile(`^[0-9]+$`)
 	formatTokenRE = regexp.MustCompile(`^[YmdHi \-:]+$`)
 	integerLitRE  = regexp.MustCompile(`^-?[0-9]+$`)
 	floatLitRE    = regexp.MustCompile(`^[+-]?[0-9]+(\.[0-9]+)?$`)
@@ -2607,7 +2615,7 @@ func (h *Handler) validateFieldDesign(ctx context.Context, f *db.Field, selfID i
 		return nil, validationf("unknown field_type %q", f.FieldType)
 	}
 	if f.Choices.String != "" {
-		if derr := validateChoices(f.Choices.String); derr != nil {
+		if derr := validateChoices(f.Choices.String, f.FieldType); derr != nil {
 			return nil, derr
 		}
 	}
@@ -2712,8 +2720,14 @@ func (h *Handler) validateFieldDesign(ctx context.Context, f *db.Field, selfID i
 }
 
 // validateChoices checks the code$label##code$label encoding: codes are
-// non-empty, numeric and unique; labels are non-empty (REQ-VAL-022).
-func validateChoices(s string) *designError {
+// non-empty, unique, letters, digits, `-` and `_` — a checkbox's only
+// lower-case letters, digits and `_`, so `<field>___<code>` stays a valid field
+// name (REQ-DB-042) — and labels are non-empty (REQ-VAL-022).
+func validateChoices(s, fieldType string) *designError {
+	codeRE, rule := validate.ChoiceCodeRE, "letters, digits, - and _"
+	if fieldType == "checkbox" {
+		codeRE, rule = validate.CheckboxCodeRE, "lower-case letters, digits and _ for a checkbox"
+	}
 	seen := map[string]bool{}
 	for _, part := range strings.Split(s, "##") {
 		idx := strings.Index(part, "$")
@@ -2721,8 +2735,8 @@ func validateChoices(s string) *designError {
 			return validationf("choices must use the code$label##code$label encoding")
 		}
 		code, label := part[:idx], part[idx+1:]
-		if !choiceCodeRE.MatchString(code) {
-			return validationf("choice code %q must be numeric", code)
+		if !codeRE.MatchString(code) {
+			return validationf("choice code %q may only use %s", code, rule)
 		}
 		if seen[code] {
 			return validationf("duplicate choice code %q", code)
@@ -2817,6 +2831,7 @@ type fieldInput struct {
 	BranchingLogic      *string `json:"branching_logic"`
 	Calculation         *string `json:"calculation"`
 	MatrixGroup         *string `json:"matrix_group"`
+	FieldAnnotation     *string `json:"field_annotation"`
 	PersonalInformation *bool   `json:"personal_information"`
 	DirectIdentifier    *bool   `json:"direct_identifier"`
 }
@@ -2829,7 +2844,7 @@ type fieldInput struct {
 var fieldInputAttrs = []string{
 	"field_name", "field_label", "field_type", "section_header", "choices", "field_note",
 	"validation_type", "validation_format", "validation_min", "validation_max",
-	"required", "branching_logic", "calculation", "matrix_group",
+	"required", "branching_logic", "calculation", "matrix_group", "field_annotation",
 	"personal_information", "direct_identifier", "acknowledge_breaking",
 }
 
@@ -2865,6 +2880,12 @@ func (in *fieldInput) apply(f *db.Field) map[string]any {
 	}
 	setStr("field_label", in.FieldLabel, &f.FieldLabel)
 	setStr("section_header", in.SectionHeader, &f.SectionHeader)
+	if in.Choices != nil {
+		// REDCap's "code, label | …" form is stored in this system's encoding
+		// (REQ-VAL-022), so a change is measured against what will be stored.
+		normalized := validate.NormalizeChoices(*in.Choices)
+		in.Choices = &normalized
+	}
 	setStr("choices", in.Choices, &f.Choices)
 	setStr("field_note", in.FieldNote, &f.FieldNote)
 	setStr("validation_type", in.ValidationType, &f.ValidationType)
@@ -2874,6 +2895,7 @@ func (in *fieldInput) apply(f *db.Field) map[string]any {
 	setStr("branching_logic", in.BranchingLogic, &f.BranchingLogic)
 	setStr("calculation", in.Calculation, &f.Calculation)
 	setStr("matrix_group", in.MatrixGroup, &f.MatrixGroup)
+	setStr("field_annotation", in.FieldAnnotation, &f.FieldAnnotation)
 	if in.FieldType != nil && f.FieldType != *in.FieldType {
 		changes["field_type"] = map[string]any{"old": f.FieldType, "new": *in.FieldType}
 		f.FieldType = *in.FieldType
@@ -3431,14 +3453,14 @@ func (h *Handler) updateField(w http.ResponseWriter, r *http.Request) {
 			`UPDATE fields SET field_name = ?, field_label = ?, field_type = ?,
 				section_header = ?, choices = ?, field_note = ?,
 				validation_type = ?, validation_format = ?, validation_min = ?, validation_max = ?,
-				required = ?, branching_logic = ?, calculation = ?, matrix_group = ?,
+				required = ?, branching_logic = ?, calculation = ?, matrix_group = ?, field_annotation = ?,
 				personal_information = ?, direct_identifier = ?
 			 WHERE id = ?`,
 			next.FieldName, nullStr(next.FieldLabel), next.FieldType,
 			nullStr(next.SectionHeader), nullStr(next.Choices), nullStr(next.FieldNote),
 			nullStr(next.ValidationType), nullStr(next.ValidationFormat), nullStr(next.ValidationMin), nullStr(next.ValidationMax),
 			boolToIntParam(next.Required), nullStr(next.BranchingLogic), nullStr(next.Calculation), nullStr(next.MatrixGroup),
-			boolToIntParam(next.PersonalInformation), boolToIntParam(next.DirectIdentifier), fieldID); err != nil {
+			nullStr(next.FieldAnnotation), boolToIntParam(next.PersonalInformation), boolToIntParam(next.DirectIdentifier), fieldID); err != nil {
 			errInternal(w)
 			return
 		}

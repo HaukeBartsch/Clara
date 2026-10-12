@@ -51,6 +51,7 @@ type stagedField struct {
 	BranchingLogic      sql.NullString `json:"branching_logic"`
 	Calculation         sql.NullString `json:"calculation"`
 	MatrixGroup         sql.NullString `json:"matrix_group"`
+	FieldAnnotation     sql.NullString `json:"field_annotation"`
 	PersonalInformation bool           `json:"personal_information"`
 	DirectIdentifier    bool           `json:"direct_identifier"`
 	ExportApproved      bool           `json:"export_approved"`
@@ -108,9 +109,9 @@ func stageField(f db.Field) stagedField {
 		ValidationType: f.ValidationType, ValidationFormat: f.ValidationFormat,
 		ValidationMin: f.ValidationMin, ValidationMax: f.ValidationMax,
 		Required: f.Required, BranchingLogic: f.BranchingLogic, Calculation: f.Calculation,
-		MatrixGroup: f.MatrixGroup, PersonalInformation: f.PersonalInformation,
-		DirectIdentifier: f.DirectIdentifier, ExportApproved: f.ExportApproved,
-		Position: f.Position,
+		MatrixGroup: f.MatrixGroup, FieldAnnotation: f.FieldAnnotation,
+		PersonalInformation: f.PersonalInformation, DirectIdentifier: f.DirectIdentifier,
+		ExportApproved: f.ExportApproved, Position: f.Position,
 	}
 }
 
@@ -124,9 +125,9 @@ func (s stagedField) field(projectID int64) db.Field {
 		ValidationType: s.ValidationType, ValidationFormat: s.ValidationFormat,
 		ValidationMin: s.ValidationMin, ValidationMax: s.ValidationMax,
 		Required: s.Required, BranchingLogic: s.BranchingLogic, Calculation: s.Calculation,
-		MatrixGroup: s.MatrixGroup, PersonalInformation: s.PersonalInformation,
-		DirectIdentifier: s.DirectIdentifier, ExportApproved: s.ExportApproved,
-		Position: s.Position,
+		MatrixGroup: s.MatrixGroup, FieldAnnotation: s.FieldAnnotation,
+		PersonalInformation: s.PersonalInformation, DirectIdentifier: s.DirectIdentifier,
+		ExportApproved: s.ExportApproved, Position: s.Position,
 	}
 }
 

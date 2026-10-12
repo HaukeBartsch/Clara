@@ -166,6 +166,7 @@ type Field struct {
 	BranchingLogic      sql.NullString
 	Calculation         sql.NullString
 	MatrixGroup         sql.NullString
+	FieldAnnotation     sql.NullString // REDCap action tags + notes, stored as given; @READONLY (REQ-DB-046)
 	PersonalInformation bool
 	DirectIdentifier    bool // user-set on any field; preset for email/MRN/phone types (REQ-EXP-020)
 	ExportApproved      bool

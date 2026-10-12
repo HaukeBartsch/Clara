@@ -94,6 +94,12 @@ type token struct {
 // it against the project's first event in canonical order GD-15), which is
 // the minimum normative filterLogic form callers like Fiona send. The calc
 // grammar keeps the event-qualified [event][field] shape of §6.1.
+//
+// The branching grammar also reads REDCap's own spellings (REQ-VAL-044):
+// 'single-quoted' strings, and / or in any letter case, <> for !=, and a
+// checkbox box written [field(code)], which names the value column
+// field___code (REQ-DB-042). Each becomes the token its counterpart makes, so
+// the parsers and the evaluator never see the difference.
 func tokenize(s string, bareRefs bool) ([]token, error) {
 	runes := []rune(s)
 	if len(runes) > maxExprLen { // security finding F5 — reject before parsing
@@ -118,7 +124,7 @@ func tokenize(s string, bareRefs bool) ([]token, error) {
 				if !bareRefs {
 					return nil, fmt.Errorf("expected a [event][field] reference at offset %d", i)
 				}
-				toks = append(toks, token{kind: tokRef, ref: Ref{Field: ev}, text: "[" + ev + "]"})
+				toks = append(toks, token{kind: tokRef, ref: Ref{Field: boxField(ev)}, text: "[" + ev + "]"})
 				i = j
 			} else {
 				close2 := strings.IndexRune(string(runes[j+1:]), ']')
@@ -126,35 +132,20 @@ func tokenize(s string, bareRefs bool) ([]token, error) {
 					return nil, fmt.Errorf("unterminated field reference at offset %d", j)
 				}
 				fld := string(runes[j+1 : j+1+close2])
-				toks = append(toks, token{kind: tokRef, ref: Ref{Event: ev, Field: fld}, text: "[" + ev + "][" + fld + "]"})
+				ref := Ref{Event: ev, Field: fld}
+				if bareRefs {
+					ref.Field = boxField(fld)
+				}
+				toks = append(toks, token{kind: tokRef, ref: ref, text: "[" + ev + "][" + fld + "]"})
 				i = j + close2 + 2
 			}
-		case c == '"':
-			var sb strings.Builder
-			i++
-			closed := false
-			for i < len(runes) {
-				if runes[i] == '\\' && i+1 < len(runes) {
-					nxt := runes[i+1]
-					if nxt != '"' && nxt != '\\' {
-						return nil, fmt.Errorf("invalid escape in string at offset %d", i)
-					}
-					sb.WriteRune(nxt)
-					i += 2
-					continue
-				}
-				if runes[i] == '"' {
-					closed = true
-					i++
-					break
-				}
-				sb.WriteRune(runes[i])
-				i++
+		case c == '"' || (c == '\'' && bareRefs):
+			str, next, err := scanString(runes, i)
+			if err != nil {
+				return nil, err
 			}
-			if !closed {
-				return nil, fmt.Errorf("unterminated string literal")
-			}
-			toks = append(toks, token{kind: tokStr, str: sb.String()})
+			toks = append(toks, token{kind: tokStr, str: str})
+			i = next
 		case c == '(':
 			toks = append(toks, token{kind: tokLParen})
 			i++
@@ -181,8 +172,19 @@ func tokenize(s string, bareRefs bool) ([]token, error) {
 			for j < len(runes) && (isIdentPart(runes[j]) || runes[j] == '_') {
 				j++
 			}
-			toks = append(toks, token{kind: tokIdent, text: string(runes[i:j])})
+			word := string(runes[i:j])
+			switch {
+			case bareRefs && strings.EqualFold(word, "and"):
+				toks = append(toks, token{kind: tokOp, text: "&&"})
+			case bareRefs && strings.EqualFold(word, "or"):
+				toks = append(toks, token{kind: tokOp, text: "||"})
+			default:
+				toks = append(toks, token{kind: tokIdent, text: word})
+			}
 			i = j
+		case bareRefs && c == '<' && i+1 < len(runes) && runes[i+1] == '>':
+			toks = append(toks, token{kind: tokOp, text: "!="}) // REDCap's not-equal
+			i += 2
 		default:
 			op := matchOperator(string(runes[i:]))
 			if op == "" {
@@ -194,6 +196,46 @@ func tokenize(s string, bareRefs bool) ([]token, error) {
 	}
 	toks = append(toks, token{kind: tokEOF})
 	return toks, nil
+}
+
+// scanString reads the string literal opening at runes[i] — double-quoted, or
+// single-quoted in REDCap's spelling (REQ-VAL-044). A backslash escapes the
+// opening quote or a backslash and nothing else. It returns the unquoted value
+// and the index just past the closing quote.
+func scanString(runes []rune, i int) (string, int, error) {
+	quote := runes[i]
+	var sb strings.Builder
+	i++
+	for i < len(runes) {
+		if runes[i] == '\\' && i+1 < len(runes) {
+			nxt := runes[i+1]
+			if nxt != quote && nxt != '\\' {
+				return "", 0, fmt.Errorf("invalid escape in string at offset %d", i)
+			}
+			sb.WriteRune(nxt)
+			i += 2
+			continue
+		}
+		if runes[i] == quote {
+			return sb.String(), i + 1, nil
+		}
+		sb.WriteRune(runes[i])
+		i++
+	}
+	return "", 0, fmt.Errorf("unterminated string literal")
+}
+
+// boxRefRE is REDCap's checkbox reference field(code) (REQ-VAL-044).
+var boxRefRE = regexp.MustCompile(`^([A-Za-z0-9_]+)\(([A-Za-z0-9_-]+)\)$`)
+
+// boxField turns REDCap's checkbox spelling field(code) into the value-column
+// name field___code this system stores a box under (REQ-DB-042); any other
+// field segment passes through unchanged.
+func boxField(segment string) string {
+	if m := boxRefRE.FindStringSubmatch(segment); m != nil {
+		return m[1] + "___" + m[2]
+	}
+	return segment
 }
 
 // matchOperator returns the longest operator prefix matching two-char then
@@ -681,10 +723,19 @@ func (p *branchParser) parseCallArg() error {
 // the stored value ("" when the reference has no value); Choices returns the
 // field's stored code$label##… encoding ("" for non-choice fields) so a
 // string constant matching a choice label resolves to its code before
-// comparison (§7.3, REQ-VAL-022).
+// comparison (§7.3, REQ-VAL-022). IsBox reports whether a reference names a
+// checkbox box (`field___code`, REQ-DB-042): an unchecked box stores nothing
+// and reads as "0", as REDCap reads it (REQ-VAL-044). A nil IsBox knows no
+// boxes.
 type LogicEval struct {
 	Value   func(Ref) string
 	Choices func(Ref) string
+	IsBox   func(Ref) bool
+}
+
+// isBox reports whether the operand references a checkbox box.
+func (ev LogicEval) isBox(o logicOperand) bool {
+	return o.kind == opRef && ev.IsBox != nil && ev.IsBox(o.ref)
 }
 
 // EvalLogic evaluates a branching/filterLogic expression against one
@@ -778,6 +829,9 @@ func truthiness(o logicOperand, ev LogicEval) float64 {
 	if v == "" {
 		return 0
 	}
+	if ev.isBox(o) {
+		return boolVal(v != "0") // a box is 1 while checked, "0" otherwise (REQ-VAL-044)
+	}
 	if o.kind == opRef && ev.Choices != nil && ev.Choices(o.ref) != "" {
 		return 1 // choice field: presence is selection, whatever the code is
 	}
@@ -808,10 +862,14 @@ type logicOperand struct {
 func (o logicOperand) value(ev LogicEval) string {
 	switch o.kind {
 	case opRef:
+		v := ""
 		if ev.Value != nil {
-			return ev.Value(o.ref)
+			v = ev.Value(o.ref)
 		}
-		return ""
+		if v == "" && ev.isBox(o) {
+			return "0" // an unchecked box stores nothing and reads 0 (REQ-VAL-044)
+		}
+		return v
 	case opNum:
 		return formatNumber(o.num)
 	default:
@@ -835,6 +893,20 @@ func (o logicOperand) resolve(ev LogicEval) (val string, present bool, num float
 }
 
 func (n logicCmp) eval(ev LogicEval) float64 {
+	// A comparison with the empty string constant is REDCap's blank test
+	// (REQ-VAL-044): = holds when the other side is missing or empty, != when
+	// it is not, and no ordering operator holds. It takes precedence over the
+	// missing-value rule below.
+	if n.l.isEmptyString() || n.r.isEmptyString() {
+		blank := n.l.value(ev) == "" && n.r.value(ev) == ""
+		switch n.op {
+		case "=":
+			return boolVal(blank)
+		case "!=":
+			return boolVal(!blank)
+		}
+		return 0
+	}
 	lv, lp, ln, lisn := n.l.resolve(ev)
 	rv, rp, rn, risn := n.r.resolve(ev)
 	// A missing/empty referenced value makes every operator 0 (ASM-VAL-6).
@@ -860,16 +932,30 @@ func (n logicCmp) eval(ev LogicEval) float64 {
 }
 
 // resolveChoiceLabel maps a string constant that names a choice label of the
-// opposite reference's field to its code; anything else passes through.
+// opposite reference's field to its code; anything else passes through. A
+// constant that already is one of the field's codes stays that code — codes
+// may be text (REQ-VAL-022), so a label equal to another choice's code must
+// not take the comparison over (§7.3).
 func resolveChoiceLabel(ev LogicEval, o, other logicOperand, val string, isNum bool) (string, bool) {
 	if o.kind != opStr || other.kind != opRef || ev.Choices == nil {
 		return val, isNum
 	}
-	if code := CodeForLabel(ev.Choices(other.ref), val); code != "" {
+	choices := ev.Choices(other.ref)
+	for _, code := range choiceCodes(choices) {
+		if code == val {
+			return val, isNum
+		}
+	}
+	if code := CodeForLabel(choices, val); code != "" {
 		return code, false
 	}
 	return val, isNum
 }
+
+// isEmptyString reports whether the operand is the empty string constant —
+// two single or two double quotes — the right-hand side of REDCap's blank
+// test (REQ-VAL-044).
+func (o logicOperand) isEmptyString() bool { return o.kind == opStr && o.str == "" }
 
 func boolVal(b bool) float64 {
 	if b {

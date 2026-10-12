@@ -49,6 +49,15 @@ final class View
      * write by the API's content policy. Never call it with anything else — a
      * review rule keeps it that way (Plan/Web_Implementation.md §9).
      */
+    /**
+     * Escaped text that keeps its line breaks — a label, section header or field note written
+     * over several lines (§8.2): escaped first, then each newline becomes `<br>`.
+     */
+    public static function lines(mixed $value): string
+    {
+        return nl2br(self::e($value), false);
+    }
+
     public static function htmlAllowed(?string $sanitized): string
     {
         return (string) $sanitized;

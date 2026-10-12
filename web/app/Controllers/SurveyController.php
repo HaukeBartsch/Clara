@@ -71,14 +71,18 @@ final class SurveyController extends Controller
         }
 
         $values = $this->request->fieldMap('value');
-        $params = ['content' => 'record', 'action' => 'import',
-            'data' => [DataEntry::submission($values, $this->request->fieldMap('was'))]];
+        $was = $this->request->fieldMap('was');
         $tz = $this->request->field('tz');
-        if (DataEntry::validTimezone($tz)) {
-            $params['tz'] = $tz;
-        }
 
         try {
+            // A field annotated @READONLY takes no answer from a respondent, whatever the
+            // browser posted (REQ-DB-046): the link's own definitions say which.
+            $fields = self::fieldsFromMetadata($this->api->dataApi()->call($token, ['content' => 'metadata']));
+            $params = ['content' => 'record', 'action' => 'import',
+                'data' => [DataEntry::submission(DataEntry::withoutReadonly($values, $fields), DataEntry::withoutReadonly($was, $fields))]];
+            if (DataEntry::validTimezone($tz)) {
+                $params['tz'] = $tz;
+            }
             $result = $this->api->dataApi()->call($token, $params);
         } catch (ApiException $e) {
             $this->logger->info('survey submission refused', ['code' => $e->code(), 'status' => $e->status()]);
@@ -184,8 +188,8 @@ final class SurveyController extends Controller
      * The `content=metadata` rows (API §3.4) in the field shape the form partial renders —
      * the structure endpoints' shape (§4.11). The record identifier is left out: it names the
      * record, which the respondent neither enters nor sees. Choices come from the combined
-     * `code, label | code, label` column, split at each pair's first `, ` — codes are numbers
-     * (REQ-VAL-022), so a label may itself contain a comma.
+     * `code, label | code, label` column, split at each pair's first `, ` — a code holds no
+     * comma or space (REQ-VAL-022), so a label may itself contain a comma.
      *
      * @param array<mixed> $rows
      * @return list<array<string, mixed>>
@@ -214,6 +218,7 @@ final class SurveyController extends Controller
                 'required' => ($row['required_field'] ?? '') === 'Y',
                 'branching_logic' => (string) ($row['branching_logic'] ?? ''),
                 'matrix_group' => (string) ($row['matrix_group_name'] ?? ''),
+                'field_annotation' => (string) ($row['field_annotation'] ?? ''),
             ];
         }
 

@@ -33,9 +33,11 @@ const corpus = JSON.parse(
 function envFor(cs) {
   const values = cs.values ?? {}
   const choices = cs.choices ?? {}
+  const boxes = new Set(cs.boxes ?? [])
   return {
     value: (event, field) => values[event + "|" + field] ?? "",
     choices: (event, field) => choices[event + "|" + field] ?? "",
+    isBox: (event, field) => boxes.has(field),
   }
 }
 
