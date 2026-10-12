@@ -538,6 +538,22 @@ describe('saving and deleting (§8.6, §8.7)', function (): void {
         assert_true(!isset($_SESSION['_stash']), 'no record value outlives the request');
     });
 
+    it('states a refusal no field input can carry, rather than promising reasons it hides', function (): void {
+        sign_in(['csrf_token' => M5_CSRF]);
+        m5_queue();
+        api_route('data:action=import', [['record_id' => '8DISC001', 'form_name' => 'intake', 'import_record_id' => 0,
+            'import_form_name' => "Validation error: age: TYPE_INVALID — value 'abc' is not a valid integer; "
+                . "event_name: CONTENT_INVALID — unknown event 'old_arm_1'; gone_field: UNKNOWN_FIELD — unknown field 'gone_field'"]]);
+
+        $body = m5_post('/projects/3/records/8DISC001', m5_save_fields(['age' => 'abc'], ['age' => '42']), 'save')->body();
+
+        assert_contains('TYPE_INVALID — value &#039;abc&#039; is not a valid integer', $body, 'the field reason stays under its input');
+        assert_contains('event_name: CONTENT_INVALID — unknown event &#039;old_arm_1&#039;', $body,
+            'a framing-key reason is on screen, not only in the log');
+        assert_contains("gone_field: UNKNOWN_FIELD — unknown field &#039;gone_field&#039;", $body,
+            'so is one keyed on a field this form no longer renders');
+    });
+
     it('discards a refused token, fetches it again and retries exactly once (§8.6 step 3)', function (): void {
         sign_in(['csrf_token' => M5_CSRF]);
         $_SESSION['proj_token_3'] = 'stale';

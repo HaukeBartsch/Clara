@@ -326,6 +326,36 @@ final class RecordController extends DataEntryController
             }
         }
 
+        // A reason keyed on a name this render has no input for — a framing key the API names
+        // (`event_name`, `form_name`, or `record_id` away from its own field), or a field of
+        // another instrument or one the design dropped since this form was opened — would show
+        // nowhere, leaving the page promising reasons it hides; it joins the general line beside
+        // the form instead (§8.6; the survey page states the same rule in §8.8). Headers and
+        // descriptions carry no error slot, so their names do not count as inputs here.
+        $inputs = $identifier === '' ? [] : [$identifier];
+        foreach ($fields as $field) {
+            if (in_array((string) ($field['field_type'] ?? ''), ['header', 'description'], true)) {
+                continue;
+            }
+            $inputs[] = (string) ($field['field_name'] ?? '');
+            foreach (DataEntry::valueNames($field) as $valueName) {
+                $inputs[] = $valueName;
+            }
+        }
+        $visible = array_flip($inputs);
+        $general = (string) ($errors[''] ?? '');
+        foreach (array_diff_key($errors, $visible) as $key => $reason) {
+            if ($key === '') {
+                continue; // the general line already carries itself
+            }
+            $line = $key . ': ' . $reason;
+            $general = $general === '' ? $line : $general . '; ' . $line;
+        }
+        $errors = array_intersect_key($errors, $visible);
+        if ($general !== '') {
+            $errors[''] = $general;
+        }
+
         // The values this render needs: the form's own fields at the selected event, and every
         // reference the field and instrument branching logic of this event reads (§8.4).
         $own = [];
