@@ -286,7 +286,7 @@ Data: `GET /api/v1/projects/{id}/roles` for the list, `POST …/roles` to create
 **`<h4>` · Permissions per instrument and event** — the body of the screen: a tab per arm (Bootstrap `nav-tabs`, the first arm active; a single-arm project renders no tab row), each tab holding one `<table class="table table-sm">` whose rows are that arm's mapped (instrument, event) pairs in design order — instrument first, then its events in the canonical order of GD-15. The header is two rows: `rowspan` for the pair column, then `colspan` groups **data access** and **export**, then the two unlabeled checkbox columns; both header rows stick to the top of the scroll container. Columns, left to right:
 
 | Column | Control | Values |
-|---|---|---|
+|---|---|------|
 | instrument (event) | text | pair label, e.g. `instrument 2 (followup)` |
 | data access · no access / read only / view edit | radio group (`name="data[<arm>][<pair>]"`) | REQ-AUTH-018 |
 | delete values | checkbox | the **delete instrument values** right (REQ-AUTH-070) |
