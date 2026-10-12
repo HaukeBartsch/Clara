@@ -426,7 +426,7 @@ describe('Instrument Designer (§7, REQ-UI-021…023)', function (): void {
             'choice_code' => ['1', '2', ''], 'choice_label' => ['Male', 'Female', ''],
         ], 'save_field');
 
-        assert_same('/projects/3/design/instruments/7?field=30', $response->headers()['Location']);
+        assert_same('/projects/3/design/instruments/7', $response->headers()['Location'], 'a saved field closes the form');
         $body = m4_body('POST', '/instruments/7/fields');
         assert_same(['field_name', 'field_label', 'field_type', 'section_header', 'choices', 'field_note',
             'validation_type', 'validation_format', 'validation_min', 'validation_max', 'required',
@@ -454,8 +454,9 @@ describe('Instrument Designer (§7, REQ-UI-021…023)', function (): void {
         api_route('/api/v1/projects/3/instruments/7/fields/14', ['error' => 'validation_error',
             'message' => 'calculation is not valid: unknown field [baseline_arm_1][nope]', 'status' => 400], 400);
 
-        m4_post('/projects/3/design/instruments/7', ['field_id' => '14', 'field_name' => 'bmi', 'field_type' => 'calculated',
+        $response = m4_post('/projects/3/design/instruments/7', ['field_id' => '14', 'field_name' => 'bmi', 'field_type' => 'calculated',
             'calculation' => '[baseline_arm_1][nope] * 2'], 'save_field');
+        assert_same('/projects/3/design/instruments/7?field=14', $response->headers()['Location'], 'a refused save re-opens the form');
         m4_queue();
         $body = m4_get('/projects/3/design/instruments/7', ['field' => '14'])->body();
 
