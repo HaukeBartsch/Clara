@@ -231,7 +231,7 @@ final class DesignController extends StructureController
             );
         } catch (ApiException $e) {
             $this->logger->info('calculation test rejected', ['code' => $e->code(), 'status' => $e->status()]);
-            $this->flashDanger(\Clara\Messages::forApiException($this->i18n, $e));
+            $this->flashDanger($this->apiFailureMessage($e));
             Session::stash('calc_test', $result);
 
             return $back;

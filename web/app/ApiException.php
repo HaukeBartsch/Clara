@@ -23,12 +23,15 @@ final class ApiException extends \RuntimeException
      *        the caller needs to act on rather than only text: `mfa_required`
      *        names the method, `tfa_enrollment_required` carries the pending
      *        identity's id so the wizard can run pre-session (§2.7).
+     * @param string $endpoint the failing call as `METHOD /path`, for the developer-facing
+     *                         detail of REQ-UI-050; never rendered outside development.
      */
     public function __construct(
         private readonly string $errorCode,
         string $message,
         private readonly int $status,
-        private readonly array $context = []
+        private readonly array $context = [],
+        private readonly string $endpoint = ''
     ) {
         // \Exception::$code is an int and unusable for a string code, so the
         // code lives beside it and is read through code().
@@ -45,6 +48,12 @@ final class ApiException extends \RuntimeException
     public function status(): int
     {
         return $this->status;
+    }
+
+    /** The failing call as `METHOD /path`, or '' when the throw site did not name it. */
+    public function endpoint(): string
+    {
+        return $this->endpoint;
     }
 
     /** One context field as a string, or '' when the response did not carry it. */
@@ -64,7 +73,7 @@ final class ApiException extends \RuntimeException
     }
 
     /** Builds from a decoded error body, tolerating a missing field. */
-    public static function fromBody(array $body, int $status): self
+    public static function fromBody(array $body, int $status, string $endpoint = ''): self
     {
         $code = isset($body['error']) && is_string($body['error']) ? $body['error'] : 'internal';
         $message = isset($body['message']) && is_string($body['message']) ? $body['message'] : '';
@@ -72,6 +81,6 @@ final class ApiException extends \RuntimeException
         // Everything the envelope does not define itself travels with it.
         $context = array_diff_key($body, array_flip(['error', 'message', 'status']));
 
-        return new self($code, $message, $status, $context);
+        return new self($code, $message, $status, $context, $endpoint);
     }
 }

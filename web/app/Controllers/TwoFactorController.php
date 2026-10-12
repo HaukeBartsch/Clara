@@ -186,7 +186,7 @@ final class TwoFactorController extends Controller
             'smtp_send_failed' => $this->i18n->t('tfa.failure.send_failed'),
             // A conflict names what was already true — an enabled factor, or no
             // enrollment pending — and the §3.4 table shows the API's reason for it.
-            default => Messages::forApiException($this->i18n, $e),
+            default => $this->apiFailureMessage($e),
         };
 
         return $this->render($status, [

@@ -11,7 +11,6 @@ namespace Clara\Controllers;
 
 use Clara\ApiException;
 use Clara\Config;
-use Clara\Messages;
 use Clara\Response;
 use Clara\Session;
 
@@ -38,7 +37,7 @@ final class AccountController extends Controller
             $this->api->put('/api/v1/users/me/ui-language', ['language' => $code]);
         } catch (ApiException $e) {
             $this->logger->warn('language change failed', ['code' => $e->code()]);
-            $this->flashDanger(Messages::forApiException($this->i18n, $e));
+            $this->flashDanger($this->apiFailureMessage($e));
 
             return $this->redirectBack();
         }
@@ -73,7 +72,7 @@ final class AccountController extends Controller
             $this->api->put('/api/v1/users/me/ui-theme', ['theme' => $theme]);
         } catch (ApiException $e) {
             $this->logger->warn('theme change failed', ['code' => $e->code()]);
-            $this->flashDanger(Messages::forApiException($this->i18n, $e));
+            $this->flashDanger($this->apiFailureMessage($e));
 
             return $this->redirectBack();
         }
@@ -130,7 +129,7 @@ final class AccountController extends Controller
         } catch (ApiException $e) {
             $this->logger->info('password change rejected', ['code' => $e->code(), 'status' => $e->status()]);
 
-            return $this->passwordPage(Messages::forApiException($this->i18n, $e));
+            return $this->passwordPage($this->apiFailureMessage($e));
         }
         if (is_int($answer['session_epoch'] ?? null)) {
             Session::adoptEpoch($answer['session_epoch']);

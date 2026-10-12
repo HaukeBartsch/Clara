@@ -70,9 +70,20 @@ final class Response
     }
 
     /** The §4.2 error envelope, so a data request fails exactly like the API. */
-    public static function apiError(string $code, string $message, int $status): self
+    /**
+     * The §4.2 failure envelope. `$ref` is this request's correlation reference
+     * (REQ-UI-050): an extra field the browser modules ignore and devtools shows,
+     * so a failing call can be matched to the server log without changing the
+     * shape existing callers read.
+     */
+    public static function apiError(string $code, string $message, int $status, string $ref = ''): self
     {
-        return self::json(['error' => $code, 'message' => $message, 'status' => $status], $status);
+        $body = ['error' => $code, 'message' => $message, 'status' => $status];
+        if ($ref !== '') {
+            $body['ref'] = $ref;
+        }
+
+        return self::json($body, $status);
     }
 
     /** 406 — a data request for a route that declares no data region. */

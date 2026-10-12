@@ -23,14 +23,20 @@ final class Logger
         'code_verifier', 'code', 'mfa_code', 'recovery_code', 'otp', 'apikey', 'api_key',
     ];
 
+    /**
+     * @param string $ref the per-request correlation reference (REQ-UI-050); when
+     *                    non-empty it is stamped into every line, so a reference
+     *                    shown to a user greps back to this request's log entries.
+     */
     public function __construct(
         private readonly string $level,
-        private readonly bool $debug
+        private readonly bool $debug,
+        private readonly string $ref = ''
     ) {}
 
-    public static function fromConfig(Config $config): self
+    public static function fromConfig(Config $config, string $ref = ''): self
     {
-        return new self($config->logLevelWeb, $config->isDevelopment);
+        return new self($config->logLevelWeb, $config->isDevelopment, $ref);
     }
 
     public function debug(string $message, array $context = []): void
@@ -68,6 +74,9 @@ final class Logger
             'component' => 'web',
             'msg' => $message,
         ];
+        if ($this->ref !== '') {
+            $entry['ref'] = $this->ref;
+        }
         if ($context !== []) {
             $entry['ctx'] = $this->redact($context);
         }

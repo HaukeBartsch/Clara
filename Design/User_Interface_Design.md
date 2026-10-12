@@ -165,8 +165,10 @@ The PHP layer maps the stable `error` code of `API_Endpoints_Design.md` §4.2 to
 | `bad_mfa_code` (login) | "That code is wrong or has expired" on the two-factor panel; resend stays available until the lockout line replaces it (REQ-AUTH-058) |
 | `tfa_enrollment_required` (login) | not an error — opens the enrollment wizard (§2.5, §2.2) |
 | `session_revoked` (401) | not a line on the current page: the session is ended and the browser goes to `/login`, which shows `session.ended.revoked` (§2.2, REQ-AUTH-074) |
-| `service_token_invalid` / `internal` (500) | a generic failure line + the operator is notified by the application log — never internals (REQ-API-006) |
+| `service_token_invalid` / `internal` (500) | a generic failure line + the operator is notified by the application log — never internals (REQ-API-006); the line carries the request's correlation reference, and in development the technical detail as well (REQ-UI-050) |
 | data-API `import_record_id = 0` | the per-field validation detail from `import_form_name` (`Data_Validation_Design.md` §3 codes), §8.6 |
+
+**Correlation reference (REQ-UI-050).** Every request handled by the PHP layer carries an opaque per-request reference (`Request::ref()`, generated in `fromGlobals()`). The web logger stamps it into every log line of that request, and a generic failure line — flash alert, 500 page, fatal fallback — appends `error.reference` ("Reference: {ref}") so a user report finds the logged cause; JSON failures carry the same token as an additive `ref` field. Nothing about the reference encodes internals. When `APP_ENV=development`, the generic line additionally renders the technical detail the screen otherwise never shows (API code, status, failing call, message; exception class and origin for fatal errors) — the same development/production split `configFailure()` uses.
 
 Success confirmations (created/updated/removed) are one translated alert line at the top of the panel; they name the object (e.g. "Event `follow_up` updated") — never identifiers of other users beyond what the page already shows.
 

@@ -67,6 +67,35 @@ describe('API errors → user messages (§3.4)', function (): void {
         assert_not_contains('sql', $text);
     });
 
+    it('carries the request reference on the generic line (REQ-UI-050)', function (): void {
+        $text = Messages::forApiException(translator(), failure('internal', 'boom', 500), 'a3f9c21e');
+
+        assert_contains('Something went wrong', $text);
+        assert_contains('Reference: a3f9c21e', $text);
+    });
+
+    it('shows the technical detail on the generic line in development only (REQ-UI-050)', function (): void {
+        $e = new ApiException('internal', 'sql: no such table', 500, [], 'GET /api/v1/projects');
+
+        $dev = Messages::forApiException(translator(), $e, 'a3f9c21e', true);
+        assert_contains('internal', $dev);
+        assert_contains('500', $dev);
+        assert_contains('GET /api/v1/projects', $dev);
+        assert_contains('sql: no such table', $dev);
+
+        // The same failure in production keeps its internals out of the screen.
+        $prod = Messages::forApiException(translator(), $e, 'a3f9c21e', false);
+        assert_not_contains('sql', $prod);
+        assert_not_contains('/api/v1/', $prod);
+        assert_contains('Reference: a3f9c21e', $prod);
+    });
+
+    it('omits the reference from the generic line when the request has none', function (): void {
+        $text = Messages::forApiException(translator(), failure('internal', '', 500));
+
+        assert_not_contains('Reference:', $text);
+    });
+
     it('names the wait when the caller is rate limited (REQ-AUTH-035)', function (): void {
         $text = Messages::forApiException(translator(), failure('rate_limited', 'retry after 42 seconds', 429));
 

@@ -15,6 +15,7 @@ final class Request
      * @param array<string, mixed>  $post       parsed body (form-encoded)
      * @param array<string, string> $pathParams the `{name}` values the router matched,
      *                                          filled in by withPathParams()
+     * @param string                $ref        the per-request correlation reference (REQ-UI-050)
      */
     public function __construct(
         private readonly string $method,
@@ -22,7 +23,8 @@ final class Request
         private readonly array $headers,
         private readonly array $query,
         private readonly array $post,
-        private readonly array $pathParams = []
+        private readonly array $pathParams = [],
+        private readonly string $ref = ''
     ) {}
 
     public static function fromGlobals(): self
@@ -43,8 +45,21 @@ final class Request
             $path,
             self::collectHeaders(),
             is_array($_GET) ? $_GET : [],
-            is_array($_POST) ? $_POST : []
+            is_array($_POST) ? $_POST : [],
+            [],
+            bin2hex(random_bytes(4))
         );
+    }
+
+    /**
+     * The per-request correlation reference (REQ-UI-050): stamped into every log
+     * line of this request and shown next to a generic failure, so a user report
+     * finds the logged cause. '' on a hand-built request (tests) — callers skip
+     * the reference then rather than show an empty one.
+     */
+    public function ref(): string
+    {
+        return $this->ref;
     }
 
     public function method(): string
@@ -76,7 +91,7 @@ final class Request
     /** This request with the router's matched placeholders attached (immutably). */
     public function withPathParams(array $pathParams): self
     {
-        return new self($this->method, $this->path, $this->headers, $this->query, $this->post, $pathParams);
+        return new self($this->method, $this->path, $this->headers, $this->query, $this->post, $pathParams, $this->ref);
     }
 
     public function header(string $name): ?string

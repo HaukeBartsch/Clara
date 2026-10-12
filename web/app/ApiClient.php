@@ -137,7 +137,7 @@ final class ApiClient
         if ($response['status'] === 0) {
             $this->logger->error('api unreachable', ['method' => 'GET', 'path' => $path]);
 
-            throw new ApiException('internal', 'the API is not reachable', 502);
+            throw new ApiException('internal', 'the API is not reachable', 502, [], 'GET ' . $path);
         }
 
         $decoded = json_decode($response['body'], true);
@@ -150,7 +150,7 @@ final class ApiClient
         $this->noteOperatorFailure($decoded, 'GET', $path);
         $this->endRevokedSession($decoded, 'GET', $path);
 
-        throw ApiException::fromBody($decoded, $response['status']);
+        throw ApiException::fromBody($decoded, $response['status'], 'GET ' . $path);
     }
 
     /**
@@ -281,7 +281,7 @@ final class ApiClient
             // The API is unreachable: an operator problem, never a detail to show.
             $this->logger->error('api unreachable', ['method' => $method, 'path' => $path]);
 
-            throw new ApiException('internal', 'the API is not reachable', 502);
+            throw new ApiException('internal', 'the API is not reachable', 502, [], $method . ' ' . $path);
         }
 
         $decoded = null;
@@ -304,7 +304,7 @@ final class ApiClient
             $this->noteOperatorFailure($decoded, $method, $path);
             $this->endRevokedSession($decoded, $method, $path);
 
-            throw ApiException::fromBody($decoded, $status);
+            throw ApiException::fromBody($decoded, $status, $method . ' ' . $path);
         }
 
         if ($status === 204 || $decoded === null) {

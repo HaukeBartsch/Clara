@@ -26,7 +26,7 @@ final class Messages
     }
 
     /** The login-page failure line for an account-state code (§2.2). */
-    public static function loginFailure(I18n $i18n, ApiException $e): string
+    public static function loginFailure(I18n $i18n, ApiException $e, string $ref = '', bool $isDevelopment = false): string
     {
         return match ($e->code()) {
             // Unknown account and wrong password are one line on purpose: the
@@ -41,7 +41,7 @@ final class Messages
             'provider_unavailable' => $i18n->t('login.failure.provider_unavailable'),
             'state_mismatch' => $i18n->t('login.failure.state_mismatch'),
             'rate_limited' => self::rateLimited($i18n, $e),
-            default => $i18n->t('error.generic'),
+            default => self::generic($i18n, $e, $ref, $isDevelopment),
         };
     }
 
@@ -63,13 +63,19 @@ final class Messages
      * The generic mapping for a failed API call on any page. Where the table
      * says "the message", the API text is appended to the translated lead so the
      * user gets both the fact and the reason.
+     *
+     * @param string $ref           this request's correlation reference (REQ-UI-050),
+     *                              appended to the generic line; '' omits it
+     * @param bool   $isDevelopment additionally render the technical detail on the
+     *                              generic line — development only, never in an
+     *                              environment a user can reach (REQ-API-006)
      */
-    public static function forApiException(I18n $i18n, ApiException $e): string
+    public static function forApiException(I18n $i18n, ApiException $e, string $ref = '', bool $isDevelopment = false): string
     {
         if (self::isFlowState($e->code())) {
             // Reached only if a flow state arrives outside login: say nothing
             // specific rather than render a code the user cannot interpret.
-            return $i18n->t('error.generic');
+            return self::generic($i18n, $e, $ref, $isDevelopment);
         }
 
         // ApiException carries the code as its message when the API sent none; that is no
@@ -94,7 +100,7 @@ final class Messages
             // line, no hint about what else the account might be.
             'bad_password' => $i18n->t('error.bad_password'),
             'rate_limited' => self::rateLimited($i18n, $e),
-            default => $i18n->t('error.generic'),
+            default => self::generic($i18n, $e, $ref, $isDevelopment),
         };
 
         if ($showReason && $reason !== '') {
@@ -107,5 +113,33 @@ final class Messages
         }
 
         return $lead;
+    }
+
+    /**
+     * The generic failure line, with the debugging affordances of REQ-UI-050:
+     * always the request's correlation reference when one exists — it is what a
+     * user can quote and an operator can grep for — and, in development only,
+     * the technical detail the screen must otherwise never show (REQ-API-006).
+     * The suffixes are not translated: the reference is a token and the detail
+     * is developer text.
+     */
+    private static function generic(I18n $i18n, ApiException $e, string $ref, bool $isDevelopment): string
+    {
+        $text = $i18n->t('error.generic');
+        if ($ref !== '') {
+            $text .= ' ' . $i18n->t('error.reference', ['ref' => $ref]);
+        }
+
+        if ($isDevelopment) {
+            $detail = implode(' ', array_filter([
+                $e->code(),
+                $e->status() > 0 ? (string) $e->status() : '',
+                $e->endpoint(),
+                $e->getMessage() === $e->code() ? '' : $e->getMessage(),
+            ], static fn (string $part): bool => $part !== ''));
+            $text .= ' (internal: ' . $detail . ')';
+        }
+
+        return $text;
     }
 }

@@ -460,6 +460,7 @@ return [
 
     // --- error pages and the §3.4 message table ---
     'error.generic' => 'Something went wrong. Please try again; if it continues, contact your administrator.',
+    'error.reference' => 'Reference: {ref}',
     'error.invalid_request' => 'The form contains invalid values',
     // The self-service password change (§2.6): the one line a rejected credential gets.
     'error.bad_password' => 'The current password is not correct.',

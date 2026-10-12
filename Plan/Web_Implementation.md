@@ -90,7 +90,7 @@ web/
 ├── public/index.php              # front controller: config → session → router → response
 ├── app/
 │   ├── Config.php                # env load + startup validation (REQ-CFG-005)
-│   ├── Logger.php                # structured, secrets/value-free (REQ-API-005 hygiene applies here too)
+│   ├── Logger.php                # structured, secrets/value-free (REQ-API-005 hygiene applies here too); stamps each request's correlation reference into every line (REQ-UI-050)
 │   ├── Router.php                # route table of §2.1; the one page-vs-JSON dispatch on Accept (REQ-UI-044) + `?action=` mutations
 │   ├── ApiClient.php             # curl: service token, X-Internal-User-Id, X-Real-IP; error envelope → ApiException
 │   ├── Session.php               # SESSION_DIR, cookie flags, regenerate, lifecycle: idle/absolute bounds, id rotation, replay, epoch (§3/§3.1)
@@ -100,7 +100,7 @@ web/
 │   ├── Navigation.php            # the two left panels + the default-section rule (§2.4, REQ-UI-046/047)
 │   ├── View.php                  # layout + template render, e() escaping, CSP header (REQ-TECH-020)
 │   ├── I18n.php                  # English catalog + bundle overlay, t(), JS-string injection (§9)
-│   ├── Messages.php              # API error code → translated line (§3.4 table)
+│   ├── Messages.php              # API error code → translated line (§3.4 table); the generic line carries the request reference, plus technical detail in development (REQ-UI-050)
 │   ├── DataApi.php               # data-API form encoding: import rows data[i][key], delete, export passthrough
 │   └── i18n/en.php               # English source of truth (REQ-DB-031)
 ├── app/Controllers/…             # one class per page group of §2.1 (Login, Dashboard, ControlPanel, Project, Setup, Record, …)

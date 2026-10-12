@@ -447,10 +447,10 @@ final class LoginController extends Controller
         $this->logger->info('login rejected', ['code' => $e->code(), 'status' => $e->status()]);
 
         if (Session::hasPendingSecondFactor()) {
-            return $this->renderPanel(Messages::loginFailure($this->i18n, $e));
+            return $this->renderPanel(Messages::loginFailure($this->i18n, $e, $this->request->ref(), $this->config->isDevelopment));
         }
 
-        return $this->renderCredentials($email, Messages::loginFailure($this->i18n, $e));
+        return $this->renderCredentials($email, Messages::loginFailure($this->i18n, $e, $this->request->ref(), $this->config->isDevelopment));
     }
 
     /** The page to land on after login: only a same-site path is honoured. */

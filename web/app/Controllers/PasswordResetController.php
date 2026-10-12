@@ -117,7 +117,7 @@ final class PasswordResetController extends Controller
                 return $this->setPage('', invalid: true);
             }
 
-            return $this->setPage($token, Messages::forApiException($this->i18n, $e));
+            return $this->setPage($token, $this->apiFailureMessage($e));
         }
 
         // Success is the same sentence for both purposes: the password now works and the
