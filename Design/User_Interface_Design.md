@@ -165,8 +165,10 @@ The PHP layer maps the stable `error` code of `API_Endpoints_Design.md` §4.2 to
 | `bad_mfa_code` (login) | "That code is wrong or has expired" on the two-factor panel; resend stays available until the lockout line replaces it (REQ-AUTH-058) |
 | `tfa_enrollment_required` (login) | not an error — opens the enrollment wizard (§2.5, §2.2) |
 | `session_revoked` (401) | not a line on the current page: the session is ended and the browser goes to `/login`, which shows `session.ended.revoked` (§2.2, REQ-AUTH-074) |
-| `service_token_invalid` / `internal` (500) | a generic failure line + the operator is notified by the application log — never internals (REQ-API-006) |
+| `service_token_invalid` / `internal` (500) | a generic failure line + the operator is notified by the application log — never internals (REQ-API-006); the line carries the request's correlation reference, and in development the technical detail as well (REQ-UI-050) |
 | data-API `import_record_id = 0` | the per-field validation detail from `import_form_name` (`Data_Validation_Design.md` §3 codes), §8.6 |
+
+**Correlation reference (REQ-UI-050).** Every request handled by the PHP layer carries an opaque per-request reference (`Request::ref()`, generated in `fromGlobals()`). The web logger stamps it into every log line of that request, and a generic failure line — flash alert, 500 page, fatal fallback — appends `error.reference` ("Reference: {ref}") so a user report finds the logged cause; JSON failures carry the same token as an additive `ref` field. Nothing about the reference encodes internals. When `APP_ENV=development`, the generic line additionally renders the technical detail the screen otherwise never shows (API code, status, failing call, message; exception class and origin for fatal errors) — the same development/production split `configFailure()` uses.
 
 Success confirmations (created/updated/removed) are one translated alert line at the top of the panel; they name the object (e.g. "Event `follow_up` updated") — never identifiers of other users beyond what the page already shows.
 
@@ -324,6 +326,8 @@ Data: `GET /api/v1/i18n/strings?language=<code>` (after `GET /api/v1/i18n/langua
 - **Language select**: the enabled languages (code + display name).
 - **Key table**: one row per translation key — `key`, current `text`, and a **missing** badge (`missing = true` → the key falls back to English at render, REQ-DB-031, REQ-UI-008). Missing keys are visually distinct (the requirement's "MUST be visible in the list").
 - **Editor**: inline `text` editing per row (or a side form); empty `text` **removes** the translation (fallback to English). Save → `PUT /api/v1/i18n/strings` with `{ "language", "entries": [ { "key", "text" } ] }` (upsert; REQ-API-100).
+- **Export (REQ-UI-049)**: a client-side CSV download of the current table — `key,english,text`, RFC 4180 quoting, CRLF endings, UTF-8 BOM so spreadsheets open the Norwegian characters — named `clara-translations-<code>.csv`. No new route and no API call: the region already holds the data (REQ-UI-002 stays literally true).
+- **Import (REQ-UI-049)**: a file picker accepting CSV (header must name the `key` and `text` columns; extra columns such as the exported `english` are reference material, ignored) or the flat JSON key→text map of `tools/i18n/` seed files (`@`-prefixed metadata keys skipped, as the seeder skips them). Unknown keys are skipped — an import never adds a key; empty cells change nothing (clearing stays a grid edit plus Save); applied values become unsaved edits in the grid, diffed like inline edits and persisted by the same Save, so CSRF (§3.3) and the audit trail are unchanged. A result line reports applied / unknown-key-skipped / empty-skipped counts.
 - Translated strings are escaped on render (§3.2, REQ-UI-004).
 
 ### 5.8 Settings section (`GET /admin?section=settings`, `is_admin`)

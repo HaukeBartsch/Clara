@@ -20,7 +20,6 @@ declare(strict_types=1);
 namespace Clara\Controllers;
 
 use Clara\ApiException;
-use Clara\Messages;
 use Clara\Navigation;
 use Clara\Permissions;
 use Clara\Response;
@@ -135,7 +134,7 @@ final class ProjectController extends ProjectPageController
             $answer = $this->api->put('/api/v1/projects/' . $projectId . '/mode', $body);
         } catch (ApiException $e) {
             $this->logger->info('project mode change rejected', ['code' => $e->code(), 'status' => $e->status()]);
-            $this->flashDanger(Messages::forApiException($this->i18n, $e));
+            $this->flashDanger($this->apiFailureMessage($e));
 
             return $back;
         }
@@ -252,7 +251,7 @@ final class ProjectController extends ProjectPageController
             $call($projectId);
         } catch (ApiException $e) {
             $this->logger->info('project ' . $section . ' change rejected', ['code' => $e->code(), 'status' => $e->status()]);
-            $this->flashDanger(Messages::forApiException($this->i18n, $e));
+            $this->flashDanger($this->apiFailureMessage($e));
 
             return Response::redirect('/projects/' . $projectId . '/' . $section);
         }
@@ -328,7 +327,7 @@ final class ProjectController extends ProjectPageController
             $answer = $this->api->put('/api/v1/projects/' . $projectId . '/users/' . $uid, $body);
         } catch (ApiException $e) {
             $this->logger->info('project members change rejected', ['code' => $e->code(), 'status' => $e->status()]);
-            $this->flashDanger(Messages::forApiException($this->i18n, $e));
+            $this->flashDanger($this->apiFailureMessage($e));
 
             return $back;
         }
@@ -508,7 +507,7 @@ final class ProjectController extends ProjectPageController
             }
         } catch (ApiException $e) {
             $this->logger->info('role change rejected', ['code' => $e->code(), 'status' => $e->status()]);
-            $this->flashDanger(Messages::forApiException($this->i18n, $e));
+            $this->flashDanger($this->apiFailureMessage($e));
 
             return Response::redirect('/projects/' . $projectId . '/roles'
                 . ($roleId > 0 ? '?role=' . $roleId : ''));

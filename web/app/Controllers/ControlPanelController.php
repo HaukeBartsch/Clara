@@ -15,7 +15,6 @@ declare(strict_types=1);
 namespace Clara\Controllers;
 
 use Clara\ApiException;
-use Clara\Messages;
 use Clara\Navigation;
 use Clara\Response;
 use Clara\Session;
@@ -162,7 +161,7 @@ final class ControlPanelController extends Controller
         } catch (ApiException $e) {
             $this->logger->info('user create rejected', ['code' => $e->code(), 'status' => $e->status()]);
 
-            return $this->usersPage(Messages::forApiException($this->i18n, $e), $form);
+            return $this->usersPage($this->apiFailureMessage($e), $form);
         }
 
         $this->flashSuccess($this->i18n->t(
@@ -215,7 +214,7 @@ final class ControlPanelController extends Controller
         } catch (ApiException $e) {
             // 409: the last enabled administrator stays (REQ-AUTH-068) — the API's reason.
             $this->logger->info('admin flag change rejected', ['code' => $e->code(), 'status' => $e->status()]);
-            $this->flashDanger(Messages::forApiException($this->i18n, $e));
+            $this->flashDanger($this->apiFailureMessage($e));
 
             return $this->toSection('users');
         }
@@ -244,7 +243,7 @@ final class ControlPanelController extends Controller
             // No SMTP relay: the direct password is then the only path (§5.1, REQ-CFG-028).
             $this->flashDanger($e->code() === 'smtp_not_configured'
                 ? $this->i18n->t('admin.users.smtp_not_configured')
-                : Messages::forApiException($this->i18n, $e));
+                : $this->apiFailureMessage($e));
 
             return $this->toSection('users');
         }
@@ -259,7 +258,7 @@ final class ControlPanelController extends Controller
         try {
             $answer = $this->api->post('/api/v1/users/' . $id . '/tfa/reset');
         } catch (ApiException $e) {
-            $this->flashDanger(Messages::forApiException($this->i18n, $e));
+            $this->flashDanger($this->apiFailureMessage($e));
 
             return $this->toSection('users');
         }
@@ -277,7 +276,7 @@ final class ControlPanelController extends Controller
             $answer = $this->api->put('/api/v1/users/' . $id, $body);
         } catch (ApiException $e) {
             $this->logger->info('user update rejected', ['code' => $e->code(), 'status' => $e->status()]);
-            $this->flashDanger(Messages::forApiException($this->i18n, $e));
+            $this->flashDanger($this->apiFailureMessage($e));
 
             return $this->toSection('users');
         }
@@ -358,7 +357,7 @@ final class ControlPanelController extends Controller
         } catch (ApiException $e) {
             $this->logger->info('project create rejected', ['code' => $e->code(), 'status' => $e->status()]);
 
-            return $this->projectsPage(Messages::forApiException($this->i18n, $e), $form);
+            return $this->projectsPage($this->apiFailureMessage($e), $form);
         }
 
         $this->flashSuccess($this->i18n->t('admin.projects.created', ['name' => $form['project_name']]));
@@ -384,7 +383,7 @@ final class ControlPanelController extends Controller
         } catch (ApiException $e) {
             $this->logger->info('project update rejected', ['code' => $e->code(), 'status' => $e->status()]);
 
-            return $this->projectsPage(Messages::forApiException($this->i18n, $e), $form, $id);
+            return $this->projectsPage($this->apiFailureMessage($e), $form, $id);
         }
 
         $this->flashSuccess($this->i18n->t('admin.projects.updated', ['name' => $form['project_name']]));
@@ -451,7 +450,7 @@ final class ControlPanelController extends Controller
             if ($e->status() !== 400) {
                 throw $e;
             }
-            $error = Messages::forApiException($this->i18n, $e);
+            $error = $this->apiFailureMessage($e);
         }
         $users = $this->api->get('/api/v1/users');
 
@@ -499,6 +498,10 @@ final class ControlPanelController extends Controller
                 'admin.translations.key', 'admin.translations.english', 'admin.translations.text',
                 'admin.translations.empty', 'admin.translations.missing', 'admin.translations.missing_status',
                 'admin.translations.edited',
+                // The import result line (REQ-UI-049) is composed client-side over the staged rows.
+                'admin.translations.import_applied', 'admin.translations.import_skipped',
+                'admin.translations.import_empty', 'admin.translations.import_nothing',
+                'admin.translations.import_failed',
             ],
         ]);
     }
@@ -603,7 +606,7 @@ final class ControlPanelController extends Controller
             $this->api->put('/api/v1/i18n/strings', ['language' => $language, 'entries' => $entries]);
         } catch (ApiException $e) {
             $this->logger->info('translations rejected', ['code' => $e->code(), 'status' => $e->status()]);
-            $this->flashDanger(Messages::forApiException($this->i18n, $e));
+            $this->flashDanger($this->apiFailureMessage($e));
 
             return $this->toSection('translations', $back);
         }
@@ -635,7 +638,7 @@ final class ControlPanelController extends Controller
         } catch (ApiException $e) {
             $this->logger->info('settings change rejected', ['code' => $e->code(), 'status' => $e->status()]);
 
-            return $this->settingsPage(Messages::forApiException($this->i18n, $e), $enabled, $rpm, $blockMinutes);
+            return $this->settingsPage($this->apiFailureMessage($e), $enabled, $rpm, $blockMinutes);
         }
 
         $this->flashSuccess($this->i18n->t('admin.settings.saved'));

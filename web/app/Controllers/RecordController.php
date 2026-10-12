@@ -24,7 +24,6 @@ namespace Clara\Controllers;
 
 use Clara\ApiException;
 use Clara\DataEntry;
-use Clara\Messages;
 use Clara\Navigation;
 use Clara\Permissions;
 use Clara\Response;
@@ -244,7 +243,7 @@ final class RecordController extends DataEntryController
                 ['group_id' => $raw === 'none' ? null : (int) $raw]);
         } catch (ApiException $e) {
             $this->logger->info('record group change rejected', ['code' => $e->code(), 'status' => $e->status()]);
-            $this->flashDanger(Messages::forApiException($this->i18n, $e));
+            $this->flashDanger($this->apiFailureMessage($e));
 
             return $back;
         }
@@ -596,7 +595,7 @@ final class RecordController extends DataEntryController
                 ['state' => $now === 'finished' ? 'finished' : 'unfinished']);
         } catch (ApiException $e) {
             $this->logger->info('completion change rejected', ['code' => $e->code(), 'status' => $e->status()]);
-            $this->flashDanger(Messages::forApiException($this->i18n, $e));
+            $this->flashDanger($this->apiFailureMessage($e));
         }
     }
 
@@ -639,7 +638,7 @@ final class RecordController extends DataEntryController
             $call($projectId, $record, $iid, $event);
         } catch (ApiException $e) {
             $this->logger->info('survey link call rejected', ['code' => $e->code(), 'status' => $e->status()]);
-            $this->flashDanger(Messages::forApiException($this->i18n, $e));
+            $this->flashDanger($this->apiFailureMessage($e));
 
             return $back;
         }

@@ -90,7 +90,7 @@ web/
 ├── public/index.php              # front controller: config → session → router → response
 ├── app/
 │   ├── Config.php                # env load + startup validation (REQ-CFG-005)
-│   ├── Logger.php                # structured, secrets/value-free (REQ-API-005 hygiene applies here too)
+│   ├── Logger.php                # structured, secrets/value-free (REQ-API-005 hygiene applies here too); stamps each request's correlation reference into every line (REQ-UI-050)
 │   ├── Router.php                # route table of §2.1; the one page-vs-JSON dispatch on Accept (REQ-UI-044) + `?action=` mutations
 │   ├── ApiClient.php             # curl: service token, X-Internal-User-Id, X-Real-IP; error envelope → ApiException
 │   ├── Session.php               # SESSION_DIR, cookie flags, regenerate, lifecycle: idle/absolute bounds, id rotation, replay, epoch (§3/§3.1)
@@ -100,7 +100,7 @@ web/
 │   ├── Navigation.php            # the two left panels + the default-section rule (§2.4, REQ-UI-046/047)
 │   ├── View.php                  # layout + template render, e() escaping, CSP header (REQ-TECH-020)
 │   ├── I18n.php                  # English catalog + bundle overlay, t(), JS-string injection (§9)
-│   ├── Messages.php              # API error code → translated line (§3.4 table)
+│   ├── Messages.php              # API error code → translated line (§3.4 table); the generic line carries the request reference, plus technical detail in development (REQ-UI-050)
 │   ├── DataApi.php               # data-API form encoding: import rows data[i][key], delete, export passthrough
 │   └── i18n/en.php               # English source of truth (REQ-DB-031)
 ├── app/Controllers/…             # one class per page group of §2.1 (Login, Dashboard, ControlPanel, Project, Setup, Record, …)
@@ -149,7 +149,7 @@ Each milestone is a vertical slice that runs against the real API (SQLite, `APP_
 | M3 | Administration surface | `/admin` (Control Panel: `?section=users\|projects\|audits\|translations\|settings`, REQ-UI-047), `/projects/{id}/members`, `/roles`, `/groups` | L | M2 |
 | M4 | Setup and designer | `/projects/{id}/setup` (blocks A–D, arm tabs), `/design`, `/design/instruments/{iid}`, expression editors + test panel, staging banner/commit/discard, analysis-mode acknowledge, mode card | **XL** | M3 |
 | M5 | Data entry and record view | `/projects/{id}/record-status` (colour grid, new participant, auto-name), `/projects/{id}/records/{record}` (form render, prefill from history, per-field history, completion control, branching evaluator, submit via data-API import), record actions (delete scoped, DAG assign, survey link) | **XL** | M4 |
-| M6 | Export, public survey, hardening | `/projects/{id}/export` (streamed), `/s/{link}`, responsive pass, error-mapping completeness, `nb`/`nn` catalog population, PHP smoke tests + Playwright browser tests (`REQ-TECH-028`) in CI | M | M5 |
+| M6 | Export, public survey, hardening | `/projects/{id}/export` (streamed), `/s/{link}`, responsive pass, error-mapping completeness, `nb`/`nn` catalog population (with spreadsheet export/import in the Translations section for offline translation work, `REQ-UI-049`), PHP smoke tests + Playwright browser tests (`REQ-TECH-028`) in CI | M | M5 |
 
 Ordering notes: M3 precedes M4 because members/roles must exist before a project can be designed and permissioned by a non-admin. M6's export slice is small and may be pulled forward into M3 if a demonstration of Fiona-parity download is wanted early. M4 and M5 are the two heaviest; nothing else can proceed in parallel with them beyond i18n catalog authoring, which is continuous work from M1 onward.
 

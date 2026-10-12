@@ -502,18 +502,19 @@ final class Router
     private function fromApiException(ApiException $e, array $route): Response
     {
         $wantsJson = $this->request->wantsJson() && ($route['region'] ?? null) !== null;
-        $text = Messages::forApiException($this->i18n, $e);
+        $text = Messages::forApiException($this->i18n, $e, $this->request->ref(), $this->config->isDevelopment);
 
         if ($wantsJson) {
-            return Response::apiError($e->code(), $text, $e->status());
+            return Response::apiError($e->code(), $text, $e->status(), $this->request->ref());
         }
 
         // A page-level failure: log the real reason, show the user the line.
-        $this->logger->warn('page read failed', [
+        $this->logger->warn('page read failed', array_filter([
             'path' => $this->request->path(),
             'code' => $e->code(),
             'status' => $e->status(),
-        ]);
+            'endpoint' => $e->endpoint(),
+        ], static fn (string $value): bool => $value !== ''));
 
         if ($e->status() === 403 || $e->status() === 404) {
             return $this->view->render('errors/denied', [
@@ -524,20 +525,32 @@ final class Router
             ], ['layout' => 'shell', 'titleKey' => '']);
         }
 
-        return $this->serverError();
+        return $this->serverError($e);
     }
 
-    /** The 500 page: no stack trace, no internals (REQ-CFG-005, REQ-API-006). */
-    public function serverError(): Response
+    /**
+     * The 500 page: no stack trace, no internals (REQ-CFG-005, REQ-API-006) — but the
+     * request's correlation reference, so what the user sees greps back to the log
+     * line that holds the real reason, and in development the reason itself
+     * (REQ-UI-050).
+     */
+    public function serverError(?ApiException $e = null): Response
     {
         if ($this->request->wantsJson()) {
-            return Response::apiError('internal', $this->i18n->t('error.generic'), 500);
+            return Response::apiError('internal', $this->i18n->t('error.generic'), 500, $this->request->ref());
         }
 
         try {
             return $this->view->render('errors/server', [
                 'title' => $this->i18n->t('error.server.page_title'),
                 'body' => $this->i18n->t('error.server.page_body'),
+                'ref_line' => $this->request->ref() !== ''
+                    ? $this->i18n->t('error.reference', ['ref' => $this->request->ref()])
+                    : '',
+                'detail' => $e !== null && $this->config->isDevelopment
+                    ? trim($e::class . ': ' . $e->getMessage()
+                        . ($e->endpoint() !== '' ? ' at ' . $e->endpoint() : ''))
+                    : '',
             ], ['layout' => null]);
         } catch (\Throwable) {
             // The view itself failed (often a missing template): answer plainly.

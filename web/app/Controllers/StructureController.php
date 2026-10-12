@@ -21,7 +21,6 @@ declare(strict_types=1);
 namespace Clara\Controllers;
 
 use Clara\ApiException;
-use Clara\Messages;
 use Clara\Permissions;
 use Clara\Response;
 use Clara\Session;
@@ -158,7 +157,7 @@ abstract class StructureController extends ProjectPageController
 
                 return Response::redirect(is_string($back) ? $back : $back());
             }
-            $this->flashDanger(Messages::forApiException($this->i18n, $e));
+            $this->flashDanger($this->apiFailureMessage($e));
             if ($onFailure !== null) {
                 $onFailure($e);
             }
@@ -253,7 +252,7 @@ abstract class StructureController extends ProjectPageController
             $answer = $this->api->post('/api/v1/projects/' . $projectId . '/staging/commit', $body);
         } catch (ApiException $e) {
             $this->logger->info('staging commit rejected', ['code' => $e->code(), 'status' => $e->status()]);
-            $this->flashDanger(Messages::forApiException($this->i18n, $e));
+            $this->flashDanger($this->apiFailureMessage($e));
             if ($e->code() === 'conflict') {
                 Session::stash('commit_open', ['open' => true]);
             }
@@ -287,7 +286,7 @@ abstract class StructureController extends ProjectPageController
             $call($projectId);
         } catch (ApiException $e) {
             $this->logger->info($what . ' rejected', ['code' => $e->code(), 'status' => $e->status()]);
-            $this->flashDanger(Messages::forApiException($this->i18n, $e));
+            $this->flashDanger($this->apiFailureMessage($e));
 
             return Response::redirect($this->request->path());
         }

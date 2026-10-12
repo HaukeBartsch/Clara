@@ -5,9 +5,12 @@ import { expect, test, type Page } from "@playwright/test"
 // are fetched as JSON from the very route that served the page and rendered by
 // web/assets/js/translations.js into the vendored Tabulator grid. Asserted here: region-driven
 // rendering, the missing badge, client-side filtering with no extra request, an inline edit
-// round-tripping through the unchanged CSRF-protected PRG save (§3.3), and the stored text back
-// from the API after reload. The assertions adapt to the overlay's current state, so the spec
-// passes both against a fresh dev stack (every key missing) and on re-run over its own save.
+// round-tripping through the unchanged CSRF-protected PRG save (§3.3), the stored text back
+// from the API after reload, and the spreadsheet exchange of REQ-UI-049: the CSV export carries
+// the current table, an import stages known keys as unsaved edits while unknown keys are
+// skipped rather than added — and persists through that same save. The assertions adapt to the
+// overlay's current state, so the spec passes both against a fresh dev stack (every key missing)
+// and on re-run over its own save.
 
 const ADMIN_EMAIL = "admin@example.org"
 const ADMIN_PASSWORD = "clara-dev-481516-pw" // dev-stack.sh: "${stack_seed}-pw", development only
@@ -79,5 +82,43 @@ test.describe("translations key table (M6, REQ-TECH-028)", () => {
     await expect(table.locator(".tabulator-row", { has: page.locator("code", { hasText: "nav.dashboard" }) })).toHaveCount(0)
     await missingBox.uncheck()
     await expect(row).toHaveCount(1)
+
+    // Export (REQ-UI-049): a client-side CSV of the whole table — BOM, header, and the text
+    // that was just saved. The active filter must not narrow it: an off-screen key is exported.
+    const [csvDownload] = await Promise.all([page.waitForEvent("download"), page.locator("#tr-export").click()])
+    expect(csvDownload.suggestedFilename()).toMatch(/^clara-translations-\w+\.csv$/)
+    const exported = await (await csvDownload.createReadStream()).toArray().then((parts) => Buffer.concat(parts).toString("utf8"))
+    expect(exported.charCodeAt(0)).toBe(0xfeff)
+    const [exportHeader, ...exportLines] = exported.slice(1).trim().split(/\r?\n/)
+    expect(exportHeader).toBe("key,english,text")
+    expect(exportLines.join("\n")).toContain(draft)
+    expect(exportLines.some((line) => line.startsWith("app.name,"))).toBe(true) // not visible under the filter
+
+    // Import (REQ-UI-049): a known key stages an unsaved edit; an unknown key is reported and
+    // skipped — never added to the table. Quoting round-trips: the text carries a comma.
+    const imported = `Oversikt, importert ${Date.now()}`
+    const csv = "key,english,text\r\nnav.dashboard,Dashboard,\"" + imported + "\"\r\nno.such.key,X,Y\r\n"
+    await page.setInputFiles("#tr-import-file", { name: "import.csv", mimeType: "text/csv", buffer: Buffer.from(csv) })
+    const message = page.locator("#tr-message")
+    await expect(message).toContainText("1 translations applied from the file.")
+    await expect(message).toContainText("key not found")
+    await expect(table.locator(".tabulator-row", { has: page.locator("code", { hasText: "no.such.key" }) })).toHaveCount(0)
+    await expect(status).toContainText("1 unsaved changes.")
+    await expect(page.locator("#tr-save")).toBeEnabled()
+
+    // Save runs the imported text through the unchanged PRG path (REQ-UI-005, REQ-API-100).
+    await page.locator("#tr-save").click()
+    await expect(page.locator('[role="alert"]')).toContainText("1 translations saved.")
+    await page.fill("#tr-search", "nav.dashboard")
+    await expect(row.locator('.tabulator-cell[tabulator-field="text"]')).toContainText(imported)
+
+    // The JSON seed shape of tools/i18n/ imports too — the "@"-prefixed metadata key is
+    // skipped like the seeder skips it, and the one text stages as an unsaved edit.
+    await page.setInputFiles("#tr-import-file", {
+      name: "nb.json", mimeType: "application/json",
+      buffer: Buffer.from(JSON.stringify({ "@draft": "metadata, never a translation", "nav.dashboard": "Oversikt" })),
+    })
+    await expect(message).toContainText("1 translations applied from the file.")
+    await expect(status).toContainText("1 unsaved changes.") // staged only — nothing saved without Save
   })
 })

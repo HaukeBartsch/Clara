@@ -37,8 +37,10 @@ try {
 ini_set('display_errors', $config->isDevelopment ? '1' : '0');
 error_reporting(E_ALL);
 
-$logger = Logger::fromConfig($config);
+// The request first: its correlation reference goes into every log line of this
+// request and into the generic failure the user may see (REQ-UI-050).
 $request = Request::fromGlobals();
+$logger = Logger::fromConfig($config, $request->ref());
 
 // --- vendored static assets -------------------------------------------------
 // web/assets sits outside the document root (the tree in
@@ -81,8 +83,9 @@ try {
     // a bad .env, because it is the same class of problem.
     configFailure($e);
 } catch (Throwable $e) {
-    // One log line with the real reason; the user gets a generic page and no
-    // stack trace in any environment they can reach (REQ-API-006, REQ-CFG-005).
+    // One log line with the real reason; the user gets a generic page plus the
+    // reference, and no stack trace in any environment (REQ-API-006, REQ-CFG-005).
+    // The technical detail below the line renders only in development (REQ-UI-050).
     $logger->error('unhandled error', [
         'path' => $request->path(),
         'type' => $e::class,
@@ -92,6 +95,16 @@ try {
 
     // English copy when the translator itself is what failed.
     $generic = $i18n?->t('error.generic') ?? 'Something went wrong.';
+
+    // The reference greps to the log line above (REQ-UI-050); the technical
+    // detail renders only in development, mirroring configFailure's split.
+    if ($request->ref() !== '') {
+        $generic .= ' ' . ($i18n?->t('error.reference', ['ref' => $request->ref()]) ?? 'Reference: ' . $request->ref());
+    }
+    if ($config->isDevelopment) {
+        $generic .= ' (internal: ' . $e::class . ': ' . $e->getMessage() . ' at '
+            . $e->getFile() . ':' . $e->getLine() . ')';
+    }
 
     $response = $request->wantsJson()
         ? Response::apiError('internal', $generic, 500)
@@ -110,7 +123,9 @@ $response->send();
  */
 function configFailure(ConfigError $error): never
 {
-    fwrite(STDERR, json_encode([
+    // php://stderr rather than the STDERR constant: the constant is not defined
+    // under every SAPI (the built-in server), and this page must render there too.
+    file_put_contents('php://stderr', json_encode([
         'ts' => gmdate('Y-m-d\TH:i:s\Z'),
         'level' => 'error',
         'component' => 'web',

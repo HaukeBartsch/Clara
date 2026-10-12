@@ -13,7 +13,6 @@ declare(strict_types=1);
 namespace Clara\Controllers;
 
 use Clara\ApiException;
-use Clara\Messages;
 use Clara\Permissions;
 
 abstract class DataEntryController extends ProjectPageController
@@ -165,7 +164,7 @@ abstract class DataEntryController extends ProjectPageController
             'analysis_mode' => $this->i18n->t('record.analysis_closed'),
             'not_member' => $this->i18n->t('record.not_member'),
             'invalid_token' => $this->i18n->t('record.token_refused'),
-            default => Messages::forApiException($this->i18n, $e),
+            default => $this->apiFailureMessage($e),
         };
     }
 

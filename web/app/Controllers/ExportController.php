@@ -24,7 +24,6 @@ declare(strict_types=1);
 namespace Clara\Controllers;
 
 use Clara\ApiException;
-use Clara\Messages;
 use Clara\Permissions;
 use Clara\Response;
 use Clara\Session;
@@ -274,7 +273,7 @@ final class ExportController extends ProjectPageController
                 );
             } catch (ApiException $e) {
                 $this->logger->info('export refused', ['code' => $e->code(), 'status' => $e->status()]);
-                Session::flash('danger', Messages::forApiException($this->i18n, $e));
+                Session::flash('danger', $this->apiFailureMessage($e));
                 $sink->begin(303, ['Location' => $back, 'Cache-Control' => 'no-store']);
             }
         });

@@ -12,10 +12,12 @@ declare(strict_types=1);
 namespace Clara\Controllers;
 
 use Clara\ApiClient;
+use Clara\ApiException;
 use Clara\Auth;
 use Clara\Config;
 use Clara\I18n;
 use Clara\Logger;
+use Clara\Messages;
 use Clara\Request;
 use Clara\Response;
 use Clara\Session;
@@ -61,6 +63,17 @@ abstract class Controller
     protected function flashDanger(string $text): void
     {
         Session::flash('danger', $text);
+    }
+
+    /**
+     * The user line for a failed API call, carrying this request's correlation
+     * reference and — in development only — the technical detail (REQ-UI-050).
+     * Controllers flash or render failures through this rather than calling
+     * Messages directly, so every surface gets both.
+     */
+    protected function apiFailureMessage(ApiException $e): string
+    {
+        return Messages::forApiException($this->i18n, $e, $this->request->ref(), $this->config->isDevelopment);
     }
 
     /** A page rendered inside the application shell. */
