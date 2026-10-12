@@ -25,6 +25,7 @@ func (h *Handler) registerStructure(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/projects/{id}/arms", h.listArms)
 	mux.HandleFunc("POST /api/v1/projects/{id}/arms", h.createArm)
 	mux.HandleFunc("PUT /api/v1/projects/{id}/arms/order", h.orderArms)
+	mux.HandleFunc("PUT /api/v1/arms/{id}", h.updateArm)
 	mux.HandleFunc("DELETE /api/v1/arms/{id}", h.deleteArm)
 
 	mux.HandleFunc("GET /api/v1/projects/{id}/events", h.listEvents)
@@ -464,6 +465,153 @@ func (h *Handler) createArm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, armObject{ID: arm.ID, ArmNum: next, Name: name, Events: []armEventObject{}})
+}
+
+// updateArm renames an arm (path verbatim per ASM-API-1, REQ-API-150): the
+// body writes only the display label — id, arm_num, position and events are
+// untouched, and no uniqueness constraint applies to arm names. The rename is
+// never breaking in analysis mode (§4.21: labels are decoupled from the
+// unique_event_name values), yet acknowledge_breaking is accepted for
+// uniformity with the other structure writes. project_admin; idempotent
+// (REQ-API-042) — a PUT carrying the current name stores and audits nothing.
+// 200 with the arm object; audit `arm_updated` with old and new values.
+func (h *Handler) updateArm(w http.ResponseWriter, r *http.Request) {
+	u, ok := actor(r)
+	if !ok {
+		errForbidden(w)
+		return
+	}
+	armID, ok := pathObjectID(r, "id")
+	if !ok {
+		errBadRequest(w, "invalid arm id")
+		return
+	}
+	ctx := r.Context()
+	arm, err := h.Store.GetArm(ctx, armID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	var supplied map[string]json.RawMessage
+	if err := decodeBody(r, &supplied); err != nil {
+		errBadRequest(w, "malformed JSON body")
+		return
+	}
+	if !RejectUnknownAttrs(w, supplied, "name", "acknowledge_breaking") {
+		return
+	}
+
+	// The same edit over a design snapshot: production routes it to the open
+	// set, and an arm created while one is open lives only there (§4.21).
+	applyEdit := func(d *stagedDesign) *designError {
+		a, ok := d.armByID(armID)
+		if !ok {
+			return validationf("arm %d is not part of the staged design", armID)
+		}
+		if raw, present := supplied["name"]; present {
+			var name string
+			if err := json.Unmarshal(raw, &name); err != nil {
+				return validationf("name must be a string")
+			}
+			a.Name = sql.NullString{String: name, Valid: name != ""}
+		}
+		return nil
+	}
+	// writeStagedArm answers from the snapshot that carries the rename, in the
+	// §4.8 object shape; the apply closure guarantees the arm is there.
+	writeStagedArm := func(d *stagedDesign) {
+		for _, o := range d.armObjects() {
+			if o.ID == armID {
+				writeJSON(w, http.StatusOK, o)
+				return
+			}
+		}
+		errInternal(w)
+	}
+	if arm == nil {
+		// An arm created while a staging set is open has no live row; the set
+		// holding it answers for it.
+		var matched *stagedDesign
+		handled, err := h.stagedObjectWrite(w, r, u,
+			func(d *stagedDesign) bool {
+				if _, ok := d.armByID(armID); !ok {
+					return false
+				}
+				matched = d
+				return true
+			},
+			applyEdit, func() { writeStagedArm(matched) })
+		if err != nil {
+			errInternal(w)
+			return
+		}
+		if !handled {
+			errNotFound(w)
+		}
+		return
+	}
+	lv, err := h.access(ctx, u, arm.ProjectID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	if !h.requireProjectAdmin(w, r, lv) {
+		return
+	}
+	target, staged, breakingAcknowledged, ok := h.structureWrite(w, r, arm.ProjectID, acknowledgeFrom(supplied), applyEdit)
+	if !ok {
+		return
+	}
+	if target == writeStaged {
+		if !h.applyStagedChange(w, r, arm.ProjectID, staged, applyEdit) {
+			return
+		}
+		writeStagedArm(staged)
+		return
+	}
+
+	name := arm.Name.String
+	if raw, present := supplied["name"]; present {
+		if err := json.Unmarshal(raw, &name); err != nil {
+			errBadRequest(w, "name must be a string")
+			return
+		}
+	}
+	if name != arm.Name.String {
+		next := *arm
+		next.Name = sql.NullString{String: name, Valid: name != ""}
+		if err := h.Store.UpdateArm(ctx, &next); err != nil {
+			errInternal(w)
+			return
+		}
+		if err := h.Audit.Insert(ctx, audit.Entry{
+			EventType: audit.ArmUpdated, Source: audit.SourceUI,
+			UserID: u.ID, Email: u.Email, ProjectID: arm.ProjectID,
+			Details: withBreakingAcknowledgement(map[string]any{
+				"arm_num": arm.ArmNum,
+				"changes": map[string]any{"name": map[string]any{
+					"old": arm.Name.String, "new": name,
+				}},
+			}, breakingAcknowledged),
+		}); err != nil {
+			errInternal(w)
+			return
+		}
+	}
+	events, err := h.Store.ListEventsByArm(ctx, arm.ProjectID, arm.ID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	objs := make([]armEventObject, 0, len(events))
+	for _, e := range events {
+		objs = append(objs, armEventObject{
+			ID: e.ID, EventName: e.EventName, UniqueEventName: e.UniqueEventName,
+			Period: Int64Ptr(e.Period), SafeRegionStart: Int64Ptr(e.SafeRegionStart),
+			SafeRegionEnd: Int64Ptr(e.SafeRegionEnd), Position: e.Position,
+		})
+	}
+	writeJSON(w, http.StatusOK, armObject{ID: arm.ID, ArmNum: arm.ArmNum, Name: name, Events: objs})
 }
 
 // deleteArm removes an empty arm (path verbatim per ASM-API-1). An arm that

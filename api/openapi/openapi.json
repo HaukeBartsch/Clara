@@ -662,6 +662,21 @@
       }
     },
     "/api/v1/arms/{id}": {
+      "put": {
+        "tags": ["Admin: Structure"],
+        "operationId": "updateArm",
+        "summary": "Rename an arm (REQ-API-150)",
+        "description": "`project_admin`; the path follows the master plan verbatim (ASM-API-1); idempotent. The body writes the display label only — id, `arm_num`, position and events are untouched; arm names carry no uniqueness constraint. The rename is never breaking in analysis mode (§4.21), yet `acknowledge_breaking` is accepted for uniformity. Audit `arm_updated` with old and new values.",
+        "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64" }, "description": "Arm id." } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "name": { "type": "string" }, "acknowledge_breaking": { "type": "boolean" } } } } } },
+        "responses": {
+          "200": { "description": "The arm object with the new label.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ArmWithEvents" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
       "delete": {
         "tags": ["Admin: Structure"],
         "operationId": "deleteArm",

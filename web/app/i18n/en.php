@@ -520,6 +520,7 @@ return [
     'setup.arm.name' => 'Arm name',
     'setup.arm.add' => 'Add arm',
     'setup.arm.added' => 'Arm "{name}" added.',
+    'setup.arm.updated' => 'Arm "{name}" updated.',
     'setup.arm.deleted' => 'Arm "{name}" removed.',
     'setup.arm.reset' => 'The last arm cannot be removed — it was renamed to arm_1 instead.',
     'setup.arm.confirm_delete' => 'Remove arm {arm}? An arm that still has events or data cannot be removed.',

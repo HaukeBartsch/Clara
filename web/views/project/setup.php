@@ -56,6 +56,7 @@ $nullable = static fn (mixed $v): string => $v === null ? '' : (string) $v;
                                     </form>
                                 <?php endif; ?>
                             <?php endforeach; ?>
+                            <a class="btn btn-sm btn-outline-primary" href="<?= View::e($setupUrl . '?edit_arm=' . (int) ($arm['id'] ?? 0) . '#arm-edit') ?>"><?= View::e($view->t('setup.edit')) ?></a>
                             <form method="post" action="<?= View::e($act('delete_arm')) ?>" class="d-inline"
                                   data-clara-confirm="<?= View::e($view->t($lastArm ? 'setup.arm.confirm_reset' : 'setup.arm.confirm_delete',
                                       ['arm' => (string) ($arm['arm_num'] ?? '')])) ?>">
@@ -72,6 +73,28 @@ $nullable = static fn (mixed $v): string => $v === null ? '' : (string) $v;
         </table>
     </div>
     <?php if ($canEdit): ?>
+        <?php foreach ($arms as $arm): ?>
+            <?php if ((int) ($arm['id'] ?? 0) !== $editArm || $editArm === 0) {
+                continue;
+            } ?>
+            <!-- Rename one arm: the label only — id, arm_num and events are untouched (REQ-API-150). -->
+            <form method="post" action="<?= View::e($act('rename_arm')) ?>" class="card card-body mb-3" id="arm-edit">
+                <?= $view->csrfField() ?>
+                <input type="hidden" name="arm_id" value="<?= (int) $arm['id'] ?>">
+                <div class="row g-2">
+                    <div class="col-md-6">
+                        <label class="form-label mb-0 small" for="arm-edit-name"><?= View::e($view->t('setup.arm.name')) ?></label>
+                        <input class="form-control form-control-sm" type="text" id="arm-edit-name" name="name" required maxlength="255"
+                               value="<?= View::e($arm['name'] ?? '') ?>">
+                    </div>
+                </div>
+                <div class="mt-2 d-flex gap-2">
+                    <button class="btn btn-sm btn-primary" type="submit"><?= View::e($view->t('action.save')) ?></button>
+                    <a class="btn btn-sm btn-outline-secondary" href="<?= View::e($setupUrl) ?>"><?= View::e($view->t('action.cancel')) ?></a>
+                </div>
+            </form>
+        <?php endforeach; ?>
+
         <form method="post" action="<?= View::e($act('add_arm')) ?>" class="d-flex flex-wrap gap-2 align-items-end">
             <?= $view->csrfField() ?>
             <div>

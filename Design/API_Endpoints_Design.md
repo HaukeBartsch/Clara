@@ -564,7 +564,7 @@ All three endpoints require `is_admin`. Roles are project-scoped (REQ-AUTH-024) 
 
 **`PUT /api/v1/projects/{id}/roles/{rid}`** — body: the same shape as `POST`, replacing the role's name, `project_admin`, arm defaults and grants in one transaction; a pair omitted from `grants` reverts to its arm default, and an `arms` map missing an arm sets that arm to `no_access` / `export_none` (REQ-API-143). Unknown `{rid}` → 404; duplicate name → 409; an `event`/`instrument` pair not mapped in the project → 400 naming it, nothing applied. 200 — the updated role object. Audit `role_updated` with the before/after permission set; members holding the role pick the change up on their next request without re-authentication (REQ-AUTH-033).
 
-### 4.8 Arms (REQ-API-058…060)
+### 4.8 Arms (REQ-API-058…060, REQ-API-150)
 
 **`GET /api/v1/projects/{id}/arms`** — data access ≥ `read_only`. 200 (events in the canonical per-arm order, GD-15; `period` is `null` when the event has no timepoint):
 
@@ -577,6 +577,8 @@ All three endpoints require `is_admin`. Roles are project-scoped (REQ-AUTH-024) 
 ```
 
 **`POST /api/v1/projects/{id}/arms`** — `project_admin`. Body `{ "name": "…" }`; `arm_num` is the next 1-based number (a duplicate → 409 `conflict`). 201 — the arm object. Audit `arm_created`.
+
+**`PUT /api/v1/arms/{id}`** — `project_admin`; the path follows the master plan verbatim (ASM-API-1); idempotent (REQ-API-042). Body `{ "name": "…" }` writes the display label only — id, `arm_num`, position and events are untouched; arm names carry no uniqueness constraint. The rename is never breaking in analysis mode (§4.21) — labels are decoupled from `unique_event_name` values (REQ-DB-011) — yet `acknowledge_breaking` is accepted for uniformity with the other structure writes. 200 — the arm object. Audit `arm_updated` with `{arm_num, changes:{name:{old,new}}}` (the last-arm-reset audit of `DELETE …/arms/{id}` shares this shape; REQ-API-150).
 
 **`DELETE /api/v1/arms/{id}`** — `project_admin`; the path follows the master plan verbatim (ASM-API-1). 204. An arm that still has events or data → 409 `conflict` (DEV-API-6; phase-1 edge case, ASM-API-4) — **unless it is the project's last remaining arm**: that one cannot go either, and the call instead renames it to `arm_1`, keeping its id, `arm_num` and events (a renumbering would rewrite every `unique_event_name` and its stored values; the rename is a label). The answer is then 200 with the renamed arm object. Audit `arm_deleted`, or `arm_updated` with `last_arm_reset` on the rename (REQ-API-128; VISION "Arms, events and instruments").
 

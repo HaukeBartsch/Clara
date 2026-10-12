@@ -98,6 +98,8 @@ final class Router
         ['method' => 'POST', 'pattern' => '/projects/{id}/setup', 'controller' => Controllers\SetupController::class,
             'handler' => 'addArm', 'guard' => 'login', 'action' => 'add_arm'],
         ['method' => 'POST', 'pattern' => '/projects/{id}/setup', 'controller' => Controllers\SetupController::class,
+            'handler' => 'renameArm', 'guard' => 'login', 'action' => 'rename_arm'],
+        ['method' => 'POST', 'pattern' => '/projects/{id}/setup', 'controller' => Controllers\SetupController::class,
             'handler' => 'moveArm', 'guard' => 'login', 'action' => 'move_arm'],
         ['method' => 'POST', 'pattern' => '/projects/{id}/setup', 'controller' => Controllers\SetupController::class,
             'handler' => 'deleteArm', 'guard' => 'login', 'action' => 'delete_arm'],

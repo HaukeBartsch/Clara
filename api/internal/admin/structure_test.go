@@ -512,6 +512,83 @@ func TestLastArmRename(t *testing.T) {
 	}
 }
 
+// TestArmRename: PUT /api/v1/arms/{id} writes the label only — id, arm_num and
+// events are untouched (REQ-API-150). The same PUT is a no-op with no second
+// audit row (REQ-API-042); unknown ids → 404, non-admins → 403; the audit
+// carries the name change with old/new values.
+func TestArmRename(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	projectID := e.mustProject("Arm Study")
+
+	rec := e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/arms", map[string]any{"name": "Control"}, admin)
+	var arm armObject
+	e.decode(rec, &arm)
+	rec = e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/events", map[string]any{
+		"arm_num": 1, "event_name": "visit",
+	}, admin)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create event: %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = e.do("PUT", "/api/v1/arms/"+itoa(arm.ID), map[string]any{"name": "Treatment"}, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rename arm: %d %s", rec.Code, rec.Body.String())
+	}
+	var renamed armObject
+	e.decode(rec, &renamed)
+	if renamed.ID != arm.ID || renamed.ArmNum != 1 || renamed.Name != "Treatment" || len(renamed.Events) != 1 {
+		t.Fatalf("renamed arm object = %+v, want id %d arm_num 1 named Treatment with its event", renamed, arm.ID)
+	}
+
+	rec = e.do("GET", "/api/v1/projects/"+itoa(projectID)+"/arms", nil, admin)
+	var arms []armObject
+	e.decode(rec, &arms)
+	if len(arms) != 1 || arms[0].Name != "Treatment" {
+		t.Fatalf("arms after rename = %+v", arms)
+	}
+
+	rec = e.do("PUT", "/api/v1/arms/"+itoa(arm.ID), map[string]any{"name": "Treatment"}, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("idempotent rename: %d, want 200", rec.Code)
+	}
+	var n int
+	if err := e.Store.DB.QueryRow(
+		`SELECT COUNT(*) FROM audit_events WHERE event_type = 'arm_updated'`).Scan(&n); err != nil {
+		t.Fatalf("count audit: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("arm_updated audit rows = %d after the no-op rename, want 1", n)
+	}
+
+	rec = e.do("PUT", "/api/v1/arms/999999", map[string]any{"name": "x"}, admin)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown arm: %d, want 404", rec.Code)
+	}
+	regular := e.mustUser("user@example.org")
+	rec = e.do("PUT", "/api/v1/arms/"+itoa(arm.ID), map[string]any{"name": "y"}, regular)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("non-admin rename: %d, want 403", rec.Code)
+	}
+
+	var saw bool
+	rows, err := e.Store.DB.Query(`SELECT details FROM audit_events WHERE event_type = 'arm_updated'`)
+	if err != nil {
+		t.Fatalf("audit: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err == nil &&
+			contains(d, `"name"`) && contains(d, `"Control"`) && contains(d, `"Treatment"`) {
+			saw = true
+		}
+	}
+	if !saw {
+		t.Fatalf("arm_updated audit missing the name change")
+	}
+}
+
 // TestOrderArms: PUT /api/v1/projects/{id}/arms/order writes the full order;
 // ids and arm numbers never change (REQ-API-129).
 func TestOrderArms(t *testing.T) {

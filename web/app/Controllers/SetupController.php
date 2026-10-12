@@ -53,6 +53,7 @@ final class SetupController extends StructureController
             'instruments' => $instruments,
             'mapping' => $mapping,
             'activeArm' => $activeArm,
+            'editArm' => self::parseObjectId($this->request->query('edit_arm')),
             'editEvent' => self::parseObjectId($this->request->query('edit_event')),
             'editInstrument' => self::parseObjectId($this->request->query('edit_instrument')),
         ], ['scripts' => self::SCRIPTS, 'jsKeys' => self::JS_KEYS], $state['mode']);
@@ -67,6 +68,17 @@ final class SetupController extends StructureController
         return $this->structureWrite($this->back(), function (int $projectId) use ($name): void {
             $this->api->post('/api/v1/projects/' . $projectId . '/arms', $this->withAck(['name' => $name]));
         }, $this->i18n->t('setup.arm.added', ['name' => $name]));
+    }
+
+    /** PUT /api/v1/arms/{id} — the label only; id, arm_num and events are untouched (REQ-API-150). */
+    public function renameArm(): Response
+    {
+        $armId = $this->objectId('arm_id');
+        $name = trim($this->request->field('name'));
+
+        return $this->structureWrite($this->back(), function () use ($armId, $name): void {
+            $this->api->put('/api/v1/arms/' . $armId, $this->withAck(['name' => $name]));
+        }, $this->i18n->t('setup.arm.updated', ['name' => $name]));
     }
 
     public function moveArm(): Response
