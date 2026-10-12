@@ -707,18 +707,15 @@ func (a *applyState) deleteFieldsAndInstruments(active, staged *stagedDesign) er
 			if _, keep := remaining[xf.ID]; keep && instKept {
 				continue
 			}
-			if referenced, err := designReferencesField(staged, xf.FieldName); err != nil {
-				return err
-			} else if referenced {
-				return conflictf("field %s is referenced by an active expression", xf.FieldName)
-			}
 			// A checkbox's values live under its derived choice columns; they
-			// leave with the field exactly as the parent-named rows do
-			// (REQ-DB-042).
-			names := []string{xf.FieldName}
-			if xf.FieldType == "checkbox" {
-				for _, code := range validate.ChoiceCodes(xf.Choices.String) {
-					names = append(names, db.CheckboxSubName(xf.FieldName, code))
+			// leave with the field exactly as the parent-named rows do, and an
+			// expression reading one of its boxes holds it back (REQ-DB-042).
+			names := storedNames(xf.FieldName, xf.FieldType, xf.Choices)
+			for _, name := range names {
+				if referenced, err := designReferencesField(staged, name); err != nil {
+					return err
+				} else if referenced {
+					return conflictf("field %s is referenced by an active expression", name)
 				}
 			}
 			for _, name := range names {

@@ -678,3 +678,102 @@ describe('saving and deleting (§8.6, §8.7)', function (): void {
         assert_same(0, m4_count('POST', '/survey-link'));
     });
 });
+
+/** intake with a checkbox `habits` after its other fields (REQ-DB-042). */
+function m5_checkbox_fields(array $extra = []): array
+{
+    return array_merge(m5_fields(), [m5_field(7, 'habits', 'checkbox', $extra + ['choices' => '1$Smoking##2$Drinking##3$Sports'])]);
+}
+
+/** A history in which box 1 was checked and box 3 checked, then cleared. */
+function m5_checkbox_history(): array
+{
+    return m5_history([
+        m5_entry('update', 'baseline_arm_1', ['habits___3' => ['1', null]], '2026-10-02 10:00:00'),
+        m5_entry('update', 'baseline_arm_1', ['habits___1' => [null, '1'], 'habits___3' => [null, '1'], 'age' => ['41', '42']]),
+    ]);
+}
+
+describe('checkboxes in data entry (REQ-DB-042, REQ-UI-025)', function (): void {
+    it('names a checkbox\'s values per box and recognises a box of its checkbox', function (): void {
+        $habits = m5_field(7, 'habits', 'checkbox', ['choices' => '1$Smoking##12$Drinking']);
+        assert_same(['habits___1', 'habits___12'], DataEntry::valueNames($habits));
+        assert_same(['age'], DataEntry::valueNames(m5_field(2, 'age', 'text')));
+        assert_true(DataEntry::isEnterable($habits));
+        assert_true(DataEntry::isChoiceColumnOf('habits___12', 'habits'));
+        assert_true(!DataEntry::isChoiceColumnOf('habits___x', 'habits'), 'choice codes are numbers');
+        assert_true(!DataEntry::isChoiceColumnOf('habits_old___1', 'habits'));
+        assert_true(!DataEntry::isChoiceColumnOf('habits', 'habits'));
+    });
+
+    it('renders one box per choice, checked as the history left it, each with its own baseline', function (): void {
+        sign_in();
+        api_route('/instruments/7/fields', m5_checkbox_fields(['required' => true]));
+        m5_queue(history: m5_checkbox_history());
+
+        $body = m5_get('/projects/3/records/8DISC001', ['event' => 'baseline_arm_1', 'instrument' => 'intake'])->body();
+
+        assert_contains('name="value[habits___1]" value="1"', $body);
+        assert_contains('data-clara-choice="habits___1" data-clara-choices="1$Smoking" checked>', $body);
+        assert_contains('data-clara-choice="habits___2" data-clara-choices="1$Drinking">', $body);
+        assert_contains('data-clara-choice="habits___3" data-clara-choices="1$Sports">', $body, 'cleared by the newer entry');
+        assert_contains('name="was[habits___1]" value="1"', $body);
+        assert_contains('name="was[habits___3]" value=""', $body);
+        assert_not_contains('name="value[habits]"', $body, 'the checkbox itself carries no value');
+        assert_contains('role="group" aria-labelledby="f-habits-label"', $body);
+        assert_contains('data-clara-field="habits" data-clara-type="checkbox"', $body);
+    });
+
+    it('shows a read_only member the checked boxes, every box still readable by the evaluator', function (): void {
+        sign_in();
+        api_route('/instruments/7/fields', m5_checkbox_fields());
+        m5_queue('read_only', history: m5_checkbox_history());
+
+        $body = m5_get('/projects/3/records/8DISC001', ['event' => 'baseline_arm_1', 'instrument' => 'intake'])->body();
+
+        assert_not_contains('name="value[habits___', $body);
+        assert_contains('class="me-2" data-clara-choice="habits___1" data-clara-value="1"', $body);
+        assert_contains('class="me-2 d-none" data-clara-choice="habits___2" data-clara-value=""', $body);
+        assert_contains('✓ Smoking', $body);
+    });
+
+    it('saves a checked box as 1 and a stored box the user unchecked as an explicit clear (GD-14)', function (): void {
+        sign_in(['csrf_token' => M5_CSRF]);
+        api_route('/instruments/7/fields', m5_checkbox_fields());
+        m5_queue();
+        api_route('data:action=import', [['record_id' => '8DISC001', 'form_name' => 'intake', 'import_record_id' => 2, 'import_form_name' => 'intake']]);
+
+        // The browser posts only checked boxes; was[…] carries every box's stored state.
+        m5_post('/projects/3/records/8DISC001',
+            m5_save_fields(['habits___2' => '1'], ['habits___1' => '1', 'habits___2' => '', 'habits___3' => '']), 'save');
+
+        assert_same(['record_id' => '8DISC001', 'form_name' => 'intake', 'event_name' => 'baseline_arm_1',
+            'habits___2' => '1', 'habits___1' => ''], data_api_body('action=import')['data'][0]);
+    });
+
+    it('re-renders a refused save with the boxes as the user left them and the reason under the checkbox', function (): void {
+        sign_in(['csrf_token' => M5_CSRF]);
+        api_route('/instruments/7/fields', m5_checkbox_fields());
+        m5_queue(history: m5_checkbox_history());
+        api_route('data:action=import', [['record_id' => '8DISC001', 'form_name' => 'intake', 'import_record_id' => 0,
+            'import_form_name' => 'Validation error: habits___2: CHOICE_INVALID — value \'7\' of checkbox choice \'habits___2\' must be 0 or 1']]);
+
+        $body = m5_post('/projects/3/records/8DISC001',
+            m5_save_fields(['habits___2' => '7'], ['habits___1' => '1', 'habits___2' => '', 'habits___3' => '']), 'save')->body();
+
+        assert_contains('data-clara-choice="habits___1" data-clara-choices="1$Smoking">', $body, 'unchecked by the user, not re-checked from storage');
+        assert_contains('data-clara-choice="habits___2" data-clara-choices="1$Drinking" checked>', $body);
+        assert_contains('clara-field clara-field-invalid" data-clara-field="habits"', $body);
+        assert_contains('must be 0 or 1', $body);
+    });
+
+    it('serves a checkbox\'s history as that of its boxes (REQ-UI-026)', function (): void {
+        sign_in();
+        m5_queue(history: m5_checkbox_history());
+
+        $payload = json_decode(m5_get('/projects/3/records/8DISC001', ['field' => 'habits', 'event' => 'baseline_arm_1'], json_headers())->body(), true);
+
+        assert_same(['habits___3', 'habits___1', 'habits___3'], array_column($payload['entries'], 'field'));
+        assert_contains('field=habits', $GLOBALS['api_calls'][count($GLOBALS['api_calls']) - 1]['url']);
+    });
+});

@@ -16,6 +16,7 @@ This document outlines the validation rules for the clinical study management sy
 
 ### 2. Choice Fields (Dropdowns / Radio Buttons)
 - Validation: Value must match one of the predefined numeric codes.
+- Checkboxes store one value per choice under `<field_name>___<code>` (REQ-DB-042): `1` checks a box, `0` or empty clears it; any other value is rejected.
 
 ### 3. Matrix Fields
 - Validation: Each row must have a valid selection from the shared choices.

@@ -311,6 +311,11 @@ func (h *Handler) surveyValueFields(ctx context.Context, projectID, instrumentID
 		if f.ID == identifierID || f.FieldType == "description" || f.FieldType == "header" {
 			continue
 		}
+		if f.FieldType == "checkbox" {
+			// A checkbox answers through its choice columns (REQ-DB-042).
+			names = append(names, checkboxSubs(f)...)
+			continue
+		}
 		names = append(names, f.FieldName)
 	}
 	return names, nil

@@ -2138,7 +2138,7 @@ func (h *Handler) deleteInstrumentHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		doomed := make([]string, 0, len(si.Fields))
 		for _, sf := range si.Fields {
-			doomed = append(doomed, sf.FieldName)
+			doomed = append(doomed, storedNames(sf.FieldName, sf.FieldType, sf.Choices)...)
 		}
 		if len(d.Instruments) <= 1 {
 			// Last instrument: only its fields go; the shell returns as
@@ -2202,14 +2202,16 @@ func (h *Handler) deleteInstrumentHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, f := range fields {
-		referenced, err := h.fieldReferencedOutsideInstrument(ctx, projectID, instID, f.FieldName, last)
-		if err != nil {
-			errInternal(w)
-			return
-		}
-		if referenced {
-			errConflict(w, "field "+f.FieldName+" is referenced by an active expression; update the expression first")
-			return
+		for _, name := range storedNames(f.FieldName, f.FieldType, f.Choices) {
+			referenced, err := h.fieldReferencedOutsideInstrument(ctx, projectID, instID, name, last)
+			if err != nil {
+				errInternal(w)
+				return
+			}
+			if referenced {
+				errConflict(w, "field "+name+" is referenced by an active expression; update the expression first")
+				return
+			}
 		}
 	}
 	tx, err := h.Store.DB.BeginTx(ctx, nil)
@@ -2220,19 +2222,22 @@ func (h *Handler) deleteInstrumentHTTP(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 	var valuesRemoved int64
 	for _, f := range fields {
-		var removed int64
-		if err := tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM data WHERE project_id = ? AND field_name = ?`,
-			projectID, f.FieldName).Scan(&removed); err != nil {
-			errInternal(w)
-			return
-		}
-		valuesRemoved += removed
-		if _, err := tx.ExecContext(ctx,
-			`DELETE FROM data WHERE project_id = ? AND field_name = ?`,
-			projectID, f.FieldName); err != nil {
-			errInternal(w)
-			return
+		// A checkbox's values sit under its choice columns (REQ-DB-042).
+		for _, name := range storedNames(f.FieldName, f.FieldType, f.Choices) {
+			var removed int64
+			if err := tx.QueryRowContext(ctx,
+				`SELECT COUNT(*) FROM data WHERE project_id = ? AND field_name = ?`,
+				projectID, name).Scan(&removed); err != nil {
+				errInternal(w)
+				return
+			}
+			valuesRemoved += removed
+			if _, err := tx.ExecContext(ctx,
+				`DELETE FROM data WHERE project_id = ? AND field_name = ?`,
+				projectID, name); err != nil {
+				errInternal(w)
+				return
+			}
 		}
 		if _, err := tx.ExecContext(ctx,
 			`DELETE FROM calculated_dependencies WHERE project_id = ? AND calculated_field_id = ?`,
@@ -2503,6 +2508,20 @@ func checkboxSubs(f db.Field) []string {
 		subs = append(subs, db.CheckboxSubName(f.FieldName, c))
 	}
 	return subs
+}
+
+// storedNames returns every name a field's values are stored under: its own,
+// and for a checkbox each of its choice columns (REQ-DB-042). Deletes and the
+// expression guards that protect them walk this list, so a checkbox leaves with
+// its values and stays while an expression still reads one of its boxes.
+func storedNames(fieldName, fieldType string, choices sql.NullString) []string {
+	names := []string{fieldName}
+	if fieldType == "checkbox" {
+		for _, code := range validate.ChoiceCodes(choices.String) {
+			names = append(names, db.CheckboxSubName(fieldName, code))
+		}
+	}
+	return names
 }
 
 // expandCheckboxFields adds the derived value-column entries of every checkbox
@@ -3399,6 +3418,17 @@ func (h *Handler) updateField(w http.ResponseWriter, r *http.Request) {
 				errInternal(w)
 				return
 			}
+			if old.FieldType == "checkbox" {
+				for _, code := range validate.ChoiceCodes(old.Choices.String) {
+					if _, err := tx.ExecContext(ctx,
+						`UPDATE calculated_dependencies SET ref_field_name = ?
+						 WHERE project_id = ? AND ref_field_name = ?`,
+						db.CheckboxSubName(rename, code), projectID, db.CheckboxSubName(old.FieldName, code)); err != nil {
+						errInternal(w)
+						return
+					}
+				}
+			}
 		}
 		if calcChanged || rename != "" && next.FieldType == "calculated" {
 			if err := putCalcDepsTx(ctx, tx, projectID, fieldID, refs); err != nil {
@@ -3612,10 +3642,12 @@ func (h *Handler) deleteField(w http.ResponseWriter, r *http.Request) {
 		}
 		// The expression guard reads the design that is about to become active, so a
 		// staged expression still naming this field blocks the removal (§6.2).
-		if referenced, err := designReferencesField(d, sf.FieldName); err != nil {
-			return &designError{status: http.StatusInternalServerError, msg: "internal"}
-		} else if referenced {
-			return conflictf("field is referenced by an active expression; update the expression first")
+		for _, name := range storedNames(sf.FieldName, sf.FieldType, sf.Choices) {
+			if referenced, err := designReferencesField(d, name); err != nil {
+				return &designError{status: http.StatusInternalServerError, msg: "internal"}
+			} else if referenced {
+				return conflictf("field is referenced by an active expression; update the expression first")
+			}
 		}
 		d.deleteField(fieldID)
 		return nil
@@ -3650,14 +3682,17 @@ func (h *Handler) deleteField(w http.ResponseWriter, r *http.Request) {
 		errNotFound(w)
 		return
 	}
-	referenced, err := h.fieldReferencedByExpressions(ctx, projectID, f.FieldName)
-	if err != nil {
-		errInternal(w)
-		return
-	}
-	if referenced {
-		errConflict(w, "field is referenced by an active expression; update the expression first")
-		return
+	// A checkbox stays while an expression reads any of its boxes (REQ-DB-042).
+	for _, name := range storedNames(f.FieldName, f.FieldType, f.Choices) {
+		referenced, err := h.fieldReferencedByExpressions(ctx, projectID, name)
+		if err != nil {
+			errInternal(w)
+			return
+		}
+		if referenced {
+			errConflict(w, "field is referenced by an active expression; update the expression first")
+			return
+		}
 	}
 	tx, err := h.Store.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -3667,12 +3702,8 @@ func (h *Handler) deleteField(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 	// A checkbox's values live under its derived choice columns (REQ-DB-042);
 	// they leave with the field exactly as the parent-named rows do.
-	names := []string{f.FieldName}
-	for _, sub := range checkboxSubs(*f) {
-		names = append(names, sub)
-	}
 	var removed int64
-	for _, name := range names {
+	for _, name := range storedNames(f.FieldName, f.FieldType, f.Choices) {
 		var n int64
 		if err := tx.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM data WHERE project_id = ? AND field_name = ?`,

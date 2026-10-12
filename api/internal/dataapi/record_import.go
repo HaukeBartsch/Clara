@@ -375,10 +375,19 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 	}
 	var pendings []pending
 	var problems []string
-	// Deterministic order: dictionary order over the row's keys.
-	for _, f := range d.fields {
+	// Deterministic order: dictionary order over the row's keys. A checkbox is
+	// written through its choice columns, which follow it in the expanded
+	// dictionary (REQ-DB-042).
+	for _, f := range d.expanded {
 		raw, ok := row[f.FieldName]
 		if !ok || importMetaKeys[f.FieldName] {
+			continue
+		}
+		if f.isCheckboxParent() {
+			// The checkbox's own name addresses no data column; its boxes do.
+			problems = append(problems, f.FieldName+": "+string(validate.CodeNonValueField)+
+				" — checkbox field '"+f.FieldName+"' takes its values per choice as "+
+				db.CheckboxSubName(f.FieldName, "<code>"))
 			continue
 		}
 		// A row writes its named instrument and the record identifier —
@@ -399,6 +408,19 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 			problems = append(problems, f.FieldName+": CONTENT_INVALID — field '"+f.FieldName+
 				"' belongs to instrument '"+f.Instrument+"', not '"+own+"'")
 			continue
+		}
+		if f.isChoiceColumn() {
+			// One box: 1 checks it, 0 clears it exactly like an empty value —
+			// only checked boxes hold a stored row (REQ-DB-042).
+			switch raw {
+			case "0":
+				raw = ""
+			case "", "1":
+			default:
+				problems = append(problems, f.FieldName+": "+string(validate.CodeChoiceInvalid)+
+					" — value '"+raw+"' of checkbox choice '"+f.FieldName+"' must be 0 or 1")
+				continue
+			}
 		}
 		vf := validate.Field{
 			Name:           f.FieldName,

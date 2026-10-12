@@ -12,6 +12,7 @@ import (
 	"csms/api/internal/audit"
 	"csms/api/internal/authz"
 	"csms/api/internal/db"
+	"csms/api/internal/validate"
 )
 
 // registerQueries mounts the query surface of §4: the record-status dashboard
@@ -59,6 +60,60 @@ type recordStatusRow struct {
 // read_only + project visibility; events of arms without read access are
 // omitted (GD-2). A record-status read is not a record view — no audit row is
 // written (§4.13, ASM-AUD-2).
+// checkboxDataCells reports every (record, event, instrument) holding a checked
+// box: the derived "some data" half of record-status for values stored under a
+// checkbox's choice columns (REQ-DB-042, REQ-API-074). Like the join it
+// complements, it hands out positions only — never a value.
+func (h *Handler) checkboxDataCells(ctx context.Context, projectID int64, add func(record, event, instrument string)) error {
+	rows, err := h.Store.DB.QueryContext(ctx,
+		`SELECT f.field_name, f.choices, i.name
+		 FROM fields f JOIN instruments i ON i.id = f.instrument_id
+		 WHERE f.project_id = ? AND f.field_type = 'checkbox'`, projectID)
+	if err != nil {
+		return err
+	}
+	instrumentOf := map[string]string{} // choice column -> instrument name
+	for rows.Next() {
+		var name, instrument string
+		var choices sql.NullString
+		if err := rows.Scan(&name, &choices, &instrument); err != nil {
+			rows.Close()
+			return err
+		}
+		for _, code := range validate.ChoiceCodes(choices.String) {
+			instrumentOf[db.CheckboxSubName(name, code)] = instrument
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	if len(instrumentOf) == 0 {
+		return nil
+	}
+	args := make([]any, 0, len(instrumentOf)+1)
+	args = append(args, projectID)
+	for name := range instrumentOf {
+		args = append(args, name)
+	}
+	cells, err := h.Store.DB.QueryContext(ctx,
+		`SELECT DISTINCT record_id, unique_event_name, field_name FROM data
+		 WHERE project_id = ? AND value <> '' AND field_name IN (`+placeholders(len(instrumentOf))+`)`, args...)
+	if err != nil {
+		return err
+	}
+	defer cells.Close()
+	for cells.Next() {
+		var record, event, name string
+		if err := cells.Scan(&record, &event, &name); err != nil {
+			return err
+		}
+		add(record, event, instrumentOf[name])
+	}
+	return cells.Err()
+}
+
 func (h *Handler) recordStatus(w http.ResponseWriter, r *http.Request) {
 	u, ok := actor(r)
 	if !ok {
@@ -174,6 +229,15 @@ func (h *Handler) recordStatus(w http.ResponseWriter, r *http.Request) {
 		complete[k] = true
 	}
 	if err := rows.Err(); err != nil {
+		errInternal(w)
+		return
+	}
+	// A checkbox stores its values under its choice columns, which name no
+	// fields row (REQ-DB-042): they reach their instrument through the checkbox
+	// in a second pass that only a project with checkboxes pays for.
+	if err := h.checkboxDataCells(ctx, projectID, func(record, event, instrument string) {
+		complete[cellKey{record, event, instrument}] = true
+	}); err != nil {
 		errInternal(w)
 		return
 	}
@@ -643,6 +707,21 @@ func (h *Handler) recordHistory(w http.ResponseWriter, r *http.Request) {
 	instrumentFilter := r.URL.Query().Get("instrument")
 	eventFilter := r.URL.Query().Get("event")
 	fieldFilter := r.URL.Query().Get("field")
+	// A checkbox's history is that of its choice columns, which carry its values
+	// (REQ-DB-042): filtering by the checkbox matches every one of them.
+	fieldMatch := map[string]bool{fieldFilter: true}
+	if fieldFilter != "" {
+		f, err := h.Store.GetFieldByName(ctx, projectID, fieldFilter)
+		if err != nil {
+			errInternal(w)
+			return
+		}
+		if f != nil {
+			for _, sub := range checkboxSubs(*f) {
+				fieldMatch[sub] = true
+			}
+		}
+	}
 
 	limit := ParseLimit(r)
 	// The record-scoped page: target_record + the data-change codes of §3.2 —
@@ -721,7 +800,7 @@ func (h *Handler) recordHistory(w http.ResponseWriter, r *http.Request) {
 		if fieldFilter != "" {
 			hit := false
 			for _, f := range d.Fields {
-				if f.Field == fieldFilter {
+				if fieldMatch[f.Field] {
 					hit = true
 					break
 				}

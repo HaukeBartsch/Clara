@@ -199,14 +199,19 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 	wantForms := toSet(s.Forms)
 	wantFields := toSet(s.Fields)
 	var wanted []column
-	for _, f := range d.fields {
-		if f.FieldType == "description" || f.FieldType == "header" {
+	// The expanded dictionary puts every checkbox's choice columns right after
+	// it; the checkbox row itself carries no value and is replaced by them
+	// (REQ-EXP-053).
+	for _, f := range d.expanded {
+		if f.FieldType == "description" || f.FieldType == "header" || f.isCheckboxParent() {
 			continue // carry no values, never appear (§3.2)
 		}
 		if wantForms != nil && !wantForms[f.Instrument] {
 			continue
 		}
-		if wantFields != nil && !wantFields[f.FieldName] {
+		// fields[] names a choice column directly or through its checkbox, which
+		// selects every choice column (REQ-EXP-053).
+		if wantFields != nil && !wantFields[f.FieldName] && !(f.isChoiceColumn() && wantFields[f.Parent]) {
 			continue
 		}
 		wanted = append(wanted, column{
@@ -461,10 +466,14 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 	wide := strings.EqualFold(s.Type, "wide")
 	headerOf := func(c column) string {
 		if (labelHeaders || bothHeaders) && c.f.FieldLabel.Valid && c.f.FieldLabel.String != "" {
-			if bothHeaders {
-				return c.f.FieldLabel.String + " (" + c.f.FieldName + ")"
+			label := c.f.FieldLabel.String
+			if c.f.isChoiceColumn() {
+				label += ", " + c.f.ChoiceLabel // "<Field Label>, <Choice Label>" (REQ-EXP-053)
 			}
-			return c.f.FieldLabel.String
+			if bothHeaders {
+				return label + " (" + c.f.FieldName + ")"
+			}
+			return label
 		}
 		return c.f.FieldName
 	}
@@ -670,6 +679,20 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 					}
 				}
 			}
+			if c.f.isChoiceColumn() {
+				// A box is checked or not: raw writes 1/0, labels the choice's
+				// text or nothing (REQ-EXP-053). The cell only exists where its
+				// pair may contribute, so a 0 never stands in for a refused one.
+				switch {
+				case v == "" && labelValues:
+					return ""
+				case v == "":
+					return "0"
+				case labelValues:
+					return c.f.ChoiceLabel
+				}
+				return v
+			}
 			if v == "" {
 				return ""
 			}
@@ -798,7 +821,7 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 					if !visible[sl.col][rs.event] {
 						continue // nothing was delivered from this pair
 					}
-					if cellsValueHasData(cell(cols[sl.col], rs.event)) {
+					if cellsValueHasData(cols[sl.col].f, cell(cols[sl.col], rs.event)) {
 						instruments[cols[sl.col].f.Instrument] = true
 					}
 				}
@@ -889,8 +912,11 @@ func nonNil(vals []string) []string {
 }
 
 // cellsValueHasData reports whether an emitted cell carried a value — the
-// record-view row lists instruments actually present in the returned rows.
-func cellsValueHasData(v string) bool { return v != "" }
+// record-view row lists instruments actually present in the returned rows. An
+// unchecked box exports as 0 but holds nothing (REQ-DB-042).
+func cellsValueHasData(f recField, v string) bool {
+	return v != "" && !(f.isChoiceColumn() && v == "0")
+}
 
 // completionKey indexes the stored finished assignments by
 // (record, event, instrument) — the join key of the REQ-API-134 derivation.

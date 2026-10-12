@@ -505,6 +505,7 @@
     "design.type.text": "Tekst",
     "design.type.dropdown": "Nedtrekksliste",
     "design.type.radio": "Radioknapper",
+    "design.type.checkbox": "Avkrysningsbokser",
     "design.type.matrix": "Matrise",
     "design.type.description": "Beskrivelse (ingen verdi)",
     "design.type.header": "Overskrift (ingen verdi)",

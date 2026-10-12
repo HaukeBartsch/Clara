@@ -49,11 +49,13 @@ function historyDialog() {
   return historyModal
 }
 
-const historyRow = (entry) => {
+const historyRow = (entry, field) => {
   // Values are written as text, never as markup (REQ-UI-004); a deletion shows the deleted
-  // value on the old side (REQ-AUD-009).
+  // value on the old side (REQ-AUD-009). A checkbox's history is that of its boxes, so each
+  // change names the box it belongs to (REQ-DB-042).
   const change = el("td", { class: "clara-history-change" }, [
     el("span", { class: "badge text-bg-light border me-1" }, t("record.history.action." + entry.action)),
+    entry.field && entry.field !== field ? el("code", { class: "small me-1" }, entry.field) : null,
     el("span", { class: "text-body-secondary" }, entry.old ?? "—"),
     " → ",
     el("span", null, entry.new ?? "—"),
@@ -74,7 +76,7 @@ async function loadHistory(first) {
   try {
     const page = await fetchJson(dialog.url + (dialog.cursor ? "&cursor=" + encodeURIComponent(dialog.cursor) : ""))
     if (first) dialog.body.replaceChildren()
-    for (const entry of page.entries || []) dialog.body.appendChild(historyRow(entry))
+    for (const entry of page.entries || []) dialog.body.appendChild(historyRow(entry, dialog.field))
     dialog.cursor = page.next_cursor || null
     if (dialog.cursor) dialog.more.classList.remove("d-none")
     if (!dialog.cursor && dialog.body.children.length === 0) dialog.body.appendChild(historyNotice(t("record.history.empty")))
@@ -88,6 +90,7 @@ function wireHistory(form) {
     button.addEventListener("click", () => {
       const dialog = historyDialog()
       const field = button.dataset.claraHistory
+      dialog.field = field
       dialog.title.textContent = t("record.history.title") + " — " + field
       dialog.url = form.dataset.history + "?field=" + encodeURIComponent(field) + "&event=" + encodeURIComponent(form.dataset.event)
       dialog.cursor = null

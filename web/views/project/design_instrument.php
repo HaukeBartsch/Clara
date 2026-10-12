@@ -129,7 +129,7 @@ $nullable = static fn (mixed $v): string => $v === null ? '' : (string) $v;
                 <input class="form-control form-control-sm" type="text" id="field-note" name="field_note" value="<?= View::e($selected['field_note'] ?? '') ?>">
             </div>
 
-            <!-- Choices (dropdown / radio / matrix): code + label rows, sent as code$label##… -->
+            <!-- Choices (dropdown / radio / checkbox / matrix): code + label rows, sent as code$label##… -->
             <fieldset class="col-12 border rounded p-2" data-clara-for-types="<?= View::e(implode('|', $choiceTypes)) ?>">
                 <legend class="float-none w-auto px-1 small mb-0"><?= View::e($view->t('design.field.choices')) ?></legend>
                 <table class="table table-sm mb-1 clara-choices">

@@ -69,6 +69,10 @@ func (h *Handler) contentRecordDelete(w http.ResponseWriter, r *http.Request, en
 		visible[id] = true
 	}
 
+	// fields[] naming a checkbox scopes the delete to its choice columns, where
+	// its values are stored (REQ-DB-042).
+	fields := d.withChoiceColumns(p.Fields)
+
 	results := make([]deleteRow, 0, len(p.Records))
 	for _, recordID := range uniqueStrings(p.Records) {
 		row := deleteRow{RecordID: recordID}
@@ -105,7 +109,7 @@ func (h *Handler) contentRecordDelete(w http.ResponseWriter, r *http.Request, en
 			continue
 		}
 
-		removed, err := h.Store.DeleteRecordValuesTx(ctx, tx, sub.Project.ID, recordID, p.Events, p.Fields)
+		removed, err := h.Store.DeleteRecordValuesTx(ctx, tx, sub.Project.ID, recordID, p.Events, fields)
 		if err != nil {
 			tx.Rollback()
 			h.storeError(w, enc)

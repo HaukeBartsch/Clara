@@ -437,6 +437,25 @@ describe('Instrument Designer (§7, REQ-UI-021…023)', function (): void {
         assert_same(true, $body['required']);
     });
 
+    it('offers Checkboxes beside the radio buttons and sends its choices like theirs (REQ-DB-042)', function (): void {
+        sign_in();
+        m4_queue();
+        $body = m4_get('/projects/3/design/instruments/7', ['field' => 'new'])->body();
+        assert_contains('<option value="checkbox">Checkboxes</option>', $body);
+        $at = static fn (string $type): int => (int) strpos($body, '<option value="' . $type . '"');
+        assert_true($at('radio') < $at('checkbox') && $at('checkbox') < $at('matrix'), 'listed after the radio buttons');
+        assert_contains('data-clara-for-types="dropdown|radio|checkbox|matrix"', $body);
+
+        api_route('/api/v1/projects/3/instruments/7/fields', ['id' => 32], 201);
+        m4_post('/projects/3/design/instruments/7', [
+            'field_id' => '0', 'field_name' => 'habits', 'field_type' => 'checkbox',
+            'choice_code' => ['1', '2', ''], 'choice_label' => ['Smoking', 'Drinking', ''],
+        ], 'save_field');
+        $sent = m4_body('POST', '/instruments/7/fields');
+        assert_same('checkbox', $sent['field_type']);
+        assert_same('1$Smoking##2$Drinking', $sent['choices']);
+    });
+
     it('leaves direct_identifier to the API preset on a new identifier-typed field, unless cleared', function (): void {
         sign_in();
         api_route('/api/v1/projects/3/instruments/7/fields', ['id' => 31], 201);

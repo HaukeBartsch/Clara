@@ -73,7 +73,9 @@ func valueOrNull(v string) *string {
 func importChangeGroups(d *projectDict, action, recordID, form, event string, changes map[string]map[string]string) []dataChangeDetails {
 	var out []dataChangeDetails
 	at := map[string]int{}
-	for _, f := range d.fields {
+	// The expanded dictionary, so a checkbox's boxes are on the trail under
+	// their choice columns, in their checkbox's place (REQ-DB-042).
+	for _, f := range d.expanded {
 		c, ok := changes[f.FieldName]
 		if !ok {
 			continue

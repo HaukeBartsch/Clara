@@ -1,8 +1,8 @@
 <?php
 /**
  * The fields of one instrument form, in position order (§8.2, REQ-UI-025): single fields,
- * matrix groups with the coding stated once, section headings, descriptions and headers,
- * calculated values read-only. Shared by the record view (§8) and the public survey page
+ * matrix groups with the coding stated once, checkbox groups (one value per box, REQ-DB-042),
+ * section headings, descriptions and headers, calculated values read-only. Shared by the record view (§8) and the public survey page
  * (§8.8) so the two render one instrument the same way — the evaluator they both run
  * (branching.js, §8.4) reads the same `data-clara-*` attributes from this markup.
  *
@@ -17,6 +17,14 @@ use Clara\View;
 
 $shown = static fn (string $name): string => $draft !== null && array_key_exists($name, $draft)
     ? (string) $draft[$name] : (string) ($prefill[$name] ?? '');
+
+/**
+ * Whether one checkbox box (`<field>___<code>`, REQ-DB-042) shows checked: as a rejected
+ * submission left it — a browser posts only checked boxes, so an absent one was unchecked —
+ * otherwise as stored.
+ */
+$isChecked = static fn (string $box): bool => $draft !== null
+    ? (string) ($draft[$box] ?? '') !== '' : (string) ($prefill[$box] ?? '') !== '';
 
 /**
  * The display text of a stored value: a choice's label (with its code), a free-text value as
@@ -126,6 +134,9 @@ $fieldAttrs = static function (array $field, ?string $staticValue = null) use ($
     $id = 'f-' . $name;
     $value = $shown($name);
     $isIdentifier = $name === $identifier;
+    // A rejected box's reason belongs to its checkbox (REQ-DB-042).
+    $error = implode('; ', array_values(array_intersect_key($errors,
+        array_flip(array_merge([$name], $type === 'checkbox' ? DataEntry::valueNames($field) : [])))));
     ?>
     <?php if ($type === 'header'): ?>
         <h2 class="h6 mt-3 clara-field-header"<?= $fieldAttrs($field) ?>><?= View::e($label) ?></h2>
@@ -138,10 +149,10 @@ $fieldAttrs = static function (array $field, ?string $staticValue = null) use ($
     <?php endif; ?>
 
     <?php $static = !$canEdit || $isIdentifier || $type === 'calculated' ? ($isIdentifier && $value === '' ? $record : $value) : null; ?>
-    <div class="mb-3 clara-field<?= isset($errors[$name]) ? ' clara-field-invalid' : '' ?>"<?= $fieldAttrs($field, $static) ?>>
+    <div class="mb-3 clara-field<?= $error !== '' ? ' clara-field-invalid' : '' ?>"<?= $fieldAttrs($field, $static) ?>>
         <div class="d-flex align-items-start gap-2">
             <div class="flex-grow-1">
-                <?php if (in_array($type, ['radio'], true) && $canEdit && !$isIdentifier): ?>
+                <?php if (in_array($type, ['radio', 'checkbox'], true) && $canEdit && !$isIdentifier): ?>
                     <div class="form-label mb-1" id="<?= View::e($id) ?>-label"><?= View::e($label !== '' ? $label : $name) ?><?php if (!empty($field['required'])): ?><span class="clara-required" aria-hidden="true"> *</span><?php endif; ?></div>
                 <?php else: ?>
                     <label class="form-label mb-1" for="<?= View::e($id) ?>"><?= View::e($label !== '' ? $label : $name) ?><?php if (!empty($field['required'])): ?><span class="clara-required" aria-hidden="true"> *</span><?php endif; ?></label>
@@ -153,6 +164,18 @@ $fieldAttrs = static function (array $field, ?string $staticValue = null) use ($
                 <?php elseif ($type === 'calculated'): ?>
                     <!-- Calculated (REQ-VAL-036): a read-only value, recomputed by the API on import. -->
                     <output class="form-control form-control-sm bg-body-tertiary" id="<?= View::e($id) ?>"><?= $value === '' ? '<span class="text-body-secondary">—</span>' : View::e($value) ?></output>
+                <?php elseif (!$canEdit && $type === 'checkbox'): ?>
+                    <!-- The checked boxes; every box carries its state for the evaluator (§8.4). -->
+                    <div class="form-control-plaintext py-0 clara-value" id="<?= View::e($id) ?>">
+                        <?php $anyChecked = false; ?>
+                        <?php foreach ($item['choices'] as $choice): ?>
+                            <?php $box = $name . DataEntry::CHOICE_SEPARATOR . $choice['code']; $on = $isChecked($box); $anyChecked = $anyChecked || $on; ?>
+                            <span class="me-2<?= $on ? '' : ' d-none' ?>" data-clara-choice="<?= View::e($box) ?>" data-clara-value="<?= $on ? '1' : '' ?>"
+                                  data-clara-choices="<?= View::e('1$' . $choice['label']) ?>">✓ <?= View::e($choice['label']) ?>
+                                <span class="text-body-secondary small">(<?= View::e($choice['code']) ?>)</span></span>
+                        <?php endforeach; ?>
+                        <?php if (!$anyChecked): ?><span class="text-body-secondary">—</span><?php endif; ?>
+                    </div>
                 <?php elseif (!$canEdit): ?>
                     <div class="form-control-plaintext py-0 clara-value" id="<?= View::e($id) ?>"><?= $display($field, $value) ?></div>
                 <?php elseif ($type === 'dropdown'): ?>
@@ -176,25 +199,41 @@ $fieldAttrs = static function (array $field, ?string $staticValue = null) use ($
                         <?php endforeach; ?>
                         <button class="btn btn-sm btn-link p-0 d-none" type="button" data-clara-reset><?= View::e($view->t('record.reset')) ?></button>
                     </div>
+                <?php elseif ($type === 'checkbox'): ?>
+                    <!-- One box per choice, each its own value column `<field>___<code>` (REQ-DB-042):
+                         a checked box posts 1; an unchecked one posts nothing, and was[…] tells the
+                         controller which stored box the user cleared (GD-14). -->
+                    <div role="group" aria-labelledby="<?= View::e($id) ?>-label" class="d-flex flex-wrap gap-3">
+                        <?php foreach ($item['choices'] as $i => $choice): ?>
+                            <?php $box = $name . DataEntry::CHOICE_SEPARATOR . $choice['code']; ?>
+                            <div class="form-check mb-0">
+                                <input class="form-check-input" type="checkbox" id="<?= View::e($id . '-' . $i) ?>" name="value[<?= View::e($box) ?>]" value="1"
+                                       data-clara-choice="<?= View::e($box) ?>" data-clara-choices="<?= View::e('1$' . $choice['label']) ?>"<?= $isChecked($box) ? ' checked' : '' ?>>
+                                <label class="form-check-label" for="<?= View::e($id . '-' . $i) ?>"><?= View::e($choice['label']) ?></label>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
                 <?php else: ?>
                     <?php
                     $vt = (string) ($field['validation_type'] ?? '');
                     $format = in_array($vt, ['date', 'datetime'], true) ? (string) (($field['validation_format'] ?? '') ?: $formats[$vt]) : '';
                     $mode = ['integer' => 'numeric', 'floating point' => 'decimal'][$vt] ?? 'text';
                     ?>
-                    <input class="form-control form-control-sm<?= isset($errors[$name]) ? ' is-invalid' : '' ?>" type="text" id="<?= View::e($id) ?>"
+                    <input class="form-control form-control-sm<?= $error !== '' ? ' is-invalid' : '' ?>" type="text" id="<?= View::e($id) ?>"
                            name="value[<?= View::e($name) ?>]" value="<?= View::e($value) ?>" inputmode="<?= $mode ?>"
                            <?= $format !== '' ? 'placeholder="' . View::e($format) . '"' : '' ?> autocomplete="off">
                 <?php endif; ?>
 
                 <?php if ($canEdit && !$isIdentifier && DataEntry::isEnterable($field)): ?>
-                    <input type="hidden" name="was[<?= View::e($name) ?>]" value="<?= View::e($prefill[$name] ?? '') ?>">
+                    <?php foreach (DataEntry::valueNames($field) as $valueName): ?>
+                        <input type="hidden" name="was[<?= View::e($valueName) ?>]" value="<?= View::e($prefill[$valueName] ?? '') ?>">
+                    <?php endforeach; ?>
                 <?php endif; ?>
                 <?php if (($field['field_note'] ?? '') !== ''): ?>
                     <div class="form-text"><?= View::e($field['field_note']) ?></div>
                 <?php endif; ?>
-                <?php if (isset($errors[$name])): ?>
-                    <div class="text-danger small" data-clara-error><?= View::e($errors[$name]) ?></div>
+                <?php if ($error !== ''): ?>
+                    <div class="text-danger small" data-clara-error><?= View::e($error) ?></div>
                 <?php endif; ?>
                 <div class="small text-warning-emphasis d-none" data-clara-hint></div>
             </div>

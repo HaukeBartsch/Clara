@@ -604,6 +604,7 @@ return [
     'design.type.text' => 'Text',
     'design.type.dropdown' => 'Dropdown',
     'design.type.radio' => 'Radio buttons',
+    'design.type.checkbox' => 'Checkboxes',
     'design.type.matrix' => 'Matrix',
     'design.type.description' => 'Description (no value)',
     'design.type.header' => 'Header (no value)',

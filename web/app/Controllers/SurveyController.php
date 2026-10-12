@@ -141,10 +141,16 @@ final class SurveyController extends Controller
         $fields = self::fieldsFromMetadata($rows);
         $instrument = (string) ($fields[0]['form_name'] ?? '');
 
-        // A reason keyed on a field the respondent has an input for belongs under that input;
-        // one keyed on anything else (a framing key the API names, or nothing at all) would
-        // leave the page promising reasons it shows nowhere — so it rides in the general line.
+        // A reason keyed on a field the respondent has an input for belongs under that input —
+        // a checkbox's boxes are inputs of their own (REQ-DB-042); one keyed on anything else (a
+        // framing key the API names, or nothing at all) would leave the page promising reasons it
+        // shows nowhere — so it rides in the general line.
         $names = array_column($fields, 'field_name');
+        foreach ($fields as $field) {
+            if (($field['field_type'] ?? '') === 'checkbox') {
+                $names = array_merge($names, DataEntry::valueNames($field));
+            }
+        }
         $note = '';
         foreach (array_diff_key($errors, array_flip($names)) as $key => $reason) {
             $note .= ($note === '' ? '' : ' ') . ($key === '' ? '' : $key . ': ') . $reason;

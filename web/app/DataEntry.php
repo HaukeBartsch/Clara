@@ -16,7 +16,10 @@ namespace Clara;
 final class DataEntry
 {
     /** Field types that take a value in the form (§8.2); description, header, calculated never do. */
-    public const ENTERABLE_TYPES = ['text', 'dropdown', 'radio', 'matrix'];
+    public const ENTERABLE_TYPES = ['text', 'dropdown', 'radio', 'checkbox', 'matrix'];
+
+    /** Separates a checkbox's name from a choice code in its value columns (REQ-DB-042). */
+    public const CHOICE_SEPARATOR = '___';
 
     /** The three completion states of record-status and the dropdown (§6.3, §8.5). */
     public const STATES = ['no_data', 'some_data', 'finished'];
@@ -48,6 +51,33 @@ final class DataEntry
     public static function isEnterable(array $field): bool
     {
         return in_array((string) ($field['field_type'] ?? ''), self::ENTERABLE_TYPES, true);
+    }
+
+    /**
+     * The names a field's values are stored and imported under (REQ-DB-042): a checkbox has one
+     * per choice, `<field_name>___<code>` — checked stores `1`, unchecked nothing — and every
+     * other field its own name.
+     *
+     * @return list<string>
+     */
+    public static function valueNames(array $field): array
+    {
+        $name = (string) ($field['field_name'] ?? '');
+        if (($field['field_type'] ?? '') !== 'checkbox') {
+            return [$name];
+        }
+
+        return array_map(static fn (array $choice): string => $name . self::CHOICE_SEPARATOR . $choice['code'],
+            self::choices((string) ($field['choices'] ?? '')));
+    }
+
+    /**
+     * True when `$name` is one of the value columns of a checkbox called `$field` — the shape a
+     * history entry of that checkbox carries (REQ-DB-042). Choice codes are numbers (REQ-VAL-022).
+     */
+    public static function isChoiceColumnOf(string $name, string $field): bool
+    {
+        return preg_match('/^' . preg_quote($field . self::CHOICE_SEPARATOR, '/') . '[0-9]+$/', $name) === 1;
     }
 
     /** A free-text field: `text` without a validation type (Data_Validation_Design.md §5). */

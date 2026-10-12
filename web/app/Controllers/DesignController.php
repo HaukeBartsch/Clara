@@ -21,10 +21,13 @@ use Clara\Session;
 final class DesignController extends StructureController
 {
     /** The field types of §7.2, in the order the type select lists them. */
-    public const FIELD_TYPES = ['text', 'dropdown', 'radio', 'matrix', 'description', 'header', 'calculated'];
+    public const FIELD_TYPES = ['text', 'dropdown', 'radio', 'checkbox', 'matrix', 'description', 'header', 'calculated'];
 
-    /** Types whose values are choice codes (the `code$label##…` encoding, REQ-VAL-022). */
-    public const CHOICE_TYPES = ['dropdown', 'radio', 'matrix'];
+    /**
+     * Types that carry choices (the `code$label##…` encoding, REQ-VAL-022). A checkbox stores
+     * one column per choice instead of a code (REQ-DB-042), but is designed the same way.
+     */
+    public const CHOICE_TYPES = ['dropdown', 'radio', 'checkbox', 'matrix'];
 
     /** Validation types that preset `direct_identifier` (REQ-EXP-020, API §4.11). */
     public const IDENTIFIER_TYPES = ['email', 'MRN', 'international phone', 'national phone'];

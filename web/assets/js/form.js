@@ -11,12 +11,13 @@
 //    to a field of this form reads its input; any other reads the current value the server
 //    put in the record-context block. A form that knows only its own fields (the survey
 //    page) sets `anyEvent`, so a reference to one of them reads the input whatever event it
-//    names.
+//    names. A checkbox box `[field___code]` reads 1 while checked and empty otherwise — what
+//    the API reads from the stored rows (REQ-DB-042).
 // 2. Advisory validation (REQ-VAL-002): type, min/max, date format and registry pattern
 //    hints as the user types; the API decides (REQ-VAL-001).
 // 3. Required fields (REQ-VAL-028): a submit with visible required fields empty is held
-//    once with the list; the second click saves anyway — partial records are first-class
-//    (GD-14, ASM-VAL-3).
+//    once with the list — a checkbox is empty while none of its boxes is checked; the second
+//    click saves anyway — partial records are first-class (GD-14, ASM-VAL-3).
 // 4. Small things: clearing a radio, and the browser timezone for date values (GD-16).
 
 import { compileBranching } from "./branching.js"
@@ -40,6 +41,9 @@ export const fieldValue = (form, wrapper) => {
   return wrapper.dataset.claraValue ?? ""
 }
 
+// One checkbox box (REQ-DB-042): an input while editable, a marked span when read-only.
+const boxValue = (box) => (box.type === "checkbox" ? (box.checked ? "1" : "") : box.dataset.claraValue ?? "")
+
 // --- 1. branching ---
 
 function compile(source) {
@@ -56,16 +60,22 @@ export function wireBranching(form, context) {
   for (const wrapper of form.querySelectorAll("[data-clara-field]")) {
     fields.set(wrapper.dataset.claraField, wrapper)
   }
+  const boxes = new Map()
+  for (const box of form.querySelectorAll("[data-clara-choice]")) {
+    boxes.set(box.dataset.claraChoice, box)
+  }
+  const onForm = (event) => context.anyEvent || (event || context.firstEvent) === context.event
 
   const env = {
     value: (event, field) => {
       const ev = event || context.firstEvent
-      if ((context.anyEvent || ev === context.event) && fields.has(field)) return fieldValue(form, fields.get(field))
+      if (onForm(event) && boxes.has(field)) return boxValue(boxes.get(field))
+      if (onForm(event) && fields.has(field)) return fieldValue(form, fields.get(field))
       return (context.values || {})[ev + "|" + field] ?? ""
     },
     choices: (event, field) => {
-      const ev = event || context.firstEvent
-      if ((context.anyEvent || ev === context.event) && fields.has(field)) return fields.get(field).dataset.claraChoices || ""
+      if (onForm(event) && boxes.has(field)) return boxes.get(field).dataset.claraChoices || ""
+      if (onForm(event) && fields.has(field)) return fields.get(field).dataset.claraChoices || ""
       return ""
     },
   }
@@ -173,6 +183,11 @@ export function wireRequired(form) {
     const missing = []
     for (const wrapper of form.querySelectorAll("[data-clara-required='1']")) {
       if (wrapper.closest(".d-none")) continue // hidden by branching: not asked for
+      const boxes = [...wrapper.querySelectorAll("input[type=checkbox][data-clara-choice]")]
+      if (boxes.length > 0) {
+        if (!boxes.some((box) => box.checked)) missing.push(wrapper.dataset.claraField)
+        continue
+      }
       if (!form.elements.namedItem("value[" + wrapper.dataset.claraField + "]")) continue
       if (fieldValue(form, wrapper) === "") missing.push(wrapper.dataset.claraField)
     }

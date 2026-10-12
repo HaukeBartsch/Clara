@@ -464,6 +464,23 @@ describe('public survey page (§8.8, REQ-UI-028)', function (): void {
         assert_contains('unknown event', $body, 'the reason is on screen, not only in the log');
     });
 
+    it('renders a checkbox as its boxes and keeps a refused box\'s reason beside them (REQ-DB-042)', function (): void {
+        resetApi();
+        queue_shell();
+        api_route('data:action=import', [['record_id' => 'S001', 'form_name' => '', 'import_record_id' => 0,
+            'import_form_name' => 'Validation error: symptoms___2: CHOICE_INVALID — value \'5\' of checkbox choice \'symptoms___2\' must be 0 or 1']]);
+        api_route('data:content=metadata', [m6_meta('symptoms', 'checkbox', ['select_choices_or_calculations' => '1, Cough | 2, Fever'])]);
+
+        $body = router_for(http_request('POST', M6_LINK, browser_headers(),
+            ['value' => ['symptoms___1' => '1', 'symptoms___2' => '5'], 'was' => []]))->dispatch()->body();
+
+        assert_contains('name="value[symptoms___1]" value="1"', $body);
+        assert_contains('data-clara-choice="symptoms___1" data-clara-choices="1$Cough" checked>', $body);
+        assert_contains('clara-field-invalid" data-clara-field="symptoms"', $body);
+        assert_contains('must be 0 or 1', $body);
+        assert_not_contains('symptoms___2: CHOICE_INVALID', $body, 'beside the checkbox, not in the general line');
+    });
+
     it('closes the survey in analysis mode and answers a revoked link with the one state (§8.8)', function (): void {
         resetApi();
         queue_shell();

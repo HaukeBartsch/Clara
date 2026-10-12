@@ -88,7 +88,10 @@ final class RecordController extends DataEntryController
                 continue;
             }
             foreach ((is_array($entry['fields'] ?? null) ? $entry['fields'] : []) as $change) {
-                if (!is_array($change) || ($field !== '' && ($change['field'] ?? '') !== $field)) {
+                // A checkbox's history is that of its boxes (REQ-DB-042): the API matches them
+                // for its name, and they are kept here under their own.
+                $changed = is_array($change) ? (string) ($change['field'] ?? '') : '';
+                if (!is_array($change) || ($field !== '' && $changed !== $field && !DataEntry::isChoiceColumnOf($changed, $field))) {
                     continue;
                 }
                 $entries[] = [
@@ -328,9 +331,10 @@ final class RecordController extends DataEntryController
         $own = [];
         $refs = [];
         foreach ($fields as $field) {
-            $name = (string) ($field['field_name'] ?? '');
             if (DataEntry::isEnterable($field) || ($field['field_type'] ?? '') === 'calculated') {
-                $own[] = $uen . '|' . $name;
+                foreach (DataEntry::valueNames($field) as $valueName) {
+                    $own[] = $uen . '|' . $valueName;
+                }
             }
             $refs = array_merge($refs, DataEntry::references((string) ($field['branching_logic'] ?? ''), $firstEvent));
         }
@@ -341,8 +345,9 @@ final class RecordController extends DataEntryController
 
         $prefill = [];
         foreach ($fields as $field) {
-            $name = (string) ($field['field_name'] ?? '');
-            $prefill[$name] = $values[$uen . '|' . $name] ?? '';
+            foreach (DataEntry::valueNames($field) as $valueName) {
+                $prefill[$valueName] = $values[$uen . '|' . $valueName] ?? '';
+            }
         }
         $context = [];
         foreach (array_unique($refs) as $key) {

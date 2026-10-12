@@ -11,6 +11,7 @@ package dataapi
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"net/http"
@@ -44,11 +45,24 @@ func (h *Handler) contentRecord(w http.ResponseWriter, r *http.Request, enc stri
 	}
 }
 
-// recField is one dictionary entry with its instrument name resolved.
+// recField is one dictionary entry with its instrument name resolved. A
+// checkbox choice column (REQ-DB-042) is an entry of its own: Parent names the
+// checkbox it belongs to and ChoiceLabel is the choice's text; both are empty
+// for every stored dictionary row.
 type recField struct {
 	db.Field
-	Instrument string
+	Instrument  string
+	Parent      string
+	ChoiceLabel string
 }
+
+// isChoiceColumn reports whether f is a checkbox's derived value column rather
+// than a stored dictionary row (REQ-DB-042).
+func (f recField) isChoiceColumn() bool { return f.Parent != "" }
+
+// isCheckboxParent reports whether f is a checkbox's own dictionary row. It
+// carries no value: its values live under its choice columns (REQ-DB-042).
+func (f recField) isCheckboxParent() bool { return f.FieldType == "checkbox" && f.Parent == "" }
 
 // dictInstrument is the export view of one instrument: the `<instrument>_complete`
 // column needs its name, its position-order place and its survey flag (GD-9 —
@@ -64,7 +78,7 @@ type dictInstrument struct {
 // position — ListFields' own order). loadDict builds it at most once per
 // structure generation and shares it read-only across calls.
 type projectDict struct {
-	fields      []recField
+	fields []recField
 	// expanded is the dictionary with every checkbox field followed inline by
 	// its derived choice columns `base___<code>` (REQ-DB-042) — the order the
 	// export columns and import validation walk. byName resolves those names
@@ -83,6 +97,9 @@ type projectDict struct {
 // expands into (REQ-DB-042). Each carries the parent's instrument and
 // sensitivity flags; its Choices are the one coding of a checked box
 // ("1$<choice label>"), which is what label export and value validation read.
+// A stored value is only ever "1", so the parent's validation type has nothing
+// to check and is dropped — a box must never fail an email pattern or shift
+// like a date.
 func checkboxColumns(p recField) []recField {
 	if p.FieldType != "checkbox" {
 		return nil
@@ -101,7 +118,11 @@ func checkboxColumns(p recField) []recField {
 		sub.FieldName = db.CheckboxSubName(p.FieldName, kv[0])
 		sub.FieldType = "checkbox"
 		sub.Choices = sql.NullString{String: "1$" + label, Valid: true}
-		out = append(out, recField{Field: sub, Instrument: p.Instrument})
+		sub.ValidationType = sql.NullString{}
+		sub.ValidationFormat = sql.NullString{}
+		sub.ValidationMin = sql.NullString{}
+		sub.ValidationMax = sql.NullString{}
+		out = append(out, recField{Field: sub, Instrument: p.Instrument, Parent: p.FieldName, ChoiceLabel: label})
 	}
 	return out
 }
@@ -112,7 +133,7 @@ func checkboxColumns(p recField) []recField {
 func (d *projectDict) valueFieldsByInstrument() map[int64]map[string]bool {
 	out := make(map[int64]map[string]bool, len(d.instruments))
 	for _, f := range d.expanded { // includes checkbox choice columns (REQ-DB-042)
-		if f.FieldType == "description" || f.FieldType == "header" {
+		if f.FieldType == "description" || f.FieldType == "header" || f.isCheckboxParent() {
 			continue
 		}
 		set := out[f.InstrumentID]
@@ -121,6 +142,25 @@ func (d *projectDict) valueFieldsByInstrument() map[int64]map[string]bool {
 			out[f.InstrumentID] = set
 		}
 		set[f.FieldName] = true
+	}
+	return out
+}
+
+// withChoiceColumns returns names with every checkbox among them followed by
+// its choice columns — a checkbox's values are stored under those (REQ-DB-042).
+// Other names, known or not, pass through unchanged.
+func (d *projectDict) withChoiceColumns(names []string) []string {
+	if len(names) == 0 {
+		return names
+	}
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		out = append(out, name)
+		if f, ok := d.byName[name]; ok && f.isCheckboxParent() {
+			for _, c := range checkboxColumns(f) {
+				out = append(out, c.FieldName)
+			}
+		}
 	}
 	return out
 }
@@ -491,6 +531,11 @@ func categorize(f recField, identifier string) exportCategory {
 	switch {
 	case f.FieldName == identifier || f.DirectIdentifier:
 		return catDirectID
+	case f.isChoiceColumn():
+		// A checkbox choice column inherits its parent's identifier flag, but a
+		// stored box says nothing beyond checked/unchecked: it is never hashed
+		// and is no free text (REQ-EXP-053).
+		return catStructured
 	case f.PersonalInformation:
 		return catPersonal
 	case f.FieldType == "text":

@@ -1117,7 +1117,7 @@
           { "$ref": "#/components/parameters/RecordId" },
           { "name": "instrument", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Filter by instrument (REQ-API-080)." },
           { "name": "event", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Filter by `unique_event_name`." },
-          { "name": "field", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Filter by field name." },
+          { "name": "field", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Filter by field name. A checkbox's name matches the changes of every one of its choice columns `<field_name>___<code>` (REQ-DB-042)." },
           { "name": "order", "in": "query", "required": false, "schema": { "type": "string", "enum": ["chrono", "newest"], "default": "chrono" }, "description": "Any other value → 400 `invalid_request` (REQ-API-137)." },
           { "$ref": "#/components/parameters/Limit" },
           { "$ref": "#/components/parameters/Cursor" }
