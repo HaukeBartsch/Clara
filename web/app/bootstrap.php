@@ -53,3 +53,16 @@ function clara_resolve_asset(string $urlPath): string
 
     return is_file($resolved) ? $resolved : '';
 }
+
+/**
+ * Whether a path clara_resolve_asset() returned lies below web/assets/vendor — the
+ * third-party tree, which keeps a freshness window, whereas the application's own
+ * assets are revalidated on every use (Response::asset). Decided on the resolved path,
+ * so `/assets/vendor/../app.js` counts as the application file it is.
+ */
+function clara_asset_is_vendored(string $resolvedPath): bool
+{
+    $vendor = realpath(CLARA_WEB_ROOT . '/assets/vendor');
+
+    return $vendor !== false && str_starts_with($resolvedPath, $vendor . DIRECTORY_SEPARATOR);
+}

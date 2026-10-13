@@ -654,10 +654,20 @@ server {
         return 404;
     }
 
-    # --- vendored CSS/JS/fonts (outside the document root)
+    # --- static CSS/JS/fonts (outside the document root)
+    # Third-party libraries change only on an upgrade and may be cached for a day.
+    location /assets/vendor/ {
+        alias /opt/clara/web/assets/vendor/;
+        expires 1d;
+        add_header Strict-Transport-Security "max-age=31536000" always;
+        add_header X-Content-Type-Options "nosniff" always;
+    }
+    # CLARA's own scripts and styles change with every deployment, while pages are
+    # never cached: browsers must revalidate them (a cheap 304 via ETag) or a
+    # day-old script runs under a new page and its controls stay dead.
     location /assets/ {
         alias /opt/clara/web/assets/;
-        expires 1d;
+        add_header Cache-Control "no-cache" always;
         add_header Strict-Transport-Security "max-age=31536000" always;
         add_header X-Content-Type-Options "nosniff" always;
     }
@@ -731,6 +741,7 @@ curl -sk -o /dev/null -w '%{http_code}\n' $H/login                          # 20
 curl -sk -o /dev/null -w '%{http_code}\n' $H/                               # 302 → /login
 curl -sk -o /dev/null -w '%{http_code} %{content_type}\n' \
      $H/assets/vendor/bootstrap/bootstrap.min.css                           # 200 text/css
+curl -sk -o /dev/null -D - $H/assets/app.js | grep -i '^cache-control'     # Cache-Control: no-cache
 curl -sk -w ' [%{http_code}]\n' -X POST -d token=0000 -d content=version $H/api/   # Invalid token [401] (from the API)
 curl -sk -o /dev/null -w '%{http_code}\n' $H/api/                           # 403 (GET refused)
 curl -sk -o /dev/null -w '%{http_code}\n' $H/api/v1/health                  # 404 (admin API hidden)

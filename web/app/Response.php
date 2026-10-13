@@ -135,21 +135,49 @@ final class Response
      * Serves a file from the vendored asset tree. The caller has already
      * resolved and contained the path (see FrontController::asset); the content
      * type comes from a fixed map so nothing unexpected is ever served inline.
+     * `$vendored` marks a third-party file below assets/vendor/ (clara_asset_is_vendored);
+     * `$ifNoneMatch` is the request's If-None-Match header, answered with a 304.
      */
-    public static function asset(string $absolutePath): self
+    public static function asset(string $absolutePath, bool $vendored = false, ?string $ifNoneMatch = null): self
     {
         $body = @file_get_contents($absolutePath);
         if ($body === false) {
             return self::notFound();
         }
 
-        $response = new self(200, $body);
-        $response->headers['Content-Type'] = self::contentType($absolutePath);
-        // Vendored files are replaced on deployment, not versioned by hash yet:
-        // a short freshness window keeps upgrades visible without a build step.
-        $response->headers['Cache-Control'] = 'public, max-age=86400';
+        // Neither tree is versioned by hash (no build step). Third-party files under
+        // vendor/ change only on a library upgrade, so a short freshness window is fine.
+        // The application's own scripts and styles change with every deployment, and a
+        // page is never cached (no-store): a day-old app script under a current page
+        // runs against markup it does not know — controls it never enables stay dead.
+        // So those are revalidated on every use; the ETag keeps an unchanged file a 304.
+        $etag = '"' . substr(hash('sha256', $body), 0, 32) . '"';
+        if (self::etagMatches($ifNoneMatch, $etag)) {
+            $response = new self(304, '');
+        } else {
+            $response = new self(200, $body);
+            $response->headers['Content-Type'] = self::contentType($absolutePath);
+        }
+        $response->headers['Cache-Control'] = $vendored ? 'public, max-age=86400' : 'no-cache';
+        $response->headers['ETag'] = $etag;
 
         return $response;
+    }
+
+    /** If-None-Match against one strong tag: a list, weak forms and `*` all count (RFC 9110 §13.1.2). */
+    private static function etagMatches(?string $ifNoneMatch, string $etag): bool
+    {
+        if ($ifNoneMatch === null) {
+            return false;
+        }
+        foreach (explode(',', $ifNoneMatch) as $candidate) {
+            $candidate = trim($candidate);
+            if ($candidate === '*' || $candidate === $etag || $candidate === 'W/' . $etag) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public static function notFound(): self

@@ -56,6 +56,40 @@ describe('the /assets handler', function (): void {
     it('answers 404 rather than serving an unresolved path', function (): void {
         assert_same(404, Response::asset('/does/not/exist')->status());
     });
+
+    it('tells the third-party tree from the application files', function (): void {
+        assert_true(clara_asset_is_vendored(clara_resolve_asset('/assets/vendor/bootstrap/bootstrap.min.css')));
+        assert_true(!clara_asset_is_vendored(clara_resolve_asset('/assets/js/translations.js')));
+        assert_true(!clara_asset_is_vendored(clara_resolve_asset('/assets/vendor/../app.js')));
+    });
+
+    it('revalidates application assets so a stale script never runs under a new page', function (): void {
+        $response = Response::asset(clara_resolve_asset('/assets/js/translations.js'));
+
+        assert_same(200, $response->status());
+        assert_same('no-cache', $response->headers()['Cache-Control']);
+        assert_true(preg_match('/^"[0-9a-f]{32}"$/', $response->headers()['ETag']) === 1);
+    });
+
+    it('keeps the freshness window for vendored libraries', function (): void {
+        $file = clara_resolve_asset('/assets/vendor/bootstrap/bootstrap.min.css');
+
+        assert_same('public, max-age=86400', Response::asset($file, true)->headers()['Cache-Control']);
+    });
+
+    it('answers a matching If-None-Match with an empty 304', function (): void {
+        $file = clara_resolve_asset('/assets/app.js');
+        $etag = Response::asset($file)->headers()['ETag'];
+
+        foreach ([$etag, 'W/' . $etag, '"other", ' . $etag, '*'] as $ifNoneMatch) {
+            $response = Response::asset($file, false, $ifNoneMatch);
+            assert_same(304, $response->status());
+            assert_same('', $response->body());
+            assert_same($etag, $response->headers()['ETag']);
+            assert_same('no-cache', $response->headers()['Cache-Control']);
+        }
+        assert_same(200, Response::asset($file, false, '"other"')->status());
+    });
 });
 
 describe('response headers (REQ-TECH-020)', function (): void {

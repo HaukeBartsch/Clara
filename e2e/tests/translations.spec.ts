@@ -96,9 +96,16 @@ test.describe("translations key table (M6, REQ-TECH-028)", () => {
 
     // Import (REQ-UI-049): a known key stages an unsaved edit; an unknown key is reported and
     // skipped — never added to the table. Quoting round-trips: the text carries a comma.
+    // The file goes in the way a user picks it: the visible control is the .btn label of a
+    // hidden input, and clicking it must open the chooser — setInputFiles on the input
+    // alone would pass even while the label is dead.
     const imported = `Oversikt, importert ${Date.now()}`
     const csv = "key,english,text\r\nnav.dashboard,Dashboard,\"" + imported + "\"\r\nno.such.key,X,Y\r\n"
-    await page.setInputFiles("#tr-import-file", { name: "import.csv", mimeType: "text/csv", buffer: Buffer.from(csv) })
+    const [chooser] = await Promise.all([
+      page.waitForEvent("filechooser"),
+      page.getByText("Import spreadsheet", { exact: true }).click(),
+    ])
+    await chooser.setFiles({ name: "import.csv", mimeType: "text/csv", buffer: Buffer.from(csv) })
     const message = page.locator("#tr-message")
     await expect(message).toContainText("1 translations applied from the file.")
     await expect(message).toContainText("key not found")
@@ -120,5 +127,21 @@ test.describe("translations key table (M6, REQ-TECH-028)", () => {
     })
     await expect(message).toContainText("1 translations applied from the file.")
     await expect(status).toContainText("1 unsaved changes.") // staged only — nothing saved without Save
+  })
+
+  test("export and import stay visibly disabled while the region has not bound", async ({ page }) => {
+    await signInAsAdmin(page)
+    // The page itself loads; only the region's JSON fetch from the same route fails.
+    await page.route("**/admin?section=translations*", (route) =>
+      route.request().resourceType() === "fetch" ? route.abort() : route.continue())
+    await page.goto("/admin?section=translations")
+    await expect(page.locator("#clara-translations")).toContainText("Retry")
+
+    await expect(page.locator("#tr-export")).toBeDisabled()
+    await expect(page.locator("#tr-import-file")).toBeDisabled()
+    // The label is what the user sees: it must look disabled too, not like a live button.
+    const label = page.locator('label[for="tr-import-file"]')
+    await expect(label).toHaveCSS("pointer-events", "none")
+    await expect(label).toHaveCSS("opacity", "0.65")
   })
 })

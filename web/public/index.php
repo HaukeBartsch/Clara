@@ -46,10 +46,13 @@ $logger = Logger::fromConfig($config, $request->ref());
 // web/assets sits outside the document root (the tree in
 // Technology_Stack_Design.md §4 fixes it there), so the built-in server cannot
 // serve it and this handler does: one directory, contained, media type from a
-// fixed map. Production nginx aliases the same path (`location /assets/`).
+// fixed map. Production nginx aliases the same path (`location /assets/`) with the
+// same cache split: vendor/ for a day, the application's own files revalidated.
 if (str_starts_with($request->path(), '/assets/')) {
     $file = clara_resolve_asset($request->path());
-    ($file === '' ? Response::notFound() : Response::asset($file))->send();
+    ($file === ''
+        ? Response::notFound()
+        : Response::asset($file, clara_asset_is_vendored($file), $request->header('If-None-Match')))->send();
 
     exit(0);
 }
