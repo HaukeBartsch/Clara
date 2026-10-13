@@ -1,0 +1,11 @@
+{
+  "name": "clara-intro-presentation",
+  "private": true,
+  "description": "Builds docs/intro-to-Clara/CLARA_Introduction.pptx (documentation tooling, not part of the application)",
+  "scripts": {
+    "build": "node build_presentation.cjs"
+  },
+  "devDependencies": {
+    "pptxgenjs": "4.0.1"
+  }
+}
