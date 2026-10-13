@@ -175,11 +175,16 @@ describe('M5 data-entry rules (DataEntry)', function (): void {
 
     it('sends values and explicit clears, never untouched empties (GD-14, REQ-UI-031)', function (): void {
         $sent = DataEntry::submission(
-            ['age' => '42', 'notes' => '', 'sex' => '', 'record_id' => 'evil', 'BAD-NAME' => '1'],
-            ['age' => '41', 'notes' => 'old', 'sex' => '', 'preg' => '1']
+            ['age' => '42', 'notes' => '', 'sex' => '', 'record_id' => 'evil', 'form_name' => 'x', 'BAD-NAME' => '1'],
+            ['age' => '41', 'notes' => 'old', 'sex' => '', 'preg' => '1'],
+            'record_id'
         );
         // age carries a value; notes and preg were stored and removed; sex never had one.
         assert_same(['age' => '42', 'notes' => '', 'preg' => ''], $sent);
+        // The identifier is the project's first field (GD-8), whatever its name: that one is
+        // reserved, and a field that merely happens to be called record_id is not.
+        assert_same(['record_id' => 'R-7'], DataEntry::submission(
+            ['study_instance_uid' => 'evil', 'record_id' => 'R-7'], [], 'study_instance_uid'));
     });
 
     it('splits a rejected row into one line per field (§3.7.2)', function (): void {
@@ -537,6 +542,24 @@ describe('saving and deleting (§8.6, §8.7)', function (): void {
         assert_contains('saved', $_SESSION['_flash'][0]['text']);
     });
 
+    it('keys the import row on the project\'s own identifier field, not a fixed record_id (GD-8)', function (): void {
+        sign_in(['csrf_token' => M5_CSRF]);
+        // A FIONA-style dictionary: the first field of the first instrument is study_instance_uid,
+        // and a later field happens to be called record_id.
+        api_route('/instruments/7/fields', array_merge(
+            [m5_field(1, 'study_instance_uid', 'text'), m5_field(10, 'record_id', 'text')], array_slice(m5_fields(), 1)));
+        m5_queue();
+        api_route('data:action=import', [['record_id' => '8DISC001', 'form_name' => 'intake', 'import_record_id' => 2, 'import_form_name' => 'intake']]);
+
+        m5_post('/projects/3/records/8DISC001',
+            m5_save_fields(['age' => '43', 'study_instance_uid' => 'forged', 'record_id' => 'R-7'], ['age' => '42']), 'save');
+
+        $row = data_api_body('action=import')['data'][0];
+        assert_same('8DISC001', $row['study_instance_uid'], 'the record name, never a posted value');
+        assert_same('R-7', $row['record_id'] ?? null, 'record_id is an ordinary field here');
+        assert_same('43', $row['age']);
+    });
+
     it('sets "finished" after the import, and clears it only when leaving finished (§8.5)', function (): void {
         sign_in(['csrf_token' => M5_CSRF]);
         m5_queue();
@@ -622,6 +645,7 @@ describe('saving and deleting (§8.6, §8.7)', function (): void {
         resetApi();
         queue_shell();
         api_route('/api/v1/projects/3/instruments/7/fields', m5_fields());
+        api_route('/api/v1/projects/3/instruments', [['id' => 7, 'name' => 'intake', 'position' => 1]]);
         api_route('/users/7/token', ['error' => 'forbidden', 'message' => '', 'status' => 403], 403);
         m5_post('/projects/3/records/8DISC001', m5_save_fields(['age' => '43'], []), 'save');
         assert_contains('not a member of this project', $_SESSION['_flash'][0]['text']);
@@ -744,6 +768,17 @@ describe('saving and deleting (§8.6, §8.7)', function (): void {
         m5_post('/projects/3/records/8DISC001', ['iid' => '12', 'event' => 'baseline_arm_1', 'instrument' => 'scores'], 'survey_link');
         assert_same(0, data_api_calls('action=import'));
         assert_same(1, m4_count('POST', '/survey-link'));
+
+        // The identifier-only import names the record under the project's own first field.
+        sign_in(['csrf_token' => M5_CSRF]);
+        resetApi();
+        api_route('/instruments/7/fields', array_merge([m5_field(1, 'study_instance_uid', 'text')], array_slice(m5_fields(), 1)));
+        m5_queue();
+        api_route('data:action=import', [['record_id' => '8DISC009', 'form_name' => 'scores', 'import_record_id' => 1, 'import_form_name' => 'scores']]);
+        m5_post('/projects/3/records/8DISC009',
+            ['iid' => '12', 'event' => 'baseline_arm_1', 'instrument' => 'scores', 'create_record' => '1'], 'survey_link');
+        assert_same(['study_instance_uid' => '8DISC009', 'form_name' => 'scores', 'event_name' => 'baseline_arm_1'],
+            data_api_body('action=import')['data'][0]);
     });
 
     it('issues no link when the new participant cannot be stored, and says why (REQ-UI-051)', function (): void {

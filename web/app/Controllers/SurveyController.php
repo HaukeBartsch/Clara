@@ -77,9 +77,12 @@ final class SurveyController extends Controller
         try {
             // A field annotated @READONLY takes no answer from a respondent, whatever the
             // browser posted (REQ-DB-046): the link's own definitions say which.
-            $fields = self::fieldsFromMetadata($this->api->dataApi()->call($token, ['content' => 'metadata']));
+            $metadata = $this->api->dataApi()->call($token, ['content' => 'metadata']);
+            $fields = self::fieldsFromMetadata($metadata);
+            // The record identifier is the link's to name, never the respondent's (GD-8).
             $params = ['content' => 'record', 'action' => 'import',
-                'data' => [DataEntry::submission(DataEntry::withoutReadonly($values, $fields), DataEntry::withoutReadonly($was, $fields))]];
+                'data' => [DataEntry::submission(DataEntry::withoutReadonly($values, $fields),
+                    DataEntry::withoutReadonly($was, $fields), self::identifierFromMetadata($metadata))]];
             if (DataEntry::validTimezone($tz)) {
                 $params['tz'] = $tz;
             }
@@ -182,6 +185,23 @@ final class SurveyController extends Controller
             'scripts' => ['/assets/app.js', '/assets/js/survey.js'],
             'jsKeys' => self::JS_KEYS,
         ]);
+    }
+
+    /**
+     * The record identifier's field name among `content=metadata` rows (`record_identifier`
+     * `Y`, GD-8); '' when the rows do not carry it — a link to a later instrument.
+     *
+     * @param array<mixed> $rows
+     */
+    public static function identifierFromMetadata(array $rows): string
+    {
+        foreach ($rows as $row) {
+            if (is_array($row) && ($row['record_identifier'] ?? '') === 'Y') {
+                return (string) ($row['field_name'] ?? '');
+            }
+        }
+
+        return '';
     }
 
     /**

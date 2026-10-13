@@ -189,22 +189,23 @@ final class RecordController extends DataEntryController
 
         $values = $this->request->fieldMap('value');
         $was = $this->request->fieldMap('was');
-        // A field annotated @READONLY never reaches the import from this form, whatever the
-        // browser posted (REQ-DB-046) — the data API can still write it.
-        if ($iid !== 0) {
-            try {
+        try {
+            $identifier = $this->identifierName($projectId);
+            // A field annotated @READONLY never reaches the import from this form, whatever the
+            // browser posted (REQ-DB-046) — the data API can still write it.
+            if ($iid !== 0) {
                 $fields = self::listOf($this->api->get('/api/v1/projects/' . $projectId . '/instruments/' . $iid . '/fields'));
-            } catch (ApiException $e) {
-                $this->flashDanger($this->apiFailureMessage($e));
-
-                return $back;
+                $values = DataEntry::withoutReadonly($values, $fields);
+                $was = DataEntry::withoutReadonly($was, $fields);
             }
-            $values = DataEntry::withoutReadonly($values, $fields);
-            $was = DataEntry::withoutReadonly($was, $fields);
+        } catch (ApiException $e) {
+            $this->flashDanger($this->apiFailureMessage($e));
+
+            return $back;
         }
-        $row = ['record_id' => $record, 'form_name' => $instrument, 'event_name' => $event]
+        $row = self::identifierKey($identifier, $record) + ['form_name' => $instrument, 'event_name' => $event]
             + ($instance > 0 ? ['redcap_repeat_instrument' => $instrument, 'redcap_repeat_instance' => (string) $instance] : [])
-            + DataEntry::submission($values, $was);
+            + DataEntry::submission($values, $was, $identifier);
         $params = ['content' => 'record', 'action' => 'import', 'data' => [$row]];
         $tz = $this->request->field('tz');
         if (DataEntry::validTimezone($tz)) {
@@ -420,7 +421,7 @@ final class RecordController extends DataEntryController
         }
 
         // A reason keyed on a name this render has no input for — a framing key the API names
-        // (`event_name`, `form_name`, or `record_id` away from its own field), or a field of
+        // (`event_name`, `form_name`, or the record identifier away from its own field), or a field of
         // another instrument or one the design dropped since this form was opened — would show
         // nowhere, leaving the page promising reasons it hides; it joins the general line beside
         // the form instead (§8.6; the survey page states the same rule in §8.8). Headers and
@@ -837,6 +838,34 @@ final class RecordController extends DataEntryController
         return $names;
     }
 
+    /**
+     * The record identifier's field name — the first field of the first instrument (GD-8) —
+     * under which an import row carries the record name (§3.7.1); '' while the project has no
+     * field yet.
+     */
+    private function identifierName(int $projectId): string
+    {
+        $base = '/api/v1/projects/' . $projectId;
+        $first = (int) (self::byPosition(self::listOf($this->api->get($base . '/instruments')))[0]['id'] ?? 0);
+        if ($first === 0) {
+            return '';
+        }
+        $fields = self::listOf($this->api->get($base . '/instruments/' . $first . '/fields'));
+
+        return (string) ($fields[0]['field_name'] ?? '');
+    }
+
+    /**
+     * The import row's record key: the record name under the identifier's own field name. A
+     * project without fields has no such key, and the API names the missing identifier.
+     *
+     * @return array<string, string>
+     */
+    private static function identifierKey(string $identifier, string $record): array
+    {
+        return $identifier === '' ? [] : [$identifier => $record];
+    }
+
     /** One survey-link call, then back to the instrument it was made for. */
     private function linkCall(callable $call, string $successKey): Response
     {
@@ -885,8 +914,9 @@ final class RecordController extends DataEntryController
         }
 
         try {
-            $result = $this->dataCall($projectId, ['content' => 'record', 'action' => 'import',
-                'data' => [['record_id' => $record, 'form_name' => $instrument, 'event_name' => $event]]]);
+            $row = self::identifierKey($this->identifierName($projectId), $record)
+                + ['form_name' => $instrument, 'event_name' => $event];
+            $result = $this->dataCall($projectId, ['content' => 'record', 'action' => 'import', 'data' => [$row]]);
         } catch (ApiException $e) {
             $this->flashDanger($this->dataApiFailure($e));
 

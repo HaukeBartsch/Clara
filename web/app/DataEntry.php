@@ -28,8 +28,12 @@ final class DataEntry
     public const HISTORY_PAGE = 200;
     public const HISTORY_MAX_PAGES = 25;
 
-    /** Import row keys that are not fields (§3.7.1) — never taken from a posted value map. */
-    private const RESERVED_KEYS = ['record_id', 'form_name', 'event_name', 'redcap_event_name',
+    /**
+     * Import row keys that are not fields (§3.7.1) — never taken from a posted value map. The
+     * record identifier's own name is reserved per call (`submission()`): it is whatever the
+     * project's first field is called (GD-8), not a fixed key.
+     */
+    private const RESERVED_KEYS = ['form_name', 'event_name', 'redcap_event_name',
         'redcap_repeat_instrument', 'redcap_repeat_instance'];
 
     private function __construct() {}
@@ -305,21 +309,24 @@ final class DataEntry
      *
      * `$was` is each field's prefill (§8.3) as the form carried it; the comparison is done
      * here rather than only in the browser so the rule holds with JavaScript off as well.
-     * Only names in field syntax are taken, and never an import row key (§3.7.1). A text area
+     * Only names in field syntax are taken, and never an import row key (§3.7.1) — the record
+     * identifier `$identifier` (GD-8) included, whose value is the record name. A text area
      * posts its line breaks as CRLF (the HTML form encoding); they go on as LF, the form
      * `Data_Validation_Design.md` §5.1 step 2 stores, so an untouched `notes` value
      * (REQ-DB-044) arrives exactly as it is stored.
      *
      * @param array<string, string> $values posted values
-     * @param array<string, string> $was    posted prefill
+     * @param array<string, string> $was        posted prefill
+     * @param string                $identifier the record identifier's field name, '' if unknown
      * @return array<string, string>
      */
-    public static function submission(array $values, array $was): array
+    public static function submission(array $values, array $was, string $identifier = ''): array
     {
         $out = [];
         foreach (array_keys($values + $was) as $name) {
             $name = (string) $name;
-            if (preg_match('/^[a-z0-9_]{1,100}$/', $name) !== 1 || in_array($name, self::RESERVED_KEYS, true)) {
+            if (preg_match('/^[a-z0-9_]{1,100}$/', $name) !== 1 || in_array($name, self::RESERVED_KEYS, true)
+                || $name === $identifier) {
                 continue;
             }
             $value = str_replace("\r\n", "\n", $values[$name] ?? '');

@@ -143,8 +143,8 @@ func jsonValueString(v any) string {
 
 // importMetaKeys are the row tuple keys (and REDCap repeat columns this
 // implementation stores as instance 1); everything else names a field.
-// record_id is deliberately not here — it doubles as the identifier field
-// and is stored like any other value of the row. redcap_event_name is the
+// The record identifier (GD-8) is deliberately not here — its key carries the
+// record id and is stored like any other value of the row. redcap_event_name is the
 // accepted alias of event_name (REQ-API-138), listed so it never reaches the
 // unknown-field pass; no project field can carry the name — reserved
 // (Data_Validation_Design.md §9).
@@ -239,7 +239,15 @@ func (h *Handler) contentRecordImport(w http.ResponseWriter, r *http.Request, en
 func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict, reg *validate.Registry,
 	p Params, row map[string]string) (importRow, error) {
 
-	recordID := row["record_id"]
+	// The record id travels under the record identifier's own field name —
+	// the first field of the first instrument (GD-8) — exactly as an export
+	// writes it, so `record_id` is only the key when the project names its
+	// first field that way.
+	idKey := d.identifier
+	recordID := ""
+	if idKey != "" {
+		recordID = row[idKey]
+	}
 	formName := row["form_name"]
 	// A rejected submission is audit-logged like an accepted one
 	// (REQ-AUD-021); nothing changed, so its field list is empty.
@@ -251,6 +259,10 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 			ImportRecordID: importInvalid, ImportFormName: "Validation error: " + msg}, nil
 	}
 
+	if idKey == "" {
+		// A project without fields has no identifier to address a record by.
+		return fail("CONTENT_INVALID — the project has no record identifier field (GD-8)")
+	}
 	if sub.isLink() && recordID == "" {
 		// A survey link is the whole address: its row already holds the
 		// (record, instrument, event) this submission targets, so the public
@@ -258,13 +270,13 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 		// instead of the record being told to a browser that must not learn it;
 		// a row that *does* name another triple is still the 403 below.
 		recordID = sub.Link.RecordID
-		// record_id doubles as the identifier field's value and is not a meta
-		// key, so writing it back keeps storage identical to a named submission
-		// — including for a record this call creates.
-		row["record_id"] = recordID
+		// The identifier field's value is the record id and is not a meta key,
+		// so writing it back keeps storage identical to a named submission —
+		// including for a record this call creates.
+		row[idKey] = recordID
 	}
 	if recordID == "" {
-		return fail("record_id: CONTENT_INVALID — a record id is required")
+		return fail(idKey + ": CONTENT_INVALID — a record id is required")
 	}
 	// A row without form_name is flat (REQ-API-031): every supplied field
 	// stores on its own instrument from the data dictionary, so a caller can
@@ -550,7 +562,7 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 			return importRow{}, err
 		}
 		if groupID != nil && (!entity.DagGroupID.Valid || entity.DagGroupID.Int64 != *groupID) {
-			return fail("record_id: PERMISSION_DENIED — the record belongs to another data access group")
+			return fail(idKey + ": PERMISSION_DENIED — the record belongs to another data access group")
 		}
 	}
 	existed := len(oldValues) > 0 || entity != nil
