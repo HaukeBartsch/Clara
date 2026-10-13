@@ -424,6 +424,99 @@ h1 .clara-mode-badge {
   display: none;
 }
 
+/* --- Training (§2.7, REQ-UI-059) --- */
+
+/* Card pictures share one shape whatever size a plan's first picture has, cut from its top-left
+   corner — a screenshot's header and left panel are what identify the page it shows. */
+.clara-training-cover {
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  object-position: left top;
+  border-bottom: 1px solid var(--bs-border-color);
+}
+
+/* The whole card opens the plan (the title's stretched link); the title reads as a heading. */
+.clara-training-open {
+  font-size: inherit;
+  text-decoration: none;
+}
+
+.clara-training-card:hover,
+.clara-training-card:focus-within {
+  border-color: var(--bs-primary);
+}
+
+.clara-training-card:hover .clara-training-open {
+  text-decoration: underline;
+}
+
+/* The gallery keeps a whole picture in view, on a neutral surface under every theme (§3.8). */
+.clara-training-gallery .carousel {
+  background-color: var(--bs-secondary-bg);
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--bs-border-radius);
+}
+
+/* The general `.active` tint further down would colour the current slide and thumbnail. */
+.clara-training-gallery .carousel-item.active,
+.clara-training-gallery .clara-training-thumb.active {
+  background-color: transparent;
+}
+
+/* Half the viewport, so the first lines of the text stay in view below the picture. */
+.clara-training-image {
+  max-width: 100%;
+  max-height: 50vh;
+  object-fit: contain;
+}
+
+/* Bootstrap's controls are white on a photograph; screenshots are light, so they get a dark
+   backdrop to stay visible. */
+.clara-training-gallery .carousel-control-prev,
+.clara-training-gallery .carousel-control-next {
+  width: 3rem;
+}
+
+.clara-training-gallery .carousel-control-prev-icon,
+.clara-training-gallery .carousel-control-next-icon {
+  background-color: rgba(0, 0, 0, 0.55);
+  background-size: 60% 60%;
+  border-radius: 50%;
+  padding: 1.1rem;
+}
+
+.clara-training-thumbs {
+  overflow-x: auto;
+}
+
+.clara-training-thumb {
+  flex: 0 0 auto;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: var(--bs-border-radius-sm);
+  background: none;
+  opacity: 0.6;
+}
+
+.clara-training-thumb img {
+  display: block;
+  width: 4.5rem;
+  height: 2.8rem;
+  object-fit: cover;
+  object-position: left top;
+}
+
+.clara-training-thumb.active,
+.clara-training-thumb:hover,
+.clara-training-thumb:focus-visible {
+  border-color: var(--bs-primary);
+  opacity: 1;
+}
+
+.clara-training-text {
+  max-width: 48rem;
+}
+
 /* --- responsive pass (M6; REQ-UI-032) --- */
 
 /* A wide table scrolls inside its .table-responsive wrapper. Absolutely positioned content in

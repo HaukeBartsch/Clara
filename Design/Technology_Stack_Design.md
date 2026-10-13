@@ -73,6 +73,7 @@ redcap-replacement/
 │   ├── views/                      # PHP templates (Bootstrap, escaped output)
 │   └── assets/
 │       ├── app.js                  # shared ES-module runtime (REQ-UI-045): fetch helper (Accept: application/json, X-CSRF-Token), data-region binding, JS-string block reader, Tabulator defaults
+│       ├── training/               # Training page plans, one directory each: plan.md (+ plan.<lang>.md) and pictures (User_Interface_Design.md §2.7, REQ-UI-059)
 │       ├── js/                     # one module per view/logical section — record.js, record-status.js, setup.js, design.js, admin-*.js, survey.js — loaded with <script type="module"> by relative path; no bundler (REQ-UI-045, REQ-TECH-001)
 │       └── vendor/bootstrap/       # vendored Bootstrap 5.3.x
 │           └── themes/             # darkly/, yeti/ — full-replacement bootstrap.min.css per theme, remote @imports stripped (GD-26, REQ-TECH-027)

@@ -40,6 +40,7 @@ Common conventions (REQ-UI-001…008), binding on every page:
 | `POST /lang` | language switch (redirect back) | any authenticated | `PUT /api/v1/users/me/ui-language` |
 | `POST /theme` | theme switch (redirect back, §3.8) | any authenticated | `PUT /api/v1/users/me/ui-theme` (GD-26) |
 | `GET /account/two-factor` | two-factor settings (§2.5) | any authenticated | `GET /api/v1/users/me/tfa`, `POST /api/v1/users/me/tfa/*` (GD-21, REQ-UI-039) |
+| `GET /training` | Training page — training-plan cards and the plan modal (§2.7) | any authenticated | — (reads the plans under `web/assets/training/`; no API call) |
 | `GET\|POST /account/password` | change own password (§2.6) | any authenticated | `PUT /api/v1/users/me/password` (GD-23, REQ-AUTH-061) |
 | `GET\|POST /password-reset` | forgot-password request (§2.6) | public — no session | `POST /api/v1/auth/password-reset/request` (GD-23, REQ-AUTH-062) |
 | `GET\|POST /set-password?token=…` | set password via invite/reset token (§2.6) | public — valid token, no session | `POST /api/v1/auth/invite/complete`, `POST /api/v1/auth/password-reset/complete` (GD-22/GD-23, Sequence H) |
@@ -87,7 +88,7 @@ Every authenticated page renders in one of three shells, and **a left panel appe
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────┐
-│ header  CLARA · <project name> / Overview       [ Control Panel ]   (adm) │
+│ header  CLARA · <project name> / Overview  [ Training ] [ Control Panel ] │
 ├───────────────────────────────────────────────────────────────────────────┤
 │                                                                           │
 │  A · project overview (`/`)      B · project page, Control Panel          │
@@ -104,7 +105,7 @@ Every authenticated page renders in one of three shells, and **a left panel appe
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Header** (all shells): the brand (`CLARA`, linking to the project overview `/`) and, inside a project context, that project's name linked to its Overview (`/projects/{id}/overview`) as a breadcrumb. On the right, for `is_admin` users only, the **Control Panel** button → `/admin` (REQ-UI-009/047); it is absent from the DOM for every other user (REQ-UI-003), and nothing else administration-related appears in the header.
+- **Header** (all shells): the brand (`CLARA`, linking to the project overview `/`) and, inside a project context, that project's name linked to its Overview (`/projects/{id}/overview`) as a breadcrumb. On the right, for every signed-in user, the **Training** link → `/training` (§2.7, REQ-UI-059), and beside it, for `is_admin` users only, the **Control Panel** button → `/admin` (REQ-UI-009/047); the button is absent from the DOM for every other user (REQ-UI-003), and nothing else administration-related appears in the header.
 - **A · Project overview** (`GET /`, §4): one content panel between header and footer with **no left panel** — the first screen after login is information about the projects, not navigation (REQ-UI-009).
 - **B · Left-panel shells** — the **project page** (§6.1) and the **Control Panel** (§5). The left panel lists that page's sections as links in its canonical order; the current one is marked `active`. Selecting an entry loads the corresponding page in the right-hand panel (master spec): mechanically plain navigation — a `GET` to the route of §2.1 rendered into the same shell, with no client-side page switching and no SPA (REQ-UI-001). An entry whose permission the acting user lacks, or whose section this build does not serve, is absent from the panel rather than disabled (REQ-UI-003).
 - **Footer** (all shells): language selector (§9, REQ-UI-029), theme selector (§3.8, REQ-UI-041), a "Two-factor authentication" link (`/account/two-factor`, §2.5 — GD-21), a "Password" link (`/account/password`, §2.6 — only when the account has a local credential, GD-23), the user's display name, and a "Sign out" action (`POST /logout`, CSRF token, REQ-UI-007). These are user-scoped rather than project-scoped, so they sit outside any section panel and stay put while the panel changes.
@@ -128,6 +129,29 @@ Self-service page in the shell, reachable by every signed-in user (also rendered
 **Forgot password (`GET /password-reset`, public, standalone panel).** One email field; submits `POST /api/v1/auth/password-reset/request`; the page always shows the same translated line — "If that address has an account with a local password, a reset link has been sent" — never revealing whether it did (REQ-AUTH-062). Rate-limit rejection (429) shows a retry-soon message.
 
 **Set password (`GET /set-password?token=…`, public, standalone panel).** Reached from the invite or reset email. Renders two new-password fields (+ repeat, client-side match check plus authoritative server check); on submit PHP routes by purpose — `POST /api/v1/auth/invite/complete` or `POST /api/v1/auth/password-reset/complete`. Any token failure (unknown, expired, consumed) shows one generic translated line with a link back to `/login` and, for the reset case, an offer to request a new link (`invalid_setup_token`, `API_Endpoints_Design.md` §4.2). Success: invite → "Password set — sign in" link to `/login`; reset → same. The token never re-renders into the page beyond the hidden form field carrying it; no session is established by this page (Sequence H, `Authentication_Authorization_Design.md` §2.8).
+
+### 2.7 Training page (`GET /training`, any authenticated, REQ-UI-059)
+
+Short step-by-step guides to common tasks, reached from the header's **Training** link (§2.4) — on every page, so also from the project overview (master spec: "linked on the first project selection screen header (next to 'Control Panel')"). The page renders in the single-panel shell of the project overview (§2.4 A): a heading, one intro line, and a responsive grid of Bootstrap cards (`row-cols-1 / -sm-2 / -lg-3 / -xxl-4`).
+
+**Where the plans live.** One directory per plan under `web/assets/training/` — not in the database and not behind the API: the plans describe the application rather than a project, and an operator adds or edits one by dropping files there (master spec: "stored in individual sub-directories inside assets/ (so they are easy to add/edit)"). `web/assets/training/README.md` documents the format for editors.
+
+```
+web/assets/training/<plan>/      <plan> = [a-z0-9][a-z0-9_-]*; directory-name order is the card order
+    plan.md                      the text, English (without it the directory is not a plan)
+    plan.<language>.md           optional, the text in a UI language (nb, nn, …)
+    *.png | *.jpg | *.gif | *.webp   the pictures, in natural file-name order; the first is the card's
+```
+
+- **Text format** — a small Markdown subset, parsed in PHP (`Clara\Training`): the first line `# Title`; paragraphs; `## ` headings; `1. ` and `- ` lists (an indented line continues the item above); `**bold**` and `` `code` `` inline. The first paragraph is the card's short text and also opens the modal's text. Nothing else is interpreted — HTML in a plan file stays literal text (§3.2, REQ-UI-004).
+- **Language** — the acting user's UI language picks `plan.<language>.md` when present; otherwise `plan.md` (REQ-UI-008). The language only ever selects a file name matching a language tag.
+- **Pictures** — served by the static asset handler like every other file under `web/assets/` (revalidated, ETag; `jpg`/`jpeg`/`webp` join the media-type map). SVG is not accepted as a picture. Only file names of letters, digits, `.`, `-`, `_` are listed.
+
+**Data region.** The route's `plans` region (REQ-UI-044) is the list of plans, each `{id, title, summary, images: [url…], blocks}`, where a block is `{type: paragraph|heading, text: runs}` or `{type: list, ordered, items: [runs…]}` and a run is `{text, strong, code}`. `assets/js/training.js` (REQ-UI-045) builds the cards and the modal from it with `createElement`/`textContent` only (§3.7). The region reads files; it makes no API call.
+
+**Card.** The plan's first picture as `card-img-top`, cropped to 16:10 from its top-left corner (a screenshot's header and left panel identify the page), the title as the card's link (`stretched-link`, so the whole card opens the plan), and the short text. A plan without pictures shows a card without one. With no plans installed, the grid shows one empty-state line.
+
+**Modal** (`modal-xl`, scrollable, full screen below `lg`): the plan title; then the **gallery** — a Bootstrap carousel (no auto-play) of the pictures, each fitted to half the viewport height and linking to the full-size file, previous/next controls, a "Picture n of N" counter and a thumbnail strip (the current one marked) — and below it the plan's text. The arrow keys page through the pictures while the dialog is open; touch swipes do as well. A plan with one picture shows no paging controls; one with none shows its text only. Opening a plan puts its id in the address fragment (`/training#<plan>`), so a plan can be linked to directly; closing removes it.
 
 ## 3. Common Components and Rendering Rules
 

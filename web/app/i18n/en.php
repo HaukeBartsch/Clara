@@ -21,6 +21,7 @@ return [
     'nav.project_sections' => 'Project',
     'nav.sections' => 'Sections',
     'nav.control_panel' => 'Control Panel',
+    'nav.training' => 'Training',
     'nav.overview' => 'Overview',
     'nav.setup' => 'Setup',
     'nav.design' => 'Design',
@@ -120,6 +121,16 @@ return [
     'dashboard.project.open' => 'Open project',
     // The overview's table body when an administrator's installation has no projects yet (§4).
     'dashboard.empty' => 'No projects yet. Create one in the Control Panel.',
+
+    // --- Training (User_Interface_Design.md §2.7, REQ-UI-059) ---
+    'training.title' => 'Training',
+    'training.intro' => 'Short step-by-step guides to common tasks. Choose one to see its pictures and instructions.',
+    'training.empty' => 'No training plans are installed.',
+    'training.gallery.previous' => 'Previous picture',
+    'training.gallery.next' => 'Next picture',
+    'training.gallery.counter' => 'Picture {n} of {total}',
+    'training.gallery.thumbnail' => 'Show picture {n}',
+    'training.image_alt' => '{title}, picture {n}',
 
     // --- Control Panel (User_Interface_Design.md §5, REQ-UI-047) ---
     'admin.title' => 'Control Panel',

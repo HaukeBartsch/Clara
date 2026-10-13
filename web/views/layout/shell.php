@@ -104,6 +104,12 @@ $controlPanel = $view->isAdmin() && Navigation::controlPanelExists();
         <?php endif; ?>
 
         <div class="ms-auto d-flex align-items-center gap-2">
+            <?php if ($view->isAuthenticated()): ?>
+                <!-- The Training page (§2.7, REQ-UI-059): for every signed-in user, beside the
+                     Control Panel button. -->
+                <a class="btn btn-sm btn-outline-secondary<?= $view->isActive('/training') ? ' active' : '' ?>"
+                   href="/training"><?= View::e($view->t('nav.training')) ?></a>
+            <?php endif; ?>
             <?php if ($controlPanel): ?>
                 <!-- The single entry point to installation administration (§5, REQ-UI-047);
                      absent from the DOM for anyone who is not an administrator. -->

@@ -75,6 +75,11 @@ final class Router
         ['method' => 'GET', 'pattern' => '/', 'controller' => Controllers\DashboardController::class,
             'handler' => 'index', 'guard' => 'login', 'region' => 'projects'],
 
+        // The Training page (§2.7, REQ-UI-059): any signed-in user; its region is the plans
+        // installed under web/assets/training/.
+        ['method' => 'GET', 'pattern' => '/training', 'controller' => Controllers\TrainingController::class,
+            'handler' => 'index', 'guard' => 'login', 'region' => 'plans'],
+
         // The project workspace (§6.1). The entry route resolves the first available
         // section and answers 303 (REQ-UI-017); its data region is the same summary the
         // Overview shows — records, instruments, fields, and the metadata block — so a

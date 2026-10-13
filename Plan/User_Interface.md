@@ -4,7 +4,7 @@ This document outlines the key views and layout for the clinical study managemen
 
 ## Layout (three shells — REQ-UI-046, DEV-UI-14)
 
-A left panel appears only where it switches between sections. The **project overview** (§1) is a single panel between header and footer; the **project page** (§3) and the **Control Panel** (§2) each carry their own left panel with the right-hand panel showing the selected entry. One header (brand, project breadcrumb, and the `is_admin` **Control Panel** button) and one footer (language, theme, two-factor, password, sign out) are shared by all three; selecting a panel entry is plain navigation to that route (`Design/User_Interface_Design.md` §2.4).
+A left panel appears only where it switches between sections. The **project overview** (§1) is a single panel between header and footer; the **project page** (§3) and the **Control Panel** (§2) each carry their own left panel with the right-hand panel showing the selected entry. One header (brand, project breadcrumb, the **Training** link, and the `is_admin` **Control Panel** button) and one footer (language, theme, two-factor, password, sign out) are shared by all three; selecting a panel entry is plain navigation to that route (`Design/User_Interface_Design.md` §2.4).
 
 ## Key Views
 
@@ -12,6 +12,10 @@ A left panel appears only where it switches between sections. The **project over
 - Purpose: Start page after login; overview of accessible projects — information, not navigation, so it has **no left sidebar** (REQ-UI-009/046).
 - Components: A table with one row per project the user has access to (administrator group or project membership) and quick stats in columns (record, instrument, field counts per project). Selecting a project's **name** opens that project's page (§3), which lands on its first available section. The header shows the **Control Panel** button for `is_admin` users only.
 - Not a requirement today: "recent activity" and "notifications". An earlier draft of this plan listed them as dashboard components; nothing in the requirements or design asks for them and no API supplies them, so they are out rather than pending. Re-introducing either needs a `REQ-UI-*` entry first (with an endpoint behind it), not an implementation shortcut.
+
+### 1a. Training
+- Purpose: short step-by-step guides to common tasks for every signed-in user, linked in the header beside the Control Panel button (REQ-UI-059).
+- Components: one card per training plan (picture + short text); a card opens a modal with the plan's picture gallery (previous/next, counter, thumbnails) above its text. Each plan is a directory under `web/assets/training/` holding `plan.md` (plus optional translations) and its pictures in file-name order, so plans are added and edited as files. Example plans: create a new project, create data collection forms, collect data, export data, export audit trails.
 
 ### 2. Control Panel (`is_admin`)
 - Purpose: Administration for authenticated and authorized (administrator) users, on **one page** reached from the header button — all installation-administration settings live here and nowhere else (REQ-UI-047).
