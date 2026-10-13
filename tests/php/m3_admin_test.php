@@ -293,6 +293,21 @@ describe('Control Panel — Audits (§5.6, REQ-UI-016)', function (): void {
         assert_same(1, preg_match('#<code>record_updated</code></td>\s*<td class="small">HEART004</td>#', $body));
         assert_same(1, preg_match('#<code>project_updated</code></td>\s*<td class="small"></td>#', $body));
     });
+    it('offers every event code of the API\'s catalog in the filter, and nothing else (§3)', function (): void {
+        // The catalog is the const block that opens api/internal/audit/audit.go and ends before
+        // the source values (REQ-AUD-017): those are a column, not event types.
+        $go = (string) file_get_contents(__DIR__ . '/../../api/internal/audit/audit.go');
+        $start = strpos($go, '// Event catalog');
+        $end = strpos($go, '// Source values');
+        assert_true($start !== false && $end !== false, 'audit.go still marks its event catalog');
+        preg_match_all('/^\s+\w+\s*=\s*"([a-z0-9_]+)"/m', substr($go, $start, $end - $start), $m);
+        $catalog = $m[1];
+        sort($catalog);
+
+        $filter = \Clara\Controllers\ControlPanelController::AUDIT_EVENT_TYPES;
+        assert_true(count($catalog) > 50, 'the catalog parsed');
+        assert_same($catalog, $filter, 'the filter lists the catalog, alphabetically');
+    });
 });
 
 describe('Control Panel — Translations (§5.7, REQ-UI-030)', function (): void {

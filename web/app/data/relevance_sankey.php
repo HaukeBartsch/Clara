@@ -21,7 +21,7 @@ return array (
       'column' => 0,
       'order' => 0,
       'area' => 'api-endpoints',
-      'codes' => 190,
+      'codes' => 192,
     ),
     1 => 
     array (
@@ -30,7 +30,7 @@ return array (
       'order' => 0,
       'prefix' => 'REQ-API',
       'kind' => 'req',
-      'codes' => 157,
+      'codes' => 159,
     ),
     2 => 
     array (
@@ -56,7 +56,7 @@ return array (
       'column' => 0,
       'order' => 1,
       'area' => 'audit-logging',
-      'codes' => 40,
+      'codes' => 41,
     ),
     5 => 
     array (
@@ -65,7 +65,7 @@ return array (
       'order' => 10,
       'prefix' => 'REQ-AUD',
       'kind' => 'req',
-      'codes' => 32,
+      'codes' => 33,
     ),
     6 => 
     array (
@@ -327,7 +327,7 @@ return array (
       'column' => 0,
       'order' => 9,
       'area' => 'user-interface',
-      'codes' => 78,
+      'codes' => 82,
     ),
     36 => 
     array (
@@ -336,7 +336,7 @@ return array (
       'order' => 90,
       'prefix' => 'REQ-UI',
       'kind' => 'req',
-      'codes' => 58,
+      'codes' => 62,
     ),
     37 => 
     array (
@@ -362,7 +362,7 @@ return array (
       'column' => 2,
       'order' => 0,
       'class' => 'security',
-      'codes' => 379,
+      'codes' => 385,
     ),
     40 => 
     array (
@@ -370,7 +370,7 @@ return array (
       'column' => 2,
       'order' => 1,
       'class' => 'performance',
-      'codes' => 33,
+      'codes' => 34,
     ),
     41 => 
     array (
@@ -378,7 +378,7 @@ return array (
       'column' => 2,
       'order' => 2,
       'class' => 'workflow',
-      'codes' => 323,
+      'codes' => 328,
     ),
     42 => 
     array (
@@ -403,13 +403,13 @@ return array (
     array (
       'source' => 'a-api-endpoints',
       'target' => 'g-api-endpoints-req',
-      'value' => 228,
+      'value' => 231,
     ),
     1 => 
     array (
       'source' => 'g-api-endpoints-req',
       'target' => 'c-security',
-      'value' => 77,
+      'value' => 79,
     ),
     2 => 
     array (
@@ -421,7 +421,7 @@ return array (
     array (
       'source' => 'g-api-endpoints-req',
       'target' => 'c-workflow',
-      'value' => 102,
+      'value' => 103,
     ),
     4 => 
     array (
@@ -493,13 +493,13 @@ return array (
     array (
       'source' => 'a-audit-logging',
       'target' => 'g-audit-logging-req',
-      'value' => 42,
+      'value' => 43,
     ),
     16 => 
     array (
       'source' => 'g-audit-logging-req',
       'target' => 'c-security',
-      'value' => 28,
+      'value' => 29,
     ),
     17 => 
     array (
@@ -1111,25 +1111,25 @@ return array (
     array (
       'source' => 'a-user-interface',
       'target' => 'g-user-interface-req',
-      'value' => 91,
+      'value' => 99,
     ),
     119 => 
     array (
       'source' => 'g-user-interface-req',
       'target' => 'c-security',
-      'value' => 28,
+      'value' => 31,
     ),
     120 => 
     array (
       'source' => 'g-user-interface-req',
       'target' => 'c-performance',
-      'value' => 3,
+      'value' => 4,
     ),
     121 => 
     array (
       'source' => 'g-user-interface-req',
       'target' => 'c-workflow',
-      'value' => 45,
+      'value' => 49,
     ),
     122 => 
     array (

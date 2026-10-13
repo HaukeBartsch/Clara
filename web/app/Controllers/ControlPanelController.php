@@ -53,19 +53,21 @@ final class ControlPanelController extends Controller
     private const PROJECT_REQUIRED = ['project_name', 'organization', 'pi_name', 'pi_email', 'participant_names'];
 
     /**
-     * The event codes of Audit_Logging_Design.md §3 — the audit filter's select (§5.6).
-     * Sources (`api`/`ui`/`system`) are not event types and are not listed.
+     * The event codes of Audit_Logging_Design.md §3 — the audit filter's select (§5.6) — in
+     * alphabetical order, exactly the API's catalog (api/internal/audit/audit.go; a test keeps the
+     * two in step). Sources (`api`/`ui`/`system`) are not event types and are not listed.
      */
     public const AUDIT_EVENT_TYPES = [
-        'account_auto_disabled', 'admin_rejected', 'arm_created', 'arm_deleted', 'arm_reordered', 'arm_updated', 'audit_export',
-        'calculated_recomputed', 'dag_active_switched', 'dag_created', 'dag_deleted', 'dag_membership_changed',
-        'dag_record_assigned', 'event_created', 'event_deleted', 'event_reordered', 'event_updated', 'export',
-        'field_created', 'field_deleted', 'field_moved', 'field_reordered', 'field_updated', 'instrument_completed',
-        'instrument_created', 'instrument_deleted', 'instrument_reordered', 'instrument_uncompleted',
-        'instrument_updated', 'invite_accepted', 'login_failure', 'login_success', 'logout', 'mapping_updated',
-        'membership_changed', 'password_changed', 'password_reset_completed', 'password_reset_requested',
-        'project_created', 'project_ended', 'project_mode_changed', 'project_updated', 'record_created',
-        'record_deleted', 'record_updated', 'role_created', 'settings_updated', 'staging_committed',
+        'account_auto_disabled', 'admin_rejected', 'arm_created', 'arm_deleted', 'arm_reordered', 'arm_updated',
+        'audit_export', 'calculated_recomputed', 'dag_active_switched', 'dag_created', 'dag_deleted',
+        'dag_membership_changed', 'dag_record_assigned', 'event_created', 'event_deleted', 'event_reordered',
+        'event_updated', 'export', 'field_created', 'field_deleted', 'field_moved', 'field_reordered',
+        'field_updated', 'i18n_updated', 'instrument_completed', 'instrument_created', 'instrument_deleted',
+        'instrument_reordered', 'instrument_uncompleted', 'instrument_updated', 'invite_accepted', 'login_failure',
+        'login_success', 'logout', 'mapping_updated', 'membership_changed', 'password_changed',
+        'password_reset_completed', 'password_reset_requested', 'project_created', 'project_ended',
+        'project_mode_changed', 'project_updated', 'record_created', 'record_deleted', 'record_updated',
+        'role_created', 'role_updated', 'session_replay_detected', 'settings_updated', 'staging_committed',
         'staging_discarded', 'staging_started', 'survey_link_issued', 'survey_link_revoked', 'survey_submitted',
         'tfa_disabled', 'tfa_enrolled', 'tfa_reset', 'token_issued', 'token_revoked', 'token_rotated',
         'token_viewed', 'user_created', 'user_invited', 'user_updated',
