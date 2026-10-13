@@ -162,7 +162,7 @@ On success PHP establishes the session (§3) exactly as for the other paths; `au
 
 **Source registry.** Every configured authentication path is a **source**: kind `local` | `ldap` | `oauth2`, carrying one or more display **names**; the relation between names and sources is many-to-many (REQ-AUTH-064). Names extend the existing per-index configuration (`OAUTH2_N_*`, REQ-CFG-011; `LDAP_SERVER_N_*`, REQ-CFG-012) with a name list per source — the variable set is owned by `System_Configuration_Design.md` §3 (follow-up registration). The local kind exists at most once (one `users` table, GD-18) but may carry several names.
 
-**Login page.** `GET /login` renders the distinct set of names across all configured sources ("Hospital 1", "Hospital 2", … — REQ-AUTH-063). With exactly one distinct name the picker is skipped and that name applies implicitly; sources configured without a name form one implicit default set (REQ-AUTH-067). The selected name is stored in the session (`auth_source_name`, §3) before any credential exchange.
+**Login page.** `GET /login` renders the distinct set of names across all configured sources ("Hospital 1", "Hospital 2", … — REQ-AUTH-063), in name order with a name carried by the local source alone last (REQ-UI-042); a name the local source shares with a directory or provider keeps its place. With exactly one distinct name the picker is skipped and that name applies implicitly; sources configured without a name form one implicit default set (REQ-AUTH-067). The selected name is stored in the session (`auth_source_name`, §3) before any credential exchange.
 
 **Dispatch on submit.** For the selected name, PHP dispatches concurrently:
 

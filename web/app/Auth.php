@@ -493,6 +493,11 @@ final class Auth
      * implicitly; an empty result means every source forms one implicit default
      * set (REQ-AUTH-067) — which is also the case for a local-only installation.
      *
+     * Picker order (REQ-UI-042): by name, except that a name carried by the local
+     * source alone comes last — the institutions lead and the installation's own
+     * account store ("Local") follows them. A name the local source shares with a
+     * directory or provider is an institution's name and keeps its place.
+     *
      * @return list<array{name: string, kinds: list<string>}>
      */
     public function sourceNames(): array
@@ -507,7 +512,9 @@ final class Auth
         foreach ($byName as $name => $kinds) {
             $names[] = ['name' => $name, 'kinds' => array_values(array_unique($kinds))];
         }
-        usort($names, static fn (array $a, array $b): int => strcmp($a['name'], $b['name']));
+        $localOnly = static fn (array $n): bool => $n['kinds'] === ['local'];
+        usort($names, static fn (array $a, array $b): int =>
+            ($localOnly($a) <=> $localOnly($b)) ?: strcmp($a['name'], $b['name']));
 
         return $names;
     }

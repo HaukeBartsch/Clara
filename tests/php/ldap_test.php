@@ -426,6 +426,22 @@ describe('the credential race over its launcher (Sequence I, §2.9)', function (
 // --- login through the race (Sequence I end to end) ----------------------------
 
 describe('login with a directory source (Sequence I, §2.9)', function (): void {
+    it('lists the institutions by name and the local-only name last (REQ-UI-042)', function (): void {
+        // The dev stack's shape: "Local" sorts between the two directories alphabetically,
+        // yet it is the installation's own account store, so it follows the institutions.
+        // "Clinic" carries the local source and a directory — an institution, kept in place.
+        $config = ldap_directory_config([
+            'LOCAL_LOGIN_NAMES' => 'Local, Clinic',
+            'LDAP_SERVER_1_NAMES' => 'OUS (Oslo)',
+            'LDAP_SERVER_2_NAMES' => 'Ahus (Akerhus), Clinic',
+        ]);
+
+        $body = router_for(http_request('GET', '/login', browser_headers()), $config)->dispatch()->body();
+
+        preg_match_all('/name="source"[^>]*?value="([^"]*)"/s', $body, $tiles);
+        assert_same(['Ahus (Akerhus)', 'Clinic', 'OUS (Oslo)', 'Local'], $tiles[1]);
+    });
+
     it_needs_directory_support('sends the credential to no directory outside the selected name', function (): void {
         $_SESSION = ['csrf_token' => str_repeat('c', 64)];
         $launcher = new FakeLdapLauncher(['ldap-2' => ['outcome' => 'ok', 'email' => 'from@dir2.example']]);

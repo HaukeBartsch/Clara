@@ -4,11 +4,14 @@ import { expect, test, type Page } from "@playwright/test"
 // stack: what the source picker offers for a name, and how a directory behind that name changes the
 // answer the user reads (Plan/Web_Implementation.md §8, REQ-TECH-028).
 //
-// `e2e/dev-stack.sh` starts an installation with three names — "Local" (the API's own account store),
-// "Hospital 1" and "Hospital 2" (directories pointed at ports nothing listens on). The unreachable
-// directories are the point: they are what makes "the directory was down" observable in a browser as
+// `e2e/dev-stack.sh` starts an installation with three names — "Ahus (Akerhus)" and "OUS (Oslo)"
+// (directories pointed at ports nothing listens on) and "Local" (the API's own account store). The
+// unreachable directories are the point: they are what makes "the directory was down" observable in a browser as
 // something other than "wrong password" (§2.2 step 4). As in smoke.spec.ts, no CLARA_WEB_URL means no
 // page tests — the suite stays green without an application to point at.
+
+const AHUS = "Ahus (Akerhus)"
+const OUS = "OUS (Oslo)"
 
 const credentialForm = (page: Page) => page.locator('form[action="/login?action=credentials"]')
 const alertLine = (page: Page) => page.locator('[role="alert"]')
@@ -27,9 +30,8 @@ test.describe("login through a named source (§2.9)", () => {
     await page.goto("/login")
 
     await expect(page.locator("form[data-clara-source-picker]")).toBeVisible()
-    await expect(sourceRadio(page, "Local")).toBeVisible()
-    await expect(sourceRadio(page, "Hospital 1")).toBeVisible()
-    await expect(sourceRadio(page, "Hospital 2")).toBeVisible()
+    // The institutions by name, the installation's own account store last (REQ-UI-042).
+    await expect(page.locator("form[data-clara-source-picker] label")).toHaveText([AHUS, OUS, "Local"])
 
     // Nothing can verify a password until a name is chosen, so no form is offered for the empty
     // selection — a form whose every answer is "not recognised" is what §2.2 rules out.
@@ -38,7 +40,7 @@ test.describe("login through a named source (§2.9)", () => {
 
   test("offers credentials for a directory name, and no provider button", async ({ page }) => {
     await page.goto("/login")
-    await chooseSource(page, "Hospital 1")
+    await chooseSource(page, AHUS)
 
     await expect(page.locator('#login-password')).toBeVisible()
     await expect(page.locator('form[action="/login?action=oauth"]')).toHaveCount(0)
@@ -46,7 +48,7 @@ test.describe("login through a named source (§2.9)", () => {
 
   test("reports an unreachable directory as an outage, not as a wrong password", async ({ page }) => {
     await page.goto("/login")
-    await chooseSource(page, "Hospital 1")
+    await chooseSource(page, AHUS)
 
     // A fresh address per run: repeated failures lock an address out (REQ-AUTH-035).
     await page.fill("#login-email", `researcher-${Date.now()}@example.org`)
@@ -65,7 +67,7 @@ test.describe("login through a named source (§2.9)", () => {
 
   test("keeps the chosen name after a failure and never echoes the password back", async ({ page }) => {
     await page.goto("/login")
-    await chooseSource(page, "Hospital 2")
+    await chooseSource(page, OUS)
 
     // A fresh address per run: repeated failures lock an address out (REQ-AUTH-035).
     const email = `researcher-${Date.now()}@example.org`
@@ -74,8 +76,8 @@ test.describe("login through a named source (§2.9)", () => {
     await credentialForm(page).locator('button[type="submit"]').click()
 
     await expect(alertLine(page)).toBeVisible()
-    // The selection rides in the session, so the re-render is still Hospital 2's page (§2.9).
-    await expect(sourceRadio(page, "Hospital 2")).toBeChecked()
+    // The selection rides in the session, so the re-render is still OUS's page (§2.9).
+    await expect(sourceRadio(page, OUS)).toBeChecked()
     // REQ-AUTH-036: the page re-renders after a rejected attempt; the password does not come back.
     await expect(page.locator("#login-password")).toHaveValue("")
     await expect(page.locator("#login-email")).toHaveValue(email)
@@ -106,8 +108,8 @@ test.describe("login through a named source (§2.9)", () => {
     await expect(page.locator('form[action="/login?action=oauth"]')).toHaveCount(0)
     await expect(page.locator(".clara-sources")).not.toHaveClass(/clara-sources-chosen/)
 
-    await chooseSource(page, "Hospital 2")
-    await expect(sourceRadio(page, "Hospital 2")).toBeChecked()
+    await chooseSource(page, OUS)
+    await expect(sourceRadio(page, OUS)).toBeChecked()
     await expect(page.locator("form[data-clara-source-picker] input[type=radio]:checked")).toHaveCount(1)
     await expect(page.locator(".clara-sources")).toHaveClass(/clara-sources-chosen/)
   })
