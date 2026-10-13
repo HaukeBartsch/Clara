@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test"
 import { readFileSync } from "node:fs"
 
-// The Audits page's Export control (§5.6, REQ-UI-057): clicking it downloads the filtered
+// The Audits page's Export control (§5.6, REQ-UI-058): clicking it downloads the filtered
 // trail as a zip-compressed CSV streamed through the PHP route (REQ-AUD-031), and an export
 // estimated above 1 GiB is confirmed in a modal naming its size first (REQ-AUD-032). The
 // estimate paths are route-mocked — the threshold behaviour must hold whatever the dev
@@ -33,7 +33,7 @@ function mockEstimate(page: Page, body: unknown, status = 200): void {
     route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) }))
 }
 
-test.describe("audit log export (§5.6, REQ-UI-057)", () => {
+test.describe("audit log export (§5.6, REQ-UI-058)", () => {
   test.skip(!process.env.CLARA_WEB_URL, "CLARA_WEB_URL not set — no running web/ application to drive")
 
   test("exports the filtered trail as a zip-compressed CSV", async ({ page }) => {

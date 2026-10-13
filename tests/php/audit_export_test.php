@@ -1,5 +1,5 @@
 <?php
-// The Audits export's server halves (§5.6, REQ-UI-057, REQ-API-158): `download=1` streams
+// The Audits export's server halves (§5.6, REQ-UI-058, REQ-API-158): `download=1` streams
 // the API's ZIP through untouched — filters along, pagination never bounding it (REQ-AUD-031)
 // — and `estimate=1` answers its JSON for the > 1 GiB warning (REQ-AUD-032); a refusal before
 // the first byte becomes a line on the page. The Audits listing itself is covered by
@@ -59,7 +59,7 @@ function audits_request(array $query): \Clara\Response
     return router_for(http_request('GET', '/admin', browser_headers(), [], $query + ['section' => 'audits']))->dispatch();
 }
 
-describe('audit export (§5.6, REQ-UI-057, REQ-API-158)', function (): void {
+describe('audit export (§5.6, REQ-UI-058, REQ-API-158)', function (): void {
     it('streams the audit ZIP through with the API\'s file name and no page bounding it', function (): void {
         sign_in(['is_admin' => 1]);
         queue_shell();

@@ -425,7 +425,7 @@ final class ControlPanelController extends Controller
             'from' => $this->dateParam($this->request->query('from')),
             'to' => $this->dateParam($this->request->query('to')),
         ];
-        // The Export control (REQ-UI-057) rides the same filter form: `download=1` streams
+        // The Export control (REQ-UI-058) rides the same filter form: `download=1` streams
         // the ZIP, `estimate=1` prices it for the > 1 GiB warning (REQ-AUD-032). Both reuse
         // the allowlisted filters — nothing from the browser reaches the API unchecked.
         $filtered = $this->auditFilterQuery($filters);

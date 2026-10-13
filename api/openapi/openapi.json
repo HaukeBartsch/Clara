@@ -1549,6 +1549,41 @@
         }
       }
     },
+    "/api/v1/audit/export": {
+      "get": {
+        "tags": ["Admin: Audit"],
+        "operationId": "exportAudit",
+        "summary": "Export the audit log as CSV in a ZIP (§4.23, REQ-API-158)",
+        "description": "`is_admin` only; any other acting user gets the uniform 403 (REQ-API-078). Takes the filters of `GET /api/v1/audit` and exports **every** matching entry — there is no `limit`/`cursor`, pagination never bounds an export (REQ-AUD-031). The ZIP is streamed and holds one deflate-compressed CSV member, `audit_events.csv` or `audit_record_views.csv` by `type`, written chronologically (`created_at, id` ascending) behind a header row: events `id, created_at, source, user_id, email, token, project_id, arm_num, role, target_record, event_type, details` (the payload as stored JSON text); views `id, created_at, user_id, email, token, project_id, record_ids, instruments`. Every cell is formula-neutralized (REQ-VAL-032); no BOM (REQ-EXP-016); the log is never materialized (REQ-TECH-011). Every export that ends writes one `audit_export` entry naming the filters, the rows delivered, and `truncated: true` when the stream broke off (REQ-AUD-011).",
+        "parameters": [
+          { "name": "type", "in": "query", "required": false, "schema": { "type": "string", "enum": ["events", "views"], "default": "events" }, "description": "Selects `audit_events` or `audit_record_views` — and the CSV member's name." },
+          { "name": "project", "in": "query", "required": false, "schema": { "type": "integer", "format": "int64" }, "description": "Project id filter." },
+          { "name": "user", "in": "query", "required": false, "schema": { "type": "integer", "format": "int64" }, "description": "User id filter." },
+          { "name": "event_type", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Event code filter." },
+          { "name": "from", "in": "query", "required": false, "schema": { "type": "string" }, "description": "UTC date range start (inclusive)." },
+          { "name": "to", "in": "query", "required": false, "schema": { "type": "string" }, "description": "UTC date range end (inclusive)." },
+          { "name": "estimate", "in": "query", "required": false, "schema": { "type": "string", "enum": ["1"] }, "description": "`1` answers the JSON size estimate instead of the file (REQ-AUD-032)." }
+        ],
+        "responses": {
+          "200": {
+            "description": "The ZIP as an attachment named `audit_<type>_<YYYY-MM-DD>_<HHMM>.zip` (UTC), `Cache-Control: no-store`; or, with `estimate=1`, the size estimate — `rows` exact, `estimated_bytes` = rows × the average row size of at most the newest 1000 matching rows, advisory only.",
+            "headers": {
+              "Content-Disposition": { "schema": { "type": "string" }, "description": "`attachment; filename=\"audit_events_2026-10-13_0915.zip\"`" }
+            },
+            "content": {
+              "application/zip": { "schema": { "type": "string", "format": "binary" } },
+              "application/json": {
+                "schema": { "type": "object", "required": ["rows", "estimated_bytes"], "properties": { "rows": { "type": "integer", "format": "int64" }, "estimated_bytes": { "type": "integer", "format": "int64" } } },
+                "example": { "rows": 48213, "estimated_bytes": 15728640 }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
+        }
+      }
+    },
     "/api/v1/projects/{id}/records/{record}/history": {
       "get": {
         "tags": ["Admin: Records"],
