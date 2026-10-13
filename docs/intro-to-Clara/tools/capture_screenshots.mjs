@@ -361,7 +361,10 @@ await step("dashboard", async () => {
 })
 
 await step("project overview", async () => {
+  // The dashboard link opens the project's first permitted section (Setup for an admin); the
+  // overview has a route of its own.
   await openProjectLink(registryName)
+  await page.goto(`${WEB}/projects/${registryId}/overview`)
   await shot("03-project-overview")
 })
 
@@ -427,6 +430,44 @@ await step("audit log", async () => {
 await step("api documentation", async () => {
   await page.goto(`${WEB}/admin?section=api`)
   await shot("15-api-docs")
+})
+
+// --- authentication and authorization slide -------------------------------------------
+
+await step("roles (permission matrix)", async () => {
+  await page.goto(`${WEB}/projects/${registryId}/roles`)
+  await settle()
+  await page.fill("#role-name", "data-entry")
+  await page.locator("[data-clara-roles-form]").scrollIntoViewIfNeeded()
+  await shot("16-roles")
+})
+
+await step("users (control panel)", async () => {
+  await page.goto(`${WEB}/admin?section=users`)
+  await shot("17-users")
+})
+
+await step("two-factor authentication", async () => {
+  await page.goto(`${WEB}/account/two-factor`)
+  await shot("18-two-factor")
+})
+
+await step("training", async () => {
+  await page.goto(`${WEB}/training`)
+  await shot("19-training")
+})
+
+await step("login credentials form", async () => {
+  // A signed-out page: the source picker with "Local" chosen shows the credential form.
+  const anonymous = await browser.newContext({ viewport: { width: 1024, height: 768 }, deviceScaleFactor: 2 })
+  const signedOut = await anonymous.newPage()
+  await signedOut.goto(`${WEB}/login`)
+  await signedOut.getByRole("radio", { name: "Local", exact: true }).check()
+  await signedOut.locator("#login-email").waitFor()
+  await signedOut.waitForTimeout(400)
+  await signedOut.screenshot({ path: path.join(OUT, "20-login-local.png") })
+  console.log("shot  20-login-local.png")
+  await anonymous.close()
 })
 
 await browser.close()
