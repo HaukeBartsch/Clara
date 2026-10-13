@@ -50,7 +50,7 @@ The master spec's \"CSV raw / CSV labels\" pair is the `rawOrLabel` axis on the 
 - `type=flat` is normative — one row per (record, event); `type=wide` is the compatibility mode of DEV-API-1.
 - Each row carries the record identifier's value under its field name (GD-8), `redcap_event_name` for projects with events (flat), and empty strings for missing values.
 - `description`/`header` fields carry no values and never appear.
-- Multi-valued fields: a `checkbox` field exports one column per choice in the three-underscore notation — `<field_name>___<choice_code>` directly after the parent's dictionary position (REQ-DB-042, REQ-EXP-053). Raw encoding writes `1` for a checked box and `0` for an unchecked one; `rawOrLabel=label` writes the choice's text when checked and nothing otherwise; a `rawOrLabelHeaders=label|both` header reads `<Field Label>, <Choice Label>`. The `fields[]` filter matches the parent name (every choice column) or a derived name. Choice columns inherit the parent's sensitivity but are never hashed — the stored value carries nothing beyond checked/unchecked (§4.1). (The historic reading of the master spec's per-choice example via matrix rows with `1/0` choices stands for existing projects, D-6; an unselected matrix row stays an empty string.)
+- Multi-valued fields: a `checkbox` field exports one column per choice in the three-underscore notation — `<field_name>___<choice_code>` directly after the parent's dictionary position (REQ-DB-042, REQ-EXP-053). Raw encoding writes `1` for a checked box and `0` for an unchecked one; `rawOrLabel=label` writes REDCap's `Checked` / `Unchecked` on both surfaces, or — when a data-API call carries `exportCheckboxLabel=true` — the choice's text when checked and nothing otherwise; a `rawOrLabelHeaders=label|both` header reads `<Field Label>, <Choice Label>`. The `fields[]` filter matches the parent name (every choice column) or a derived name. Choice columns inherit the parent's sensitivity but are never hashed — the stored value carries nothing beyond checked/unchecked (§4.1). (The historic reading of the master spec's per-choice example via matrix rows with `1/0` choices stands for existing projects, D-6; an unselected matrix row stays an empty string.)
 
 ### 3.3 CSV mechanics (REQ-API-029, REQ-TECH-011)
 
@@ -68,7 +68,7 @@ Import is unchanged: it accepts the period form only (REQ-VAL-016), so a comma-d
 
 ### 3.4 Parameters accepted and ignored (REQ-API-016/017, DEV-API-2)
 
-`exportCheckboxLabel`, `exportSurveyFields`, `exportDataAccessGroups` and any other unknown parameter are accepted and ignored, never rejected — existing callers keep working (REQ-API-017, REQ-API-037).
+`exportSurveyFields`, `exportDataAccessGroups` and any other unknown parameter are accepted and ignored, never rejected; `exportCheckboxLabel` is honored (§3.2, REQ-EXP-053) — existing callers keep working (REQ-API-017, REQ-API-037).
 
 ## 4. Sensitivity Levels and the Transformation Pipeline (normative)
 

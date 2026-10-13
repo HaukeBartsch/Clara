@@ -223,7 +223,15 @@ func writeCSV(w http.ResponseWriter, delimiter rune, rows any) {
 		fv := rv.Index(i)
 		vals := make([]string, ft.NumField())
 		for j := range vals {
-			vals[j] = fmt.Sprintf("%v", fv.Field(j).Interface())
+			f := fv.Field(j)
+			switch {
+			case f.Kind() == reflect.Pointer && f.IsNil():
+				vals[j] = "" // JSON's null is an empty CSV cell
+			case f.Kind() == reflect.Pointer:
+				vals[j] = fmt.Sprintf("%v", f.Elem().Interface())
+			default:
+				vals[j] = fmt.Sprintf("%v", f.Interface())
+			}
 		}
 		_ = cw.Write(vals)
 	}

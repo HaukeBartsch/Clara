@@ -142,13 +142,29 @@ func (h *Handler) eventRows(ctx context.Context, projectID int64) ([]eventRow, e
 	return rows, nil
 }
 
+// eventOut is the content=event response row: eventRow plus REDCap's
+// custom_event_label, which this system does not store and always answers as
+// null — empty in CSV (REQ-API-020).
+type eventOut struct {
+	EventName        string  `json:"event_name"`
+	ArmNum           int     `json:"arm_num"`
+	UniqueEventName  string  `json:"unique_event_name"`
+	CustomEventLabel *string `json:"custom_event_label"`
+	EventID          int64   `json:"event_id"`
+}
+
 func (h *Handler) contentEvent(ctx context.Context, w http.ResponseWriter, enc string, sub *subject, p Params) {
 	rows, err := h.eventRows(ctx, sub.Project.ID)
 	if err != nil {
 		h.storeError(w, enc)
 		return
 	}
-	render(w, enc, p.Delimiter(), rows)
+	out := make([]eventOut, 0, len(rows))
+	for _, e := range rows {
+		out = append(out, eventOut{EventName: e.EventName, ArmNum: e.ArmNum,
+			UniqueEventName: e.UniqueEventName, EventID: e.EventID})
+	}
+	render(w, enc, p.Delimiter(), out)
 }
 
 // metaRow is one content=metadata object (REQ-API-019); matrix rows are

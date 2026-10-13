@@ -481,10 +481,11 @@ func TestCSVOutput(t *testing.T) {
 	if len(lines) != 4 {
 		t.Fatalf("want header + 3 rows, got %d lines: %s", len(lines), body)
 	}
-	if lines[0] != "event_name,arm_num,unique_event_name,event_id" {
+	if lines[0] != "event_name,arm_num,unique_event_name,custom_event_label,event_id" {
 		t.Errorf("csv header = %q", lines[0])
 	}
-	wantPrefix := []string{"baseline,1,baseline_arm_1,", "followup,1,followup_arm_1,", "screening,1,screening_arm_1,"}
+	// custom_event_label is null in JSON and an empty cell here (REQ-API-020).
+	wantPrefix := []string{"baseline,1,baseline_arm_1,,", "followup,1,followup_arm_1,,", "screening,1,screening_arm_1,,"}
 	for i, p := range wantPrefix {
 		if !strings.HasPrefix(lines[i+1], p) {
 			t.Errorf("csv row %d = %q, want prefix %q", i+1, lines[i+1], p)
@@ -495,12 +496,12 @@ func TestCSVOutput(t *testing.T) {
 	// tab also by REDCap's name for it.
 	code, body = do(t, h, url.Values{"token": {full}, "content": {"event"}, "csvDelimiter": {"|"}})
 	mustStatus(t, code, http.StatusOK, body)
-	if first := strings.SplitN(body, "\n", 2)[0]; first != "event_name|arm_num|unique_event_name|event_id" {
+	if first := strings.SplitN(body, "\n", 2)[0]; first != "event_name|arm_num|unique_event_name|custom_event_label|event_id" {
 		t.Errorf("delimiter header = %q, want pipes", first)
 	}
 	code, body = do(t, h, url.Values{"token": {full}, "content": {"event"}, "csvDelimiter": {"tab"}})
 	mustStatus(t, code, http.StatusOK, body)
-	if first := strings.SplitN(body, "\n", 2)[0]; first != "event_name\tarm_num\tunique_event_name\tevent_id" {
+	if first := strings.SplitN(body, "\n", 2)[0]; first != "event_name\tarm_num\tunique_event_name\tcustom_event_label\tevent_id" {
 		t.Errorf("delimiter header = %q, want tabs", first)
 	}
 

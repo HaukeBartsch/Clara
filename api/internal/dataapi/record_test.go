@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -197,9 +198,28 @@ func (f *recordFixture) exportJSON(t *testing.T, token string, extra url.Values)
 	}
 	code, body := f.call(t, form)
 	mustStatus(t, code, 200, body)
-	var out []map[string]string
-	if err := decodeInto(body, &out); err != nil {
+	var raw []map[string]any
+	if err := decodeInto(body, &raw); err != nil {
 		t.Fatalf("bad export json: %v / %s", err, body)
+	}
+	// Every cell is a string except redcap_repeat_instance, which REDCap writes
+	// as a number (REQ-API-155); it reads back in its decimal form here.
+	out := make([]map[string]string, len(raw))
+	for i, r := range raw {
+		out[i] = make(map[string]string, len(r))
+		for k, v := range r {
+			switch x := v.(type) {
+			case string:
+				out[i][k] = x
+			case float64:
+				if k != "redcap_repeat_instance" {
+					t.Fatalf("row %d: %s is a number, only redcap_repeat_instance may be: %s", i, k, body)
+				}
+				out[i][k] = strconv.FormatFloat(x, 'f', -1, 64)
+			default:
+				t.Fatalf("row %d: %s = %v (%T), want a string: %s", i, k, v, v, body)
+			}
+		}
 	}
 	return out
 }
@@ -260,7 +280,8 @@ func TestRecordExportCSVHeaderAndLabels(t *testing.T) {
 	})
 	mustStatus(t, code, 200, body)
 	lines := strings.Split(strings.TrimRight(body, "\r\n"), "\n")
-	wantHeader := "record_id,redcap_event_name,redcap_repeat_instrument,redcap_repeat_instance," +
+	// No repeating instrument in this project, so no repeat columns (REQ-API-155).
+	wantHeader := "record_id,redcap_event_name," +
 		"age,status,notes,contact_email,visit_date,secret,demo_complete,total,calc_complete"
 	if lines[0] != wantHeader {
 		t.Errorf("header =\n%q\nwant\n%q", lines[0], wantHeader)
@@ -270,6 +291,11 @@ func TestRecordExportCSVHeaderAndLabels(t *testing.T) {
 	}
 	if !strings.Contains(lines[1], ",Done,") {
 		t.Errorf("rawOrLabel=label must map status 2 to Done: %q", lines[1])
+	}
+	// Label mode names the event as REDCap does: its name, in a one-arm project
+	// without the arm (REQ-API-028).
+	if !strings.HasPrefix(lines[1], "8DISC001,baseline,") {
+		t.Errorf("rawOrLabel=label must name the event by its label: %q", lines[1])
 	}
 }
 
@@ -365,8 +391,10 @@ func TestRecordExportCompleteColumns(t *testing.T) {
 		t.Errorf("demo_complete = %q / %q, want 1 and 1 (values present)",
 			rows[0]["demo_complete"], rows[1]["demo_complete"])
 	}
-	if rows[0]["calc_complete"] != "0" || rows[1]["calc_complete"] != "0" {
-		t.Errorf("calc_complete = %q / %q, want 0 and 0 (no values)",
+	// calc is mapped to baseline only: at followup there is no pair, so no state
+	// — REDCap's empty cell (REQ-API-134).
+	if rows[0]["calc_complete"] != "0" || rows[1]["calc_complete"] != "" {
+		t.Errorf("calc_complete = %q / %q, want 0 (no values) and empty (unmapped)",
 			rows[0]["calc_complete"], rows[1]["calc_complete"])
 	}
 
@@ -388,8 +416,8 @@ func TestRecordExportCompleteColumns(t *testing.T) {
 	// A finished assignment on an unmapped pair stays invisible.
 	setCompletion("8DISC001", evFol.ID, calcID, true) // calc is mapped to baseline only
 	rows = f.exportJSON(t, "tok-admin", url.Values{"records": {"8DISC001"}})
-	if rows[1]["calc_complete"] != "0" {
-		t.Errorf("unmapped finished calc_complete = %q, want 0 (invisible until mapped back)",
+	if rows[1]["calc_complete"] != "" {
+		t.Errorf("unmapped finished calc_complete = %q, want empty (invisible until mapped back)",
 			rows[1]["calc_complete"])
 	}
 	setCompletion("8DISC001", evFol.ID, calcID, false)

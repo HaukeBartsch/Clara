@@ -243,6 +243,10 @@ func TestFionaExportEvents(t *testing.T) {
 		if _, ok := row["event_id"]; !ok {
 			t.Errorf("row %d is missing event_id: %v", i, row)
 		}
+		// The sample output carries custom_event_label: null (REQ-API-020).
+		if v, ok := row["custom_event_label"]; !ok || v != nil {
+			t.Errorf("row %d custom_event_label = %v (present %v), want null", i, v, ok)
+		}
 	}
 }
 
@@ -411,12 +415,13 @@ func TestFionaExportRecordsFlat(t *testing.T) {
 			t.Errorf("row %d = %v/%v, want %s / %s",
 				i, row["record_id"], row["redcap_event_name"], w.record, w.event)
 		}
-		// The flat redcap_* columns are present on every row (§3.2).
-		if _, ok := row["redcap_repeat_instrument"]; !ok {
-			t.Errorf("row %d is missing redcap_repeat_instrument: %v", i, row)
+		// The repeat columns exist only in projects with a repeating instrument,
+		// which this one has not — REDCap's shape (REQ-API-155).
+		if _, ok := row["redcap_repeat_instrument"]; ok {
+			t.Errorf("row %d carries redcap_repeat_instrument without repeating instruments: %v", i, row)
 		}
-		if _, ok := row["redcap_repeat_instance"]; !ok {
-			t.Errorf("row %d is missing redcap_repeat_instance: %v", i, row)
+		if _, ok := row["redcap_repeat_instance"]; ok {
+			t.Errorf("row %d carries redcap_repeat_instance without repeating instruments: %v", i, row)
 		}
 	}
 	// Values land in their own rows; other events' fields are empty.
@@ -502,6 +507,64 @@ func TestFionaExportRecordsFormsEvents(t *testing.T) {
 	for i, row := range out {
 		if row["redcap_event_name"] != "baseline_arm_1" {
 			t.Errorf("row %d event = %v, want baseline_arm_1 (events[] filter)", i, row["redcap_event_name"])
+		}
+		// Every row names its record, although neither filter selects the
+		// identifier (REQ-API-028).
+		if row["record_id"] == nil || row["record_id"] == "" {
+			t.Errorf("row %d has no record_id: %v", i, row)
+		}
+	}
+}
+
+// TestFionaExportRecordList encodes the record-list call of the recorded FIONA
+// traffic (infoForThisProject, assets/transfer_samples_input_output.zip):
+// fields=[record_id] alone lists every (record, event) that holds data, keys
+// record_id and redcap_event_name only — no repeat columns, as the project has
+// no repeating instrument (REQ-API-155). The identifier's instrument (projects)
+// is mapped to event_1_arm_1 only; those rows must not be suppressed.
+func TestFionaExportRecordList(t *testing.T) {
+	f := newFionaFixture(t)
+	data := "token=" + fionaToken + "&content=record&format=json&type=flat&fields[0]=record_id" +
+		"&rawOrLabel=raw&rawOrLabelHeaders=raw&exportCheckboxLabel=false" +
+		"&exportSurveyFields=false&exportDataAccessGroups=false&returnFormat=json"
+	code, body := postRaw(t, f.h, data)
+	mustStatus(t, code, http.StatusOK, body)
+	out := decodeJSON(t, body)
+	want := [][2]string{
+		{"1462-0004", "baseline_arm_1"},
+		{"1490-0004", "baseline_arm_1"},
+		{"8DISC001", "event_1_arm_1"},
+		{"8DISC002", "event_1_arm_1"},
+		{"8DISC003", "event_1_arm_1"},
+	}
+	if len(out) != len(want) {
+		t.Fatalf("rows = %d, want %d: %s", len(out), len(want), body)
+	}
+	for i, w := range want {
+		if out[i]["record_id"] != w[0] || out[i]["redcap_event_name"] != w[1] || len(out[i]) != 2 {
+			t.Errorf("row %d = %v, want exactly record_id %s / redcap_event_name %s", i, out[i], w[0], w[1])
+		}
+	}
+}
+
+// TestFionaExportFormKeepsRecordID: the recorded forms[0]=projects call
+// (anonymizeAndSend) — a forms[] filter still names each row's record
+// (REQ-API-028), here also where the filtered instrument is not the identifier's.
+func TestFionaExportFormKeepsRecordID(t *testing.T) {
+	f := newFionaFixture(t)
+	code, body := postRaw(t, f.h, "token="+fionaToken+"&content=record&format=json&type=flat"+
+		"&forms[0]=leave_alone_do_not_touch&rawOrLabel=raw&rawOrLabelHeaders=raw&returnFormat=json")
+	mustStatus(t, code, http.StatusOK, body)
+	out := decodeJSON(t, body)
+	if len(out) == 0 {
+		t.Fatalf("no rows: %s", body)
+	}
+	for i, row := range out {
+		if row["record_id"] == nil || row["record_id"] == "" {
+			t.Errorf("row %d has no record_id: %v", i, row)
+		}
+		if _, ok := row["projects_complete"]; ok {
+			t.Errorf("row %d: the identifier's instrument must not get a block: %v", i, row)
 		}
 	}
 }

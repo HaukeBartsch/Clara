@@ -62,9 +62,13 @@ type ExportSpec struct {
 
 	RawOrLabel        string // "label" renders choice labels (REQ-EXP-010)
 	RawOrLabelHeaders string // raw | label | both (REQ-API-027)
-	Type              string // "" flat (normative) | "wide" (§3.6.2)
-	Enc               string // "csv" | "json"
-	Delimiter         rune   // CSV separator; 0 = comma (REQ-EXP-013)
+	// CheckboxLabel is REDCap's exportCheckboxLabel (REQ-EXP-053): in label mode a
+	// checked box exports its choice label and an unchecked one nothing; without
+	// it — REDCap's default — the boxes read Checked / Unchecked.
+	CheckboxLabel bool
+	Type          string // "" flat (normative) | "wide" (§3.6.2)
+	Enc           string // "csv" | "json"
+	Delimiter     rune   // CSV separator; 0 = comma (REQ-EXP-013)
 	// Decimal is the decimalCharacter (REQ-EXP-015): the separator written into
 	// calculated and floating-point values, in either encoding; 0 keeps the
 	// stored form.
@@ -152,6 +156,7 @@ func (h *Handler) contentRecordExport(w http.ResponseWriter, r *http.Request, en
 		FilterEvents:      p.Events,
 		RawOrLabel:        p.RawOrLabel,
 		RawOrLabelHeaders: p.RawOrLabelHeaders,
+		CheckboxLabel:     strings.EqualFold(p.ExportCheckboxLabel, "true"),
 		Type:              p.Type,
 		Enc:               enc,
 		Delimiter:         p.Delimiter(),
@@ -195,6 +200,9 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		dateBrg  bool
 		pairLess bool // the record identifier: belongs to no pair, follows the floor (GD-8)
 		decimal  bool // a number decimalCharacter rewrites: calculated or floating point (REQ-EXP-015)
+		// forced marks the record identifier kept although forms[]/fields[] left it
+		// out (REQ-API-028): it names the row's record and widens no pair scope.
+		forced bool
 	}
 	wantForms := toSet(s.Forms)
 	wantFields := toSet(s.Fields)
@@ -206,18 +214,20 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		if f.FieldType == "description" || f.FieldType == "header" || f.isCheckboxParent() {
 			continue // carry no values, never appear (§3.2)
 		}
-		if wantForms != nil && !wantForms[f.Instrument] {
-			continue
-		}
 		// fields[] names a choice column directly or through its checkbox, which
 		// selects every choice column (REQ-EXP-053).
-		if wantFields != nil && !wantFields[f.FieldName] && !(f.isChoiceColumn() && wantFields[f.Parent]) {
+		filtered := (wantForms != nil && !wantForms[f.Instrument]) ||
+			(wantFields != nil && !wantFields[f.FieldName] && !(f.isChoiceColumn() && wantFields[f.Parent]))
+		// Every row names its record (REQ-API-028): the identifier survives a filter
+		// that leaves it out, without bringing its instrument's pairs into scope.
+		if filtered && f.FieldName != d.identifier {
 			continue
 		}
 		wanted = append(wanted, column{
 			f: f, cat: categorize(f, d.identifier), dateBrg: isDateBearing(f.Field),
 			pairLess: f.FieldName == d.identifier,
 			decimal:  f.FieldType == "calculated" || f.ValidationType.String == "floating point",
+			forced:   filtered,
 		})
 	}
 
@@ -252,7 +262,9 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 	}
 	valueInstrs := map[int64]bool{}
 	for _, c := range wanted {
-		valueInstrs[c.f.InstrumentID] = true
+		if !c.forced {
+			valueInstrs[c.f.InstrumentID] = true
+		}
 	}
 
 	pairKey := func(event string, instrID int64) string {
@@ -328,6 +340,16 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 			pairLessCols = append(pairLessCols, len(cols))
 			visible = append(visible, map[string]bool{})
 			cols = append(cols, c)
+			// Asked for by name, the identifier is what its own instrument's pair
+			// delivers: an export of record_id alone lists every (record, event)
+			// instead of finding each event emptied. A forced one widens nothing.
+			if !c.forced {
+				for _, sc := range scope {
+					if rank, known := rankOf[pairKey(sc.name, c.f.InstrumentID)]; known && rank > expNone {
+						deliveredAt[sc.name]++
+					}
+				}
+			}
 			continue
 		}
 		at := map[string]bool{}
@@ -393,7 +415,9 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 	blockInstrs := make([]dictInstrument, 0, len(d.instruments))
 	hasBlock := map[int64]bool{}
 	for _, c := range cols {
-		hasBlock[c.f.InstrumentID] = true
+		if !c.forced { // a forced identifier opens no block of its instrument
+			hasBlock[c.f.InstrumentID] = true
+		}
 	}
 	for _, instr := range d.instruments {
 		if hasBlock[instr.ID] {
@@ -458,6 +482,39 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 	}
 
 	labelValues := strings.EqualFold(s.RawOrLabel, "label")
+	// eventCell is the redcap_event_name cell: the unique name, or in label mode
+	// the event's name as REDCap writes it — "<event>" in a one-arm project,
+	// "<event> (Arm <n>: <arm name>)" otherwise.
+	eventCell := func(unique string) string { return unique }
+	if labelValues && d.hasEvents {
+		arms, err := h.Store.ListArms(ctx, s.ProjectID)
+		if err != nil {
+			s.fail(w, http.StatusInternalServerError, "Internal error")
+			return
+		}
+		armName := make(map[int]string, len(arms))
+		for _, a := range arms {
+			name := a.Name.String
+			if name == "" {
+				name = "Arm " + strconv.Itoa(a.ArmNum)
+			}
+			armName[a.ArmNum] = name
+		}
+		label := make(map[string]string, len(d.events))
+		for _, e := range d.events {
+			l := e.EventName
+			if len(arms) > 1 {
+				l += " (Arm " + strconv.Itoa(e.ArmNum) + ": " + armName[e.ArmNum] + ")"
+			}
+			label[e.UniqueEventName] = l
+		}
+		eventCell = func(unique string) string {
+			if l, ok := label[unique]; ok {
+				return l
+			}
+			return unique
+		}
+	}
 	var labelHeaders, bothHeaders bool
 	switch strings.ToLower(s.RawOrLabelHeaders) {
 	case "label":
@@ -546,13 +603,24 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		}
 		colsOf[c.f.InstrumentID] = append(colsOf[c.f.InstrumentID], i)
 	}
+	// The repeat columns exist where REDCap writes them: in projects with a
+	// repeating instrument (REQ-API-155).
+	repeatCols := d.hasEvents && d.hasRepeating()
+	// instanceCol is the header index of redcap_repeat_instance, which JSON
+	// writes as a number like REDCap does (REQ-API-155); -1 = no such column.
+	instanceCol := -1
 	var slots []wideSlot
+	// Both layouts open with the record identifier (GD-8, REQ-API-028).
+	if identifierCol >= 0 {
+		header = append(header, headerOf(cols[identifierCol]))
+	}
 	if !wide {
-		if identifierCol >= 0 {
-			header = append(header, headerOf(cols[identifierCol]))
-		}
 		if d.hasEvents {
-			header = append(header, "redcap_event_name", "redcap_repeat_instrument", "redcap_repeat_instance")
+			header = append(header, "redcap_event_name")
+		}
+		if repeatCols {
+			header = append(header, "redcap_repeat_instrument", "redcap_repeat_instance")
+			instanceCol = len(header) - 1
 		}
 		for _, instr := range blockInstrs {
 			instr := instr
@@ -697,9 +765,13 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 					b.WriteByte(',')
 				}
 				k, _ := json.Marshal(name)
-				v, _ := json.Marshal(cells[i])
 				b.Write(k)
 				b.WriteByte(':')
+				if i == instanceCol && cells[i] != "" {
+					b.WriteString(cells[i]) // a positive integer the export itself formatted
+					continue
+				}
+				v, _ := json.Marshal(cells[i])
 				b.Write(v)
 			}
 			b.WriteByte('}')
@@ -740,18 +812,23 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		// transformations of its pair, then presentation (REQ-API-026).
 		present := func(c column, event, v string) string {
 			if c.f.isChoiceColumn() {
-				// A box is checked or not: raw writes 1/0, labels the choice's
-				// text or nothing (REQ-EXP-053). The cell only exists where its
-				// pair may contribute, so a 0 never stands in for a refused one.
+				// A box is checked or not: raw writes 1/0; labels write REDCap's
+				// Checked/Unchecked, or with exportCheckboxLabel the choice's text or
+				// nothing (REQ-EXP-053). The cell only exists where its pair may
+				// contribute, so a 0 never stands in for a refused one.
 				switch {
-				case v == "" && labelValues:
-					return ""
-				case v == "":
+				case !labelValues && v == "":
 					return "0"
-				case labelValues:
+				case !labelValues:
+					return v
+				case s.CheckboxLabel && v == "":
+					return ""
+				case s.CheckboxLabel:
 					return c.f.ChoiceLabel
+				case v == "":
+					return "Unchecked"
 				}
-				return v
+				return "Checked"
 			}
 			if v == "" {
 				return ""
@@ -804,6 +881,11 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		// derivation rendered as 0/1/2. An exact event stays exact; a bare
 		// slot scans the record's events, mirroring cell above.
 		completeCell := func(instr dictInstrument, event, id string) string {
+			if event != "" && d.hasEvents && !mapped(instr.ID, event) {
+				// No pair at this event, so no completion state to report — REDCap's
+				// empty cell for an instrument not collected there (REQ-API-134).
+				return ""
+			}
 			if instr.IsSurvey {
 				return "2" // GD-9: completion info is filled in automatically
 			}
@@ -981,19 +1063,18 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 			for _, rs := range specs {
 				cells := make([]string, 0, len(header))
 				if identifierCol >= 0 {
-					if rs.instrument != nil {
-						// The identifier is the record's (GD-8), stored with its first
-						// instance; an instance row names the record it belongs to.
-						cells = append(cells, present(cols[identifierCol], rs.event, id))
-					} else {
-						cells = append(cells, cell(cols[identifierCol], rs.event))
-					}
+					// The identifier is the record's (GD-8): every row names the record
+					// it belongs to, whether or not the value is stored at its event.
+					cells = append(cells, present(cols[identifierCol], rs.event, id))
 				}
 				if d.hasEvents {
+					cells = append(cells, eventCell(rs.event))
+				}
+				if repeatCols {
 					if rs.instrument != nil {
-						cells = append(cells, rs.event, rs.instrument.Name, strconv.Itoa(rs.instance))
+						cells = append(cells, rs.instrument.Name, strconv.Itoa(rs.instance))
 					} else {
-						cells = append(cells, rs.event, "", "")
+						cells = append(cells, "", "")
 					}
 				}
 				for _, sl := range slots {
@@ -1013,6 +1094,9 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 			}
 		} else if len(dvs) > 0 {
 			cells := make([]string, 0, len(header))
+			if identifierCol >= 0 {
+				cells = append(cells, present(cols[identifierCol], "", id))
+			}
 			for _, sl := range slots {
 				if sl.instance > 1 {
 					// A further instance's slot (REQ-API-155); one this record does

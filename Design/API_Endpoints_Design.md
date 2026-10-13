@@ -47,7 +47,7 @@ One endpoint: `POST /api/` with an `application/x-www-form-urlencoded` body; `GE
 | `content` | `project` / `metadata` / `event` / `formEventMapping` / `exportFieldNames` / `generateNextRecordName` / `record` | — (required) | with `content=record`, a call carrying `data` is an import, one without it an export; deletion needs `action=delete` (REQ-API-012) |
 | `action` | `export` / `import` / `delete` (with `content=record` only) | — | optional: `export`/`import` are accepted and never override the `data` rule; `delete` is the only action that dispatches; any other value → REDCap-style error (REQ-API-012, DEV-API-24) |
 | `format` / `returnFormat` | `json` / `csv` | `csv` (REDCap default) | a present `returnFormat` takes precedence for the response encoding (REQ-API-013) |
-| `type` | `flat` / `wide` | `wide` (REDCap default) | `flat` is normative — one row per (record, event); `wide` is the simplified compatibility mode of §3.6.2 (DEV-API-1) |
+| `type` | `flat` / `wide` | `flat` (REDCap default) | `flat` is normative — one row per (record, event); `wide` is the simplified compatibility mode of §3.6.2 (DEV-API-1) |
 | `csvDelimiter` | `,` / `;` / `\|` / `^` / tab (the character or `tab`) | `,` | REDCap's set; empty value = comma; any other value → 400 `Invalid csvDelimiter`, never cut down to its first character (REQ-API-029, REQ-EXP-013) |
 | `decimalCharacter` | `.` / `,` | stored form | record export: the decimal separator of `calculated` and `floating point` values, in either format (`Data_Export_Anonymization_Design.md` §3.3); empty value = stored form (a period); any other value → 400 `Invalid decimalCharacter` (REQ-EXP-015) |
 | `records[]` / `fields[]` / `forms[]` / `events[]` | arrays | — | both REDCap array syntax (`records[0]=…&records[1]=…`) and repeated single values (REQ-API-015) |
@@ -57,7 +57,8 @@ One endpoint: `POST /api/` with an `application/x-www-form-urlencoded` body; `GE
 | `data[i][key]` / `data` | import rows (§3.7.1) | — | import only; indexed form parameters or a JSON array of record objects — its presence makes the call an import (REQ-API-012, REQ-API-031) |
 | `returnContent` | `count` (or any other value) | result rows | with `content=record` import: `count` answers `{"count": N}` for the rows applied; anything else keeps the §3.7.2 result rows (REQ-API-142, DEV-API-24) |
 | `tz` | IANA timezone name or `±HH:MM` offset | `APP_TIMEZONE` (REQ-CFG-026) | import only — timezone of collection for the call's date/date-time values (GD-16, REQ-VAL-041, REQ-API-031) |
-| `exportCheckboxLabel`, `exportSurveyFields`, `exportDataAccessGroups` | any | — | accepted and **ignored** (REQ-API-016, DEV-API-2) |
+| `exportCheckboxLabel` | `true` / `false` | `false` (REDCap default) | record export with `rawOrLabel=label`: `true` writes a checked box's choice text (unchecked: empty), otherwise `Checked`/`Unchecked` (REQ-API-016, REQ-EXP-053) |
+| `exportSurveyFields`, `exportDataAccessGroups` | any | — | accepted and **ignored** (REQ-API-016, DEV-API-2) |
 
 Unknown parameters are accepted and ignored, never rejected — existing callers keep working (REQ-API-017).
 
@@ -166,10 +167,10 @@ All require data access ≥ `read_only` except `generateNextRecordName` (≥ `vi
 
 | content | Response shape (JSON) |
 |---|------|
-| `event` (REQ-API-020) | `[ {"event_name":"baseline","arm_num":1,"unique_event_name":"baseline_arm_1","event_id":4}, … ]` — events in the **canonical per-arm order** (GD-15: timepoint events by `period` ascending, ties by position; then no-timepoint events by position) |
+| `event` (REQ-API-020) | `[ {"event_name":"baseline","arm_num":1,"unique_event_name":"baseline_arm_1","custom_event_label":null,"event_id":4}, … ]` — `custom_event_label` is not stored: always `null` (an empty CSV cell), present because naive REDCap parsers read the key — events in the **canonical per-arm order** (GD-15: timepoint events by `period` ascending, ties by position; then no-timepoint events by position) |
 | `formEventMapping` (REQ-API-021) | `[ {"form_name":"intake","event_name":"baseline","arm_num":1,"unique_event_name":"baseline_arm_1","form_event_mapping":"1"}, … ]` — events in the canonical per-arm order (GD-15) |
 | `exportFieldNames` (REQ-API-022) | `[ {"field_name":"record_id","form_name":"intake"}, … ]` — restricted to `forms[]` when supplied |
-| `generateNextRecordName` (REQ-API-023) | `{ "next_record_name": "8DISC042" }` |
+| `generateNextRecordName` (REQ-API-023) | `[ { "next_record_name": "8DISC042" } ]` — a one-row array like the other contents |
 | `repeatingFormsEvents` (REQ-API-155) | `[ {"event_name":"baseline_arm_1","form_name":"visits","custom_form_label":""}, … ]` — the repeating pairs (REQ-DB-047), events in canonical order, instruments by position; read-only — a call carrying `data` is 400 (the designation is the administration API's, §4.10) |
 
 `generateNextRecordName` follows the project's naming pattern (REQ-DB-007) — digit-placeholder style (`8DISC[0-9][0-9][0-9]`) and counter-prefix style (`0001_01`, width preserved) — and MUST NOT return a name an existing record already holds (REQ-API-023). The next name is one counter step above the greatest existing name of the same shape (max + 1); names freed by deleted records are not reused (no gap-filling, REQ-API-023). While the project's record naming mode is `auto` (REQ-DB-045) it answers the next plain integer strictly above every numeric record id of the project instead — the first name is `1`, and ids that are not all digits never advance the counter nor collide with it (REQ-API-151).
@@ -180,18 +181,19 @@ An explicit `action=export` may accompany the call and changes nothing; a `data`
 
 #### 3.6.1 Rules
 
-- Filters `records[]`, `fields[]`, `forms[]`, `events[]` combine (intersection); with no filters, all records visible to the holder under the data-access-group rule are returned (REQ-API-024, REQ-AUTH-045, REQ-API-092).
+- Filters `records[]`, `fields[]`, `forms[]`, `events[]` combine (intersection) — with one exception: the record identifier stays in every export (REQ-API-028), added when `fields[]`/`forms[]` leave it out; such an added identifier brings neither its instrument's other columns nor its `<instrument>_complete`, and no pair of its instrument into the sensitivity scope. With no filters, all records visible to the holder under the data-access-group rule are returned (REQ-API-024, REQ-AUTH-045, REQ-API-092).
 - Sensitivity per the token holder's export level **for the (instrument, event) pair of each exported column** (REQ-API-026): `export_full` → full dataset; `export_no_identifiers` → all identifier fields removed; `export_de_identified` → de-identified per `Data_Export_Anonymization_Requirements.md` (date shift per `Database_Schema_Design.md` §8, salt/range per `System_Configuration_Design.md` §3.6); a pair at `export_none` contributes **no columns** — the permitted pairs still export normally, and only a request with no permitted pair in scope is 403 `Permission denied` (REQ-AUTH-069).
-- `rawOrLabel=label` → choice labels for dropdown/radio fields (stored values remain codes, REQ-VAL-022), `Yes`/`No` for a yesno field (REQ-DB-043); checkbox choice columns render the choice text when checked and nothing otherwise (`Data_Export_Anonymization_Design.md` §3.2, REQ-EXP-053); `rawOrLabelHeaders` controls field names the same way (REQ-API-027).
-- Rows carry the record identifier's value under its field name (GD-8), `redcap_event_name` per row (flat, projects with events), and empty strings for missing values (REQ-API-028).
-- Each instrument's field block ends with an `<instrument>_complete` column carrying that instrument's three-state completion for the row's position — `0` not complete, `1` in progress, `2` complete (REQ-API-134). The state is the record-status derivation of §4.13 (REQ-API-074): stored `finished` → `2`, else any value of that instrument at that position → `1`, else `0`; a survey-marked instrument always exports `2` (GD-9); a `finished` assignment on an unmapped (event, instrument) pair stays invisible until the pair is mapped back. The column belongs to whole-instrument exports — a full export or one filtered by `forms[]` carries it for every instrument that contributes at least one value column; a `fields[]`-filtered export omits it entirely (the web application exports whole instruments and gets the column; a field-list export returns exactly the requested fields). It keeps its raw name under `rawOrLabelHeaders` (it names no field), and appears in JSON as an ordinary key. Import does not accept it: a `<instrument>_complete` key remains an unknown field (§3.7).
+- `rawOrLabel=label` → choice labels for dropdown/radio fields (stored values remain codes, REQ-VAL-022), `Yes`/`No` for a yesno field (REQ-DB-043); checkbox choice columns render REDCap's `Checked`/`Unchecked`, or with `exportCheckboxLabel=true` the choice text when checked and nothing otherwise (`Data_Export_Anonymization_Design.md` §3.2, REQ-EXP-053); `redcap_event_name` renders the event's name — `<event_name>`, or `<event_name> (Arm <n>: <arm name>)` in a project with several arms — while `redcap_repeat_instrument` keeps the instrument name (no form label is stored) (REQ-API-028); `rawOrLabelHeaders` controls field names the same way (REQ-API-027).
+- Rows carry the record identifier's value under its field name (GD-8) — the record id itself, on every row of both layouts — `redcap_event_name` per row (flat, projects with events), and empty strings for missing values (REQ-API-028). An export of the identifier alone (`fields[]=record_id`) lists one row per (record, event) that holds data: the identifier counts as delivered by its own instrument's pair wherever that pair is permitted, so those events are not suppressed as rows naming nothing but the event (§4.3).
+- `redcap_repeat_instrument` and `redcap_repeat_instance` appear only in projects with a repeating pair (REQ-API-155), as in REDCap; JSON writes `redcap_repeat_instance` as a number on instance rows and `""` on the event's own row.
+- Each instrument's field block ends with an `<instrument>_complete` column carrying that instrument's three-state completion for the row's position — `0` not complete, `1` in progress, `2` complete (REQ-API-134). The state is the record-status derivation of §4.13 (REQ-API-074): stored `finished` → `2`, else any value of that instrument at that position → `1`, else `0`; a survey-marked instrument always exports `2` (GD-9); at an event the instrument is not mapped to the cell is empty (no pair, no state — REDCap's shape), so a `finished` assignment on an unmapped (event, instrument) pair stays invisible until the pair is mapped back. The column belongs to whole-instrument exports — a full export or one filtered by `forms[]` carries it for every instrument that contributes at least one value column; a `fields[]`-filtered export omits it entirely (the web application exports whole instruments and gets the column; a field-list export returns exactly the requested fields). It keeps its raw name under `rawOrLabelHeaders` (it names no field), and appears in JSON as an ordinary key. Import does not accept it: a `<instrument>_complete` key remains an unknown field (§3.7).
 - CSV is streamed (REQ-TECH-011): quoted per standard CSV rules, honors `csvDelimiter`, formula-triggering leading characters neutralized per `Data_Validation_Design.md` §5.3 in every cell, header row included (REQ-API-029, REQ-EXP-013); never preceded by a byte-order mark (REQ-EXP-016).
 - `decimalCharacter` rewrites the separator of `calculated` and `floating point` values after the sensitivity transformation, so hashes never depend on it (REQ-EXP-015, `Data_Export_Anonymization_Design.md` §3.3).
 - Every invocation writes a record-view audit row (`audit_record_views`, `Audit_Logging_Design.md` §4) and an `export` event (`Audit_Logging_Design.md` §3.5) (REQ-API-030, REQ-AUD-011).
 
 #### 3.6.2 `type=flat` (normative) and `type=wide` (compatibility)
 
-`flat` — one row per (record, event):
+`flat` — one row per (record, event); the two `redcap_repeat_*` columns exist because this project has a repeating instrument:
 
 ```json
 [
@@ -208,7 +210,7 @@ An explicit `action=export` may accompany the call and changes nothing; a `data`
 ]
 ```
 
-`wide` (DEV-API-1, simplified for caller compatibility): one row per record; a field present in exactly one event keeps its bare name; a field present in several events is emitted once per event as `<field>_<unique_event_name>`. An instrument's `<instrument>_complete` follows the same rule — suffixed once per event when the instrument is active in several (REQ-API-134). Missing values are empty strings. `flat` is what all known callers use; `wide` exists so requests that omit `type` (REDCap default) keep working.
+`wide` (DEV-API-1, simplified for caller compatibility): one row per record, opening with the record identifier under its bare name; a field present in exactly one event keeps its bare name; a field present in several events is emitted once per event as `<field>_<unique_event_name>`. An instrument's `<instrument>_complete` follows the same rule — suffixed once per event when the instrument is active in several (REQ-API-134). Missing values are empty strings. `flat` is what all known callers use and what an omitted `type` selects (REDCap's default); `wide` exists for callers that ask for it.
 
 **Repeating instruments** (REQ-API-155, REDCap's layout). At an event where an instrument repeats (REQ-DB-047), `flat` writes the event's own row with that instrument's columns — its `<instrument>_complete` included — left empty, and then one row per instance that holds a value or is finished, ascending: `redcap_repeat_instrument` names the instrument, `redcap_repeat_instance` the number, the identifier column the record, and only that instrument's columns are filled (the others empty). The event's own row is written only when the event holds a first-instance value outside its repeating instruments (the identifier counts):
 
@@ -216,9 +218,9 @@ An explicit `action=export` may accompany the call and changes nothing; a `data`
 [
   { "record_id": "8DISC042", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "", "redcap_repeat_instance": "",
     "age": "42", "intake_complete": "1", "visit_score": "", "visits_complete": "" },
-  { "record_id": "8DISC042", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "visits", "redcap_repeat_instance": "1",
+  { "record_id": "8DISC042", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "visits", "redcap_repeat_instance": 1,
     "age": "", "intake_complete": "", "visit_score": "3", "visits_complete": "1" },
-  { "record_id": "8DISC042", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "visits", "redcap_repeat_instance": "2",
+  { "record_id": "8DISC042", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "visits", "redcap_repeat_instance": 2,
     "age": "", "intake_complete": "", "visit_score": "5", "visits_complete": "2" }
 ]
 ```

@@ -187,6 +187,13 @@ func TestRepeatingExportRoundTrip(t *testing.T) {
 	if fu := byKey[key{"followup_arm_1", "", ""}]; fu == nil || fu["visit_note"] != "plain" {
 		t.Fatalf("follow-up row: %v", fu)
 	}
+	// JSON writes the instance number as a number, like REDCap; an event row
+	// keeps the empty string.
+	_, body := f.call(t, url.Values{"token": {"tok-admin"}, "content": {"record"}, "returnFormat": {"json"},
+		"records[0]": {"8DISC001"}, "fields[0]": {"visit_score"}})
+	if !strings.Contains(body, `"redcap_repeat_instance":2`) || !strings.Contains(body, `"redcap_repeat_instance":""`) {
+		t.Fatalf("redcap_repeat_instance must be a JSON number on instance rows: %s", body)
+	}
 
 	// Round trip: every exported row imports back without a change. Calculated
 	// values and the _complete columns are export-only, as for any project.
@@ -226,9 +233,12 @@ func TestRepeatingWideExport(t *testing.T) {
 	rows := f.exportJSON(t, "tok-admin", url.Values{"type": {"wide"}})
 	var row1 map[string]string
 	for _, r := range rows {
-		if r["age_baseline_arm_1"] == "42" { // 8DISC001 (the wide layout carries no identifier column)
+		if r["record_id"] == "8DISC001" { // the wide row opens with its record (REQ-API-028)
 			row1 = r
 		}
+	}
+	if row1 == nil || row1["age_baseline_arm_1"] != "42" {
+		t.Fatalf("wide row of 8DISC001: %v", rows)
 	}
 	for _, col := range []string{"visit_score_baseline_arm_1__2", "visit_score_baseline_arm_1__3", "visits_complete_baseline_arm_1__3"} {
 		if _, ok := row1[col]; !ok {

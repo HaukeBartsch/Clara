@@ -148,9 +148,10 @@ test.describe("repeating instruments (REQ-UI-054, REQ-UI-055)", () => {
       form: { token, content: "record", format: "json", returnFormat: "json", "records[0]": "RP001" },
     })
     expect(exported.ok()).toBeTruthy()
-    const rows = (await exported.json()) as Record<string, string>[]
+    const rows = (await exported.json()) as Record<string, string | number>[]
     const instances = rows.filter((r) => r.redcap_repeat_instrument === "visits")
-    expect(instances.map((r) => [r.redcap_repeat_instance, r.visit_note])).toEqual([["1", "first visit"], ["2", "second visit"]])
+    // The instance number is a JSON number, as REDCap writes it.
+    expect(instances.map((r) => [r.redcap_repeat_instance, r.visit_note])).toEqual([[1, "first visit"], [2, "second visit"]])
 
     // --- off hides the second instance, on brings it back (REQ-DB-048) ---
     await setRepeating(page, false)

@@ -33,9 +33,12 @@ type Params struct {
 	FilterLogic       string
 	RawOrLabel        string
 	RawOrLabelHeaders string
-	TZ                string
-	Data              string // import payload as a JSON array (§3.7.1, REQ-API-031)
-	ReturnContent     string // "count" switches the import response (REQ-API-142)
+	// ExportCheckboxLabel is REDCap's flag for checkbox values in label mode
+	// (REQ-EXP-053); "true" selects the choice label.
+	ExportCheckboxLabel string
+	TZ                  string
+	Data                string // import payload as a JSON array (§3.7.1, REQ-API-031)
+	ReturnContent       string // "count" switches the import response (REQ-API-142)
 	// RepeatInstance narrows a delete to one form instance (REDCap's
 	// repeat_instance, REQ-API-155); "" = every instance.
 	RepeatInstance string
@@ -95,26 +98,27 @@ func ParseParams(r *http.Request) (Params, error) {
 	}
 
 	return Params{
-		Token:             single("token"),
-		Content:           single("content"),
-		Action:            single("action"),
-		Format:            single("format"),
-		ReturnFormat:      single("returnFormat"),
-		Type:              single("type"),
-		CSVDelimiter:      single("csvDelimiter"),
-		DecimalCharacter:  single("decimalCharacter"),
-		Records:           list("records"),
-		Fields:            list("fields"),
-		Forms:             list("forms"),
-		Events:            list("events"),
-		FilterLogic:       single("filterLogic"),
-		RawOrLabel:        single("rawOrLabel"),
-		RawOrLabelHeaders: single("rawOrLabelHeaders"),
-		TZ:                single("tz"),
-		Data:              single("data"),
-		ReturnContent:     single("returnContent"),
-		RepeatInstance:    single("repeat_instance"),
-		HasData:           hasDataKey(body) || hasDataKey(query),
+		Token:               single("token"),
+		Content:             single("content"),
+		Action:              single("action"),
+		Format:              single("format"),
+		ReturnFormat:        single("returnFormat"),
+		Type:                single("type"),
+		CSVDelimiter:        single("csvDelimiter"),
+		DecimalCharacter:    single("decimalCharacter"),
+		Records:             list("records"),
+		Fields:              list("fields"),
+		Forms:               list("forms"),
+		Events:              list("events"),
+		FilterLogic:         single("filterLogic"),
+		RawOrLabel:          single("rawOrLabel"),
+		RawOrLabelHeaders:   single("rawOrLabelHeaders"),
+		ExportCheckboxLabel: single("exportCheckboxLabel"),
+		TZ:                  single("tz"),
+		Data:                single("data"),
+		ReturnContent:       single("returnContent"),
+		RepeatInstance:      single("repeat_instance"),
+		HasData:             hasDataKey(body) || hasDataKey(query),
 	}, nil
 }
 

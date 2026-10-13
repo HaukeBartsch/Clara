@@ -158,7 +158,10 @@ test.describe("checkbox fields (REQ-DB-042)", () => {
     const raw = await exported({})
     expect(raw).not.toHaveProperty("habits")
     expect([raw.habits___1, raw.habits___2, raw.habits___3]).toEqual(["1", "1", "0"])
+    // Label mode follows REDCap: Checked/Unchecked, the choice text with exportCheckboxLabel=true.
     const labels = await exported({ rawOrLabel: "label" })
-    expect([labels.habits___1, labels.habits___2, labels.habits___3]).toEqual(["Smoking", "Drinking", ""])
+    expect([labels.habits___1, labels.habits___2, labels.habits___3]).toEqual(["Checked", "Checked", "Unchecked"])
+    const choiceLabels = await exported({ rawOrLabel: "label", exportCheckboxLabel: "true" })
+    expect([choiceLabels.habits___1, choiceLabels.habits___2, choiceLabels.habits___3]).toEqual(["Smoking", "Drinking", ""])
   })
 })

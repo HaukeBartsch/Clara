@@ -141,17 +141,32 @@ func TestCheckboxExportColumns(t *testing.T) {
 		t.Errorf("an unchecked box at a mapped event exports 0: %v", rows[1])
 	}
 
-	// Labels: the choice's text when checked, nothing otherwise; label headers
-	// read "<Field Label>, <Choice Label>".
-	code, body = f.call(t, url.Values{"token": {"tok-admin"}, "content": {"record"},
-		"records": {"8DISC001"}, "events": {"baseline_arm_1"}, "rawOrLabel": {"label"}, "rawOrLabelHeaders": {"label"}})
-	mustStatus(t, code, 200, body)
-	lines = strings.Split(strings.TrimRight(body, "\r\n"), "\n")
+	// Labels: REDCap's Checked/Unchecked by default, and with exportCheckboxLabel
+	// the choice's text when checked and nothing otherwise; label headers read
+	// "<Field Label>, <Choice Label>".
+	label := func(checkboxLabel string) []string {
+		t.Helper()
+		form := url.Values{"token": {"tok-admin"}, "content": {"record"},
+			"records": {"8DISC001"}, "events": {"baseline_arm_1"}, "rawOrLabel": {"label"}, "rawOrLabelHeaders": {"label"}}
+		if checkboxLabel != "" {
+			form.Set("exportCheckboxLabel", checkboxLabel)
+		}
+		code, body := f.call(t, form)
+		mustStatus(t, code, 200, body)
+		return strings.Split(strings.TrimRight(body, "\r\n"), "\n")
+	}
+	lines = label("")
 	if !strings.Contains(lines[0], `"Habits, Smoking","Habits, Drinking","Habits, Sports"`) {
 		t.Errorf("label header = %q", lines[0])
 	}
-	if !strings.Contains(lines[1], ",Smoking,,Sports,") {
-		t.Errorf("label row = %q", lines[1])
+	if !strings.Contains(lines[1], ",Checked,Unchecked,Checked,") {
+		t.Errorf("label row = %q, want Checked/Unchecked", lines[1])
+	}
+	if lines = label("false"); !strings.Contains(lines[1], ",Checked,Unchecked,Checked,") {
+		t.Errorf("exportCheckboxLabel=false row = %q, want Checked/Unchecked", lines[1])
+	}
+	if lines = label("true"); !strings.Contains(lines[1], ",Smoking,,Sports,") {
+		t.Errorf("exportCheckboxLabel=true row = %q, want the choice labels", lines[1])
 	}
 	rows = f.exportJSON(t, "tok-admin", url.Values{"records": {"8DISC001"}, "rawOrLabelHeaders": {"both"}})
 	if _, ok := rows[0]["Habits, Sports (habits___3)"]; !ok {
@@ -160,7 +175,7 @@ func TestCheckboxExportColumns(t *testing.T) {
 
 	// fields[] matches the checkbox (every column) or one choice column.
 	rows = f.exportJSON(t, "tok-admin", url.Values{"records": {"8DISC001"}, "fields": {"habits"}})
-	if len(rows[0]) != 3+3 { // record_id-less: event + two repeat columns, three boxes
+	if len(rows[0]) != 2+3 { // record_id (always, REQ-API-028) + event, three boxes
 		t.Errorf("fields[]=habits row = %v", rows[0])
 	}
 	rows = f.exportJSON(t, "tok-admin", url.Values{"records": {"8DISC001"}, "fields": {"habits___3"}})
