@@ -165,10 +165,10 @@ env APP_ENV=development \
   LOCAL_LOGIN_NAMES=Local \
   LDAP_SERVER_1_URL="ldap://127.0.0.1:1" \
   LDAP_SERVER_1_SEARCH_BASE="dc=hospital1,dc=example,dc=org" \
-  LDAP_SERVER_1_NAMES="Hospital 1" \
+  LDAP_SERVER_1_NAMES="Ahus (Akerhus)" \
   LDAP_SERVER_2_URL="ldap://127.0.0.1:2" \
   LDAP_SERVER_2_SEARCH_BASE="dc=hospital2,dc=example,dc=org" \
-  LDAP_SERVER_2_NAMES="Hospital 2" \
+  LDAP_SERVER_2_NAMES="OUS (Oslo)" \
   php -S "127.0.0.1:$web_port" -t "$root/web/public" "$root/web/public/index.php" \
     > "$state/web.log" 2>&1 &
 web_pid=$!
