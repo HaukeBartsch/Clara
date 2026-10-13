@@ -64,6 +64,7 @@ const (
 	FieldUpdated        = "field_updated"
 	FieldDeleted        = "field_deleted"
 	FieldReordered      = "field_reordered"
+	FieldMoved          = "field_moved" // REQ-API-157: to another instrument, or within its own
 	MappingUpdated      = "mapping_updated"
 	ProjectEnded        = "project_ended"
 

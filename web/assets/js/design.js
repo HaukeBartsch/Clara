@@ -13,6 +13,10 @@
 //    choice rows.
 // 3. The "Repeating" switches of the instrument list (REQ-UI-054): a switch saves the
 //    instrument's set at once, so the Save button for a browser without JavaScript goes.
+// 4. The Move dialog of the field list (REQ-UI-056): fills in the field the row's button
+//    names, offers this instrument's fields as rendered and another instrument's from the
+//    page route's data region, and defaults to the place the field holds — so an untouched
+//    dialog moves nothing — or to the end of another instrument.
 
 import { el, fetchJson, ready, t } from "../app.js"
 
@@ -49,14 +53,19 @@ const insertAtCaret = (textarea, text) => {
   textarea.dispatchEvent(new Event("input", { bubbles: true }))
 }
 
-// One fetch per page, shared by every editor on it: the region is the same for all of them.
-const referenceCache = new Map()
-const loadReferences = (url) => {
-  if (!referenceCache.has(url)) {
-    referenceCache.set(url, fetchJson(url).then((body) => body.references || []))
+// One fetch per page, shared by every editor on it and the Move dialog: the region is the
+// same for all of them.
+const regionCache = new Map()
+const loadRegion = (url) => {
+  if (!regionCache.has(url)) {
+    regionCache.set(url, fetchJson(url).catch((error) => {
+      regionCache.delete(url)
+      throw error
+    }))
   }
-  return referenceCache.get(url)
+  return regionCache.get(url)
 }
+const loadReferences = (url) => loadRegion(url).then((body) => body.references || [])
 
 const fillPicker = async (select, url) => {
   if (select.dataset.loaded) return
@@ -81,7 +90,6 @@ const fillPicker = async (select, url) => {
   } catch (error) {
     placeholder.textContent = t("design.refs.failed")
     delete select.dataset.loaded
-    referenceCache.delete(url)
   }
 }
 
@@ -202,8 +210,80 @@ function wireRepeating(form) {
   })
 }
 
+// --- 4. the Move dialog ---
+
+// A before-field option: the name, and as much of the label as reads in a select.
+const optionText = (field) => {
+  const label = (field.field_label || "").replace(/\s+/g, " ").trim()
+  const short = label.length > 60 ? label.slice(0, 59) + "…" : label
+  return short === "" ? field.field_name : field.field_name + " — " + short
+}
+
+function wireMove(dialog) {
+  const fieldId = dialog.querySelector("[data-clara-move-id]")
+  const fieldName = dialog.querySelector("[data-clara-move-name]")
+  const title = dialog.querySelector("[data-clara-move-title]")
+  const instrument = dialog.querySelector("[data-clara-move-instrument]")
+  const before = dialog.querySelector("[data-clara-move-before]")
+  const submit = dialog.querySelector("button[type=submit]")
+  const current = dialog.dataset.claraInstrument
+  // This instrument's fields as the page rendered them, the moved one among them.
+  const rendered = [...before.options]
+    .filter((option) => option.value !== "end")
+    .map((option) => ({ id: option.value, text: option.textContent }))
+
+  const offer = (options, selected) => {
+    const items = options
+      .filter((option) => option.id !== fieldId.value)
+      .map((option) => el("option", { value: option.id }, option.text))
+    items.push(el("option", { value: "end" }, t("design.move.end")))
+    before.replaceChildren(...items)
+    before.value = selected
+    before.disabled = false
+    submit.disabled = false
+  }
+
+  // Within its own instrument the field's present place: the field after it, or the end.
+  const ownPlace = () => {
+    const next = rendered[rendered.findIndex((option) => option.id === fieldId.value) + 1]
+    return next ? next.id : "end"
+  }
+
+  const showTarget = async () => {
+    const wanted = instrument.value
+    if (wanted === current) {
+      offer(rendered, ownPlace())
+      return
+    }
+    before.disabled = true
+    submit.disabled = true
+    before.replaceChildren(el("option", { value: "" }, t("design.move.loading")))
+    try {
+      const body = await loadRegion(dialog.dataset.claraRegion)
+      if (instrument.value !== wanted) return // another instrument was picked meanwhile
+      const target = (body.instruments || []).find((item) => String(item.id) === wanted)
+      offer((target ? target.fields : []).map((field) => ({ id: String(field.id), text: optionText(field) })), "end")
+    } catch (error) {
+      if (instrument.value !== wanted) return
+      before.replaceChildren(el("option", { value: "" }, t("design.move.failed")))
+    }
+  }
+
+  dialog.addEventListener("show.bs.modal", (event) => {
+    const button = event.relatedTarget
+    if (!button || !button.dataset.claraMoveField) return
+    fieldId.value = button.dataset.claraMoveField
+    fieldName.value = button.dataset.claraMoveName || ""
+    title.textContent = t("design.move.title", { name: fieldName.value })
+    instrument.value = current
+    showTarget()
+  })
+  instrument.addEventListener("change", showTarget)
+}
+
 ready(() => {
   for (const root of document.querySelectorAll("[data-clara-expression]")) wireExpression(root)
   for (const form of document.querySelectorAll("[data-clara-field-form]")) wireFieldForm(form)
   for (const form of document.querySelectorAll("[data-clara-repeating-form]")) wireRepeating(form)
+  for (const dialog of document.querySelectorAll("[data-clara-move]")) wireMove(dialog)
 })

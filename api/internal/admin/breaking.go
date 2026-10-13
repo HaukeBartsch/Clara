@@ -40,6 +40,10 @@ type valueProbe interface {
 	holdsFieldData(ctx context.Context, fieldNames []string) (bool, error)
 	// holdsEventData reports whether any value is stored at these events.
 	holdsEventData(ctx context.Context, uniqueEventNames []string) (bool, error)
+	// holdsInstanceData reports whether any value is stored under these
+	// instrument names — further instances of a repeating instrument
+	// (REQ-DB-048), including those of a field since moved elsewhere (REQ-DB-049).
+	holdsInstanceData(ctx context.Context, instruments []string) (bool, error)
 	// validationRegistry resolves the regex validation types of §4.2, which a
 	// changed validation_type has to be checked against.
 	validationRegistry(ctx context.Context) (*validate.Registry, error)
@@ -78,6 +82,10 @@ func (p storeValues) holdsFieldData(ctx context.Context, fieldNames []string) (b
 
 func (p storeValues) holdsEventData(ctx context.Context, uniqueEventNames []string) (bool, error) {
 	return p.anyRow(ctx, `unique_event_name`, uniqueEventNames)
+}
+
+func (p storeValues) holdsInstanceData(ctx context.Context, instruments []string) (bool, error) {
+	return p.anyRow(ctx, `repeating_instrument`, instruments)
 }
 
 // validationRegistry loads the validation_types registry (§4.2, REQ-VAL-042). A
@@ -256,13 +264,28 @@ func classifyInstruments(ctx context.Context, active, staged *stagedDesign, prob
 	for _, i := range staged.Instruments {
 		stagedByID[i.ID] = i
 	}
+	stagedFields := flattenFields(staged)
 	for _, i := range active.Instruments {
 		if _, ok := stagedByID[i.ID]; ok {
 			continue
 		}
-		holds, err := probe.holdsFieldData(ctx, fieldNames(i.Fields))
+		// Its fields go with it, except one the set moves to another instrument
+		// (REQ-API-157) — and so do the further instances stored under its name,
+		// those of a field moved elsewhere included (REQ-DB-049).
+		var doomed []stagedField
+		for _, f := range i.Fields {
+			if _, moved := stagedFields[f.ID]; !moved {
+				doomed = append(doomed, f)
+			}
+		}
+		holds, err := probe.holdsFieldData(ctx, fieldNames(doomed))
 		if err != nil {
 			return nil, err
+		}
+		if !holds {
+			if holds, err = probe.holdsInstanceData(ctx, []string{i.Name}); err != nil {
+				return nil, err
+			}
 		}
 		out = append(out, stagedChange{
 			Kind: "instrument_deleted", Object: i.Name, Breaking: holds,
@@ -291,9 +314,9 @@ func classifyFields(ctx context.Context, active, staged *stagedDesign, probe val
 	var out []stagedChange
 	// Fields are addressed instrument.field (the §4.21 example), so both sides
 	// need the instrument a field sits on.
-	type ref struct{ inst, field string }
 	activeFields := flattenFields(active)
 	stagedFields := flattenFields(staged)
+	reordered := reorderedFields(active, staged)
 
 	for id, af := range activeFields {
 		sf, ok := stagedFields[id]
@@ -306,7 +329,15 @@ func classifyFields(ctx context.Context, active, staged *stagedDesign, probe val
 			})
 			continue
 		}
-		changes, err := classifyFieldChange(ctx, af.stagedField, sf.stagedField, sf.String(), probe)
+		if af.instrumentID != sf.instrumentID {
+			// A move keeps the field's id, name and stored values (REQ-API-157):
+			// what the target instrument does not show — an event it is not
+			// used at, a further instance of the source — stays stored, hidden
+			// until the field moves back. Reversible by construction, like
+			// unmapping a pair (REQ-DB-049).
+			out = append(out, stagedChange{Kind: "field_moved", Object: af.String() + " → " + sf.String()})
+		}
+		changes, err := classifyFieldChange(ctx, af.stagedField, sf.stagedField, sf.String(), reordered[id], probe)
 		if err != nil {
 			return nil, err
 		}
@@ -323,7 +354,7 @@ func classifyFields(ctx context.Context, active, staged *stagedDesign, probe val
 // classifyFieldChange compares one field's two states and returns at most one
 // entry per kind, strongest classification first.
 func classifyFieldChange(
-	ctx context.Context, old, next stagedField, object string, probe valueProbe,
+	ctx context.Context, old, next stagedField, object string, reordered bool, probe valueProbe,
 ) ([]stagedChange, error) {
 	var out []stagedChange
 
@@ -395,10 +426,46 @@ func classifyFieldChange(
 	switch {
 	case attributeChanged(old, next):
 		out = append(out, stagedChange{Kind: "field_updated", Object: object})
-	case old.Position != next.Position:
+	case reordered:
 		out = append(out, stagedChange{Kind: "reordered", Object: object})
 	}
 	return out, nil
+}
+
+// reorderedFields names the fields whose order the staged design changes: a
+// field is reordered when its rank among the fields that sit in its instrument
+// on both sides differs. Positions alone would also report every field a
+// delete, an add or a move merely shifted (REQ-API-157).
+func reorderedFields(active, staged *stagedDesign) map[int64]bool {
+	out := map[int64]bool{}
+	for _, si := range staged.Instruments {
+		ai, ok := lookupInstrument(active, si.ID)
+		if !ok {
+			continue
+		}
+		stays := map[int64]bool{}
+		for _, f := range si.Fields {
+			if _, found := lookupField(ai, f.ID); found {
+				stays[f.ID] = true
+			}
+		}
+		rank := func(fields []stagedField) map[int64]int {
+			ranks := map[int64]int{}
+			for _, f := range sortedFields(fields) {
+				if stays[f.ID] {
+					ranks[f.ID] = len(ranks)
+				}
+			}
+			return ranks
+		}
+		before, after := rank(ai.Fields), rank(si.Fields)
+		for id, r := range after {
+			if before[id] != r {
+				out[id] = true
+			}
+		}
+	}
+	return out
 }
 
 // validationTightened answers "its validation type beyond the current values"
@@ -619,7 +686,8 @@ func attributeChanged(old, next stagedField) bool {
 // can name it the way §4.21 does (instrument.field).
 type fieldAt struct {
 	stagedField
-	instrument string
+	instrument   string
+	instrumentID int64
 }
 
 func (f fieldAt) String() string { return f.instrument + "." + f.FieldName }
@@ -629,7 +697,7 @@ func flattenFields(d *stagedDesign) map[int64]fieldAt {
 	out := map[int64]fieldAt{}
 	for _, i := range d.Instruments {
 		for _, f := range i.Fields {
-			out[f.ID] = fieldAt{stagedField: f, instrument: i.Name}
+			out[f.ID] = fieldAt{stagedField: f, instrument: i.Name, instrumentID: i.ID}
 		}
 	}
 	return out

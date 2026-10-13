@@ -854,7 +854,7 @@
         "tags": ["Admin: Structure"],
         "operationId": "deleteInstrument",
         "summary": "Delete an instrument — or reset the last one (REQ-API-066, REQ-API-127)",
-        "description": "`project_admin`. Removes the instrument together with its fields, their stored values (same transaction) and its mapping pairs; losing recorded values makes the change breaking in analysis mode (§4.21). An expression that survives the change naming a doomed field → 409 `conflict`. A project always keeps at least one instrument: deleting the last remaining one only deletes its fields and renames the shell to `instrument` — id, position, survey flag and branching logic stay — answering 200 with the object. Audit `instrument_deleted` with the removed field and value counts, or `instrument_updated` with `last_instrument_reset`.",
+        "description": "`project_admin`. Removes the instrument together with its fields, their stored values (same transaction), the further instances stored under its name — a field's moved elsewhere since included (REQ-DB-049) — and its mapping pairs; losing recorded values makes the change breaking in analysis mode (§4.21). An expression that survives the change naming a doomed field → 409 `conflict`. A project always keeps at least one instrument: deleting the last remaining one only deletes its fields and renames the shell to `instrument` — id, position, survey flag and branching logic stay — answering 200 with the object. Audit `instrument_deleted` with the removed field and value counts, or `instrument_updated` with `last_instrument_reset`.",
         "parameters": [ { "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/InstrumentId" } ],
         "responses": {
           "200": { "description": "The last remaining instrument was reset — fields deleted, shell renamed to `instrument`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Instrument" } } } },
@@ -1112,6 +1112,28 @@
         "parameters": [ { "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/InstrumentId" }, { "$ref": "#/components/parameters/FieldId" } ],
         "responses": {
           "204": { "description": "The field and its stored values were removed." },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/instruments/{iid}/fields/{fid}/move": {
+      "post": {
+        "tags": ["Admin: Structure"],
+        "operationId": "moveField",
+        "summary": "Move a field to another instrument or place (REQ-API-157)",
+        "description": "`project_admin`. Moves the field `{fid}` of instrument `{iid}` into `instrument_id` — any instrument of the project, its own included — before `before_field_id`, a field of that instrument, or last when `before_field_id` is null or absent. Both instruments are renumbered 1..n. The field keeps its id, name, attributes and stored values: values are keyed by field name and event, so first instances show wherever the target instrument is used; values at events the target is not mapped to, and further instances kept under the source instrument's name, stay stored but hidden until the field moves back (REQ-DB-049) — never breaking (§4.21; staged diff kind `field_moved`). The record identifier must stay where it is while records exist — a move that would change it → 400 `invalid_request` (GD-8). An unknown target, or a `before_field_id` that is the field itself or not a field of the target → 400 `validation_error`. A move into or out of a repeating instrument recomputes, for further instances, the moved calculated field and the target's and source's calculated fields that read the moved field (REQ-VAL-045); a move to the place the field already holds writes nothing. Audit `field_moved`.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/InstrumentId" }, { "$ref": "#/components/parameters/FieldId" } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["instrument_id"], "additionalProperties": false, "properties": {
+          "instrument_id": { "type": "integer", "format": "int64", "description": "The target instrument (may be `{iid}` itself)." },
+          "before_field_id": { "type": ["integer", "null"], "format": "int64", "description": "The field of the target the moved field goes in front of; null or absent: last." },
+          "acknowledge_breaking": { "type": "boolean", "description": "Analysis mode (§4.21); a move is never breaking." } } },
+          "example": { "instrument_id": 7, "before_field_id": 12 } } } },
+        "responses": {
+          "200": { "description": "The moved field, at its new position.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Field" } } } },
+          "400": { "description": "`invalid_request` — malformed body, missing `instrument_id`, or a GD-8 violation; `validation_error` — unknown target or unusable `before_field_id`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } } },
           "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
           "403": { "$ref": "#/components/responses/AdminForbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },

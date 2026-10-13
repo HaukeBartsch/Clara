@@ -53,6 +53,7 @@ func (h *Handler) registerStructure(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v1/projects/{id}/instruments/{iid}/fields/order", h.orderFields)
 	mux.HandleFunc("PUT /api/v1/projects/{id}/instruments/{iid}/fields/{fid}", h.updateField)
 	mux.HandleFunc("DELETE /api/v1/projects/{id}/instruments/{iid}/fields/{fid}", h.deleteField)
+	mux.HandleFunc("POST /api/v1/projects/{id}/instruments/{iid}/fields/{fid}/move", h.moveField)
 
 	mux.HandleFunc("POST /api/v1/projects/{id}/records/{record}/fields/{fid}/test", h.testField)
 
@@ -2559,6 +2560,25 @@ func (h *Handler) deleteInstrumentHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// The further instances stored under its name go too — those of a field
+	// moved to another instrument since, which no field delete reaches
+	// (REQ-DB-049).
+	var instanceValues int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM data WHERE project_id = ? AND repeating_instrument = ?`,
+		projectID, inst.Name).Scan(&instanceValues); err != nil {
+		errInternal(w)
+		return
+	}
+	if instanceValues > 0 {
+		valuesRemoved += instanceValues
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM data WHERE project_id = ? AND repeating_instrument = ?`,
+			projectID, inst.Name); err != nil {
+			errInternal(w)
+			return
+		}
+	}
 	details := map[string]any{
 		"instrument_id": instID, "name": inst.Name,
 		"fields_removed": len(fields), "values_removed": valuesRemoved,
@@ -3845,6 +3865,14 @@ func (h *Handler) updateField(w http.ResponseWriter, r *http.Request) {
 // (Audit_Logging_Design.md §3.2, REQ-API-079). isBox names the checkbox
 // choice columns, whose absence reads as 0 (§6.3, REQ-DB-042).
 func (h *Handler) recomputeCalcField(ctx context.Context, tx *sql.Tx, u *db.User, projectID int64, instrument string, f db.Field, isBox func(string) bool) error {
+	return h.recomputeCalc(ctx, tx, u, projectID, instrument, f, isBox, true)
+}
+
+// recomputeCalc is recomputeCalcField; without firstInstances it recomputes the
+// further instances of a repeating instrument only — what a field move changes
+// (REQ-API-157), since a first instance reads first instances either way
+// (REQ-VAL-045).
+func (h *Handler) recomputeCalc(ctx context.Context, tx *sql.Tx, u *db.User, projectID int64, instrument string, f db.Field, isBox func(string) bool, firstInstances bool) error {
 	rows, err := tx.QueryContext(ctx,
 		`SELECT DISTINCT e.unique_event_name, ie.is_repeating
 		 FROM events e JOIN instrument_events ie ON ie.event_id = e.id
@@ -3874,14 +3902,28 @@ func (h *Handler) recomputeCalcField(ctx context.Context, tx *sql.Tx, u *db.User
 	// instrument.
 	ownNames := map[string]bool{}
 	if len(repeatingAt) > 0 {
-		siblings, err := h.Store.ListFieldsByInstrument(ctx, projectID, f.InstrumentID)
+		// Read in the caller's transaction: a field move (REQ-API-157) changes
+		// the instrument's fields inside it.
+		siblings, err := tx.QueryContext(ctx,
+			`SELECT field_name, field_type, choices FROM fields WHERE project_id = ? AND instrument_id = ?`,
+			projectID, f.InstrumentID)
 		if err != nil {
 			return err
 		}
-		for _, sf := range siblings {
-			for _, name := range storedNames(sf.FieldName, sf.FieldType, sf.Choices) {
-				ownNames[name] = true
+		for siblings.Next() {
+			var name, fieldType string
+			var choices sql.NullString
+			if err := siblings.Scan(&name, &fieldType, &choices); err != nil {
+				siblings.Close()
+				return err
 			}
+			for _, stored := range storedNames(name, fieldType, choices) {
+				ownNames[stored] = true
+			}
+		}
+		siblings.Close()
+		if err := siblings.Err(); err != nil {
+			return err
 		}
 	}
 	recRows, err := tx.QueryContext(ctx,
@@ -3910,6 +3952,9 @@ func (h *Handler) recomputeCalcField(ctx context.Context, tx *sql.Tx, u *db.User
 		if err := h.recomputeFurtherInstances(ctx, tx, u, projectID, recordID, instrument, f, isBox,
 			vals, ownNames, repeatingAt); err != nil {
 			return err
+		}
+		if !firstInstances {
+			continue
 		}
 		for _, eventName := range activeEvents {
 			value, _, err := validate.EvalCalc(f.Calculation.String, validate.UncheckedAsZero(func(ref validate.Ref) (string, bool) {

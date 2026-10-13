@@ -35,6 +35,7 @@ abstract class StructureController extends ProjectPageController
         'admin.confirm.title', 'action.cancel', 'admin.confirm.ok', 'tfa.copied',
         'design.refs.loading', 'design.refs.failed', 'design.refs.choose', 'design.refs.none',
         'design.name_long', 'design.direct_identifier_cleared',
+        'design.move.title', 'design.move.end', 'design.move.loading', 'design.move.failed',
     ];
 
     /**
@@ -307,6 +308,18 @@ abstract class StructureController extends ProjectPageController
      */
     public function data(): Response
     {
+        return Response::json($this->designRegion(false));
+    }
+
+    /**
+     * The region of `data()`; `$withInstruments` adds `instruments` — every instrument in
+     * position order with its fields (id, name, label), the targets of the Designer's Move
+     * dialog (§7.2, REQ-UI-056) — which reads the fields of every instrument, mapped or not.
+     *
+     * @return array<string, list<array<string, mixed>>>
+     */
+    protected function designRegion(bool $withInstruments): array
+    {
         $detail = $this->projectDetail();
         $this->requireDesigner($detail);
         $projectId = $this->projectIdOf($detail);
@@ -328,6 +341,11 @@ abstract class StructureController extends ProjectPageController
                 $instruments[(string) $instrument['name']] = (int) $instrument['id'];
             }
         }
+        // One read per instrument, and only for an instrument the region uses.
+        $read = [];
+        $fieldsOf = function (string $name) use (&$read, $instruments, $base): array {
+            return $read[$name] ??= self::listOf($this->api->get($base . '/instruments/' . $instruments[$name] . '/fields'));
+        };
 
         // instrument name → the events it is mapped to, over every arm.
         $mappedTo = [];
@@ -344,10 +362,9 @@ abstract class StructureController extends ProjectPageController
             if (!isset($instruments[$name])) {
                 continue;
             }
-            $fields = $this->api->get($base . '/instruments/' . $instruments[$name] . '/fields');
             foreach ($events as $unique) {
-                foreach ($fields as $field) {
-                    if (!is_array($field) || in_array($field['field_type'] ?? '', ['description', 'header'], true)) {
+                foreach ($fieldsOf($name) as $field) {
+                    if (in_array($field['field_type'] ?? '', ['description', 'header'], true)) {
                         continue; // no value, nothing to reference (REQ-VAL NON_VALUE_FIELD)
                     }
                     $references[] = [
@@ -361,7 +378,19 @@ abstract class StructureController extends ProjectPageController
                 }
             }
         }
+        if (!$withInstruments) {
+            return ['references' => $references];
+        }
 
-        return Response::json(['references' => $references]);
+        $targets = [];
+        foreach ($instruments as $name => $id) {
+            $targets[] = ['id' => $id, 'name' => $name, 'fields' => array_map(static fn (array $field): array => [
+                'id' => (int) ($field['id'] ?? 0),
+                'field_name' => (string) ($field['field_name'] ?? ''),
+                'field_label' => (string) ($field['field_label'] ?? ''),
+            ], $fieldsOf($name))];
+        }
+
+        return ['references' => $references, 'instruments' => $targets];
     }
 }

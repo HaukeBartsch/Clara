@@ -955,13 +955,90 @@ func (d *stagedDesign) putField(instID int64, f db.Field) (*stagedField, bool) {
 		}
 	}
 	if f.Position == 0 {
-		f.Position = len(inst.Fields) + 1
+		// After the highest position, not after the count: a staged delete
+		// leaves a gap, and len+1 would then take the last field's slot — a
+		// duplicate the commit's UNIQUE (instrument_id, position) refuses.
+		for _, sf := range inst.Fields {
+			f.Position = max(f.Position, sf.Position)
+		}
+		f.Position++
 	}
 	if f.ID == 0 {
 		f.ID = d.newID()
 	}
 	inst.Fields = append(inst.Fields, stageField(f))
 	return &inst.Fields[len(inst.Fields)-1], true
+}
+
+// fieldHome returns the instrument a field sits in.
+func (d *stagedDesign) fieldHome(fieldID int64) (*stagedInstrument, bool) {
+	for i := range d.Instruments {
+		for _, f := range d.Instruments[i].Fields {
+			if f.ID == fieldID {
+				return &d.Instruments[i], true
+			}
+		}
+	}
+	return nil, false
+}
+
+// moveField takes a field out of its instrument and places it in instID —
+// before the field beforeID, or last when beforeID is 0 — keeping its id, name
+// and attributes (REQ-API-157). Both instruments are renumbered 1..n. It
+// reports false, changing nothing, when an id does not resolve or beforeID is
+// the field itself or not a field of instID.
+func (d *stagedDesign) moveField(fieldID, instID, beforeID int64) bool {
+	source, ok := d.fieldHome(fieldID)
+	if !ok || beforeID == fieldID {
+		return false
+	}
+	target, ok := d.instrument(instID)
+	if !ok {
+		return false
+	}
+	if beforeID != 0 {
+		if home, found := d.fieldHome(beforeID); !found || home.ID != instID {
+			return false
+		}
+	}
+	var moved stagedField
+	rest := make([]stagedField, 0, len(source.Fields))
+	for _, f := range sortedFields(source.Fields) {
+		if f.ID == fieldID {
+			moved = f
+			continue
+		}
+		rest = append(rest, f)
+	}
+	source.Fields = renumberFields(rest)
+
+	moved.InstrumentID = instID
+	next := make([]stagedField, 0, len(target.Fields)+1)
+	for _, f := range sortedFields(target.Fields) {
+		if f.ID == beforeID {
+			next = append(next, moved)
+		}
+		next = append(next, f)
+	}
+	if beforeID == 0 {
+		next = append(next, moved)
+	}
+	target.Fields = renumberFields(next)
+	return true
+}
+
+// firstFieldID is the field at position 1 of the instrument at position 1 —
+// what becomes the record identifier (GD-8); 0 while that instrument has none.
+func (d *stagedDesign) firstFieldID() int64 {
+	instruments := sortedInstruments(d.Instruments)
+	if len(instruments) == 0 {
+		return 0
+	}
+	fields := sortedFields(instruments[0].Fields)
+	if len(fields) == 0 {
+		return 0
+	}
+	return fields[0].ID
 }
 
 // deleteField removes one field from its instrument.
@@ -1189,6 +1266,14 @@ func sortedFields(in []stagedField) []stagedField {
 	copy(out, in)
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Position < out[j].Position })
 	return out
+}
+
+// renumberFields gives fields already in their final order the positions 1..n.
+func renumberFields(in []stagedField) []stagedField {
+	for i := range in {
+		in[i].Position = i + 1
+	}
+	return in
 }
 
 func sortedEvents(in []stagedEvent) []stagedEvent {

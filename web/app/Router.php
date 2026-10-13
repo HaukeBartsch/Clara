@@ -156,6 +156,9 @@ final class Router
             'handler' => 'saveField', 'guard' => 'login', 'action' => 'save_field'],
         ['method' => 'POST', 'pattern' => '/projects/{id}/design/instruments/{iid}', 'controller' => Controllers\DesignController::class,
             'handler' => 'moveField', 'guard' => 'login', 'action' => 'move_field'],
+        // The Move dialog of the field list (§7.2, REQ-UI-056): to another instrument or place.
+        ['method' => 'POST', 'pattern' => '/projects/{id}/design/instruments/{iid}', 'controller' => Controllers\DesignController::class,
+            'handler' => 'relocateField', 'guard' => 'login', 'action' => 'relocate_field'],
         ['method' => 'POST', 'pattern' => '/projects/{id}/design/instruments/{iid}', 'controller' => Controllers\DesignController::class,
             'handler' => 'deleteField', 'guard' => 'login', 'action' => 'delete_field'],
         ['method' => 'POST', 'pattern' => '/projects/{id}/design/instruments/{iid}', 'controller' => Controllers\DesignController::class,

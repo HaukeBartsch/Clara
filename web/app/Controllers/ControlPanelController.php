@@ -40,7 +40,7 @@ final class ControlPanelController extends Controller
         'account_auto_disabled', 'admin_rejected', 'arm_created', 'arm_deleted', 'arm_reordered', 'arm_updated',
         'calculated_recomputed', 'dag_active_switched', 'dag_created', 'dag_deleted', 'dag_membership_changed',
         'dag_record_assigned', 'event_created', 'event_deleted', 'event_reordered', 'event_updated', 'export',
-        'field_created', 'field_deleted', 'field_reordered', 'field_updated', 'instrument_completed',
+        'field_created', 'field_deleted', 'field_moved', 'field_reordered', 'field_updated', 'instrument_completed',
         'instrument_created', 'instrument_deleted', 'instrument_reordered', 'instrument_uncompleted',
         'instrument_updated', 'invite_accepted', 'login_failure', 'login_success', 'logout', 'mapping_updated',
         'membership_changed', 'password_changed', 'password_reset_completed', 'password_reset_requested',

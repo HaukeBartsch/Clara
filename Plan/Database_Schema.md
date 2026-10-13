@@ -156,7 +156,7 @@ Entity-attribute-value layout, exactly as mandated by VISION_AND_REQUIREMENTS.md
 - project_id (Foreign Key)
 - record_id (String)
 - unique_event_name (String, includes arm information)
-- repeating_instrument (String, instrument name of instance 2, 3, … of a repeating instrument; empty for the first instance of every form, so switching repeating on moves no value - REQ-DB-048, DEV-DB-16)
+- repeating_instrument (String, instrument name of instance 2, 3, … of a repeating instrument; empty for the first instance of every form, so switching repeating on moves no value - REQ-DB-048, DEV-DB-16; a field moved to another instrument leaves its further instances here, hidden until it moves back, and deleting the instrument deletes them - REQ-DB-049)
 - repeating_instance_number (Integer, starts with 1; 1 for every form's first instance)
 - field_name (String)
 - value (Long Text / Binary)

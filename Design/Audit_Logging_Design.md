@@ -89,6 +89,7 @@ Rules: `old` is `null` for `create`; for `delete`, `new` is `null` and the `old`
 | `field_updated` | REQ-API-069 | `{"instrument":"…","field":"…","changes":{"validation_max":{"old":null,"new":"120"}}}` |
 | `field_deleted` | REQ-API-070 | `{"instrument":"…","field":"…","values_removed":1234}` (DEV-API-5) |
 | `field_reordered` | REQ-API-071 | `{"instrument":"…","order":["a","b","c"]}` |
+| `field_moved` | REQ-API-157 | `{"field":"age","from_instrument":"intake","to_instrument":"visits","position":1,"before":"visit_note"}` — `before` is `null` for a move to the end; within one instrument `from_instrument` and `to_instrument` are the same. A move to the place the field already holds writes no entry |
 | `mapping_updated` | REQ-API-073 | `{"arm_num":1,"pairs":{"intake":{"e1_arm_1":1,"e2_arm_1":0}}}` |
 | `project_ended` | the one-shot end-of-project provision action — `POST /api/v1/projects/{id}/end-provision` (BR-009, `API_Endpoints_Design.md` §4.20; rules `Data_Export_Anonymization_Design.md` §7.2) | `{"provision":"delete or anonymize","records_affected":42,"values_affected":1287}` |
 

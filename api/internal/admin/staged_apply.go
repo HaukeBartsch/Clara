@@ -354,16 +354,17 @@ func (a *applyState) instrumentsAndFields(active, staged *stagedDesign) error {
 		codes    []string // checkbox choice codes; their ___columns park and settle with the parent (REQ-DB-042)
 	}
 	var fieldRenames []fieldRename
+	// A field is matched by id wherever it sits, so one that moves to another
+	// instrument (REQ-API-157) — even to one this set creates — renames like
+	// any other.
+	activeFields := flattenFields(active)
 	for _, si := range staged.Instruments {
-		oldInst, ok := lookupInstrument(active, si.ID)
-		if !ok {
-			continue
-		}
 		for _, sf := range si.Fields {
 			if sf.ID < 0 {
 				continue
 			}
-			xf, ok := lookupField(oldInst, sf.ID)
+			x, ok := activeFields[sf.ID]
+			xf := x.stagedField
 			if !ok || xf.FieldName == sf.FieldName {
 				continue
 			}
@@ -394,7 +395,10 @@ func (a *applyState) instrumentsAndFields(active, staged *stagedDesign) error {
 
 	// Pass 2 — remove what the staged design dropped. Deleting before the new
 	// names are applied frees both the name and the (instrument, position) slot.
-	if err := a.deleteFieldsAndInstruments(active, staged); err != nil {
+	// An instrument a field moves out of is only renamed out of the way here and
+	// deleted once the field has left it (deferred).
+	deferred, err := a.deleteFieldsAndInstruments(active, staged)
+	if err != nil {
 		return err
 	}
 
@@ -445,8 +449,9 @@ func (a *applyState) instrumentsAndFields(active, staged *stagedDesign) error {
 	}
 
 	// Pass 4 — settle existing rows: parked names and positions to their final
-	// values, then the attribute updates. Only fields whose position changed
-	// parked (before the inserts); an unchanged row keeps its own value.
+	// values, then the attribute updates. Only fields whose position or
+	// instrument changed parked (before the inserts); an unchanged row keeps its
+	// own value.
 	for _, si := range staged.Instruments {
 		oldInst, ok := lookupInstrument(active, si.ID)
 		if !ok || si.ID < 0 {
@@ -480,13 +485,16 @@ func (a *applyState) instrumentsAndFields(active, staged *stagedDesign) error {
 			a.applied.Instruments++
 		}
 		a.instID[si.ID] = si.ID
-
+	}
+	// Every existing field, in the instrument it now sits in — a new one when it
+	// moved there (REQ-API-157).
+	for _, si := range staged.Instruments {
 		for _, sf := range si.Fields {
-			xf, ok := lookupField(oldInst, sf.ID)
+			x, ok := activeFields[sf.ID]
 			if !ok || sf.ID < 0 {
 				continue
 			}
-			if err := a.settleField(instIDof(a, si.ID), xf, sf); err != nil {
+			if err := a.settleField(instIDof(a, si.ID), x.stagedField, sf); err != nil {
 				return err
 			}
 		}
@@ -494,11 +502,16 @@ func (a *applyState) instrumentsAndFields(active, staged *stagedDesign) error {
 
 	// Repair — rows an earlier parked-then-skipped write left at a non-positive
 	// position are renumbered densely (see repairFieldPositions).
-
-	// Repair — rows an earlier parked-then-skipped write left at a non-positive
-	// position are renumbered densely (see repairFieldPositions).
 	if err := a.repairFieldPositions(active, staged); err != nil {
 		return err
+	}
+
+	// The instruments pass 2 kept for a field that moved out of them hold no
+	// field any more.
+	for _, id := range deferred {
+		if err := a.deleteInstrumentRow(id); err != nil {
+			return err
+		}
 	}
 
 	// Stored values follow the field renames that settled in pass 4.
@@ -572,20 +585,21 @@ func (a *applyState) insertField(instID int64, sf stagedField) error {
 	return nil
 }
 
-// settleField writes an existing field's final name, position and attributes.
+// settleField writes an existing field's final instrument, name, position and
+// attributes; instID is the live id of the instrument it now sits in.
 func (a *applyState) settleField(instID int64, old, next stagedField) error {
 	if old == next {
 		return nil
 	}
 	calcChanged := next.FieldType == "calculated" && next.Calculation != old.Calculation
 	if _, err := a.tx.ExecContext(a.ctx,
-		`UPDATE fields SET field_name = ?, field_label = ?, field_type = ?,
+		`UPDATE fields SET instrument_id = ?, field_name = ?, field_label = ?, field_type = ?,
 			section_header = ?, choices = ?, field_note = ?,
 			validation_type = ?, validation_format = ?, validation_min = ?, validation_max = ?,
 			required = ?, branching_logic = ?, calculation = ?, matrix_group = ?, field_annotation = ?,
 			personal_information = ?, direct_identifier = ?, export_approved = ?, position = ?
 		 WHERE id = ?`,
-		next.FieldName, nullStr(next.FieldLabel), next.FieldType,
+		instID, next.FieldName, nullStr(next.FieldLabel), next.FieldType,
 		nullStr(next.SectionHeader), nullStr(next.Choices), nullStr(next.FieldNote),
 		nullStr(next.ValidationType), nullStr(next.ValidationFormat),
 		nullStr(next.ValidationMin), nullStr(next.ValidationMax), boolToIntParam(next.Required),
@@ -611,26 +625,25 @@ func (a *applyState) settleField(instID int64, old, next stagedField) error {
 	return nil
 }
 
-// parkFieldPositions moves every field whose position changes within a live
-// instrument to a negative parking value, so the final positions can be written
+// parkFieldPositions moves every existing field whose position or instrument
+// changes to a negative parking value, so the final positions can be written
 // without colliding on UNIQUE (project_id, instrument_id, position). A field
-// whose position is unchanged never parks: settleField skips a row identical to
+// whose place is unchanged never parks: settleField skips a row identical to
 // its live state, so parking it would leave the row sitting on the parked
-// value — the bug that showed a first field as position -2.
+// value — the bug that showed a first field as position -2. New fields insert
+// at their final position; a field moved into a new instrument (REQ-API-157)
+// is an existing one and parks like any other.
 func (a *applyState) parkFieldPositions(active, staged *stagedDesign) error {
+	activeFields := flattenFields(active)
 	ids := map[int64]bool{}
 	for _, si := range staged.Instruments {
-		oldInst, ok := lookupInstrument(active, si.ID)
-		if !ok || si.ID < 0 {
-			continue // new instruments insert their fields at the final position
-		}
 		for _, sf := range si.Fields {
 			if sf.ID < 0 {
 				continue
 			}
-			xf, ok := lookupField(oldInst, sf.ID)
-			if !ok || xf.Position == sf.Position {
-				continue // unchanged positions keep the value their row holds
+			xf, ok := activeFields[sf.ID]
+			if !ok || xf.instrumentID == si.ID && xf.Position == sf.Position {
+				continue // unchanged places keep the value their row holds
 			}
 			ids[sf.ID] = true
 		}
@@ -710,13 +723,17 @@ func (a *applyState) repairFieldPositions(active, staged *stagedDesign) error {
 
 // deleteFieldsAndInstruments removes the rows the staged design dropped. A field
 // an expression in the staged design still names cannot go, exactly as on the
-// live path; deleting a field takes its stored values with it (DEV-API-5).
-func (a *applyState) deleteFieldsAndInstruments(active, staged *stagedDesign) error {
+// live path; deleting a field takes its stored values with it (DEV-API-5), and
+// deleting an instrument the further instances stored under its name
+// (REQ-DB-049). A field kept anywhere in the staged design stays, also when its
+// instrument goes — it moved (REQ-API-157); such an instrument is only renamed
+// out of the way here, and its id returned for deletion once the field has
+// left it, since deleting the row now would take the field along.
+func (a *applyState) deleteFieldsAndInstruments(active, staged *stagedDesign) ([]int64, error) {
 	remaining := flattenFields(staged)
 	for _, si := range active.Instruments {
-		_, instKept := lookupInstrument(staged, si.ID)
 		for _, xf := range si.Fields {
-			if _, keep := remaining[xf.ID]; keep && instKept {
+			if _, keep := remaining[xf.ID]; keep {
 				continue
 			}
 			// A checkbox's values live under its derived choice columns; they
@@ -725,43 +742,74 @@ func (a *applyState) deleteFieldsAndInstruments(active, staged *stagedDesign) er
 			names := storedNames(xf.FieldName, xf.FieldType, xf.Choices)
 			for _, name := range names {
 				if referenced, err := designReferencesField(staged, name); err != nil {
-					return err
+					return nil, err
 				} else if referenced {
-					return conflictf("field %s is referenced by an active expression", name)
+					return nil, conflictf("field %s is referenced by an active expression", name)
 				}
 			}
 			for _, name := range names {
 				if _, err := a.tx.ExecContext(a.ctx,
 					`DELETE FROM data WHERE project_id = ? AND field_name = ?`,
 					a.projectID, name); err != nil {
-					return err
+					return nil, err
 				}
 			}
 			if _, err := a.tx.ExecContext(a.ctx,
 				`DELETE FROM calculated_dependencies WHERE project_id = ? AND calculated_field_id = ?`,
 				a.projectID, xf.ID); err != nil {
-				return err
+				return nil, err
 			}
 			if _, err := a.tx.ExecContext(a.ctx, `DELETE FROM fields WHERE id = ?`, xf.ID); err != nil {
-				return err
+				return nil, err
 			}
 			a.applied.Fields++
 		}
 	}
-	// Instruments the staged design dropped (their fields are gone by now).
+	// Instruments the staged design dropped (their own fields are gone by now).
+	var deferred []int64
 	for _, si := range active.Instruments {
 		if _, ok := lookupInstrument(staged, si.ID); ok {
 			continue
 		}
+		// The renamed instruments' further instances are parked (pass 1), so the
+		// rows under this name are this instrument's alone.
 		if _, err := a.tx.ExecContext(a.ctx,
-			`DELETE FROM instrument_events WHERE instrument_id = ?`, si.ID); err != nil {
-			return err
+			`DELETE FROM data WHERE project_id = ? AND repeating_instrument = ?`,
+			a.projectID, si.Name); err != nil {
+			return nil, err
 		}
-		if _, err := a.tx.ExecContext(a.ctx, `DELETE FROM instruments WHERE id = ?`, si.ID); err != nil {
-			return err
+		movedOut := false
+		for _, xf := range si.Fields {
+			if _, kept := remaining[xf.ID]; kept {
+				movedOut = true
+			}
 		}
-		a.applied.Instruments++
+		if movedOut {
+			if _, err := a.tx.ExecContext(a.ctx, `UPDATE instruments SET name = ? WHERE id = ?`,
+				stagedRenamePrefix+strconv.FormatInt(si.ID, 10), si.ID); err != nil {
+				return nil, err
+			}
+			deferred = append(deferred, si.ID)
+			continue
+		}
+		if err := a.deleteInstrumentRow(si.ID); err != nil {
+			return nil, err
+		}
 	}
+	return deferred, nil
+}
+
+// deleteInstrumentRow removes one instrument the staged design dropped, with its
+// mapping pairs; its fields have gone or moved already.
+func (a *applyState) deleteInstrumentRow(id int64) error {
+	if _, err := a.tx.ExecContext(a.ctx,
+		`DELETE FROM instrument_events WHERE instrument_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := a.tx.ExecContext(a.ctx, `DELETE FROM instruments WHERE id = ?`, id); err != nil {
+		return err
+	}
+	a.applied.Instruments++
 	return nil
 }
 

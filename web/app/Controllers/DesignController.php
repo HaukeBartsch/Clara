@@ -62,6 +62,16 @@ final class DesignController extends StructureController
         ], ['scripts' => self::SCRIPTS, 'jsKeys' => self::JS_KEYS], $state['mode']);
     }
 
+    /**
+     * The Designer's data region: `references` as on Setup, plus `instruments` — every
+     * instrument with its fields, the targets the field editor's Move dialog offers (§7.2,
+     * REQ-UI-056). Read only when the dialog or the picker asks for it.
+     */
+    public function data(): Response
+    {
+        return Response::json($this->designRegion(true));
+    }
+
     // --- repeating instruments (§7.1, REQ-UI-054) ------------------------------------
 
     /**
@@ -328,7 +338,8 @@ final class DesignController extends StructureController
         $editorUrl = '/projects/' . $projectId . '/design/instruments/' . $iid;
 
         $instrument = null;
-        foreach (self::listOf($this->api->get($base . '/instruments')) as $candidate) {
+        $instruments = self::listOf($this->api->get($base . '/instruments'));
+        foreach ($instruments as $candidate) {
             if ((int) ($candidate['id'] ?? 0) === $iid) {
                 $instrument = $candidate;
             }
@@ -389,6 +400,7 @@ final class DesignController extends StructureController
             'editorUrl' => $editorUrl,
             'designUrl' => '/projects/' . $projectId . '/design',
             'instrument' => $instrument,
+            'instruments' => $instruments,
             'fields' => $fields,
             'selected' => $selected,
             'choiceRows' => $selected === null ? [] : self::decodeChoices((string) ($selected['choices'] ?? '')),
@@ -458,6 +470,40 @@ final class DesignController extends StructureController
             $ids = array_map(static fn (array $f): int => (int) ($f['id'] ?? 0), self::listOf($this->api->get($path)));
             $this->api->put($path . '/order', $this->withAck(['order' => SetupController::moved($ids, $fieldId, $direction)]));
         }, $this->i18n->t('setup.reordered'));
+    }
+
+    /**
+     * POST …?action=relocate_field — the Move dialog (§7.2, REQ-UI-056): `POST …/fields/{fid}/move`
+     * with the chosen instrument and the field to go in front of (`end`: last, REQ-API-157).
+     * A moved field is shown where it landed — the target instrument's editor; a refused move
+     * returns to this one with the API's reason (a GD-8 refusal among them).
+     */
+    public function relocateField(): Response
+    {
+        $iid = $this->instrumentIdFromPath();
+        $fieldId = $this->objectId('field_id');
+        $targetId = self::parseObjectId($this->request->field('target_iid'));
+        $before = $this->request->field('before_field_id');
+        $beforeId = $before === 'end' ? 0 : self::parseObjectId($before);
+        $name = $this->request->field('name');
+        if ($fieldId === 0 || $targetId === 0 || ($before !== 'end' && $beforeId === 0)) {
+            $this->flashDanger($this->i18n->t('error.invalid_request'));
+
+            return Response::redirect($this->editorUrl($iid));
+        }
+        $moved = false;
+
+        return $this->structureWrite(
+            function () use ($iid, $targetId, &$moved): string {
+                return $this->editorUrl($moved ? $targetId : $iid);
+            },
+            function (int $projectId) use ($iid, $fieldId, $targetId, $beforeId, &$moved): void {
+                $this->api->post('/api/v1/projects/' . $projectId . '/instruments/' . $iid . '/fields/' . $fieldId . '/move',
+                    $this->withAck(['instrument_id' => $targetId, 'before_field_id' => $beforeId === 0 ? null : $beforeId]));
+                $moved = true;
+            },
+            $this->i18n->t('design.move.done', ['name' => $name])
+        );
     }
 
     /** DELETE …/fields/{fid}: stored values go in the same transaction (DEV-API-5). */

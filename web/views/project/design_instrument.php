@@ -8,7 +8,11 @@
  * the markup and `design.js` shows the ones the chosen type uses — without JavaScript every
  * part is simply visible, and the API ignores what does not apply (REQ-VAL-020).
  *
- * Reads: $instrument, $fields, $selected (null | field, id 0 = new), $choiceRows,
+ * Each field's **Move** button opens one dialog (REQ-UI-056): a target instrument — this one
+ * preselected — and the field of it to go in front of, or the end. `design.js` fills in the
+ * field the button names, and the fields of another instrument from the page's data region.
+ *
+ * Reads: $instrument, $instruments, $fields, $selected (null | field, id 0 = new), $choiceRows,
  * $validationTypes, $fieldTypes, $choiceTypes, $identifierTypes, $isCalculated, $records,
  * $test, $editorUrl, $designUrl, $canEdit, and the structure-mode partial's inputs.
  */
@@ -18,7 +22,15 @@ use Clara\View;
 /** @var list<array<string, mixed>> $fields */
 $act = static fn (string $action): string => $editorUrl . '?action=' . $action;
 $instrumentName = (string) ($instrument['name'] ?? '');
+$instrumentId = (int) ($instrument['id'] ?? 0);
 $nullable = static fn (mixed $v): string => $v === null ? '' : (string) $v;
+// A before-field option: the name, and as much of the label as reads in a select.
+$fieldOption = static function (array $field): string {
+    $name = (string) ($field['field_name'] ?? '');
+    $label = trim((string) preg_replace('/\s+/u', ' ', (string) ($field['field_label'] ?? '')));
+
+    return $label === '' ? $name : $name . ' — ' . mb_strimwidth($label, 0, 60, '…');
+};
 ?>
 <nav class="small mb-1" aria-label="<?= View::e($view->t('design.title')) ?>">
     <a href="<?= View::e($designUrl) ?>"><?= View::e($view->t('design.all_instruments')) ?></a>
@@ -66,6 +78,9 @@ $nullable = static fn (mixed $v): string => $v === null ? '' : (string) $v;
                             <?php endif; ?>
                         <?php endforeach; ?>
                         <a class="btn btn-sm btn-outline-primary" href="<?= View::e($editorUrl . '?field=' . $fid . '#field-form') ?>"><?= View::e($view->t('setup.edit')) ?></a>
+                        <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="modal" data-bs-target="#clara-move"
+                                data-clara-move-field="<?= $fid ?>" data-clara-move-name="<?= View::e($field['field_name'] ?? '') ?>"
+                                aria-label="<?= View::e($view->t('design.move.title', ['name' => (string) ($field['field_name'] ?? '')])) ?>"><?= View::e($view->t('design.move.button')) ?></button>
                         <form method="post" action="<?= View::e($act('delete_field')) ?>" class="d-inline"
                               data-clara-confirm="<?= View::e($view->t('design.field.confirm_delete', ['name' => (string) ($field['field_name'] ?? '')])) ?>">
                             <?= $view->csrfField() ?>
@@ -83,6 +98,45 @@ $nullable = static fn (mixed $v): string => $v === null ? '' : (string) $v;
 
 <?php if ($canEdit && ($selected === null || (int) $selected['id'] !== 0)): ?>
     <a class="btn btn-sm btn-primary mb-3" href="<?= View::e($editorUrl . '?field=new#field-form') ?>"><?= View::e($view->t('design.field.add')) ?></a>
+<?php endif; ?>
+
+<?php if ($canEdit && $fields !== []): ?>
+    <!-- The Move dialog (§7.2, REQ-UI-056): one per page. The field and, for another instrument,
+         its fields are filled in by design.js; this instrument's fields are rendered here. -->
+    <div class="modal fade" id="clara-move" tabindex="-1" aria-labelledby="clara-move-title" aria-hidden="true"
+         data-clara-move data-clara-region="<?= View::e($editorUrl) ?>" data-clara-instrument="<?= $instrumentId ?>">
+        <div class="modal-dialog">
+            <form class="modal-content" method="post" action="<?= View::e($act('relocate_field')) ?>">
+                <?= $view->csrfField() ?>
+                <input type="hidden" name="field_id" value="" data-clara-move-id>
+                <input type="hidden" name="name" value="" data-clara-move-name>
+                <div class="modal-header">
+                    <h2 class="modal-title h6" id="clara-move-title" data-clara-move-title><?= View::e($view->t('design.move.heading')) ?></h2>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="<?= View::e($view->t('action.close')) ?>"></button>
+                </div>
+                <div class="modal-body">
+                    <label class="form-label mb-0 small" for="move-instrument"><?= View::e($view->t('design.move.instrument')) ?></label>
+                    <select class="form-select form-select-sm mb-2" id="move-instrument" name="target_iid" data-clara-move-instrument>
+                        <?php foreach ($instruments as $option): ?>
+                            <option value="<?= (int) ($option['id'] ?? 0) ?>"<?= (int) ($option['id'] ?? 0) === $instrumentId ? ' selected' : '' ?>><?= View::e($option['name'] ?? '') ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <label class="form-label mb-0 small" for="move-before"><?= View::e($view->t('design.move.before')) ?></label>
+                    <select class="form-select form-select-sm" id="move-before" name="before_field_id" data-clara-move-before>
+                        <?php foreach ($fields as $field): ?>
+                            <option value="<?= (int) ($field['id'] ?? 0) ?>"><?= View::e($fieldOption($field)) ?></option>
+                        <?php endforeach; ?>
+                        <option value="end"><?= View::e($view->t('design.move.end')) ?></option>
+                    </select>
+                    <p class="form-text mb-0 mt-2"><?= View::e($view->t('design.move.hint')) ?></p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal"><?= View::e($view->t('action.cancel')) ?></button>
+                    <button type="submit" class="btn btn-sm btn-primary"><?= View::e($view->t('design.move.submit')) ?></button>
+                </div>
+            </form>
+        </div>
+    </div>
 <?php endif; ?>
 
 <?php if ($selected !== null && $canEdit): ?>

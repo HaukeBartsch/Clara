@@ -669,7 +669,7 @@ The record-identifier invariant MUST hold after reordering (GD-8: the first fiel
 
 **`PUT /api/v1/projects/{id}/instruments/{iid}`** — `project_admin`; idempotent (REQ-API-101). Body: any subset of `{ "name", "is_survey", "branching_logic" }`, e.g. `{ "is_survey": true }`, `{ "branching_logic": "[baseline][consent]=\"1\"" }`. A `name` rename keeps the name unique within the project — a collision → 409 `conflict`, an empty or non-string name → 400 `validation_error` (REQ-API-130). The rename is a label for a form's first instance — its stored values are keyed by field name and event — and the mapping pairs and their repeating designation stay; the further instances of a repeating instrument are stored under its name and move with it in the same transaction (REQ-DB-048). `is_survey: true` on an instrument that repeats anywhere → 409 `conflict` (REQ-API-154). An invalid branching expression is rejected at design time → 400 `validation_error` (REQ-VAL-029, `Data_Validation_Design.md` §7.2). 200 — the instrument object. Audit `instrument_updated` with old and new values.
 
-**`DELETE /api/v1/projects/{id}/instruments/{iid}`** — `project_admin`. Removes the instrument together with its fields, their stored values (same transaction, like REQ-API-070) and its mapping pairs; losing recorded values makes the change breaking in analysis mode (§4.21). An expression that survives the change naming a doomed field → 409 `conflict` — references inside the deleted design go with it, which is what commit checks against the post-change design too. 204. Audit `instrument_deleted` with the removed field and value counts (REQ-API-127). **A project always keeps at least one instrument**: deleting the last remaining one only deletes its fields and renames the shell to `instrument` — id, position, survey flag and branching logic stay — answering 200 with the object and auditing `instrument_updated` with `last_instrument_reset` (VISION "Arms, events and instruments": "only the fields in that instrument should be deleted. The instrument should be renamed to 'instrument'").
+**`DELETE /api/v1/projects/{id}/instruments/{iid}`** — `project_admin`. Removes the instrument together with its fields, their stored values (same transaction, like REQ-API-070), the further instances stored under its name — a field's moved to another instrument since included (REQ-DB-049) — and its mapping pairs; losing recorded values makes the change breaking in analysis mode (§4.21). An expression that survives the change naming a doomed field → 409 `conflict` — references inside the deleted design go with it, which is what commit checks against the post-change design too. 204. Audit `instrument_deleted` with the removed field and value counts (REQ-API-127). **A project always keeps at least one instrument**: deleting the last remaining one only deletes its fields and renames the shell to `instrument` — id, position, survey flag and branching logic stay — answering 200 with the object and auditing `instrument_updated` with `last_instrument_reset` (VISION "Arms, events and instruments": "only the fields in that instrument should be deleted. The instrument should be renamed to 'instrument'").
 
 **`PUT /api/v1/projects/{id}/instruments/{iid}/repeating`** — `project_admin`; idempotent (REQ-API-154). Designates the events the instrument repeats at (REQ-DB-047); the list replaces the whole set, `[]` turns repeating off:
 
@@ -780,7 +780,7 @@ Validation types (REDCap name → `validation_type` + `validation_format`):
 
 Importing the file into a project whose first instrument is empty (step 2 above) recreates the same fields. REDCap's format has no column for the rest, which therefore does not travel: the `personal_information` and `export_approved` flags; an instrument's survey flag and branching logic; events and the instrument–event mapping. A `header` field comes back as a `description`, and a date format whose tokens are not in the order `Y-m-d`, `d-m-Y` or `m-d-Y` comes back as `Y-m-d`. Calculations keep their event-qualified references, which the import leaves as written.
 
-### 4.11 Fields (designer) (REQ-API-067…071, REQ-API-096, REQ-API-132)
+### 4.11 Fields (designer) (REQ-API-067…071, REQ-API-096, REQ-API-132, REQ-API-157)
 
 **`GET /api/v1/projects/{id}/instruments/{iid}/fields`** — data access ≥ `read_only`. 200 — the instrument's fields in position order, with all data-dictionary attributes (REQ-DB-013):
 
@@ -813,6 +813,18 @@ Importing the file into a project whose first instrument is empty (step 2 above)
 ```
 
 The GD-8 record-identifier invariant MUST hold after reordering — a violation → 400 `invalid_request` (§4.2). Audit `field_reordered`.
+
+**`POST /api/v1/projects/{id}/instruments/{iid}/fields/{fid}/move`** — `project_admin` (REQ-API-157). Moves the field `{fid}` of instrument `{iid}` into another instrument of the project, or to another place in its own:
+
+```json
+{ "instrument_id": 9, "before_field_id": 31 }
+```
+
+`instrument_id` is the target (it may be `{iid}`); `before_field_id` is the field of the target the moved one goes in front of — `null` or absent: last, which is also the only place in an instrument without fields. Both instruments are renumbered 1..n. An unknown target, or a `before_field_id` that is the field itself or not a field of the target → 400 `validation_error`; `{fid}` not a field of `{iid}` → 404. The GD-8 invariant holds as for reordering: while records exist the field at position 1 of the first instrument stays there — moving it away, or another field in front of it, → 400 `invalid_request`. A move to the place the field already holds writes nothing (200). 200 — the field object at its new position. Audit `field_moved` (`Audit_Logging_Design.md` §3.3).
+
+The field keeps its id, name, attributes and stored values (REQ-DB-049). Values are keyed by field name and event, so its first instances show wherever the target instrument is used and nothing in `data` is rewritten; from then on the target's mapping, repeating designation and role rights (REQ-AUTH-069) apply to them. What the target does not show stays stored and hidden: values at an event the target is not mapped to, as for an unmapped pair (§4.12), and the further instances kept under the source instrument's name; moving the field back shows them again — which is why a move is never breaking (§4.21). Expressions name fields and events, not instruments, so every expression stays valid. Inside a repeating instrument a calculation reads its own instrument's fields from its own instance and every other field from the first (REQ-VAL-045): a move into or out of an instrument that repeats somewhere recomputes, in the same transaction, the further instances of the moved calculated field and of the two instruments' calculated fields that read it; first instances read first instances either way and keep their values. Production stages the move like every structure write (diff kind `field_moved`); a commit then recomputes nothing, as for any staged change (below).
+
+The move is a `POST` action rather than a `PUT`: its path names the field's present instrument, so the identical request repeated after a move no longer finds the field there (404) — not idempotent as REQ-API-042 requires of a `PUT`.
 
 **`GET /api/v1/validationTypes`** — any authenticated user; read-only (REQ-API-104). 200 — the types the designer may assign: the four built-in structured types plus every `validation_types` row, as `{"name": "…", "regex": "…", "builtin": true}` objects (the pattern is included for advisory client-side hints only — server-side validation remains authoritative, REQ-VAL-002). Registry entries are added by inserting a database row (`Database_Schema_Design.md` §5); there is no write endpoint in phase 1.
 
@@ -1108,7 +1120,8 @@ Every project is in exactly one mode (`projects.mode`, `Database_Schema_Design.m
 |---|------|
 | add an arm / event / instrument / field | non-breaking |
 | map an instrument to an event; unmap a pair that holds no values | non-breaking |
-| change a field label/description, field note, section header; reorder fields/instruments/events (GD-8 invariant enforced as ever) | non-breaking |
+| change a field label/description, field note, section header; reorder fields/instruments/events (GD-8 invariant enforced as ever) | non-breaking — a field is `reordered` when its rank among the fields that stay in its instrument changes, so the fields an add, a delete or a move merely shifts are not listed |
+| move a field to another instrument or place (REQ-API-157; diff kind `field_moved`, object `<from>.<field> → <to>.<field>`) | non-breaking — values stay keyed by field name and event; what the target instrument does not show stays stored, hidden until the field moves back (REQ-DB-049) |
 | rename a field (stored values renamed in the same transaction, REQ-VAL-014) | non-breaking — values stay accessible under the new name |
 | rename an instrument (REQ-API-130) | non-breaking — values are keyed by field name and event, not instrument name |
 | turn repeating on or off for a mapped pair (REQ-API-154; diff kinds `repeating_on` / `repeating_off`) | non-breaking — a first instance is stored where it always was; further instances stay stored, hidden while the pair does not repeat (REQ-DB-048) |
@@ -1116,7 +1129,7 @@ Every project is in exactly one mode (`projects.mode`, `Database_Schema_Design.m
 | delete a field | **breaking** — its stored values are removed (DEV-API-5) |
 | change a field's type, or its validation type beyond the current values | **breaking** — stored values may no longer satisfy the new rules |
 | remove a choice option that stored values use, or re-code existing options | **breaking** — stored codes lose their label/meaning (removing an unused option is non-breaking) |
-| delete an instrument or event that holds data; delete an arm with events or data (DEV-API-6) | **breaking** — the keyed values become inaccessible |
+| delete an instrument or event that holds data; delete an arm with events or data (DEV-API-6) | **breaking** — the keyed values become inaccessible. An instrument holds data when a field that goes with it holds a value — a field the same set moves elsewhere does not go — or a further instance is stored under its name (REQ-DB-049) |
 | unmap an instrument–event pair whose records **do** hold values | non-breaking, no warning — nothing is deleted: the values stay in `data` and are reachable again once the pair is mapped back, so the change is reversible by construction (master spec "Unmap is misclassified"; retention rule §4.12) |
 
 ### 4.22 System settings (REQ-API-112, REQ-API-113)
