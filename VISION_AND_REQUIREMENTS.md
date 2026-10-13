@@ -844,6 +844,10 @@ Add an export as csv function to the Audits page. As Audits might be multi-GB in
 
 Make the "Projects" page the first open tab in the Control Panel.
 
+Close all API Documentation drawers but keep the Data API open (and move it to the first position).
+
+Feature: Add a Sankey plot to the top of the API Documentation page that displays the information from the docs/index.md table (linking codes to relevance). Group the codes at two levels, first by thematic area (suitable for end-users at a hospital doing research studies) and a second grouping by Requirement/Plan/Design. If there is space figure out how to link each code to a test as well. Use a frontend javascript library to create the sankey diagram.
+
 # Status currently 
 
 Security findings with no fix (detail in my previous message)
