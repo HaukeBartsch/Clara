@@ -850,7 +850,10 @@ Close all API Documentation drawers but keep the Data API open (and move it to t
 
 Feature: Add a Sankey plot to the top of the API Documentation page that displays the information from the docs/index.md table (linking codes to relevance). Group the codes at two levels, first by thematic area (suitable for end-users at a hospital doing research studies) and a second grouping by Requirement/Plan/Design. If there is space figure out how to link each code to a test as well. Use the frontend javascript library d3.js to create the sankey diagram.
 
-The Move a field function does not re-populate the "Move before" dropdown when the user switches to a different instrument in the first dropdown. Fix this issue. 
+Bugfix: The Move a field function does not re-populate the "Move before" dropdown when the user switches to a different instrument in the first dropdown. Fix this issue. 
+
+Feature: Create a new web/ page "Training", that is linked on the first project selection screen header (next to "Control Panel"). This application should show bootstrap cards for a number of training plans. Each training plan is shows with a picture and a short text like "create a new project", "add a user to a project", etc.. If the user clicks on a training plan a modal opens that lists a training plan text and above the text a training plan gallery image viewer (similar to Bootstrap Image Gallery). The text of each plan and all images (in order) should be stored in individual sub-directories inside assets/ (so they are easy to add/edit). Create example plans for the above "create a new project", "create data collection forms", "collect data", "export data" and "export audit trails".
+
 
 # Status currently 
 
