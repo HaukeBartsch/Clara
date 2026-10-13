@@ -1,8 +1,9 @@
 import { expect, test, type Page } from "@playwright/test"
 
 // The Control Panel's API documentation section (REQ-UI-057): the left panel links it, and the
-// section renders the API's OpenAPI document with the vendored Swagger UI — read-only, under the
-// application's Content-Security-Policy, with nothing fetched from outside the application.
+// section renders the API's OpenAPI document with the vendored Swagger UI — read-only, the Data
+// API first and the only section open, under the application's Content-Security-Policy, with
+// nothing fetched from outside the application.
 // Driven as the bootstrap administrator of `e2e/dev-stack.sh`.
 
 const ADMIN_EMAIL = "admin@example.org"
@@ -42,7 +43,16 @@ test.describe("API documentation in the Control Panel (REQ-UI-057)", () => {
     await expect(docs.locator(".info .title")).toContainText("CLARA API")
     await expect(docs.locator(".opblock").first()).toBeVisible()
 
-    // An operation opens with its description, and offers no way to send it.
+    // The Data API section comes first and is the only one open; the rest wait collapsed.
+    const sections = docs.locator(".opblock-tag-section")
+    await expect(sections.first().locator(".opblock-tag")).toHaveAttribute("data-tag", "Data API")
+    await expect(sections.first()).toHaveClass(/is-open/)
+    await expect(docs.locator(".opblock-tag-section.is-open")).toHaveCount(1)
+    await expect(sections.first().locator('.opblock-summary-path[data-path="/api/"]')).toHaveCount(2)
+
+    // A collapsed section opens on its heading; an operation opens with its description, and
+    // offers no way to send it.
+    await docs.locator('.opblock-tag[data-tag="Admin: Structure"]').click()
     const move = docs.locator('.opblock-summary-path[data-path="/api/v1/projects/{id}/instruments/{iid}/fields/{fid}/move"]')
     await move.first().click()
     await expect(docs.locator(".opblock.is-open")).toContainText("REQ-API-157")

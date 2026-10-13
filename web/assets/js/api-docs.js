@@ -12,6 +12,16 @@ import { fetchJson, ready, t } from "../app.js"
 
 const BUNDLE = "/assets/vendor/swagger-ui/swagger-ui-bundle.js"
 
+// The section an administrator comes here for (§5.9): listed first and the only one open; the
+// others keep the document's order, collapsed.
+const OPEN_TAG = "Data API"
+
+const tagOrder = (spec) => {
+  const names = (spec.tags ?? []).map((tag) => tag.name)
+  const rank = (name) => (name === OPEN_TAG ? -1 : names.includes(name) ? names.indexOf(name) : names.length)
+  return (a, b) => rank(a) - rank(b)
+}
+
 const loadBundle = () => new Promise((resolve, reject) => {
   if (window.SwaggerUIBundle) {
     resolve(window.SwaggerUIBundle)
@@ -30,13 +40,15 @@ const render = async (root) => {
     const [SwaggerUIBundle, spec] = await Promise.all([loadBundle(), fetchJson(root.dataset.claraRegion)])
     const target = document.createElement("div")
     root.replaceChildren(target)
-    SwaggerUIBundle({
+    const ui = SwaggerUIBundle({
       domNode: target,
       spec,
       supportedSubmitMethods: [],
       validatorUrl: null,
-      docExpansion: "list",
+      docExpansion: "none",
+      tagsSorter: tagOrder(spec),
       defaultModelsExpandDepth: 0,
+      onComplete: () => ui.layoutActions.show(["operations-tag", OPEN_TAG], true),
     })
   } catch (error) {
     if (status) status.textContent = t("admin.api.failed")
