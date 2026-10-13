@@ -858,6 +858,21 @@ Feature: Create a new web/ page "Training", that is linked on the first project 
 
 Feature: add a page to the Control Panel for admins called "Configuration Check". Use the information in INSTALL.md to create some checks that inform the user about issues with the current installation.
 
+Feature: Switch from the current set of funding sources to a more appropriate set for Oslo Sor Ost. Here is the list of hospitals in Helse Sor Ost:
+
+```
+Oslo University Hospital	OUS	Rikshospitalet, Ullevål, Radiumhospitalet, Aker
+Akershus University Hospital	Ahus	Nordbyhagen (Lørenskog), Kongsvinger
+Sykehuset Østfold	SØ	Kalnes (Sarpsborg), Moss
+Sykehuset i Vestfold	SiV	Tønsberg, Larvik
+Sykehuset Telemark	ST	Skien, Notodden, Porsgrunn, Rjukan
+Sørlandet Sykehus	SSHF	Kristiansand, Arendal, Flekkefjord
+Sykehuset Innlandet	SI	Hamar, Elverum, Lillehammer, Gjøvik, Kongsvinger (psychiatry)
+Vestre Viken	VVHF	Drammen, Bærum, Ringerike (Hønefoss), Kongsberg
+Sunnaas Sykehus	SUN	Nesodden (Specialized rehabilitation hospital)
+```
+
+
 # Presentation
 
 Start the design of a presentation of this project for a non-technical audience. Focus first on the need to replace the existing API to support a multi-hospital setup for FIONA, a system for research data capture in Radiology. Secondly focus on the api/ that is a silent component that FIONA is using to organize projects, to store intermittened information for incoming DICOM image series and users transfer requests to target research projects. Lastly introduce the web/ interface on a functional level. Organize the provided features thematically. Use illustrative screenshots from the application (with demo projects) as seen on an iPad screen. Store this presentation into a new sub-folder in docs/intro-to-Clara/. If possible create the presentation so that apples keynote.page can display it.
