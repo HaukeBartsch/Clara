@@ -505,9 +505,18 @@ h1 .clara-mode-badge {
   background-color: transparent;
 }
 
-/* Half the viewport, so the first lines of the text stay in view below the picture. */
+/* Half the viewport, so the first lines of the text stay in view below the picture. Every slide
+   gets the same box — the full width at a landscape ratio, capped at half the viewport — and the
+   picture is fitted into it, so the size never depends on the picture's own dimensions, which
+   Safari can resolve differently for a slide that only becomes visible after paging. */
+.clara-training-gallery .carousel-item > a {
+  display: block;
+}
+
 .clara-training-image {
-  max-width: 100%;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 3 / 2;
   max-height: 50vh;
   object-fit: contain;
 }
