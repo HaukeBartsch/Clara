@@ -15,9 +15,14 @@
  * REQ-UI-031) can tell a removed value from one that was never there; record.js adds the
  * advisory checks and the branching evaluator (§8.4) and never changes what is sent.
  *
+ * A repeating instrument (REQ-UI-055) is one instance at a time: "+" beside its name opens
+ * the next instance, the instance pills switch between the existing ones, and every form of
+ * the page names the open instance.
+ *
  * Reads: $record, $exists, $recordUrl, $statusUrl, $arms, $armNum, $event, $instrument,
- * $items, $identifier, $prefill, $draft, $errors, $states, $state, $analysis, $canEdit,
- * $deleteScopes, $isSurvey, $canLink, $link, $groups, $patterns, $formats, $clientContext.
+ * $items, $identifier, $prefill, $draft, $errors, $states, $state, $repeats, $instance,
+ * $instanceList, $nextInstance, $analysis, $canEdit, $deleteScopes, $isSurvey, $canLink,
+ * $link, $groups, $patterns, $formats, $clientContext.
  */
 
 use Clara\DataEntry;
@@ -27,7 +32,10 @@ $uen = (string) ($event['unique_event_name'] ?? '');
 $instrumentName = (string) ($instrument['name'] ?? '');
 $iid = (int) ($instrument['id'] ?? 0);
 $act = static fn (string $action): string => $recordUrl . '?action=' . $action;
-$here = ['event' => $uen, 'instrument' => $instrumentName, 'iid' => $iid];
+$here = ['event' => $uen, 'instrument' => $instrumentName, 'iid' => $iid]
+    + ($repeats ? ['repeating' => '1', 'instance' => (string) $instance] : []);
+$openUrl = static fn (string $name, int $n = 0): string => $recordUrl . '?' . http_build_query(
+    ['event' => $uen, 'instrument' => $name] + ($n > 0 ? ['instance' => $n] : []), '', '&', PHP_QUERY_RFC3986);
 $hidden = static function (array $fields): string {
     $out = '';
     foreach ($fields as $name => $value) {
@@ -83,18 +91,45 @@ $stateBadge = [
             $name = (string) $candidate['name'];
             $candidateState = $states[$uen . '|' . $name] ?? 'no_data';
             ?>
-            <li class="nav-item" data-clara-instrument="<?= View::e($name) ?>"
+            <li class="nav-item d-flex align-items-center" data-clara-instrument="<?= View::e($name) ?>"
                 <?= ($candidate['branching_logic'] ?? '') !== '' ? ' data-clara-branching="' . View::e($candidate['branching_logic']) . '"' : '' ?>>
                 <a class="nav-link py-1<?= $name === $instrumentName ? ' active' : '' ?>"<?= $name === $instrumentName ? ' aria-current="page"' : '' ?>
-                   href="<?= View::e($recordUrl . '?' . http_build_query(['event' => $uen, 'instrument' => $name], '', '&', PHP_QUERY_RFC3986)) ?>">
+                   href="<?= View::e($openUrl($name)) ?>">
                     <span class="clara-state <?= $stateBadge[$candidateState] ?? $stateBadge['no_data'] ?>"
                           title="<?= View::e($view->t('records.state.' . $candidateState)) ?>"></span>
-                    <?= View::e($name) ?>
+                    <?= View::e($name) ?><?php if (isset($nextInstance[$name])): ?> <span aria-hidden="true">⟳</span><?php endif; ?>
                     <?php if (!empty($candidate['is_survey'])): ?><span class="badge text-bg-light border ms-1"><?= View::e($view->t('record.survey_badge')) ?></span><?php endif; ?>
                 </a>
+                <?php if (!empty($nextInstance[$name]['canAdd'])): ?>
+                    <?php $addLabel = $view->t('records.add_instance', ['record' => $record, 'instrument' => $name,
+                        'event' => (string) ($event['event_name'] ?? $uen), 'instance' => (string) $nextInstance[$name]['instance']]); ?>
+                    <!-- "+" opens the instrument's next instance (REQ-UI-055). -->
+                    <a class="clara-instance-add ms-1" href="<?= View::e($openUrl($name, $nextInstance[$name]['instance'])) ?>"
+                       title="<?= View::e($addLabel) ?>" aria-label="<?= View::e($addLabel) ?>"
+                       data-clara-add-instance="<?= (int) $nextInstance[$name]['instance'] ?>">+</a>
+                <?php endif; ?>
             </li>
         <?php endforeach; ?>
     </ul>
+
+    <?php if ($repeats): ?>
+        <!-- The instances of this repeating instrument at this event (REQ-UI-055). -->
+        <nav class="mb-3 clara-instance-nav" aria-label="<?= View::e($view->t('record.instances', ['instrument' => $instrumentName])) ?>">
+            <ul class="nav nav-pills small align-items-center">
+                <li class="nav-item text-body-secondary me-2"><?= View::e($view->t('record.instances', ['instrument' => $instrumentName])) ?></li>
+                <?php foreach ($instanceList as $pill): ?>
+                    <li class="nav-item" data-clara-instance="<?= (int) $pill['instance'] ?>">
+                        <a class="nav-link py-0 px-2<?= $pill['current'] ? ' active' : '' ?>"<?= $pill['current'] ? ' aria-current="page"' : '' ?>
+                           href="<?= View::e($openUrl($instrumentName, (int) $pill['instance'])) ?>">
+                            <span class="clara-state <?= $stateBadge[$pill['state']] ?? $stateBadge['no_data'] ?>"
+                                  title="<?= View::e($view->t('records.state.' . $pill['state'])) ?>"></span>
+                            <?= View::e($view->t('record.instance', ['instance' => (string) $pill['instance']])) ?>
+                        </a>
+                    </li>
+                <?php endforeach; ?>
+            </ul>
+        </nav>
+    <?php endif; ?>
 
     <!-- The branching evaluator's inputs (§8.4): this event, the project's first event for the
          [field] shorthand, and the current values the logic reads outside this form. UI copy
@@ -107,8 +142,8 @@ $stateBadge = [
 
     <form method="post" action="<?= View::e($act('save')) ?>" class="clara-record-form mb-4" novalidate
           data-clara-record-form data-history="<?= View::e($recordUrl) ?>" data-event="<?= View::e($uen) ?>"
-          data-instrument="<?= View::e($instrumentName) ?>"
-          aria-label="<?= View::e($instrumentName) ?>">
+          data-instrument="<?= View::e($instrumentName) ?>"<?= $repeats ? ' data-instance="' . (int) $instance . '"' : '' ?>
+          aria-label="<?= View::e($repeats ? $view->t('record.instance_of', ['instrument' => $instrumentName, 'instance' => (string) $instance]) : $instrumentName) ?>">
         <?php if ($canEdit): ?>
             <?= $view->csrfField() ?>
             <?= $hidden($here) ?>
@@ -238,11 +273,12 @@ $stateBadge = [
         <div class="d-flex flex-wrap gap-2">
             <?php
             foreach ($deleteScopes as $scope):
-                $confirm = $view->t('record.delete.confirm.' . $scope, ['record' => $record, 'event' => (string) ($event['event_name'] ?? $uen), 'instrument' => $instrumentName]);
+                $confirm = $view->t('record.delete.confirm.' . $scope, ['record' => $record, 'event' => (string) ($event['event_name'] ?? $uen),
+                    'instrument' => $instrumentName, 'instance' => (string) $instance]);
             ?>
                 <form method="post" action="<?= View::e($act('delete')) ?>" data-clara-confirm="<?= View::e($confirm) ?>">
                     <?= $view->csrfField() ?><?= $hidden($here + ['scope' => $scope]) ?>
-                    <button class="btn btn-sm btn-outline-danger" type="submit" data-scope="<?= $scope ?>"><?= View::e($view->t('record.delete.' . $scope)) ?></button>
+                    <button class="btn btn-sm btn-outline-danger" type="submit" data-scope="<?= $scope ?>"><?= View::e($view->t('record.delete.' . $scope, ['instance' => (string) $instance])) ?></button>
                 </form>
             <?php endforeach; ?>
         </div>

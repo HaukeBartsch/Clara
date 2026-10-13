@@ -176,6 +176,8 @@ Evaluation produces a single value (or empty) for one record, in the transaction
 
 The recomputation runs in the transaction that triggered it (REQ-VAL-037, REQ-API-095); a rollback of that transaction rolls back the recomputation with it.
 
+**Repeating instruments** (REQ-VAL-045, REQ-DB-048). A calculated field of an instrument repeating at an event is evaluated once per visible instance there: a reference to its own instrument's fields at that event — or without an event — reads the instance being computed, every other reference the record's first instances, and the result is stored at that instance's slot. Every import recomputes all visible instances of the record (a first-instance change can reach them all); a design-time change of the expression recomputes them as it recomputes the first instances (§6.2). Instances of a pair that no longer repeats are neither evaluated nor rewritten.
+
 **Triggers** (each in the transaction of the triggering write):
 
 | Trigger | Scope of recomputation |
@@ -239,6 +241,8 @@ The semantics below are the single normative definition; every evaluator (data e
 - **Logical.** `&&` → `1` iff both sides are `1`; `||` → `1` if either side is `1`; sides that are not `1` coerce to `0`.
 
 A field (resp. instrument) is displayed only while its expression evaluates to `1` (REQ-VAL-029/040); a hidden instrument hides all of its fields regardless of their own logic (REQ-VAL-040).
+
+**Repeating instruments** (REQ-VAL-045). In the form of one instance of a repeating instrument, a reference to that instrument's fields at the open event reads the form's own inputs — the open instance; every other reference reads the record's first instances, and so does an instrument's own branching logic and `filterLogic` (`API_Endpoints_Design.md` §3.6.3). There is no syntax for naming an instance (REDCap's `[field][n]`, `[current-instance]`).
 
 ### 7.4 Re-evaluation
 

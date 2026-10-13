@@ -49,13 +49,109 @@ final class DesignController extends StructureController
         $projectId = $this->projectIdOf($detail);
         $designUrl = '/projects/' . $projectId . '/design';
         $state = $this->structureState($projectId, $designUrl);
+        $base = '/api/v1/projects/' . $projectId;
+        $instruments = self::listOf($this->api->get($base . '/instruments'));
 
         return $this->renderSection($detail, 'project/design', 'design.title', $state + [
             'designUrl' => $designUrl,
             'setupUrl' => '/projects/' . $projectId . '/setup',
-            'instruments' => self::listOf($this->api->get('/api/v1/projects/' . $projectId . '/instruments')),
+            'instruments' => $instruments,
+            'repeating' => self::repeatingChoices(self::listOf($this->api->get($base . '/arms')),
+                $this->api->get($base . '/instrument-event-mapping'), $instruments),
             'import' => self::importView(Session::kept('import')),
         ], ['scripts' => self::SCRIPTS, 'jsKeys' => self::JS_KEYS], $state['mode']);
+    }
+
+    // --- repeating instruments (§7.1, REQ-UI-054) ------------------------------------
+
+    /**
+     * Per instrument id, what its "Repeating" dropdown offers (REQ-UI-054): the arms with their
+     * events in canonical order, each event marked mapped (only a mapped pair can repeat,
+     * REQ-DB-047 — the others are shown disabled) and on (the instrument repeats there,
+     * `repeating_events` of the instrument object, REQ-API-154). A survey instrument and the
+     * first instrument — it holds the record identifier, GD-8 — cannot repeat; `locked` names
+     * the reason the dropdown gives instead of toggles.
+     *
+     * @param list<array<string, mixed>> $arms        `GET …/arms`: arms with their events
+     * @param array<mixed>               $mapping     `GET …/instrument-event-mapping`
+     * @param list<array<string, mixed>> $instruments in position order
+     * @return array<int, array{locked: string, on: list<string>, arms: list<array{arm_num: int, name: string, events: list<array{unique_event_name: string, event_name: string, mapped: bool, on: bool}>}>}>
+     */
+    public static function repeatingChoices(array $arms, array $mapping, array $instruments): array
+    {
+        $mapped = [];
+        foreach ($mapping as $arm) {
+            if (!is_array($arm)) {
+                continue;
+            }
+            foreach ((is_array($arm['mapping'] ?? null) ? $arm['mapping'] : []) as $name => $events) {
+                foreach (is_array($events) ? $events : [] as $event) {
+                    $mapped[(string) $name][(string) $event] = true;
+                }
+            }
+        }
+        $first = (int) ($instruments[0]['id'] ?? 0);
+        $out = [];
+        foreach ($instruments as $instrument) {
+            $id = (int) ($instrument['id'] ?? 0);
+            $name = (string) ($instrument['name'] ?? '');
+            $on = array_values(array_map('strval', is_array($instrument['repeating_events'] ?? null) ? $instrument['repeating_events'] : []));
+            $choiceArms = [];
+            foreach ($arms as $arm) {
+                $events = [];
+                foreach (self::listOf($arm['events'] ?? []) as $event) {
+                    $uen = (string) ($event['unique_event_name'] ?? '');
+                    $events[] = [
+                        'unique_event_name' => $uen,
+                        'event_name' => (string) ($event['event_name'] ?? $uen),
+                        'mapped' => isset($mapped[$name][$uen]),
+                        'on' => in_array($uen, $on, true),
+                    ];
+                }
+                if ($events !== []) {
+                    $choiceArms[] = ['arm_num' => (int) ($arm['arm_num'] ?? 0), 'name' => (string) ($arm['name'] ?? ''), 'events' => $events];
+                }
+            }
+            $locked = '';
+            if (!empty($instrument['is_survey'])) {
+                $locked = 'survey';
+            } elseif ($id === $first) {
+                $locked = 'first';
+            } elseif (!isset($mapped[$name])) {
+                $locked = 'unmapped';
+            }
+            $out[$id] = ['locked' => $locked, 'on' => $on, 'arms' => $choiceArms];
+        }
+
+        return $out;
+    }
+
+    /**
+     * POST …?action=save_repeating — `PUT …/instruments/{iid}/repeating` with the events whose
+     * toggle is on (REQ-API-154). The set replaces the instrument's whole set, so no toggle on
+     * turns repeating off; the further instances recorded meanwhile stay stored, hidden until
+     * the instrument repeats there again (REQ-DB-048). A structure write like any other (§6.7):
+     * staged in production, asked about in analysis mode if the API ever called it breaking.
+     */
+    public function saveRepeating(): Response
+    {
+        $projectId = $this->projectIdFromPath();
+        $designUrl = '/projects/' . $projectId . '/design';
+        $iid = self::parseObjectId($this->request->field('iid'));
+        $name = $this->request->field('instrument');
+        $events = array_values(array_unique(array_filter($this->request->fieldList('events'),
+            static fn (string $event): bool => preg_match('/^[a-z0-9_]{1,100}$/', $event) === 1)));
+        if ($iid === 0) {
+            $this->flashDanger($this->i18n->t('error.invalid_request'));
+
+            return Response::redirect($designUrl);
+        }
+
+        return $this->structureWrite($designUrl, function (int $projectId) use ($iid, $events): void {
+            $this->api->put('/api/v1/projects/' . $projectId . '/instruments/' . $iid . '/repeating',
+                $this->withAck(['events' => $events]));
+        }, $this->i18n->t($events === [] ? 'design.repeating.saved_off' : 'design.repeating.saved',
+            ['instrument' => $name, 'count' => (string) count($events)]));
     }
 
     // --- instrument import (§7.6, REQ-UI-053) ------------------------------------------

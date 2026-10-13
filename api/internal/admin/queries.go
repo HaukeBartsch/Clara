@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -34,6 +35,17 @@ func (h *Handler) registerQueries(mux *http.ServeMux) {
 type recordStatusInstrument struct {
 	Name  string `json:"name"`
 	State string `json:"state"`
+	// Instances lists, for an instrument repeating at this event, every instance
+	// holding a state other than no_data in ascending order (REQ-API-156); State
+	// is then the first instance's. Absent for a non-repeating pair.
+	Instances []recordStatusInstance `json:"instances,omitempty"`
+}
+
+// recordStatusInstance is one instance of a repeating instrument at one event:
+// its number and its three-state completion state (REQ-API-156).
+type recordStatusInstance struct {
+	Instance int    `json:"instance"`
+	State    string `json:"state"`
 }
 
 // recordStatusEvent is one event with the mapped instruments that hold a
@@ -60,11 +72,12 @@ type recordStatusRow struct {
 // read_only + project visibility; events of arms without read access are
 // omitted (GD-2). A record-status read is not a record view — no audit row is
 // written (§4.13, ASM-AUD-2).
-// checkboxDataCells reports every (record, event, instrument) holding a checked
-// box: the derived "some data" half of record-status for values stored under a
-// checkbox's choice columns (REQ-DB-042, REQ-API-074). Like the join it
-// complements, it hands out positions only — never a value.
-func (h *Handler) checkboxDataCells(ctx context.Context, projectID int64, add func(record, event, instrument string)) error {
+// checkboxDataCells reports every (record, event, instrument, instance) holding
+// a checked box: the derived "some data" half of record-status for values stored
+// under a checkbox's choice columns (REQ-DB-042, REQ-API-074). Like the join it
+// complements, it hands out positions only — never a value. repeating is the
+// stored repeating_instrument column — empty for a first instance (REQ-DB-048).
+func (h *Handler) checkboxDataCells(ctx context.Context, projectID int64, add func(record, event, instrument, repeating string, instance int)) error {
 	rows, err := h.Store.DB.QueryContext(ctx,
 		`SELECT f.field_name, f.choices, i.name
 		 FROM fields f JOIN instruments i ON i.id = f.instrument_id
@@ -98,18 +111,20 @@ func (h *Handler) checkboxDataCells(ctx context.Context, projectID int64, add fu
 		args = append(args, name)
 	}
 	cells, err := h.Store.DB.QueryContext(ctx,
-		`SELECT DISTINCT record_id, unique_event_name, field_name FROM data
+		`SELECT DISTINCT record_id, unique_event_name, field_name, repeating_instrument, repeating_instance_number
+		 FROM data
 		 WHERE project_id = ? AND value <> '' AND field_name IN (`+placeholders(len(instrumentOf))+`)`, args...)
 	if err != nil {
 		return err
 	}
 	defer cells.Close()
 	for cells.Next() {
-		var record, event, name string
-		if err := cells.Scan(&record, &event, &name); err != nil {
+		var record, event, name, repeating string
+		var instance int
+		if err := cells.Scan(&record, &event, &name, &repeating, &instance); err != nil {
 			return err
 		}
-		add(record, event, instrumentOf[name])
+		add(record, event, instrumentOf[name], repeating, instance)
 	}
 	return cells.Err()
 }
@@ -192,11 +207,15 @@ func (h *Handler) recordStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	mapped := map[int64]map[int64]bool{} // event id -> instrument ids
+	repeating := map[[2]int64]bool{}     // (event id, instrument id) designated repeating
 	for _, ie := range pairs {
 		if mapped[ie.EventID] == nil {
 			mapped[ie.EventID] = map[int64]bool{}
 		}
 		mapped[ie.EventID][ie.InstrumentID] = true
+		if ie.IsRepeating {
+			repeating[[2]int64{ie.EventID, ie.InstrumentID}] = true
+		}
 	}
 
 	// The derived half of the state, in one pass: a (record, event, instrument)
@@ -204,13 +223,36 @@ func (h *Handler) recordStatus(w http.ResponseWriter, r *http.Request) {
 	// is non-empty at that event ("any field has a value vs. none"). A value
 	// belongs to an instrument through its field — the data row's
 	// repeating_instrument column names a repeat instance, and is empty for
-	// every ordinary value — which is the same test the export's
+	// every value of a first instance, and names the instrument of a further
+	// instance (REQ-DB-048) — which is the same test the export's
 	// `<instrument>_complete` column applies (REQ-API-134). Values are
 	// aggregated away here — none leaves this function (REQ-API-074).
-	type cellKey struct{ record, event, instrument string }
+	type cellKey struct {
+		record, event, instrument string
+		instance                  int
+	}
 	complete := map[cellKey]bool{}
+	// further collects, per (record, event, instrument), the numbers of the
+	// instances above 1 that hold something — the instances a repeating cell
+	// lists besides its first (REQ-API-156).
+	type pairKey struct{ record, event, instrument string }
+	further := map[pairKey]map[int]bool{}
+	note := func(record, event, instrument, repeatingInstrument string, n int) {
+		instance := db.DataValue{RepeatingInstrument: repeatingInstrument, RepeatingInstanceNumber: n}.Instance()
+		if instance > 1 && repeatingInstrument != instrument {
+			return // a further instance is stored under its own instrument's name
+		}
+		complete[cellKey{record, event, instrument, instance}] = true
+		if instance > 1 {
+			k := pairKey{record, event, instrument}
+			if further[k] == nil {
+				further[k] = map[int]bool{}
+			}
+			further[k][instance] = true
+		}
+	}
 	rows, err := h.Store.DB.QueryContext(ctx,
-		`SELECT DISTINCT d.record_id, d.unique_event_name, i.name
+		`SELECT DISTINCT d.record_id, d.unique_event_name, i.name, d.repeating_instrument, d.repeating_instance_number
 		 FROM data d
 		 JOIN fields f ON f.project_id = d.project_id AND f.field_name = d.field_name
 		 JOIN instruments i ON i.id = f.instrument_id
@@ -221,12 +263,13 @@ func (h *Handler) recordStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var k cellKey
-		if err := rows.Scan(&k.record, &k.event, &k.instrument); err != nil {
+		var record, event, instrument, repeatingInstrument string
+		var n int
+		if err := rows.Scan(&record, &event, &instrument, &repeatingInstrument, &n); err != nil {
 			errInternal(w)
 			return
 		}
-		complete[k] = true
+		note(record, event, instrument, repeatingInstrument, n)
 	}
 	if err := rows.Err(); err != nil {
 		errInternal(w)
@@ -235,9 +278,7 @@ func (h *Handler) recordStatus(w http.ResponseWriter, r *http.Request) {
 	// A checkbox stores its values under its choice columns, which name no
 	// fields row (REQ-DB-042): they reach their instrument through the checkbox
 	// in a second pass that only a project with checkboxes pays for.
-	if err := h.checkboxDataCells(ctx, projectID, func(record, event, instrument string) {
-		complete[cellKey{record, event, instrument}] = true
-	}); err != nil {
+	if err := h.checkboxDataCells(ctx, projectID, note); err != nil {
 		errInternal(w)
 		return
 	}
@@ -247,15 +288,26 @@ func (h *Handler) recordStatus(w http.ResponseWriter, r *http.Request) {
 	type storedKey struct {
 		record            string
 		event, instrument int64
+		instance          int
 	}
 	finished := map[storedKey]bool{}
+	type storedPair struct {
+		record            string
+		event, instrument int64
+	}
+	finishedFurther := map[storedPair][]int{}
 	completions, err := h.Store.ListInstrumentCompletions(ctx, projectID)
 	if err != nil {
 		errInternal(w)
 		return
 	}
 	for _, c := range completions {
-		finished[storedKey{c.RecordID, c.EventID, c.InstrumentID}] = true
+		instance := max(c.Instance, 1)
+		finished[storedKey{c.RecordID, c.EventID, c.InstrumentID, instance}] = true
+		if instance > 1 {
+			k := storedPair{c.RecordID, c.EventID, c.InstrumentID}
+			finishedFurther[k] = append(finishedFurther[k], instance)
+		}
 	}
 
 	out := make([]recordStatusRow, 0, len(visible))
@@ -280,18 +332,49 @@ func (h *Handler) recordStatus(w http.ResponseWriter, r *http.Request) {
 					// survey instrument reports finished automatically — its
 					// completion info is filled in without an assignment
 					// (GD-9; master spec "Instrument level completion info").
-					state := StateNoData
-					if complete[cellKey{re.RecordID, ev.UniqueEventName, in.Name}] {
-						state = StateSomeData
+					stateOf := func(instance int) string {
+						state := StateNoData
+						if complete[cellKey{re.RecordID, ev.UniqueEventName, in.Name, instance}] {
+							state = StateSomeData
+						}
+						if in.IsSurvey || finished[storedKey{re.RecordID, ev.ID, in.ID, instance}] {
+							state = StateFinished
+						}
+						return state
 					}
-					if in.IsSurvey || finished[storedKey{re.RecordID, ev.ID, in.ID}] {
-						state = StateFinished
+					state := stateOf(1)
+					if !repeating[[2]int64{ev.ID, in.ID}] {
+						// A pair that does not repeat shows its first instance only:
+						// further instances it held while it did stay stored, hidden
+						// until the pair repeats again (REQ-DB-048).
+						if state == StateNoData {
+							continue // the listed event already says it (REQ-API-149)
+						}
+						instrs = append(instrs, recordStatusInstrument{
+							Name: in.Name, State: state,
+						})
+						continue
 					}
-					if state == StateNoData {
-						continue // the listed event already says it (REQ-API-149)
+					numbers := map[int]bool{}
+					if state != StateNoData {
+						numbers[1] = true
 					}
+					for n := range further[pairKey{re.RecordID, ev.UniqueEventName, in.Name}] {
+						numbers[n] = true
+					}
+					for _, n := range finishedFurther[storedPair{re.RecordID, ev.ID, in.ID}] {
+						numbers[n] = true
+					}
+					if len(numbers) == 0 {
+						continue // no instance holds anything (REQ-API-149)
+					}
+					instances := make([]recordStatusInstance, 0, len(numbers))
+					for n := range numbers {
+						instances = append(instances, recordStatusInstance{Instance: n, State: stateOf(n)})
+					}
+					sort.Slice(instances, func(i, j int) bool { return instances[i].Instance < instances[j].Instance })
 					instrs = append(instrs, recordStatusInstrument{
-						Name: in.Name, State: state,
+						Name: in.Name, State: state, Instances: instances,
 					})
 				}
 				if !anyMapped {
@@ -558,13 +641,17 @@ type historyField struct {
 
 // historyEntry is one chronological data-change row of the §4.16 response.
 type historyEntry struct {
-	CreatedAt       string         `json:"created_at"`
-	UserID          *int64         `json:"user_id"`
-	UserDisplayName *string        `json:"user_display_name"`
-	Action          string         `json:"action"`
-	Instrument      string         `json:"instrument"`
-	Event           string         `json:"event"`
-	Fields          []historyField `json:"fields"`
+	CreatedAt       string  `json:"created_at"`
+	UserID          *int64  `json:"user_id"`
+	UserDisplayName *string `json:"user_display_name"`
+	Action          string  `json:"action"`
+	Instrument      string  `json:"instrument"`
+	Event           string  `json:"event"`
+	// Instance is the form instance the change belongs to: 1 for every form that
+	// does not repeat, 2, 3, … for further instances of a repeating instrument
+	// (REQ-DB-048, REQ-API-156).
+	Instance int            `json:"instance"`
+	Fields   []historyField `json:"fields"`
 }
 
 // historyDetails is the data-change payload of record_created /
@@ -573,6 +660,7 @@ type historyDetails struct {
 	Action     string         `json:"action"`
 	Instrument string         `json:"instrument"`
 	Event      string         `json:"event"`
+	Instance   int            `json:"instance"` // absent = the first instance
 	Fields     []historyField `json:"fields"`
 }
 
@@ -584,6 +672,7 @@ type recomputedDetails struct {
 	Field      string `json:"field"`
 	Instrument string `json:"instrument"`
 	Event      string `json:"event"`
+	Instance   int    `json:"instance"`
 	Old        string `json:"old"`
 	New        string `json:"new"`
 }
@@ -605,7 +694,8 @@ func asHistory(eventType string, raw []byte) (historyDetails, bool) {
 		if nw == "" {
 			f.New = nil
 		}
-		return historyDetails{Action: "update", Instrument: c.Instrument, Event: c.Event, Fields: []historyField{f}}, true
+		return historyDetails{Action: "update", Instrument: c.Instrument, Event: c.Event,
+			Instance: c.Instance, Fields: []historyField{f}}, true
 	}
 	var d historyDetails
 	if json.Unmarshal(raw, &d) != nil {
@@ -707,6 +797,15 @@ func (h *Handler) recordHistory(w http.ResponseWriter, r *http.Request) {
 	instrumentFilter := r.URL.Query().Get("instrument")
 	eventFilter := r.URL.Query().Get("event")
 	fieldFilter := r.URL.Query().Get("field")
+	instanceFilter := 0
+	if v := r.URL.Query().Get("instance"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			errBadRequest(w, "instance must be a positive integer")
+			return
+		}
+		instanceFilter = n
+	}
 	// A checkbox's history is that of its choice columns, which carry its values
 	// (REQ-DB-042): filtering by the checkbox matches every one of them.
 	fieldMatch := map[string]bool{fieldFilter: true}
@@ -797,6 +896,10 @@ func (h *Handler) recordHistory(w http.ResponseWriter, r *http.Request) {
 		if eventFilter != "" && d.Event != eventFilter {
 			continue
 		}
+		instance := max(d.Instance, 1)
+		if instanceFilter != 0 && instance != instanceFilter {
+			continue
+		}
 		if fieldFilter != "" {
 			hit := false
 			for _, f := range d.Fields {
@@ -820,6 +923,7 @@ func (h *Handler) recordHistory(w http.ResponseWriter, r *http.Request) {
 			Action:          d.Action,
 			Instrument:      d.Instrument,
 			Event:           d.Event,
+			Instance:        instance,
 			Fields:          fields,
 		})
 	}

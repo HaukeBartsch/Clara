@@ -427,7 +427,7 @@ func TestSurveyAutoFinished(t *testing.T) {
 		t.Fatalf("BeginTx: %v", err)
 	}
 	if _, err := e.Store.SetInstrumentCompletionTx(ctx, tx, f.projectID, "R1",
-		events[0].ID, f.survey, admin.ID); err != nil {
+		events[0].ID, f.survey, 1, admin.ID); err != nil {
 		t.Fatalf("SetInstrumentCompletionTx: %v", err)
 	}
 	if err := tx.Commit(); err != nil {

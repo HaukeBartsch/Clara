@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -91,6 +92,19 @@ type projectDict struct {
 	hasEvents   bool
 	identifier  string             // GD-8: first field of the first instrument
 	instrEvents map[int64][]string // instrument id -> mapped unique event names
+	// repeating holds the pairs designated repeating (REQ-DB-047), unique event
+	// name -> instrument name.
+	repeating map[string]map[string]bool
+}
+
+// repeats reports whether an instrument is repeating at an event (REQ-DB-047).
+func (d *projectDict) repeats(event, instrument string) bool {
+	return d.repeating[event][instrument]
+}
+
+// hasRepeating reports whether any pair of the project repeats.
+func (d *projectDict) hasRepeating() bool {
+	return len(d.repeating) > 0
 }
 
 // checkboxColumns returns the derived value-column entries a checkbox field
@@ -295,10 +309,17 @@ func (h *Handler) buildDict(ctx context.Context, projectID int64) (*projectDict,
 		evName[e.EventID] = e.UniqueEventName
 	}
 	d.instrEvents = map[int64][]string{}
+	d.repeating = map[string]map[string]bool{}
 	for _, e := range events { // canonical order drives the name lists
 		for _, pr := range pairs {
 			if pr.EventID == e.EventID {
 				d.instrEvents[pr.InstrumentID] = append(d.instrEvents[pr.InstrumentID], evName[pr.EventID])
+				if pr.IsRepeating {
+					if d.repeating[e.UniqueEventName] == nil {
+						d.repeating[e.UniqueEventName] = map[string]bool{}
+					}
+					d.repeating[e.UniqueEventName][formOf[pr.InstrumentID]] = true
+				}
 			}
 		}
 	}
@@ -327,17 +348,70 @@ func (h *Handler) activeGroupID(ctx context.Context, sub *subject) (*int64, erro
 	return nil, nil
 }
 
-// recordValues indexes one record's stored values event -> field -> value.
+// recordValues indexes one record's first-instance values event -> field ->
+// value: every form's first instance, including that of a repeating instrument
+// (REQ-DB-048). Further instances are indexed apart (recordInstances), so no
+// reader of the first instance can pick up a value of another one.
 type recordValues map[string]map[string]string
 
 func valuesIndex(dvs []db.DataValue) recordValues {
 	out := recordValues{}
 	for _, dv := range dvs {
+		if dv.Instance() != 1 {
+			continue
+		}
 		if out[dv.UniqueEventName] == nil {
 			out[dv.UniqueEventName] = map[string]string{}
 		}
 		out[dv.UniqueEventName][dv.FieldName] = dv.Value
 	}
+	return out
+}
+
+// instanceKey addresses one further instance (2, 3, …) of a repeating
+// instrument at one event (REQ-DB-048).
+type instanceKey struct {
+	event, instrument string
+	instance          int
+}
+
+// recordInstances indexes one record's further instances: instanceKey ->
+// field -> value.
+type recordInstances map[instanceKey]map[string]string
+
+// instancesIndex collects the further instances a reader may see: those of a
+// pair designated repeating, each value under its own field's instrument. An
+// instance kept from a time the pair repeated stays hidden while it does not
+// (REQ-DB-048).
+func (d *projectDict) instancesIndex(dvs []db.DataValue) recordInstances {
+	out := recordInstances{}
+	for _, dv := range dvs {
+		n := dv.Instance()
+		if n == 1 || !d.repeats(dv.UniqueEventName, dv.RepeatingInstrument) {
+			continue
+		}
+		if f, ok := d.byName[dv.FieldName]; !ok || f.Instrument != dv.RepeatingInstrument {
+			continue // a value is stored under its own field's instrument only
+		}
+		k := instanceKey{event: dv.UniqueEventName, instrument: dv.RepeatingInstrument, instance: n}
+		if out[k] == nil {
+			out[k] = map[string]string{}
+		}
+		out[k][dv.FieldName] = dv.Value
+	}
+	return out
+}
+
+// numbers returns the further instances of one (event, instrument) in
+// ascending order.
+func (ri recordInstances) numbers(event, instrument string) []int {
+	var out []int
+	for k := range ri {
+		if k.event == event && k.instrument == instrument {
+			out = append(out, k.instance)
+		}
+	}
+	sort.Ints(out)
 	return out
 }
 

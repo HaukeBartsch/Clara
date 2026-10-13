@@ -181,6 +181,7 @@ CREATE TABLE IF NOT EXISTS instruments (         -- REQ-DB-011
 CREATE TABLE IF NOT EXISTS instrument_events (   -- REQ-DB-012
     instrument_id INTEGER NOT NULL REFERENCES instruments(id) ON DELETE CASCADE,
     event_id      INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    is_repeating  INTEGER NOT NULL DEFAULT 0,     -- the pair is a repeating instrument (REQ-DB-047, migration 0015)
     PRIMARY KEY (instrument_id, event_id),
     UNIQUE (instrument_id, event_id)
 );
@@ -257,8 +258,8 @@ CREATE TABLE IF NOT EXISTS data (                -- REQ-DB-015…020
     project_id                 INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     record_id                  VARCHAR(255) NOT NULL,
     unique_event_name          VARCHAR(255) NOT NULL,
-    repeating_instrument       VARCHAR(255) NOT NULL,   -- '' for non-repeating
-    repeating_instance_number  INTEGER NOT NULL DEFAULT 1,  -- starts at 1; 1 = non-repeating (REQ-DB-019)
+    repeating_instrument       VARCHAR(255) NOT NULL,   -- '' for every form's first instance; the instrument's name for instance ≥ 2 (REQ-DB-048)
+    repeating_instance_number  INTEGER NOT NULL DEFAULT 1,  -- starts at 1; 1 = a first instance (REQ-DB-019)
     field_name                 VARCHAR(255) NOT NULL,
     value                      TEXT NOT NULL,           -- LONGTEXT on MariaDB
     UNIQUE (project_id, record_id, unique_event_name,
@@ -281,15 +282,20 @@ CREATE TABLE IF NOT EXISTS instrument_completion (  -- REQ-DB-036 (DEV-DB-10) �
     record_id      VARCHAR(255) NOT NULL,
     event_id       INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
     instrument_id  INTEGER NOT NULL REFERENCES instruments(id) ON DELETE CASCADE,
+    repeat_instance INTEGER NOT NULL DEFAULT 1,     -- the instance of a repeating instrument; 1 otherwise (REQ-DB-036/048, migration 0015)
     completed_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
     completed_at   DATETIME NOT NULL,
-    PRIMARY KEY (project_id, record_id, event_id, instrument_id)
+    PRIMARY KEY (project_id, record_id, event_id, instrument_id, repeat_instance)
 );
 ```
 
+**Repeating instruments** (REQ-DB-047/048, DEV-DB-16). A pair of `instrument_events` with `is_repeating = 1` lets its form be filled out more than once per record at that event. The designation lives on the pair, so `SetInstrumentEventsForArm` — which replaces an arm's pairs — carries the flag over for every pair that survives and drops it with every pair it removes; a survey instrument and the first instrument are refused (REQ-API-154). Every form's **first instance** is stored as before, at (`repeating_instrument = ''`, `repeating_instance_number = 1`), so turning repeating on or off never rewrites a value; instance n ≥ 2 is stored at (`<instrument name>`, n). The name is part of the key: a rename moves those rows in the same transaction — directly on the live path, parked and settled with the instrument's own name in a staging commit, so two swapped names cannot meet. Rows of a further instance at a pair that no longer repeats stay in `data` and are **hidden**: every reader keys them by (event, instrument) and admits them only while the pair repeats (REQ-DB-048). Deleting a field or an instrument removes every instance of its values, hidden ones included; deleting the last value of a record removes the record whatever instance it was.
+
+Migration 0015 (both dialects): adds `instrument_events.is_repeating`; moves values stored at `repeating_instance_number = 0` — the data API's import never set the number (DEV-DB-16) — to 1, first deleting the instance-1 twin the design-time recomputation could have written beside such a value (the instance-0 row is the one every read resolved); and widens `instrument_completion`'s key by `repeat_instance` (SQLite rebuilds the table, MariaDB alters the primary key; existing rows become instance 1). Verified on SQLite and MariaDB 11.4.
+
 **`instrument_completion`** (REQ-DB-036, DEV-DB-10) stores **only** the user's "finished" assignment — there is no state column, because absence of the row already means "not finished" and the grey/amber split stays derived from `data` (REQ-API-074). Keeping it sparse avoids a row per (record × event × instrument) mapping in projects that never mark anything, and makes clearing the assignment a delete. It joins nothing into `data`, so it cannot make a stored value look complete. The primary key doubles as the record-status read path (`project_id, record_id` prefix, REQ-DB-025); the cascades drop a project's assignments with its records, instruments, and events (REQ-DB-036). Survey-marked instruments never get a row — their completion is filled in automatically by the read side, not stored (GD-9, REQ-API-074).
 
-Notes: upsert is the unique constraint + `INSERT … ON CONFLICT` (SQLite) / `INSERT … ON DUPLICATE KEY UPDATE` (MariaDB) inside one transaction (REQ-DB-016, REQ-DB-026); calculated-field values live here as ordinary rows at each active position (REQ-DB-030); `repeating_instrument` is `''` for non-repeating entries so the unique key stays total.
+Notes: upsert is the unique constraint + `INSERT … ON CONFLICT` (SQLite) / `INSERT … ON DUPLICATE KEY UPDATE` (MariaDB) inside one transaction (REQ-DB-016, REQ-DB-026); calculated-field values live here as ordinary rows at each active position (REQ-DB-030) — per instance on a repeating instrument (REQ-DB-048); `repeating_instrument` is `''` for every first instance so the unique key stays total.
 
 ## 7. Audit
 

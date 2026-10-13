@@ -24,11 +24,15 @@ type fieldChange struct {
 // dataChangeDetails is the §3.2 data-change shape — one entry per
 // (record, instrument, event) group of an operation.
 type dataChangeDetails struct {
-	Action     string        `json:"action"`
-	RecordID   string        `json:"record_id"`
-	Instrument string        `json:"instrument"`
-	Event      string        `json:"event"`
-	Fields     []fieldChange `json:"fields"`
+	Action     string `json:"action"`
+	RecordID   string `json:"record_id"`
+	Instrument string `json:"instrument"`
+	Event      string `json:"event"`
+	// Instance names a further instance of a repeating instrument (REQ-DB-048);
+	// a first instance leaves it out, so every entry of a form that does not
+	// repeat keeps its shape.
+	Instance int           `json:"instance,omitempty"`
+	Fields   []fieldChange `json:"fields"`
 }
 
 // calculatedChange is one stored result a recomputation changed: the field,
@@ -37,6 +41,7 @@ type calculatedChange struct {
 	Field      string
 	Instrument string
 	Event      string
+	Instance   int // 1 for a first instance (REQ-DB-048)
 	Old        string
 	New        string
 }
@@ -49,6 +54,7 @@ type calculatedDetails struct {
 	Field        string  `json:"field"`
 	Instrument   string  `json:"instrument"`
 	Event        string  `json:"event"`
+	Instance     int     `json:"instance,omitempty"` // further instances only, as above
 	Old          string  `json:"old"`
 	New          string  `json:"new"`
 	TriggerField *string `json:"trigger_field"`
@@ -70,7 +76,7 @@ func valueOrNull(v string) *string {
 // changed nothing still gets the entry of its own form, so the record's birth
 // is on the trail. A flat row (no form_name, REQ-API-031) groups the same way —
 // every field already sits on its own instrument.
-func importChangeGroups(d *projectDict, action, recordID, form, event string, changes map[string]map[string]string) []dataChangeDetails {
+func importChangeGroups(d *projectDict, action, recordID, form, event string, instance int, changes map[string]map[string]string) []dataChangeDetails {
 	var out []dataChangeDetails
 	at := map[string]int{}
 	// The expanded dictionary, so a checkbox's boxes are on the trail under
@@ -85,7 +91,7 @@ func importChangeGroups(d *projectDict, action, recordID, form, event string, ch
 			i = len(out)
 			at[f.Instrument] = i
 			out = append(out, dataChangeDetails{Action: action, RecordID: recordID,
-				Instrument: f.Instrument, Event: event, Fields: []fieldChange{}})
+				Instrument: f.Instrument, Event: event, Instance: furtherInstance(instance), Fields: []fieldChange{}})
 		}
 		old := valueOrNull(c["old"])
 		if action == "create" {
@@ -100,9 +106,18 @@ func importChangeGroups(d *projectDict, action, recordID, form, event string, ch
 			form = d.byName[d.identifier].Instrument
 		}
 		out = append(out, dataChangeDetails{Action: action, RecordID: recordID,
-			Instrument: form, Event: event, Fields: []fieldChange{}})
+			Instrument: form, Event: event, Instance: furtherInstance(instance), Fields: []fieldChange{}})
 	}
 	return out
+}
+
+// furtherInstance is the instance a payload names: 0 — left out — for a first
+// instance, the number itself for a further instance (REQ-DB-048).
+func furtherInstance(instance int) int {
+	if instance <= 1 {
+		return 0
+	}
+	return instance
 }
 
 // deleteChangeGroups renders the values a delete removed as §3.2 entries — one
@@ -110,11 +125,14 @@ func importChangeGroups(d *projectDict, action, recordID, form, event string, ch
 // A value whose field is no longer in the dictionary keeps an empty instrument
 // rather than being dropped from the trail.
 func deleteChangeGroups(d *projectDict, recordID string, removed []db.DataValue) []dataChangeDetails {
-	type key struct{ instrument, event string }
+	type key struct {
+		instrument, event string
+		instance          int
+	}
 	var out []dataChangeDetails
 	at := map[key]int{}
 	for _, dv := range removed {
-		k := key{event: dv.UniqueEventName}
+		k := key{event: dv.UniqueEventName, instance: dv.Instance()}
 		if f, ok := d.byName[dv.FieldName]; ok {
 			k.instrument = f.Instrument
 		}
@@ -123,7 +141,7 @@ func deleteChangeGroups(d *projectDict, recordID string, removed []db.DataValue)
 			i = len(out)
 			at[k] = i
 			out = append(out, dataChangeDetails{Action: "delete", RecordID: recordID,
-				Instrument: k.instrument, Event: k.event, Fields: []fieldChange{}})
+				Instrument: k.instrument, Event: k.event, Instance: furtherInstance(k.instance), Fields: []fieldChange{}})
 		}
 		out[i].Fields = append(out[i].Fields, fieldChange{Field: dv.FieldName, Old: valueOrNull(dv.Value)})
 	}
@@ -155,6 +173,9 @@ func sortedCalculated(changes []calculatedChange) []calculatedChange {
 	sort.SliceStable(changes, func(i, j int) bool {
 		if changes[i].Event != changes[j].Event {
 			return changes[i].Event < changes[j].Event
+		}
+		if changes[i].Instance != changes[j].Instance {
+			return changes[i].Instance < changes[j].Instance
 		}
 		return changes[i].Field < changes[j].Field
 	})

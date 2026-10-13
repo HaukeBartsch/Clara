@@ -153,7 +153,7 @@ func (s *Store) UpsertDataValueTx(ctx context.Context, tx *sql.Tx, dv *DataValue
 	}
 	_, err := tx.ExecContext(ctx, q,
 		dv.ProjectID, dv.RecordID, dv.UniqueEventName, dv.RepeatingInstrument,
-		dv.RepeatingInstanceNumber, dv.FieldName, dv.Value, dv.Value)
+		storedInstance(dv), dv.FieldName, dv.Value, dv.Value)
 	return err
 }
 
@@ -165,7 +165,7 @@ func (s *Store) DeleteDataValueTx(ctx context.Context, tx *sql.Tx, dv *DataValue
 		 WHERE project_id = ? AND record_id = ? AND unique_event_name = ?
 		 AND repeating_instrument = ? AND repeating_instance_number = ? AND field_name = ?`,
 		dv.ProjectID, dv.RecordID, dv.UniqueEventName, dv.RepeatingInstrument,
-		dv.RepeatingInstanceNumber, dv.FieldName)
+		storedInstance(dv), dv.FieldName)
 	return err
 }
 
@@ -216,9 +216,10 @@ func (s *Store) DeleteRecordTx(ctx context.Context, tx *sql.Tx, projectID int64,
 }
 
 // DeleteRecordValuesTx deletes the record's values scoped by events and
-// field names (nil lists = unrestricted) inside tx, returning what was
-// removed for the record_deleted audit payload (REQ-AUD-009).
-func (s *Store) DeleteRecordValuesTx(ctx context.Context, tx *sql.Tx, projectID int64, recordID string, events, fields []string) ([]DataValue, error) {
+// field names (nil lists = unrestricted) and by one form instance (0 = every
+// instance, REQ-DB-048) inside tx, returning what was removed for the
+// record_deleted audit payload (REQ-AUD-009).
+func (s *Store) DeleteRecordValuesTx(ctx context.Context, tx *sql.Tx, projectID int64, recordID string, events, fields []string, instance int) ([]DataValue, error) {
 	q := `SELECT project_id, record_id, unique_event_name, repeating_instrument,
 		repeating_instance_number, field_name, value
 	 FROM data WHERE project_id = ? AND record_id = ?`
@@ -246,6 +247,9 @@ func (s *Store) DeleteRecordValuesTx(ctx context.Context, tx *sql.Tx, projectID 
 			&dv.RepeatingInstrument, &dv.RepeatingInstanceNumber, &dv.FieldName, &dv.Value); err != nil {
 			rows.Close()
 			return nil, err
+		}
+		if instance > 0 && dv.Instance() != instance {
+			continue
 		}
 		doomed = append(doomed, dv)
 	}

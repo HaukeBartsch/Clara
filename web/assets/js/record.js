@@ -92,7 +92,9 @@ function wireHistory(form) {
       const field = button.dataset.claraHistory
       dialog.field = field
       dialog.title.textContent = t("record.history.title") + " — " + field
-      dialog.url = form.dataset.history + "?field=" + encodeURIComponent(field) + "&event=" + encodeURIComponent(form.dataset.event)
+      // A repeating instrument's form is one instance; its history is that instance's (REQ-UI-055).
+      dialog.url = form.dataset.history + "?field=" + encodeURIComponent(field) + "&event=" + encodeURIComponent(form.dataset.event) +
+        (form.dataset.instance ? "&instance=" + encodeURIComponent(form.dataset.instance) : "")
       dialog.cursor = null
       dialog.instance.show()
       loadHistory(true)

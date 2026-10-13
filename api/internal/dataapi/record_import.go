@@ -366,6 +366,42 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 		return importRow{}, errForbiddenRequest
 	}
 
+	// Repeating instruments (REQ-API-155): redcap_repeat_instrument and
+	// redcap_repeat_instance — REDCap's own columns, so an exported row imports
+	// back where it came from — address one instance of an instrument that
+	// repeats at the row's event. A row naming neither fills the first instance
+	// of every form it carries, which is also where instance 1 of a repeating
+	// form lives (REQ-DB-048).
+	repeatInstrument := row["redcap_repeat_instrument"]
+	instance := 1
+	if rawInstance := row["redcap_repeat_instance"]; repeatInstrument == "" {
+		// "1" alone is the first instance as well; anything more would be a
+		// repeating event, which this implementation does not have.
+		if rawInstance != "" && rawInstance != "1" {
+			return fail("redcap_repeat_instance: CONTENT_INVALID — instance '" + rawInstance +
+				"' needs redcap_repeat_instrument naming a repeating instrument (repeating events are not supported)")
+		}
+	} else {
+		if sub.isLink() {
+			// A link fills its own survey form, which never repeats (REQ-API-154).
+			return importRow{}, errForbiddenRequest
+		}
+		if formName != "" && formName != repeatInstrument {
+			return fail("redcap_repeat_instrument: CONTENT_INVALID — redcap_repeat_instrument '" + repeatInstrument +
+				"' conflicts with form_name '" + formName + "'")
+		}
+		if !d.repeats(event, repeatInstrument) {
+			return fail("redcap_repeat_instrument: CONTENT_INVALID — instrument '" + repeatInstrument +
+				"' is not repeating at event '" + event + "'")
+		}
+		n, err := strconv.Atoi(rawInstance)
+		if err != nil || n < 1 {
+			return fail("redcap_repeat_instance: CONTENT_INVALID — '" + rawInstance +
+				"' is not an instance number (1, 2, …)")
+		}
+		instance = n
+	}
+
 	offsetFor := h.collectionOffsetFor(p.TZ)
 
 	// Validate every supplied value before storing anything (§3.7.1).
@@ -398,11 +434,31 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 		// overwrite clinician data elsewhere in the record; for project
 		// tokens, form_name means what it says.
 		own := formName
+		if repeatInstrument != "" {
+			own = repeatInstrument // the row is one instance of this instrument
+		}
 		if own == "" {
 			own = f.Instrument // flat: the dictionary assigns the instrument
 			if sub.isLink() {
 				own = sub.Instrument // the link's pin replaces form_name
 			}
+			if raw == "" && f.FieldName != d.identifier && d.repeats(event, f.Instrument) {
+				// A flat row names no instance: REDCap's own export leaves the
+				// columns of a repeating instrument empty on the event's row and
+				// carries their values on the instance rows, so an empty cell here
+				// is not a clear (REQ-API-155).
+				continue
+			}
+		}
+		if repeatInstrument != "" && f.Instrument != repeatInstrument && raw == "" {
+			// An instance row carries one instrument; REDCap's own export leaves the
+			// other columns of such a row empty, which says nothing about them.
+			continue
+		}
+		if f.FieldName == d.identifier && instance > 1 {
+			// The identifier belongs to the record's first instance (GD-8); on a
+			// further instance's row it is a framing key only.
+			continue
 		}
 		if f.Instrument != own && f.FieldName != d.identifier {
 			problems = append(problems, f.FieldName+": CONTENT_INVALID — field '"+f.FieldName+
@@ -499,6 +555,22 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 	}
 	existed := len(oldValues) > 0 || entity != nil
 	rv := valuesIndex(oldValues)
+	ri := d.instancesIndex(oldValues)
+	slotInstrument, slotNumber := db.InstanceSlot(repeatInstrument, instance)
+	// target is the value map of the instance this row fills (REQ-DB-048).
+	target := func() map[string]string {
+		if instance == 1 {
+			if rv[event] == nil {
+				rv[event] = map[string]string{}
+			}
+			return rv[event]
+		}
+		k := instanceKey{event: event, instrument: repeatInstrument, instance: instance}
+		if ri[k] == nil {
+			ri[k] = map[string]string{}
+		}
+		return ri[k]
+	}
 
 	changes := map[string]map[string]string{}
 	recordChange := func(field, oldV, newV string) {
@@ -509,9 +581,11 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 	}
 
 	for _, pd := range pendings {
-		oldV := rv[event][pd.field.FieldName]
+		values := target()
+		oldV := values[pd.field.FieldName]
 		dv := &db.DataValue{ProjectID: sub.Project.ID, RecordID: recordID,
-			UniqueEventName: event, FieldName: pd.field.FieldName, Value: pd.value}
+			UniqueEventName: event, RepeatingInstrument: slotInstrument, RepeatingInstanceNumber: slotNumber,
+			FieldName: pd.field.FieldName, Value: pd.value}
 		if pd.value == "" {
 			// Intentional clear (REQ-VAL-024): empty removes the value.
 			if oldV != "" {
@@ -520,17 +594,14 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 				}
 				recordChange(pd.field.FieldName, oldV, "")
 			}
-			delete(rv[event], pd.field.FieldName)
+			delete(values, pd.field.FieldName)
 			continue
 		}
 		if err := h.Store.UpsertDataValueTx(ctx, tx, dv); err != nil {
 			return importRow{}, err
 		}
 		recordChange(pd.field.FieldName, oldV, pd.value)
-		if rv[event] == nil {
-			rv[event] = map[string]string{}
-		}
-		rv[event][pd.field.FieldName] = pd.value
+		values[pd.field.FieldName] = pd.value
 	}
 
 	// New records join the holder's active data access group — or none;
@@ -554,7 +625,7 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 	}
 
 	// Calculated fields recompute in the same transaction (REQ-VAL-037).
-	calcChanges, err := h.recomputeCalculated(ctx, tx, sub.Project.ID, recordID, rv, d)
+	calcChanges, err := h.recomputeCalculated(ctx, tx, sub.Project.ID, recordID, rv, ri, d)
 	if err != nil {
 		return importRow{}, err
 	}
@@ -570,7 +641,11 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 		eventType, action = audit.RecordUpdated, "update"
 	}
 	if len(changes) > 0 || !existed {
-		for _, details := range importChangeGroups(d, action, recordID, formName, event, changes) {
+		form := formName
+		if repeatInstrument != "" {
+			form = repeatInstrument
+		}
+		for _, details := range importChangeGroups(d, action, recordID, form, event, instance, changes) {
 			if err := h.AuditTx(ctx, tx, audit.Entry{Token: p.Token,
 				EventType:    eventType,
 				Source:       audit.SourceAPI,
@@ -587,7 +662,12 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 	// One calculated_recomputed entry per changed result (§3.2, REQ-AUD-023),
 	// naming where it is stored and which change of this row set it off.
 	for _, c := range sortedCalculated(calcChanges) {
-		triggerField, triggerEvent := importTrigger(d.byName[c.Field].Calculation.String, event, changes)
+		var triggerField, triggerEvent *string
+		if c.Instance == instance || instance == 1 {
+			// A row's changes reach every instance through the first one, and
+			// their own instance directly (REQ-VAL-045).
+			triggerField, triggerEvent = importTrigger(d.byName[c.Field].Calculation.String, event, changes)
+		}
 		if err := h.AuditTx(ctx, tx, audit.Entry{Token: p.Token,
 			EventType:    audit.CalculatedRecomputed,
 			Source:       audit.SourceAPI,
@@ -596,7 +676,8 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 			ProjectID:    sub.Project.ID,
 			TargetRecord: recordID,
 			Details: calculatedDetails{RecordID: recordID, Field: c.Field, Instrument: c.Instrument,
-				Event: c.Event, Old: c.Old, New: c.New, TriggerField: triggerField, TriggerEvent: triggerEvent},
+				Event: c.Event, Instance: furtherInstance(c.Instance), Old: c.Old, New: c.New,
+				TriggerField: triggerField, TriggerEvent: triggerEvent},
 		}); err != nil {
 			return importRow{}, err
 		}
@@ -656,9 +737,22 @@ func (*surveyUsedError) Error() string { return "survey already submitted" }
 // returning each changed result with the event it is stored at (REQ-VAL-037).
 // An unchecked checkbox box reads as 0 (§6.3, REQ-DB-042).
 func (h *Handler) recomputeCalculated(ctx context.Context, tx *sql.Tx, projectID int64,
-	recordID string, rv recordValues, d *projectDict) ([]calculatedChange, error) {
+	recordID string, rv recordValues, ri recordInstances, d *projectDict) ([]calculatedChange, error) {
 
 	isBox := func(name string) bool { f, ok := d.byName[name]; return ok && f.isChoiceColumn() }
+	// first resolves a reference in the record's first instances.
+	first := func(ref validate.Ref) (string, bool) {
+		if ref.Event != "" {
+			v := rv[ref.Event][ref.Field]
+			return v, v != ""
+		}
+		for _, byField := range rv {
+			if v := byField[ref.Field]; v != "" {
+				return v, true
+			}
+		}
+		return "", false
+	}
 	var out []calculatedChange
 	for _, f := range d.fields {
 		if f.FieldType != "calculated" || !f.Calculation.Valid || f.Calculation.String == "" {
@@ -673,18 +767,12 @@ func (h *Handler) recomputeCalculated(ctx context.Context, tx *sql.Tx, projectID
 			targets = []string{""}
 		}
 		for _, event := range targets {
-			value, _, err := validate.EvalCalc(f.Calculation.String, validate.UncheckedAsZero(func(ref validate.Ref) (string, bool) {
-				if ref.Event != "" {
-					v := rv[ref.Event][ref.Field]
-					return v, v != ""
-				}
-				for _, byField := range rv {
-					if v := byField[ref.Field]; v != "" {
-						return v, true
-					}
-				}
-				return "", false
-			}, isBox))
+			changed, err := h.recomputeFurther(ctx, tx, projectID, recordID, f, event, ri, d, first, isBox)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, changed...)
+			value, _, err := validate.EvalCalc(f.Calculation.String, validate.UncheckedAsZero(first, isBox))
 			if err != nil {
 				continue // malformed expression: never rewrite data with it
 			}
@@ -693,14 +781,14 @@ func (h *Handler) recomputeCalculated(ctx context.Context, tx *sql.Tx, projectID
 				continue
 			}
 			dv := &db.DataValue{ProjectID: projectID, RecordID: recordID,
-				UniqueEventName: event, FieldName: f.FieldName, Value: value}
+				UniqueEventName: event, RepeatingInstanceNumber: 1, FieldName: f.FieldName, Value: value}
 			if value == "" {
 				if oldV != "" {
 					if err := h.Store.DeleteDataValueTx(ctx, tx, dv); err != nil {
 						return nil, err
 					}
 					out = append(out, calculatedChange{Field: f.FieldName, Instrument: f.Instrument,
-						Event: event, Old: oldV, New: ""})
+						Event: event, Instance: 1, Old: oldV, New: ""})
 					delete(rv[event], f.FieldName)
 				}
 				continue
@@ -709,12 +797,60 @@ func (h *Handler) recomputeCalculated(ctx context.Context, tx *sql.Tx, projectID
 				return nil, err
 			}
 			out = append(out, calculatedChange{Field: f.FieldName, Instrument: f.Instrument,
-				Event: event, Old: oldV, New: value})
+				Event: event, Instance: 1, Old: oldV, New: value})
 			if rv[event] == nil {
 				rv[event] = map[string]string{}
 			}
 			rv[event][f.FieldName] = value
 		}
+	}
+	return out, nil
+}
+
+// recomputeFurther recomputes one calculated field on the further instances of
+// its instrument at one event (REQ-VAL-045): a reference to the instrument's own
+// fields at that event — or without an event — reads the instance being
+// computed, every other reference the record's first instances. An event where
+// the instrument does not repeat has no visible further instance (REQ-DB-048).
+func (h *Handler) recomputeFurther(ctx context.Context, tx *sql.Tx, projectID int64, recordID string,
+	f recField, event string, ri recordInstances, d *projectDict,
+	first func(validate.Ref) (string, bool), isBox func(string) bool) ([]calculatedChange, error) {
+
+	if !d.repeats(event, f.Instrument) {
+		return nil, nil
+	}
+	var out []calculatedChange
+	for _, n := range ri.numbers(event, f.Instrument) {
+		own := ri[instanceKey{event: event, instrument: f.Instrument, instance: n}]
+		value, _, err := validate.EvalCalc(f.Calculation.String, validate.UncheckedAsZero(func(ref validate.Ref) (string, bool) {
+			if rf, ok := d.byName[ref.Field]; ok && rf.Instrument == f.Instrument && (ref.Event == "" || ref.Event == event) {
+				v := own[ref.Field]
+				return v, v != ""
+			}
+			return first(ref)
+		}, isBox))
+		if err != nil {
+			return out, nil // malformed expression: never rewrite data with it
+		}
+		oldV := own[f.FieldName]
+		if oldV == value {
+			continue
+		}
+		dv := &db.DataValue{ProjectID: projectID, RecordID: recordID, UniqueEventName: event,
+			RepeatingInstrument: f.Instrument, RepeatingInstanceNumber: n, FieldName: f.FieldName, Value: value}
+		if value == "" {
+			if err := h.Store.DeleteDataValueTx(ctx, tx, dv); err != nil {
+				return nil, err
+			}
+			delete(own, f.FieldName)
+		} else {
+			if err := h.Store.UpsertDataValueTx(ctx, tx, dv); err != nil {
+				return nil, err
+			}
+			own[f.FieldName] = value
+		}
+		out = append(out, calculatedChange{Field: f.FieldName, Instrument: f.Instrument,
+			Event: event, Instance: n, Old: oldV, New: value})
 	}
 	return out, nil
 }

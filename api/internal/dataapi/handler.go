@@ -122,7 +122,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "project":
 		// Any valid token for the project suffices (REQ-API-018).
 		h.contentProject(ctx, w, enc, sub, p)
-	case "event", "metadata", "formEventMapping", "exportFieldNames":
+	case "event", "metadata", "formEventMapping", "exportFieldNames", "repeatingFormsEvents":
 		h.requireData(w, enc, sub, lvlReadOnly, func() {
 			switch p.Content {
 			case "event":
@@ -133,6 +133,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				h.contentFormEventMapping(ctx, w, enc, sub, p)
 			case "exportFieldNames":
 				h.contentExportFieldNames(ctx, w, enc, sub, p)
+			case "repeatingFormsEvents":
+				h.contentRepeatingFormsEvents(ctx, w, enc, sub, p)
 			}
 		})
 	case "generateNextRecordName":

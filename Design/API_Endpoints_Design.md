@@ -115,7 +115,7 @@ Any valid token for the project suffices. JSON response (array with one object):
 }]
 ```
 
-Standard REDCap project-info keys the system does not store are returned with neutral values (`"0"` / `""`) rather than omitted, so naive parsers keep working (REQ-API-018) — including `project_end_provision` since GD-17 (the end provision is no longer stored; if the owner records one, it is data in an instrument such as `DataTransferProjects`, REQ-DB-032). CSV: a single row of those key/value pairs.
+Standard REDCap project-info keys the system does not store are returned with neutral values (`"0"` / `""`) rather than omitted, so naive parsers keep working (REQ-API-018) — including `project_end_provision` since GD-17 (the end provision is no longer stored; if the owner records one, it is data in an instrument such as `DataTransferProjects`, REQ-DB-032). CSV: a single row of those key/value pairs. `has_repeating_instruments_or_events` is `"1"` once any (instrument, event) pair repeats (REQ-API-155).
 
 ### 3.4 `content=metadata` (REQ-API-019)
 
@@ -168,6 +168,7 @@ All require data access ≥ `read_only` except `generateNextRecordName` (≥ `vi
 | `formEventMapping` (REQ-API-021) | `[ {"form_name":"intake","event_name":"baseline","arm_num":1,"unique_event_name":"baseline_arm_1","form_event_mapping":"1"}, … ]` — events in the canonical per-arm order (GD-15) |
 | `exportFieldNames` (REQ-API-022) | `[ {"field_name":"record_id","form_name":"intake"}, … ]` — restricted to `forms[]` when supplied |
 | `generateNextRecordName` (REQ-API-023) | `{ "next_record_name": "8DISC042" }` |
+| `repeatingFormsEvents` (REQ-API-155) | `[ {"event_name":"baseline_arm_1","form_name":"visits","custom_form_label":""}, … ]` — the repeating pairs (REQ-DB-047), events in canonical order, instruments by position; read-only — a call carrying `data` is 400 (the designation is the administration API's, §4.10) |
 
 `generateNextRecordName` follows the project's naming pattern (REQ-DB-007) — digit-placeholder style (`8DISC[0-9][0-9][0-9]`) and counter-prefix style (`0001_01`, width preserved) — and MUST NOT return a name an existing record already holds (REQ-API-023). The next name is one counter step above the greatest existing name of the same shape (max + 1); names freed by deleted records are not reused (no gap-filling, REQ-API-023). While the project's record naming mode is `auto` (REQ-DB-045) it answers the next plain integer strictly above every numeric record id of the project instead — the first name is `1`, and ids that are not all digits never advance the counter nor collide with it (REQ-API-151).
 
@@ -207,6 +208,21 @@ An explicit `action=export` may accompany the call and changes nothing; a `data`
 
 `wide` (DEV-API-1, simplified for caller compatibility): one row per record; a field present in exactly one event keeps its bare name; a field present in several events is emitted once per event as `<field>_<unique_event_name>`. An instrument's `<instrument>_complete` follows the same rule — suffixed once per event when the instrument is active in several (REQ-API-134). Missing values are empty strings. `flat` is what all known callers use; `wide` exists so requests that omit `type` (REDCap default) keep working.
 
+**Repeating instruments** (REQ-API-155, REDCap's layout). At an event where an instrument repeats (REQ-DB-047), `flat` writes the event's own row with that instrument's columns — its `<instrument>_complete` included — left empty, and then one row per instance that holds a value or is finished, ascending: `redcap_repeat_instrument` names the instrument, `redcap_repeat_instance` the number, the identifier column the record, and only that instrument's columns are filled (the others empty). The event's own row is written only when the event holds a first-instance value outside its repeating instruments (the identifier counts):
+
+```json
+[
+  { "record_id": "8DISC042", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "", "redcap_repeat_instance": "",
+    "age": "42", "intake_complete": "1", "visit_score": "", "visits_complete": "" },
+  { "record_id": "8DISC042", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "visits", "redcap_repeat_instance": "1",
+    "age": "", "intake_complete": "", "visit_score": "3", "visits_complete": "1" },
+  { "record_id": "8DISC042", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "visits", "redcap_repeat_instance": "2",
+    "age": "", "intake_complete": "", "visit_score": "5", "visits_complete": "2" }
+]
+```
+
+`wide` adds, after an instrument's own block, one block per further instance `n` (2 … the highest among the records the call may return) at each event the instrument repeats at, every column suffixed `__<n>` — `visit_score__2` for a single-event field, `visit_score_baseline_arm_1__2` for one present at several events; a record without that instance leaves the block empty. Hidden instances (REQ-DB-048) are in neither layout. `filterLogic` evaluates first instances only (REQ-VAL-045).
+
 #### 3.6.3 `filterLogic` (REQ-API-025)
 
 Minimum normative support: equality on string fields, `[field]="value"`, and compound conditions with `&&` / `||` and parentheses — the full grammar (value comparisons `=`, `!=`, `<`, `>`, `<=`, `>=`, numeric/chronological/string comparison semantics, `text_contains`, `is_blank`, `is_not_blank`, precedence) is the branching-logic grammar of `Data_Validation_Design.md` §7, evaluated against the record's stored values. A single-segment reference `[field]` names no event and falls back to the project's **first event** in canonical order GD-15 (`Data_Validation_Design.md` §7.1). REDCap's own spellings — `'value'`, `and`/`or`, `<>`, `[field(code)]` — and its blank test `[field] = ''` are part of that grammar (REQ-VAL-044), so a filter copied from a REDCap caller means what it meant there. `filterLogic` filters which **records** are returned; it never changes the sensitivity level.
@@ -244,6 +260,8 @@ Each value passes the full validation pipeline (`Data_Validation_Design.md` §2)
 
 The row's event key is accepted as `event_name` **or** `redcap_event_name` (REQ-API-138): the latter names the same value in a flat export (REQ-API-028), so a caller can post back what it pulled without renaming. An empty value means "not supplied", so one spelling is in force per row; two different events name an ambiguous target and the row is rejected — `event_name: CONTENT_INVALID — event_name 'baseline_arm_1' conflicts with redcap_event_name 'followup_arm_1'` — storing nothing of it (REQ-API-035). The alias applies to projects **with** events: a project without events stores under the empty event name, so there the alias would move the row's values out of the slot the rest of the code reads (calculated fields recompute into it) and it is ignored instead.
 
+**Repeating instruments** (REQ-API-155). A row naming `redcap_repeat_instrument` and `redcap_repeat_instance` fills that instance of an instrument repeating at the row's event — instance 1 lands where every first instance is stored, so the rows of a flat export import back unchanged. Such a row carries that instrument's fields only: an empty cell of another instrument is skipped (REDCap's rows leave them empty), a value is the usual cross-instrument rejection; the record identifier is a framing key on a further instance and is not stored there (GD-8). `form_name`, when present, must name the same instrument. Refusals, as row results: the instrument does not repeat at the event (hidden instances are not writable, REQ-DB-048); the instance is not a positive integer; `redcap_repeat_instance` other than `1` without an instrument (repeating events do not exist here). A row naming neither fills first instances, as before; a **flat** row without repeat columns skips the empty value of a field whose instrument repeats at the row's event — the event's own row of a REDCap export leaves those cells empty, so reading them as clears would wipe instance 1 on a round trip. Calculated fields are recomputed per instance (REQ-VAL-045). The audit payloads name a further instance as `instance` (`Audit_Logging_Design.md` §3.2).
+
 #### 3.7.2 Response (REQ-API-034, REQ-VAL-008, REQ-API-142)
 
 With `returnContent=count` the response is HTTP 200 and the number of rows applied (added + updated) — `{"count": 86}` in JSON, a bare count line in CSV; rejected rows are not counted and no per-row detail is rendered (REQ-API-142). Otherwise — any other value or none — HTTP 200 with one result row per imported record:
@@ -275,7 +293,7 @@ The master spec's "Error messages by api" note shows one invalid value reported 
 
 Requires the **delete instrument values** right on every (instrument, event) pair whose values the call clears — all-or-nothing (REQ-API-036). In analysis mode the call is rejected — 403 `Project in analysis mode` (GD-20, REQ-API-109). Removes the record's values — scoped by the supplied `records[]`/`events[]`/`fields[]` (a `checkbox` named in `fields[]` scopes to every one of its choice columns, where its values are stored — REQ-DB-042), or the whole record — and, when a record's last value is removed, the record itself. Audit: `record_deleted` **with the deleted values** (REQ-AUD-009, `Audit_Logging_Design.md` §3.2).
 
-Request: `token=…&content=record&action=delete&records[0]=8DISC042` (optionally `events[]`/`fields[]` to scope).
+Request: `token=…&content=record&action=delete&records[0]=8DISC042` (optionally `events[]`/`fields[]` to scope, and `repeat_instance` — REDCap's parameter — to delete one instance only: `1` the first, `n` a further instance of a repeating instrument, REQ-API-155; without it every instance in scope goes, hidden ones included; a value that is no positive integer is 400).
 
 Response (JSON):
 
@@ -626,14 +644,18 @@ The API derives `unique_event_name = <label>_arm_<n>` (REQ-DB-011); a duplicate 
 
 Writes `position` (1…n) for the arm's events; the canonical order of GD-15 then governs the display (timepoint events by `period`, ties and no-timepoint events by the written `position`). 200. Audit `event_reordered` with the new order (REQ-API-103, `Audit_Logging_Design.md` §3.3).
 
-### 4.10 Instruments (REQ-API-064…066, REQ-API-101, REQ-API-130, REQ-API-152, REQ-API-153)
+### 4.10 Instruments (REQ-API-064…066, REQ-API-101, REQ-API-130, REQ-API-152, REQ-API-153, REQ-API-154)
 
 **`GET /api/v1/projects/{id}/instruments`** — data access ≥ `read_only`. 200:
 
 ```json
 [ { "id": 7, "name": "intake", "position": 1, "field_count": 24,
-    "is_survey": false, "branching_logic": "" } ]
+    "is_survey": false, "branching_logic": "", "repeating_events": [] },
+  { "id": 9, "name": "visits", "position": 2, "field_count": 6,
+    "is_survey": false, "branching_logic": "", "repeating_events": ["baseline_arm_1"] } ]
 ```
+
+`repeating_events` (REQ-API-154) names the events the instrument repeats at — arms by number, events in canonical order (GD-15), `[]` when none; every instrument object (list, create, update, reset) carries it.
 
 **`POST /api/v1/projects/{id}/instruments`** — `project_admin`. Body `{ "name": "intake" }`; the name is unique within the project (REQ-DB-013; a duplicate → 409 `conflict`). 201 — the instrument object (`position` = end of list). Audit `instrument_created`.
 
@@ -643,11 +665,19 @@ Writes `position` (1…n) for the arm's events; the canonical order of GD-15 the
 { "order": [7, 12, 3] }
 ```
 
-The record-identifier invariant MUST hold after reordering (GD-8: the first field of the first instrument is the record identifier) — a violation → 400 `invalid_request` (§4.2). Audit `instrument_reordered`.
+The record-identifier invariant MUST hold after reordering (GD-8: the first field of the first instrument is the record identifier) — a violation → 400 `invalid_request` (§4.2); a repeating instrument may not become the first one → 409 `conflict` (REQ-API-154). Audit `instrument_reordered`.
 
-**`PUT /api/v1/projects/{id}/instruments/{iid}`** — `project_admin`; idempotent (REQ-API-101). Body: any subset of `{ "name", "is_survey", "branching_logic" }`, e.g. `{ "is_survey": true }`, `{ "branching_logic": "[baseline][consent]=\"1\"" }`. A `name` rename keeps the name unique within the project — a collision → 409 `conflict`, an empty or non-string name → 400 `validation_error` (REQ-API-130). The rename is a label: stored values are keyed by field name and event, not instrument name, so nothing is rewritten and the mapping pairs stay. An invalid branching expression is rejected at design time → 400 `validation_error` (REQ-VAL-029, `Data_Validation_Design.md` §7.2). 200 — the instrument object. Audit `instrument_updated` with old and new values.
+**`PUT /api/v1/projects/{id}/instruments/{iid}`** — `project_admin`; idempotent (REQ-API-101). Body: any subset of `{ "name", "is_survey", "branching_logic" }`, e.g. `{ "is_survey": true }`, `{ "branching_logic": "[baseline][consent]=\"1\"" }`. A `name` rename keeps the name unique within the project — a collision → 409 `conflict`, an empty or non-string name → 400 `validation_error` (REQ-API-130). The rename is a label for a form's first instance — its stored values are keyed by field name and event — and the mapping pairs and their repeating designation stay; the further instances of a repeating instrument are stored under its name and move with it in the same transaction (REQ-DB-048). `is_survey: true` on an instrument that repeats anywhere → 409 `conflict` (REQ-API-154). An invalid branching expression is rejected at design time → 400 `validation_error` (REQ-VAL-029, `Data_Validation_Design.md` §7.2). 200 — the instrument object. Audit `instrument_updated` with old and new values.
 
 **`DELETE /api/v1/projects/{id}/instruments/{iid}`** — `project_admin`. Removes the instrument together with its fields, their stored values (same transaction, like REQ-API-070) and its mapping pairs; losing recorded values makes the change breaking in analysis mode (§4.21). An expression that survives the change naming a doomed field → 409 `conflict` — references inside the deleted design go with it, which is what commit checks against the post-change design too. 204. Audit `instrument_deleted` with the removed field and value counts (REQ-API-127). **A project always keeps at least one instrument**: deleting the last remaining one only deletes its fields and renames the shell to `instrument` — id, position, survey flag and branching logic stay — answering 200 with the object and auditing `instrument_updated` with `last_instrument_reset` (VISION "Arms, events and instruments": "only the fields in that instrument should be deleted. The instrument should be renamed to 'instrument'").
+
+**`PUT /api/v1/projects/{id}/instruments/{iid}/repeating`** — `project_admin`; idempotent (REQ-API-154). Designates the events the instrument repeats at (REQ-DB-047); the list replaces the whole set, `[]` turns repeating off:
+
+```json
+{ "events": ["baseline_arm_1", "follow_up_arm_1"] }
+```
+
+Every name must be an event the instrument is mapped to — an unknown or unmapped one → 400 `validation_error`; `events` missing or not a list → 400 `invalid_request`. A survey instrument (GD-9: one link fills one form) and the first instrument (its first field is the record identifier, GD-8) → 409 `conflict`. Never breaking: turning repeating off keeps the further instances' values, hidden until the pair repeats again (REQ-DB-048). In production the change goes to the open staging set like every structure write (§4.21; diff kinds `repeating_on`/`repeating_off`). 200 — the instrument object. Audit `instrument_updated` with `changes.repeating_events` old → new; an unchanged set writes nothing.
 
 **`POST /api/v1/projects/{id}/instruments/import`** — `project_admin` (REQ-API-152). Creates instruments and their fields from REDCap dictionaries: an **instrument ZIP** (REDCap's instrument export — `instrument.csv` plus `OriginID.txt`, the exporting server's name) or a bare **data-dictionary CSV** (one or several forms). Body — the files in import order, each base64-encoded:
 
@@ -822,7 +852,7 @@ Each array lists the events an instrument is mapped to; an empty array = mapped 
 
 An instrument is active for data entry once it is mapped to at least one event (REQ-DB-012). **Unmapping never deletes anything:** the pair's `data` rows and its `instrument_completion` rows stay in place (REQ-DB-036 creates none while the pair is unmapped, and removes none), and they become visible again — in the form, on the record-status dashboard, and in exports — as soon as the pair is mapped back. Unmapping a pair that holds values is therefore non-breaking and needs no acknowledgement in any mode (§4.21). 200. Audit `mapping_updated`.
 
-### 4.13 Record status (REQ-API-074, REQ-API-110, REQ-API-149)
+### 4.13 Record status (REQ-API-074, REQ-API-110, REQ-API-149, REQ-API-156)
 
 **`GET /api/v1/projects/{id}/record-status`** — data access ≥ `read_only` + record visibility (REQ-AUTH-045). 200 — all visible records, with their instruments per event in the instrument order of each arm and a **three-state** completion state per (record, event, instrument), listed **sparsely** (REQ-API-149, DEV-API-26):
 
@@ -842,15 +872,24 @@ An instrument is active for data entry once it is mapped to at least one event (
 
 **Sparse listing** (REQ-API-149). Every visible record is listed, and under it every event of a readable arm that has at least one mapped instrument; an event's `instruments` carries only the cells that are not `no_data`, as an empty list when there are none. A mapped instrument absent from a listed event is `no_data` — in the example, `labs` at `baseline_arm_1` and everything at `week_4_arm_1`; the mapped pairs come from the instrument–event mapping (§4.12). An event absent from a record is **not reported** (an arm the caller may not read, GD-2) and carries no state, so a client renders it as unknown, never as grey. The dense alternative — one cell per (record, event, mapped instrument) — grew with the design rather than the data: a 32-record stress project with 12,348 mapped pairs answered 15 MB for 102 non-empty cells, beyond what the web layer can decode within its `memory_limit` (DEV-API-26).
 
+**Repeating instruments** (REQ-API-156). For an instrument repeating at the event (REQ-DB-047) the entry adds `instances` — every instance whose state is not `no_data`, ascending, each with its own state — while `state` stays the first instance's; the entry is listed when any instance holds a state:
+
+```json
+{ "name": "visits", "state": "some_data",
+  "instances": [ { "instance": 1, "state": "some_data" }, { "instance": 2, "state": "finished" } ] }
+```
+
+An instance's state is derived like a cell's — from its own values — and `finished` is its own assignment. A pair that does not repeat carries no `instances` and states its first instance only; further instances it kept from a time it repeated are hidden (REQ-DB-048).
+
 The response MUST NOT contain field values (REQ-API-074). A record-status read is not a record view (`Audit_Logging_Design.md` §8, ASM-AUD-2).
 
 **`PUT /api/v1/projects/{id}/records/{record}/events/{event}/instruments/{iid}/completion`** — data access ≥ `view_edit` on the record's arm (REQ-API-110); idempotent (REQ-API-042). Body:
 
 ```json
-{ "state": "finished" }
+{ "state": "finished", "instance": 2 }
 ```
 
-`state` is `finished` (set) or `unfinished` (clear, returning the row to its derived `no_data`/`some_data`). The call writes **no field value** — it is a workflow annotation, not data entry, and MUST NOT be rejected by validation or by analysis-mode write rules that apply to values (GD-20 scopes mode rejection to imports of data; this endpoint changes none). Unknown record/event/instrument → 404 `not_found`; an (event, instrument) pair not mapped in the active design → 409 `conflict`; a survey-marked instrument → 409 `conflict` — it needs no assignment, its `finished` state is automatic (REQ-DB-036, GD-9). A record outside the caller's data-access-group scope → 403 `forbidden` (REQ-AUTH-045). 200 — `{ "state": "finished" }`, the resulting stored state. Audit `instrument_completed` / `instrument_uncompleted` (REQ-AUD-026, `Audit_Logging_Design.md` §3).
+`instance` (optional, default 1) addresses one instance of a repeating instrument (REQ-API-156): above 1 only where the pair repeats, else 409 `conflict`; not a positive integer → 400. The audit payload names a further instance as `instance`. `state` is `finished` (set) or `unfinished` (clear, returning the row to its derived `no_data`/`some_data`). The call writes **no field value** — it is a workflow annotation, not data entry, and MUST NOT be rejected by validation or by analysis-mode write rules that apply to values (GD-20 scopes mode rejection to imports of data; this endpoint changes none). Unknown record/event/instrument → 404 `not_found`; an (event, instrument) pair not mapped in the active design → 409 `conflict`; a survey-marked instrument → 409 `conflict` — it needs no assignment, its `finished` state is automatic (REQ-DB-036, GD-9). A record outside the caller's data-access-group scope → 403 `forbidden` (REQ-AUTH-045). 200 — `{ "state": "finished" }`, the resulting stored state. Audit `instrument_completed` / `instrument_uncompleted` (REQ-AUD-026, `Audit_Logging_Design.md` §3).
 
 ### 4.14 Export (UI) (REQ-API-075…076)
 
@@ -896,16 +935,18 @@ Reverse chronological (REQ-API-077). 200:
 
 Entries MAY carry the `token` column and payload values — the trail is the sole sanctioned carrier (REQ-AUD-007, `Audit_Logging_Design.md` §2). The endpoint is read-only: no endpoint exists that writes, updates, or deletes audit data (REQ-DB-024, REQ-API-077).
 
-### 4.16 Record history (REQ-API-079…081)
+### 4.16 Record history (REQ-API-079…081, REQ-API-156)
 
 **`GET /api/v1/projects/{id}/records/{record}/history`** — data access ≥ `read_only` on the record's arm (GD-2) + project visibility (REQ-API-007) + record visibility (REQ-AUTH-045). Query parameters: `instrument`, `event`, `field` (filters, REQ-API-080 — `field` naming a `checkbox` matches the changes of every one of its choice columns, which is where its values are stored, REQ-DB-042), `order` (`chrono` default | `newest`, REQ-API-137 — see below) and `limit`/`cursor` per §1. Chronological, covering all changes of the record since creation, transparent across the yearly rollover (REQ-AUD-006). 200:
 
 ```json
 { "entries": [ { "created_at": "2026-09-18 14:02:11", "user_id": 3, "user_display_name": "User",
-                 "action": "update", "instrument": "intake", "event": "baseline_arm_1",
+                 "action": "update", "instrument": "intake", "event": "baseline_arm_1", "instance": 1,
                  "fields": [ { "field": "age", "old": "41", "new": "42" } ] } ],
   "next_cursor": null }
 ```
+
+`instance` names the form instance the change belongs to — 1 for every form that does not repeat, read as 1 from an entry that names none — and `?instance=n` narrows the history to one instance (REQ-API-156; not a positive integer → 400).
 
 `action` ∈ `create | update | delete`; for `create`, `old` is `null`; for `delete`, `new` is `null` and the `old` values are the deleted values (REQ-AUD-009). The endpoint is read-only with respect to the audit trail (REQ-AUD-002). The data entry form presents this per-field history — who entered or changed the value, when, and the old → new values — fetched from this endpoint (REQ-API-081; User_Interface plan, data entry form).
 
@@ -1070,6 +1111,7 @@ Every project is in exactly one mode (`projects.mode`, `Database_Schema_Design.m
 | change a field label/description, field note, section header; reorder fields/instruments/events (GD-8 invariant enforced as ever) | non-breaking |
 | rename a field (stored values renamed in the same transaction, REQ-VAL-014) | non-breaking — values stay accessible under the new name |
 | rename an instrument (REQ-API-130) | non-breaking — values are keyed by field name and event, not instrument name |
+| turn repeating on or off for a mapped pair (REQ-API-154; diff kinds `repeating_on` / `repeating_off`) | non-breaking — a first instance is stored where it always was; further instances stay stored, hidden while the pair does not repeat (REQ-DB-048) |
 | add options to an existing dropdown/radio/matrix/checkbox | non-breaking |
 | delete a field | **breaking** — its stored values are removed (DEV-API-5) |
 | change a field's type, or its validation type beyond the current values | **breaking** — stored values may no longer satisfy the new rules |

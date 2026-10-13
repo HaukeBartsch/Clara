@@ -181,7 +181,10 @@ type ValidationType struct {
 	Builtin bool
 }
 
-// DataValue is one EAV row (REQ-DB-015…020).
+// DataValue is one EAV row (REQ-DB-015…020). The first instance of every form
+// is stored with an empty RepeatingInstrument and RepeatingInstanceNumber 1; instances
+// 2, 3, … of a repeating (instrument, event) pair carry the instrument's name
+// (REQ-DB-048). A zero instance number is written as 1 (REQ-DB-019).
 type DataValue struct {
 	ProjectID               int64
 	RecordID                string
@@ -190,6 +193,35 @@ type DataValue struct {
 	RepeatingInstanceNumber int
 	FieldName               string
 	Value                   string
+}
+
+// Instance is the form instance the row belongs to (REQ-DB-048): a row without
+// a repeating instrument is the first instance whatever number it carries.
+func (dv DataValue) Instance() int {
+	if dv.RepeatingInstrument == "" || dv.RepeatingInstanceNumber < 1 {
+		return 1
+	}
+	return dv.RepeatingInstanceNumber
+}
+
+// InstanceSlot is the (repeating_instrument, repeating_instance_number) pair a
+// value of one form instance is stored under (REQ-DB-048): instance 1 of any
+// form is (empty name, 1), so turning repeating on for a pair never moves a stored
+// value; instance n ≥ 2 names its instrument.
+func InstanceSlot(instrument string, instance int) (string, int) {
+	if instance <= 1 {
+		return "", 1
+	}
+	return instrument, instance
+}
+
+// storedInstance is the instance number a writer puts into the row: the first
+// instance is 1, never the zero value of an unset field (REQ-DB-019).
+func storedInstance(dv *DataValue) int {
+	if dv.RepeatingInstanceNumber < 1 {
+		return 1
+	}
+	return dv.RepeatingInstanceNumber
 }
 
 // RecordEntity tracks a record's identity and DAG assignment (REQ-DB-029, GD-10).
@@ -250,9 +282,12 @@ type CalculatedDependency struct {
 }
 
 // InstrumentEvent is one checked (instrument, event) pair (REQ-DB-012).
+// IsRepeating designates the pair a repeating instrument (REQ-DB-047): the form
+// can then be filled out more than once for a record at that event.
 type InstrumentEvent struct {
 	InstrumentID int64
 	EventID      int64
+	IsRepeating  bool
 }
 
 // Language and i18n string (REQ-DB-031, GD-12).

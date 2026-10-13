@@ -344,10 +344,10 @@ func TestRecordExportCompleteColumns(t *testing.T) {
 		}
 		defer tx.Rollback()
 		if on {
-			if _, err := f.s.SetInstrumentCompletionTx(ctx, tx, f.pid, record, eventID, instrID, 0); err != nil {
+			if _, err := f.s.SetInstrumentCompletionTx(ctx, tx, f.pid, record, eventID, instrID, 1, 0); err != nil {
 				t.Fatalf("SetInstrumentCompletionTx: %v", err)
 			}
-		} else if _, err := f.s.ClearInstrumentCompletionTx(ctx, tx, f.pid, record, eventID, instrID); err != nil {
+		} else if _, err := f.s.ClearInstrumentCompletionTx(ctx, tx, f.pid, record, eventID, instrID, 1); err != nil {
 			t.Fatalf("ClearInstrumentCompletionTx: %v", err)
 		}
 		if err := tx.Commit(); err != nil {

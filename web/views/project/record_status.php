@@ -113,12 +113,16 @@ $activeArm = (int) ($arms[0]['arm_num'] ?? 0);
                         <tr>
                             <?php foreach ($events as $event): ?>
                                 <?php foreach ($event['instruments'] as $instrument): ?>
-                                    <!-- data-col keys the cell record-status.js puts under this header. -->
+                                    <!-- data-col keys the cell record-status.js puts under this header; a
+                                         repeating instrument's column also says so, and whether "+" is
+                                         offered in it (REQ-UI-055). -->
                                     <th scope="col" class="small text-center clara-status-col"
                                         data-col="<?= View::e($event['unique_event_name'] . '|' . $instrument['name']) ?>"
                                         data-event="<?= View::e($event['unique_event_name']) ?>"
                                         data-event-label="<?= View::e($event['event_name']) ?>"
-                                        data-instrument="<?= View::e($instrument['name']) ?>"><?= View::e($instrument['name']) ?></th>
+                                        data-instrument="<?= View::e($instrument['name']) ?>"
+                                        <?php if (!empty($instrument['repeating'])): ?>data-repeating="1"<?= !empty($instrument['canAdd']) ? ' data-add="1"' : '' ?>
+                                        title="<?= View::e($view->t('records.repeating_column', ['instrument' => $instrument['name']])) ?>"<?php endif; ?>><?= View::e($instrument['name']) ?><?php if (!empty($instrument['repeating'])): ?> <span aria-hidden="true">⟳</span><?php endif; ?></th>
                                 <?php endforeach; ?>
                             <?php endforeach; ?>
                         </tr>

@@ -11,6 +11,8 @@
 //    warns on names over 26 characters (REQ-VAL-013), presets the direct-identifier flag for
 //    identifier-shaped types and reports an explicit clear (REQ-EXP-020/021), and adds
 //    choice rows.
+// 3. The "Repeating" switches of the instrument list (REQ-UI-054): a switch saves the
+//    instrument's set at once, so the Save button for a browser without JavaScript goes.
 
 import { el, fetchJson, ready, t } from "../app.js"
 
@@ -184,7 +186,24 @@ const wireFieldForm = (form) => {
   }
 }
 
+// --- 3. repeating switches ---
+
+function wireRepeating(form) {
+  const save = form.querySelector("[data-clara-repeating-save]")
+  if (!save) return // nothing can be changed here (§6.7)
+  save.classList.add("d-none")
+  form.addEventListener("change", (event) => {
+    if (!event.target.matches("input[type=checkbox]")) return
+    form.requestSubmit()
+    // One write per change: the page reloads with the saved state, so the switches are held
+    // still meanwhile rather than queueing a second, stale set. The submission has taken its
+    // values already, so disabling them now changes nothing it sends.
+    for (const input of form.querySelectorAll("input[type=checkbox]")) input.disabled = true
+  })
+}
+
 ready(() => {
   for (const root of document.querySelectorAll("[data-clara-expression]")) wireExpression(root)
   for (const form of document.querySelectorAll("[data-clara-field-form]")) wireFieldForm(form)
+  for (const form of document.querySelectorAll("[data-clara-repeating-form]")) wireRepeating(form)
 })

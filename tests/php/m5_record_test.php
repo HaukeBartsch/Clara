@@ -272,7 +272,7 @@ describe('Record Status Dashboard (§6.3, REQ-UI-019)', function (): void {
             'baseline_arm_1|intake' => 'some_data',
             'baseline_arm_1|scores' => 'finished',
             'follow_up_arm_1|intake' => 'no_data', // an unknown state never reaches the client
-        ]]], $payload['records']);
+        ], 'instances' => []]], $payload['records']);
     });
 
     it('relays the sparse read: reported events without cells, an empty cell map (REQ-API-149)', function (): void {
@@ -295,8 +295,8 @@ describe('Record Status Dashboard (§6.3, REQ-UI-019)', function (): void {
         $payload = json_decode($response->body(), true);
         assert_same([
             ['record_id' => '8DISC001', 'events' => ['baseline_arm_1', 'follow_up_arm_1'],
-                'cells' => ['baseline_arm_1|intake' => 'some_data']],
-            ['record_id' => '8DISC002', 'events' => ['baseline_arm_1'], 'cells' => []],
+                'cells' => ['baseline_arm_1|intake' => 'some_data'], 'instances' => []],
+            ['record_id' => '8DISC002', 'events' => ['baseline_arm_1'], 'cells' => [], 'instances' => []],
         ], $payload['records']);
     });
 
@@ -476,7 +476,7 @@ describe('record view (§8, REQ-UI-025…027)', function (): void {
         $payload = json_decode($response->body(), true);
         assert_same(2, count($payload['entries']));
         assert_same(['created_at' => '2026-10-01 10:00:00', 'user' => 'Test <Member>', 'action' => 'update',
-            'event' => 'baseline_arm_1', 'field' => 'age', 'old' => '41', 'new' => '42'], $payload['entries'][0]);
+            'event' => 'baseline_arm_1', 'instance' => 1, 'field' => 'age', 'old' => '41', 'new' => '42'], $payload['entries'][0]);
         assert_contains('field=age', $GLOBALS['api_calls'][count($GLOBALS['api_calls']) - 1]['url']);
 
         $bad = m5_get('/projects/3/records/8DISC001', ['field' => 'x;drop'], json_headers());

@@ -20,6 +20,7 @@ This document outlines the validation rules for the clinical study management sy
 - Yes/No fields (`yesno`, REQ-DB-043) are radio buttons with the fixed codes `1` = Yes and `0` = No.
 - Checkboxes store one value per choice under `<field_name>___<code>` (REQ-DB-042): `1` checks a box, `0` or empty clears it; any other value is rejected.
 - In a calculation an unchecked box reads as `0`, so a sum of boxes counts the checked ones (REQ-VAL-038).
+- Inside a repeating instrument an expression reads its own instrument's fields at its own event from the same instance, every other reference from the record's first instances; a calculated field of a repeating instrument is computed per instance (REQ-VAL-045).
 
 ### 3. Matrix Fields
 - Validation: Each row must have a valid selection from the shared choices.

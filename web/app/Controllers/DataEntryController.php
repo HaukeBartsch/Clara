@@ -196,11 +196,15 @@ abstract class DataEntryController extends ProjectPageController
         return $record;
     }
 
-    /** The browser route of one record's view, optionally on one (event, instrument). */
-    protected static function recordUrl(int $projectId, string $record, string $event = '', string $instrument = ''): string
+    /**
+     * The browser route of one record's view, optionally on one (event, instrument) and — for
+     * a repeating instrument (REQ-UI-055) — one instance of it.
+     */
+    protected static function recordUrl(int $projectId, string $record, string $event = '', string $instrument = '', int $instance = 0): string
     {
         $url = '/projects/' . $projectId . '/records/' . rawurlencode($record);
-        $query = array_filter(['event' => $event, 'instrument' => $instrument], static fn (string $v): bool => $v !== '');
+        $query = array_filter(['event' => $event, 'instrument' => $instrument, 'instance' => $instance > 0 ? (string) $instance : ''],
+            static fn (string $v): bool => $v !== '');
 
         return $query === [] ? $url : $url . '?' . http_build_query($query, '', '&', PHP_QUERY_RFC3986);
     }

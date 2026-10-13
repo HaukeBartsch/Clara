@@ -152,8 +152,10 @@ final class DataEntry
      * changes rather than the whole history (Plan §7 rule 14). `$fetch(?string $cursor)`
      * returns one decoded page: `{entries: […], next_cursor: string|null}`.
      *
-     * Keys are `<unique_event_name>|<field_name>`. A key that no entry mentions is absent —
-     * it has no stored value.
+     * Keys are `<unique_event_name>|<field_name>` for a form's first instance, and
+     * `<unique_event_name>|<field_name>#<n>` for instance n ≥ 2 of a repeating instrument
+     * (REQ-DB-048: the history names the instance of every entry, REQ-API-156). A key that no
+     * entry mentions is absent — it has no stored value.
      *
      * @param list<string> $wanted
      * @return array{values: array<string, string>, truncated: bool}
@@ -179,9 +181,11 @@ final class DataEntry
                     continue;
                 }
                 $event = (string) ($entry['event'] ?? '');
+                $instance = (int) ($entry['instance'] ?? 1);
+                $suffix = $instance > 1 ? '#' . $instance : '';
                 $deleted = ($entry['action'] ?? '') === 'delete';
                 foreach ((is_array($entry['fields'] ?? null) ? $entry['fields'] : []) as $change) {
-                    $key = $event . '|' . (string) ($change['field'] ?? '');
+                    $key = $event . '|' . (string) ($change['field'] ?? '') . $suffix;
                     if (!isset($open[$key])) {
                         continue; // not wanted, or already settled by a newer entry
                     }

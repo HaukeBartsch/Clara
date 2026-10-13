@@ -65,7 +65,7 @@ Data-change shape (create / update / delete):
 }
 ```
 
-Rules: `old` is `null` for `create`; for `delete`, `new` is `null` and the `old` values are the deleted values (REQ-AUD-009). One entry per (record, instrument, event) group of the operation. The acting user, token, and arm are in the fixed columns; `target_record` is set (§6.4).
+Rules: `old` is `null` for `create`; for `delete`, `new` is `null` and the `old` values are the deleted values (REQ-AUD-009). One entry per (record, instrument, event) group of the operation — per (record, instrument, event, instance) for a repeating instrument (REQ-DB-048): a further instance's entry carries `"instance": n` beside `event`, as do its `calculated_recomputed` and `instrument_completed`/`instrument_uncompleted` entries; a first instance leaves the key out, so every entry written before repeating instruments existed reads as instance 1 (REQ-API-156). The acting user, token, and arm are in the fixed columns; `target_record` is set (§6.4).
 
 ### 3.3 Project structure events (REQ-AUD-010)
 

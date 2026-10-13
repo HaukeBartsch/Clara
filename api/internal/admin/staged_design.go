@@ -89,13 +89,16 @@ type stagedArm struct {
 }
 
 // stagedDesign is the document: instruments, arms with events, and the mapping
-// (arm_num → instrument name → unique event names). NextID allocates the
-// provisional ids of objects created while the set is open (descending from
-// -1, so they can never collide with a live id).
+// (arm_num → instrument name → unique event names). Repeating has the mapping's
+// shape and names the mapped pairs designated repeating (REQ-DB-047) — always a
+// subset of Mapping, which every mutator that shrinks the mapping keeps true.
+// NextID allocates the provisional ids of objects created while the set is open
+// (descending from -1, so they can never collide with a live id).
 type stagedDesign struct {
 	Instruments []stagedInstrument          `json:"instruments"`
 	Arms        []stagedArm                 `json:"arms"`
 	Mapping     map[int]map[string][]string `json:"mapping"`
+	Repeating   map[int]map[string][]string `json:"repeating,omitempty"`
 	NextID      int64                       `json:"next_id"`
 }
 
@@ -203,6 +206,7 @@ func (h *Handler) stagedDesignOf(ctx context.Context, projectID int64) (*stagedD
 		Instruments: make([]stagedInstrument, 0, len(instruments)),
 		Arms:        make([]stagedArm, 0, len(arms)),
 		Mapping:     map[int]map[string][]string{},
+		Repeating:   map[int]map[string][]string{},
 		NextID:      -1,
 	}
 	byInstrument := map[int64][]stagedField{}
@@ -253,10 +257,21 @@ func (h *Handler) stagedDesignOf(ctx context.Context, projectID int64) (*stagedD
 			d.Mapping[armNum] = map[string][]string{}
 		}
 		d.Mapping[armNum][name] = append(d.Mapping[armNum][name], unique)
+		if p.IsRepeating {
+			if d.Repeating[armNum] == nil {
+				d.Repeating[armNum] = map[string][]string{}
+			}
+			d.Repeating[armNum][name] = append(d.Repeating[armNum][name], unique)
+		}
 	}
 	for armNum := range d.Mapping {
 		for name := range d.Mapping[armNum] {
 			d.Mapping[armNum][name] = sortedUniqueNames(d.Mapping[armNum][name], eventsOfArm(d.Arms, armNum))
+		}
+	}
+	for armNum := range d.Repeating {
+		for name := range d.Repeating[armNum] {
+			d.Repeating[armNum][name] = sortedUniqueNames(d.Repeating[armNum][name], eventsOfArm(d.Arms, armNum))
 		}
 	}
 	return d, nil
@@ -273,6 +288,9 @@ func parseStagedDesign(doc string) (*stagedDesign, error) {
 	}
 	if d.Mapping == nil {
 		d.Mapping = map[int]map[string][]string{}
+	}
+	if d.Repeating == nil {
+		d.Repeating = map[int]map[string][]string{} // a set opened before REQ-DB-047
 	}
 	if d.NextID == 0 {
 		d.NextID = -1
@@ -428,6 +446,99 @@ func (d *stagedDesign) mapped(armNum int, instrument string, uniqueEvent string)
 		}
 	}
 	return false
+}
+
+// repeats reports whether an instrument is designated repeating at one event
+// of an arm (REQ-DB-047).
+func (d *stagedDesign) repeats(armNum int, instrument string, uniqueEvent string) bool {
+	for _, u := range d.Repeating[armNum][instrument] {
+		if u == uniqueEvent {
+			return true
+		}
+	}
+	return false
+}
+
+// repeatingEvents lists the events an instrument repeats at, arms by number and
+// events in canonical order within each — the instrument object's
+// repeating_events (REQ-API-154).
+func (d *stagedDesign) repeatingEvents(instrument string) []string {
+	out := []string{}
+	for _, a := range d.armsByNum() {
+		for _, e := range canonicalStagedEvents(a.Events) {
+			if d.repeats(a.ArmNum, instrument, e.UniqueEventName) {
+				out = append(out, e.UniqueEventName)
+			}
+		}
+	}
+	return out
+}
+
+// setRepeating designates exactly the given events as the instrument's
+// repeating events (REQ-API-154); a name that is not a mapped pair of the
+// instrument is skipped — the caller rejects it before getting here.
+func (d *stagedDesign) setRepeating(instrument string, uniqueEvents []string) {
+	want := map[string]bool{}
+	for _, u := range uniqueEvents {
+		want[u] = true
+	}
+	for _, a := range d.Arms {
+		var list []string
+		for _, e := range canonicalStagedEvents(a.Events) {
+			if want[e.UniqueEventName] && d.mapped(a.ArmNum, instrument, e.UniqueEventName) {
+				list = append(list, e.UniqueEventName)
+			}
+		}
+		if len(list) == 0 {
+			if d.Repeating[a.ArmNum] != nil {
+				delete(d.Repeating[a.ArmNum], instrument)
+			}
+			continue
+		}
+		if d.Repeating[a.ArmNum] == nil {
+			d.Repeating[a.ArmNum] = map[string][]string{}
+		}
+		d.Repeating[a.ArmNum][instrument] = list
+	}
+}
+
+// pruneRepeating drops every designation whose pair is no longer mapped, which
+// keeps Repeating a subset of Mapping after a mapping change: an unmapped pair
+// loses its designation with it, as its row does live.
+func (d *stagedDesign) pruneRepeating() {
+	for armNum, byInstrument := range d.Repeating {
+		for name, uniques := range byInstrument {
+			kept := make([]string, 0, len(uniques))
+			for _, u := range uniques {
+				if d.mapped(armNum, name, u) {
+					kept = append(kept, u)
+				}
+			}
+			if len(kept) == 0 {
+				delete(byInstrument, name)
+				continue
+			}
+			byInstrument[name] = kept
+		}
+		if len(byInstrument) == 0 {
+			delete(d.Repeating, armNum)
+		}
+	}
+}
+
+// renameMappedEvent carries an event's mapping and repeating entries to its new
+// unique name. Both documents key events by unique name and the commit resolves
+// pairs by it, so without this a renamed event would lose its pairs.
+func (d *stagedDesign) renameMappedEvent(armNum int, from, to string) {
+	for _, doc := range []map[int]map[string][]string{d.Mapping, d.Repeating} {
+		for _, uniques := range doc[armNum] {
+			for k, u := range uniques {
+				if u == from {
+					uniques[k] = to
+				}
+			}
+		}
+	}
 }
 
 // identifierFieldID is the record identifier: the first field of the first
@@ -631,6 +742,7 @@ func (d *stagedDesign) instrumentObjects() []instrumentObject {
 		out = append(out, instrumentObject{
 			ID: i.ID, Name: i.Name, Position: i.Position, FieldCount: len(i.Fields),
 			IsSurvey: i.IsSurvey, BranchingLogic: i.BranchingLogic.String,
+			RepeatingEvents: d.repeatingEvents(i.Name),
 		})
 	}
 	return out
@@ -648,6 +760,7 @@ func (d *stagedDesign) instrumentObjectFor(instID int64) (instrumentObject, bool
 	return instrumentObject{
 		ID: si.ID, Name: si.Name, Position: si.Position, FieldCount: len(si.Fields),
 		IsSurvey: si.IsSurvey, BranchingLogic: si.BranchingLogic.String,
+		RepeatingEvents: d.repeatingEvents(si.Name),
 	}, true
 }
 
@@ -771,10 +884,12 @@ func (d *stagedDesign) renameInstrument(instID int64, to string) {
 		}
 		from := d.Instruments[k].Name
 		d.Instruments[k].Name = to
-		for armNum := range d.Mapping {
-			if pairs, ok := d.Mapping[armNum][from]; ok {
-				delete(d.Mapping[armNum], from)
-				d.Mapping[armNum][to] = pairs
+		for _, doc := range []map[int]map[string][]string{d.Mapping, d.Repeating} {
+			for armNum := range doc {
+				if pairs, ok := doc[armNum][from]; ok {
+					delete(doc[armNum], from)
+					doc[armNum][to] = pairs
+				}
 			}
 		}
 		return
@@ -794,6 +909,9 @@ func (d *stagedDesign) deleteInstrument(instID int64) {
 		d.Instruments = append(d.Instruments[:k], d.Instruments[k+1:]...)
 		for armNum := range d.Mapping {
 			delete(d.Mapping[armNum], name)
+		}
+		for armNum := range d.Repeating {
+			delete(d.Repeating[armNum], name)
 		}
 		return
 	}
@@ -919,6 +1037,7 @@ func (d *stagedDesign) deleteArm(armID int64) {
 		armNum := d.Arms[k].ArmNum
 		d.Arms = append(d.Arms[:k], d.Arms[k+1:]...)
 		delete(d.Mapping, armNum)
+		delete(d.Repeating, armNum)
 		return
 	}
 }
@@ -1005,6 +1124,7 @@ func (d *stagedDesign) deleteEvent(eventID int64) bool {
 			}
 			d.Mapping[a.ArmNum][name] = kept
 		}
+		d.pruneRepeating()
 		return true
 	}
 	return false
@@ -1052,6 +1172,7 @@ func (d *stagedDesign) setMappingForArm(armNum int, mapping map[string][]string)
 		clean[name] = list
 	}
 	d.Mapping[armNum] = clean
+	d.pruneRepeating()
 }
 
 // --- small ordering helpers shared by the flatteners ---

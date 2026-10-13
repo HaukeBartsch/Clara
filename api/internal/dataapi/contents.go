@@ -92,6 +92,19 @@ func (h *Handler) contentProject(ctx context.Context, w http.ResponseWriter, enc
 	} else if len(evs) > 0 {
 		info.IsLongitudinal = "1"
 	}
+	// REDCap's flag for projects with repeating instruments (REQ-API-155); the
+	// neutral value otherwise, as before.
+	if pairs, err := h.Store.ListInstrumentEvents(ctx, pr.ID); err != nil {
+		h.storeError(w, enc)
+		return
+	} else {
+		for _, pair := range pairs {
+			if pair.IsRepeating {
+				info.HasRepeatingInstrumentsOrEvents = "1"
+				break
+			}
+		}
+	}
 	render(w, enc, p.Delimiter(), []projectInfo{info})
 }
 
@@ -255,6 +268,40 @@ func yn(b bool) string {
 		return "Y"
 	}
 	return ""
+}
+
+// repeatingRow is one content=repeatingFormsEvents object (REQ-API-155) — REDCap's
+// shape; custom_form_label stays empty, the implementation has no such label.
+type repeatingRow struct {
+	EventName       string `json:"event_name"`
+	FormName        string `json:"form_name"`
+	CustomFormLabel string `json:"custom_form_label"`
+}
+
+// contentRepeatingFormsEvents lists the repeating (instrument, event) pairs
+// (REQ-API-155): events in the canonical per-arm order (GD-15), instruments by
+// position within each. Read-only — the designation is a structure change made
+// through the administration API (REQ-API-154), so a call carrying data is
+// refused rather than answered as an export.
+func (h *Handler) contentRepeatingFormsEvents(ctx context.Context, w http.ResponseWriter, enc string, sub *subject, p Params) {
+	if p.HasData {
+		writeError(w, enc, http.StatusBadRequest, "Invalid request")
+		return
+	}
+	d, err := h.loadDict(ctx, sub.Project.ID)
+	if err != nil {
+		h.storeError(w, enc)
+		return
+	}
+	rows := make([]repeatingRow, 0)
+	for _, e := range d.events {
+		for _, i := range d.instruments {
+			if d.repeats(e.UniqueEventName, i.Name) {
+				rows = append(rows, repeatingRow{EventName: e.UniqueEventName, FormName: i.Name})
+			}
+		}
+	}
+	render(w, enc, p.Delimiter(), rows)
 }
 
 // mappingRow is one content=formEventMapping object (REQ-API-021).

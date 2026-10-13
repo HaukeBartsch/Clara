@@ -11,6 +11,11 @@
 // form shows or its branching needs is settled (§8.3, REQ-API-137). The registry patterns and
 // the data access groups are read only when the form or the member needs them.
 //
+// A repeating instrument (REQ-UI-055) is filled out once per instance: `?instance=n` selects
+// one, the instance pills beside the instrument list switch between them, and "+" next to the
+// instrument's name opens the next. Its values travel with REDCap's `redcap_repeat_instrument`
+// and `redcap_repeat_instance` (REQ-API-155); its completion, its history and its delete name the instance (REQ-API-156).
+//
 // Writes go through the data API with the member's own token (§8.6): values by
 // `content=record&action=import` under the submission policy of GD-14, deletions by
 // `action=delete` (§8.7). The completion state, the record's group and the survey link are
@@ -71,15 +76,18 @@ final class RecordController extends DataEntryController
 
         $field = $this->request->query('field');
         $event = $this->request->query('event');
+        $instance = $this->request->query('instance');
         $cursor = $this->request->query('cursor');
         if (($field !== '' && preg_match('/^[a-z0-9_]{1,100}$/', $field) !== 1)
             || ($event !== '' && preg_match('/^[a-z0-9_]{1,100}$/', $event) !== 1)
+            || ($instance !== '' && preg_match('/^[1-9]\d{0,8}$/', $instance) !== 1)
             || preg_match('/^[A-Za-z0-9_\-=]{0,512}$/', $cursor) !== 1) {
             return Response::apiError('invalid_request', $this->i18n->t('error.invalid_request'), 400);
         }
 
-        $query = array_filter(['order' => 'newest', 'limit' => '50', 'field' => $field, 'event' => $event, 'cursor' => $cursor],
-            static fn (string $v): bool => $v !== '');
+        // `?instance=` narrows the history to one instance of a repeating instrument (REQ-API-156).
+        $query = array_filter(['order' => 'newest', 'limit' => '50', 'field' => $field, 'event' => $event,
+            'instance' => $instance, 'cursor' => $cursor], static fn (string $v): bool => $v !== '');
         $page = $this->api->get('/api/v1/projects/' . $projectId . '/records/' . rawurlencode($record) . '/history', $query);
 
         $entries = [];
@@ -99,6 +107,7 @@ final class RecordController extends DataEntryController
                     'user' => is_string($entry['user_display_name'] ?? null) ? $entry['user_display_name'] : '',
                     'action' => (string) ($entry['action'] ?? ''),
                     'event' => (string) ($entry['event'] ?? ''),
+                    'instance' => max(1, (int) ($entry['instance'] ?? 1)),
                     'field' => (string) ($change['field'] ?? ''),
                     'old' => is_scalar($change['old'] ?? null) ? (string) $change['old'] : null,
                     'new' => is_scalar($change['new'] ?? null) ? (string) $change['new'] : null,
@@ -168,7 +177,9 @@ final class RecordController extends DataEntryController
         $event = $this->request->field('event');
         $instrument = $this->request->field('instrument');
         $iid = $this->objectId('iid');
-        $back = Response::redirect(self::recordUrl($projectId, $record, $event, $instrument));
+        // A repeating instrument's form names its instance (REQ-UI-055); 0 for any other form.
+        $instance = self::postedInstance($this->request->field('repeating'), $this->request->field('instance'));
+        $back = Response::redirect(self::recordUrl($projectId, $record, $event, $instrument, $instance));
 
         if (!self::isName($event) || !self::isName($instrument)) {
             $this->flashDanger($this->i18n->t('error.invalid_request'));
@@ -192,6 +203,7 @@ final class RecordController extends DataEntryController
             $was = DataEntry::withoutReadonly($was, $fields);
         }
         $row = ['record_id' => $record, 'form_name' => $instrument, 'event_name' => $event]
+            + ($instance > 0 ? ['redcap_repeat_instrument' => $instrument, 'redcap_repeat_instance' => (string) $instance] : [])
             + DataEntry::submission($values, $was);
         $params = ['content' => 'record', 'action' => 'import', 'data' => [$row]];
         $tz = $this->request->field('tz');
@@ -218,17 +230,28 @@ final class RecordController extends DataEntryController
 
         $this->flashSuccess($this->i18n->t($code === 1 ? 'record.save.created' : 'record.save.updated',
             ['record' => $record, 'instrument' => $instrument, 'event' => $event]));
-        $this->applyCompletion($projectId, $record, $event, $iid);
+        $this->applyCompletion($projectId, $record, $event, $iid, $instance);
 
         return $back;
     }
 
     /**
-     * POST …?action=delete — the data API's delete (§8.7, GD-3, REQ-API-036) in one of three
-     * scopes the confirmation names: the whole record, its values at one event, or one
-     * instrument's values at one event. The record identifier is kept by the instrument scope
-     * — deleting a form's data is not deleting the participant. Deleted values are written to
-     * the audit trail by the API (REQ-AUD-009).
+     * The instance a repeating instrument's form posted (REQ-UI-055): its number, or 0 when the
+     * form is not one of a repeating instrument — such a row names no instance and fills the
+     * form's only one.
+     */
+    private static function postedInstance(string $repeating, string $instance): int
+    {
+        return $repeating === '1' && preg_match('/^[1-9]\d{0,8}$/', $instance) === 1 ? (int) $instance : 0;
+    }
+
+    /**
+     * POST …?action=delete — the data API's delete (§8.7, GD-3, REQ-API-036) in one of the
+     * scopes the confirmation names: the whole record, its values at one event, one
+     * instrument's values at one event — or, for a repeating instrument, one instance of it
+     * (`repeat_instance`, REQ-UI-055). The record identifier is kept by the instrument and
+     * instance scopes — deleting a form's data is not deleting the participant. Deleted values
+     * are written to the audit trail by the API (REQ-AUD-009).
      */
     public function delete(): Response
     {
@@ -240,8 +263,10 @@ final class RecordController extends DataEntryController
         $iid = $this->objectId('iid');
         $back = Response::redirect(self::recordUrl($projectId, $record, $event, $instrument));
 
-        if (!in_array($scope, ['record', 'event', 'instrument'], true)
-            || ($scope !== 'record' && !self::isName($event))) {
+        $instance = self::postedInstance($this->request->field('repeating'), $this->request->field('instance'));
+        if (!in_array($scope, ['record', 'event', 'instrument', 'instance'], true)
+            || ($scope !== 'record' && !self::isName($event))
+            || ($scope === 'instance' && $instance === 0)) {
             $this->flashDanger($this->i18n->t('error.invalid_request'));
 
             return $back;
@@ -251,9 +276,12 @@ final class RecordController extends DataEntryController
         if ($scope !== 'record') {
             $params['events'] = [$event];
         }
+        if ($scope === 'instance') {
+            $params['repeat_instance'] = (string) $instance;
+        }
 
         try {
-            if ($scope === 'instrument') {
+            if ($scope === 'instrument' || $scope === 'instance') {
                 $params['fields'] = $this->instrumentValueFields($projectId, $iid);
                 if ($params['fields'] === []) {
                     $this->flashSuccess($this->i18n->t('record.delete.nothing'));
@@ -273,7 +301,8 @@ final class RecordController extends DataEntryController
             $deleted += is_array($row) ? (int) ($row['deleted'] ?? 0) : 0;
         }
         $this->flashSuccess($this->i18n->t('record.delete.done.' . $scope,
-            ['record' => $record, 'event' => $event, 'instrument' => $instrument, 'count' => (string) $deleted]));
+            ['record' => $record, 'event' => $event, 'instrument' => $instrument, 'count' => (string) $deleted,
+                'instance' => (string) $instance]));
 
         return $scope === 'record'
             ? Response::redirect('/projects/' . $projectId . '/record-status')
@@ -370,6 +399,14 @@ final class RecordController extends DataEntryController
         $exists = $status !== null;
         $firstEvent = self::firstEvent($detail);
         $uen = $event['unique_event_name'] ?? '';
+        // A repeating instrument shows one instance at a time (REQ-UI-055): the requested one,
+        // the first when none is named. Any other form has only its first.
+        $repeats = $instrument !== null && in_array($uen, is_array($instrument['repeating_events'] ?? null)
+            ? $instrument['repeating_events'] : [], true);
+        $instance = $repeats ? max(1, self::postedInstance('1',
+            $this->request->query('instance') ?: $this->request->field('instance'))) : 1;
+        // Values of a further instance are keyed `<event>|<field>#<n>` (DataEntry::currentValues).
+        $suffix = $instance > 1 ? '#' . $instance : '';
 
         $fields = [];
         $identifier = '';
@@ -416,10 +453,12 @@ final class RecordController extends DataEntryController
         // reference the field and instrument branching logic of this event reads (§8.4).
         $own = [];
         $refs = [];
+        $ownNames = [];
         foreach ($fields as $field) {
             if (DataEntry::isEnterable($field) || ($field['field_type'] ?? '') === 'calculated') {
                 foreach (DataEntry::valueNames($field) as $valueName) {
-                    $own[] = $uen . '|' . $valueName;
+                    $own[] = $uen . '|' . $valueName . $suffix;
+                    $ownNames[$uen . '|' . $valueName] = true;
                 }
             }
             $refs = array_merge($refs, DataEntry::references((string) ($field['branching_logic'] ?? ''), $firstEvent));
@@ -432,12 +471,14 @@ final class RecordController extends DataEntryController
         $prefill = [];
         foreach ($fields as $field) {
             foreach (DataEntry::valueNames($field) as $valueName) {
-                $prefill[$valueName] = $values[$uen . '|' . $valueName] ?? '';
+                $prefill[$valueName] = $values[$uen . '|' . $valueName . $suffix] ?? '';
             }
         }
+        // The form's own fields at this event are read from its inputs; the context carries
+        // the rest — first instances everywhere else (REQ-VAL-045).
         $context = [];
         foreach (array_unique($refs) as $key) {
-            if (!in_array($key, $own, true) && isset($values[$key])) {
+            if (!isset($ownNames[$key]) && isset($values[$key])) {
                 $context[$key] = $values[$key];
             }
         }
@@ -445,6 +486,32 @@ final class RecordController extends DataEntryController
         $analysis = $mode === 'analysis';
         // Entry is decided on the selected pair, not on the arm (REQ-AUTH-069).
         $instrumentName = (string) ($instrument['name'] ?? '');
+        $instances = $status['instances'] ?? [];
+        $states = $status['states'] ?? [];
+        $state = $states[$uen . '|' . $instrumentName] ?? 'no_data';
+        if ($instance > 1) {
+            $state = 'no_data';
+            foreach ($instances[$uen . '|' . $instrumentName] ?? [] as [$n, $instanceState]) {
+                if ($n === $instance) {
+                    $state = $instanceState;
+                }
+            }
+        }
+        // "+" beside each repeating instrument of this event opens its next instance — the one
+        // after the highest that holds anything (REQ-UI-055); offered where entry is.
+        $next = [];
+        foreach ($event['instruments'] ?? [] as $candidate) {
+            $name = (string) ($candidate['name'] ?? '');
+            if (!in_array($uen, is_array($candidate['repeating_events'] ?? null) ? $candidate['repeating_events'] : [], true)) {
+                continue;
+            }
+            $top = 0;
+            foreach ($instances[$uen . '|' . $name] ?? [] as [$n]) {
+                $top = max($top, $n);
+            }
+            $next[$name] = ['instance' => $top + 1,
+                'canAdd' => !$analysis && $permissions->canEditPair($uen, $name, $armNum)];
+        }
         $canEdit = !$analysis && $instrument !== null
             && $permissions->canEditPair($uen, $instrumentName, $armNum);
         $isSurvey = $instrument !== null && !empty($instrument['is_survey']);
@@ -475,13 +542,19 @@ final class RecordController extends DataEntryController
             'prefill' => $prefill,
             'draft' => $draft,
             'errors' => $errors,
-            'states' => $status ?? [],
-            'state' => $status[$uen . '|' . ($instrument['name'] ?? '')] ?? 'no_data',
+            'states' => $states,
+            'state' => $state,
+            // Repeating (REQ-UI-055): whether this form is one instance of several, which one,
+            // the instances to switch between, and the "+" targets per instrument.
+            'repeats' => $repeats,
+            'instance' => $instance,
+            'instanceList' => self::instancePills($instances[$uen . '|' . $instrumentName] ?? [], $instance),
+            'nextInstance' => $next,
             'analysis' => $analysis,
             'canEdit' => $canEdit,
             // Which of the three delete scopes this user may carry out (REQ-API-036/070).
             'deleteScopes' => !$analysis && $exists
-                ? self::deleteScopes($permissions, $mapping, $armNum, $uen, $instrumentName) : [],
+                ? self::deleteScopes($permissions, $mapping, $armNum, $uen, $instrumentName, $repeats) : [],
             'isSurvey' => $isSurvey,
             'canLink' => $canLink,
             'link' => $link,
@@ -508,13 +581,15 @@ final class RecordController extends DataEntryController
      * read — and those hold the whole delete back.
      *
      * @param array<int, array<string, list<string>>> $mapping arm_num => instrument => events
-     * @return list<string> any subset of instrument / event / record, in that order
+     * @return list<string> any subset of instrument (or instance) / event / record, in that order
      */
     private static function deleteScopes(Permissions $permissions, array $mapping,
-        int $armNum, string $uen, string $instrumentName): array
+        int $armNum, string $uen, string $instrumentName, bool $repeats = false): array
     {
         if ($instrumentName !== '' && $permissions->canDeleteValues($uen, $instrumentName, $armNum)) {
-            $scopes = ['instrument'];
+            // A repeating instrument's form is one instance: deleting it deletes that instance
+            // (REQ-UI-055); the event scope still takes all of them.
+            $scopes = [$repeats ? 'instance' : 'instrument'];
         } else {
             $scopes = [];
         }
@@ -595,10 +670,12 @@ final class RecordController extends DataEntryController
 
     /**
      * This record's completion states from the record-status read (§4.13), keyed
-     * `<event>|<instrument>` — or null when the read does not list the record: it has not
-     * been stored yet (a new participant, §6.3) or is outside the member's group.
+     * `<event>|<instrument>` — the first instance's — with a repeating instrument's instances
+     * as `[instance, state]` pairs under the same key (REQ-API-156); or null when the read does
+     * not list the record: it has not been stored yet (a new participant, §6.3) or is outside
+     * the member's group.
      *
-     * @return array<string, string>|null
+     * @return array{states: array<string, string>, instances: array<string, list<array{0: int, 1: string}>>}|null
      */
     private function recordStates(int $projectId, string $record): ?array
     {
@@ -607,17 +684,46 @@ final class RecordController extends DataEntryController
                 continue;
             }
             $states = [];
+            $instances = [];
             foreach ((is_array($row['events'] ?? null) ? $row['events'] : []) as $event) {
                 foreach ((is_array($event['instruments'] ?? null) ? $event['instruments'] : []) as $instrument) {
-                    $states[(string) ($event['unique_event_name'] ?? '') . '|' . (string) ($instrument['name'] ?? '')] =
-                        (string) ($instrument['state'] ?? 'no_data');
+                    $key = (string) ($event['unique_event_name'] ?? '') . '|' . (string) ($instrument['name'] ?? '');
+                    $states[$key] = (string) ($instrument['state'] ?? 'no_data');
+                    if (is_array($instrument['instances'] ?? null)) {
+                        $instances[$key] = RecordStatusController::instanceStates($instrument['instances']);
+                    }
                 }
             }
 
-            return $states;
+            return ['states' => $states, 'instances' => $instances];
         }
 
         return null;
+    }
+
+    /**
+     * The instance pills of a repeating instrument's form (REQ-UI-055): every instance that
+     * holds something, the first one when none does, and the open one — a new instance has no
+     * state yet — in ascending order.
+     *
+     * @param list<array{0: int, 1: string}> $listed
+     * @return list<array{instance: int, state: string, current: bool}>
+     */
+    public static function instancePills(array $listed, int $current): array
+    {
+        $pills = [];
+        foreach ($listed as [$n, $state]) {
+            $pills[$n] = $state;
+        }
+        $pills += [1 => 'no_data'];
+        $pills += [$current => 'no_data'];
+        ksort($pills);
+        $out = [];
+        foreach ($pills as $n => $state) {
+            $out[] = ['instance' => $n, 'state' => $state, 'current' => $n === $current];
+        }
+
+        return $out;
     }
 
     /**
@@ -686,7 +792,7 @@ final class RecordController extends DataEntryController
      * record-status derives no data / some data from the values (REQ-API-110). Moving between
      * the two derived states is not an assignment and makes no call.
      */
-    private function applyCompletion(int $projectId, string $record, string $event, int $iid): void
+    private function applyCompletion(int $projectId, string $record, string $event, int $iid, int $instance = 0): void
     {
         $now = $this->request->field('completion');
         $was = $this->request->field('completion_was');
@@ -698,7 +804,8 @@ final class RecordController extends DataEntryController
         try {
             $this->api->put('/api/v1/projects/' . $projectId . '/records/' . rawurlencode($record)
                 . '/events/' . rawurlencode($event) . '/instruments/' . $iid . '/completion',
-                ['state' => $now === 'finished' ? 'finished' : 'unfinished']);
+                ['state' => $now === 'finished' ? 'finished' : 'unfinished']
+                    + ($instance > 0 ? ['instance' => $instance] : []));
         } catch (ApiException $e) {
             $this->logger->info('completion change rejected', ['code' => $e->code(), 'status' => $e->status()]);
             $this->flashDanger($this->apiFailureMessage($e));

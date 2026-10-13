@@ -48,11 +48,17 @@ type completionDetails struct {
 	RecordID   string `json:"record_id"`
 	Event      string `json:"event"`
 	Instrument string `json:"instrument"`
+	// Instance names a further instance of a repeating instrument (REQ-DB-048);
+	// the first instance leaves it out, so the entries of every non-repeating
+	// form keep their shape.
+	Instance int `json:"instance,omitempty"`
 }
 
 // putCompletion sets or clears the user-assigned "finished" state of one
-// (record, event, instrument) — the control at the end of a data-collection
-// instrument's form (REQ-API-110, UI §8.5).
+// (record, event, instrument, instance) — the control at the end of a
+// data-collection instrument's form (REQ-API-110, UI §8.5). The optional body
+// attribute instance (default 1) addresses one instance of a repeating
+// instrument; an instance above 1 needs the pair to be repeating (REQ-API-156).
 //
 // The event path segment is its unique_event_name, the identifier record-status
 // returns and the dashboard binds to; {iid} is the instrument id, as in every
@@ -100,8 +106,15 @@ func (h *Handler) putCompletion(w http.ResponseWriter, r *http.Request) {
 		errBadRequest(w, "malformed JSON body")
 		return
 	}
-	if !RejectUnknownAttrs(w, supplied, "state") {
+	if !RejectUnknownAttrs(w, supplied, "state", "instance") {
 		return
+	}
+	instance := 1
+	if raw, present := supplied["instance"]; present {
+		if err := json.Unmarshal(raw, &instance); err != nil || instance < 1 {
+			errBadRequest(w, "instance must be a positive integer")
+			return
+		}
 	}
 	rawState, present := supplied["state"]
 	if !present {
@@ -203,15 +216,19 @@ func (h *Handler) putCompletion(w http.ResponseWriter, r *http.Request) {
 		errInternal(w)
 		return
 	}
-	mapped := false
+	mapped, repeating := false, false
 	for _, ie := range pairs {
 		if ie.EventID == event.ID && ie.InstrumentID == instrumentID {
-			mapped = true
+			mapped, repeating = true, ie.IsRepeating
 			break
 		}
 	}
 	if !mapped {
 		errConflict(w, "instrument "+instrument.Name+" is not mapped to event "+eventName)
+		return
+	}
+	if instance > 1 && !repeating {
+		errConflict(w, "instrument "+instrument.Name+" is not repeating at event "+eventName)
 		return
 	}
 	if instrument.IsSurvey {
@@ -230,11 +247,11 @@ func (h *Handler) putCompletion(w http.ResponseWriter, r *http.Request) {
 	eventType := audit.InstrumentCompleted
 	if want == StateFinished {
 		changed, err = h.Store.SetInstrumentCompletionTx(ctx, tx, projectID, recordID,
-			event.ID, instrumentID, u.ID)
+			event.ID, instrumentID, instance, u.ID)
 	} else {
 		eventType = audit.InstrumentUncompleted
 		changed, err = h.Store.ClearInstrumentCompletionTx(ctx, tx, projectID, recordID,
-			event.ID, instrumentID)
+			event.ID, instrumentID, instance)
 	}
 	if err != nil {
 		errInternal(w)
@@ -247,7 +264,8 @@ func (h *Handler) putCompletion(w http.ResponseWriter, r *http.Request) {
 			EventType: eventType, Source: audit.SourceUI,
 			UserID: u.ID, Email: u.Email, ProjectID: projectID,
 			ArmNum: armNum, TargetRecord: recordID,
-			Details: completionDetails{RecordID: recordID, Event: eventName, Instrument: instrument.Name},
+			Details: completionDetails{RecordID: recordID, Event: eventName, Instrument: instrument.Name,
+				Instance: furtherInstance(instance)},
 		}); err != nil {
 			errInternal(w)
 			return
@@ -258,4 +276,14 @@ func (h *Handler) putCompletion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, completionObject{State: want})
+}
+
+// furtherInstance is the instance an audit payload names: 0 — left out — for
+// the first instance of a form, the number itself for a further instance of a
+// repeating one (REQ-DB-048).
+func furtherInstance(instance int) int {
+	if instance <= 1 {
+		return 0
+	}
+	return instance
 }

@@ -426,7 +426,7 @@ func (s *Store) DeleteInstrument(ctx context.Context, id int64) error {
 // from (REQ-API-072).
 func (s *Store) ListInstrumentEvents(ctx context.Context, projectID int64) ([]InstrumentEvent, error) {
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT ie.instrument_id, ie.event_id
+		`SELECT ie.instrument_id, ie.event_id, ie.is_repeating
 		 FROM instrument_events ie
 		 JOIN events e ON e.id = ie.event_id
 		 JOIN instruments i ON i.id = ie.instrument_id
@@ -439,9 +439,11 @@ func (s *Store) ListInstrumentEvents(ctx context.Context, projectID int64) ([]In
 	var out []InstrumentEvent
 	for rows.Next() {
 		var p InstrumentEvent
-		if err := rows.Scan(&p.InstrumentID, &p.EventID); err != nil {
+		var repeating int
+		if err := rows.Scan(&p.InstrumentID, &p.EventID, &repeating); err != nil {
 			return nil, err
 		}
+		p.IsRepeating = repeating != 0
 		out = append(out, p)
 	}
 	return out, rows.Err()
@@ -449,13 +451,36 @@ func (s *Store) ListInstrumentEvents(ctx context.Context, projectID int64) ([]In
 
 // SetInstrumentEventsForArm replaces the mapping of one arm from the full
 // checked matrix (REQ-DB-012, REQ-API-073); pairs is the complete set for
-// the arm after the change.
+// the arm after the change. A pair that stays mapped keeps its repeating
+// designation (REQ-DB-047) — the matrix says nothing about it, so its IsRepeating
+// is not read here; a pair that is unmapped loses the designation with its row.
 func (s *Store) SetInstrumentEventsForArm(ctx context.Context, projectID, armID int64, pairs []InstrumentEvent) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	repeating := map[[2]int64]bool{}
+	rows, err := tx.QueryContext(ctx,
+		`SELECT instrument_id, event_id FROM instrument_events
+		 WHERE is_repeating <> 0
+		   AND event_id IN (SELECT id FROM events WHERE project_id = ? AND arm_id = ?)`,
+		projectID, armID)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var k [2]int64
+		if err := rows.Scan(&k[0], &k[1]); err != nil {
+			rows.Close()
+			return err
+		}
+		repeating[k] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM instrument_events
 		 WHERE event_id IN (SELECT id FROM events WHERE project_id = ? AND arm_id = ?)`,
@@ -464,8 +489,8 @@ func (s *Store) SetInstrumentEventsForArm(ctx context.Context, projectID, armID 
 	}
 	for _, p := range pairs {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO instrument_events (instrument_id, event_id) VALUES (?, ?)`,
-			p.InstrumentID, p.EventID); err != nil {
+			`INSERT INTO instrument_events (instrument_id, event_id, is_repeating) VALUES (?, ?, ?)`,
+			p.InstrumentID, p.EventID, boolToInt(repeating[[2]int64{p.InstrumentID, p.EventID}])); err != nil {
 			return err
 		}
 	}
@@ -477,6 +502,27 @@ func (s *Store) SetInstrumentEventsForArm(ctx context.Context, projectID, armID 
 	}
 	s.BumpStructureCache()
 	return nil
+}
+
+// SetRepeatingEventsTx designates exactly the given events as the repeating
+// events of one instrument (REQ-DB-047, REQ-API-154): its mapped pairs at those
+// events become repeating and every other pair of the instrument stops being
+// so. An event the instrument is not mapped to has no pair to carry the flag —
+// the caller rejects it before getting here. Values of further instances stay
+// where they are when a pair stops repeating (REQ-DB-048).
+func (s *Store) SetRepeatingEventsTx(ctx context.Context, tx *sql.Tx, instrumentID int64, eventIDs []int64) error {
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE instrument_events SET is_repeating = 0 WHERE instrument_id = ?`, instrumentID); err != nil {
+		return err
+	}
+	for _, id := range eventIDs {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE instrument_events SET is_repeating = 1 WHERE instrument_id = ? AND event_id = ?`,
+			instrumentID, id); err != nil {
+			return err
+		}
+	}
+	return nil // the caller bumps the structure cache once the transaction commits
 }
 
 // MaterializePairGrantsTx records an explicit grant for every mapped pair of
@@ -874,7 +920,7 @@ func (s *Store) AddDataValue(ctx context.Context, dv *DataValue) error {
 			repeating_instrument, repeating_instance_number, field_name, value)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		dv.ProjectID, dv.RecordID, dv.UniqueEventName, dv.RepeatingInstrument,
-		dv.RepeatingInstanceNumber, dv.FieldName, dv.Value)
+		storedInstance(dv), dv.FieldName, dv.Value)
 	return err
 }
 
@@ -885,7 +931,7 @@ func (s *Store) DeleteDataValueByID(ctx context.Context, dv *DataValue) error {
 		 WHERE project_id = ? AND record_id = ? AND unique_event_name = ?
 		 AND repeating_instrument = ? AND repeating_instance_number = ? AND field_name = ?`,
 		dv.ProjectID, dv.RecordID, dv.UniqueEventName, dv.RepeatingInstrument,
-		dv.RepeatingInstanceNumber, dv.FieldName)
+		storedInstance(dv), dv.FieldName)
 	return err
 }
 
@@ -905,7 +951,7 @@ func (s *Store) UpsertDataValue(ctx context.Context, dv *DataValue) error {
 	}
 	_, err := s.DB.ExecContext(ctx, q,
 		dv.ProjectID, dv.RecordID, dv.UniqueEventName, dv.RepeatingInstrument,
-		dv.RepeatingInstanceNumber, dv.FieldName, dv.Value, dv.Value)
+		storedInstance(dv), dv.FieldName, dv.Value, dv.Value)
 	return err
 }
 

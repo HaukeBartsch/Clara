@@ -340,6 +340,13 @@ func (a *applyState) instrumentsAndFields(active, staged *stagedDesign) error {
 			`UPDATE instruments SET name = ? WHERE id = ?`, temp, si.ID); err != nil {
 			return err
 		}
+		// Further instances of a repeating instrument are stored under its name
+		// (REQ-DB-048): they park with it, so a swap of two names cannot mix them.
+		if _, err := a.tx.ExecContext(a.ctx,
+			`UPDATE data SET repeating_instrument = ? WHERE project_id = ? AND repeating_instrument = ?`,
+			temp, a.projectID, old.Name); err != nil {
+			return err
+		}
 	}
 	type fieldRename struct {
 		id       int64
@@ -453,6 +460,11 @@ func (a *applyState) instrumentsAndFields(active, staged *stagedDesign) error {
 			}
 			if _, err := a.tx.ExecContext(a.ctx,
 				`UPDATE instruments SET name = ? WHERE id = ?`, si.Name, si.ID); err != nil {
+				return err
+			}
+			if _, err := a.tx.ExecContext(a.ctx,
+				`UPDATE data SET repeating_instrument = ? WHERE project_id = ? AND repeating_instrument = ?`,
+				si.Name, a.projectID, stagedRenamePrefix+strconv.FormatInt(si.ID, 10)); err != nil {
 				return err
 			}
 			a.applied.Instruments++
@@ -770,6 +782,13 @@ func (a *applyState) mapping(active, staged *stagedDesign) error {
 		}
 	}
 	a.applied.MappingPairs = added + removed
+	// A pair whose repeating designation changed is a changed pair too (REQ-DB-047).
+	repeatingBefore, repeatingAfter := repeatingSet(active), repeatingSet(staged)
+	for k := range after {
+		if _, kept := before[k]; kept && repeatingBefore[k] != repeatingAfter[k] {
+			a.applied.MappingPairs++
+		}
+	}
 
 	// Rebuild each surviving arm's pairs from the staged matrix, translating the
 	// snapshot ids the set introduced into their live ids.
@@ -799,8 +818,8 @@ func (a *applyState) mapping(active, staged *stagedDesign) error {
 					continue
 				}
 				if _, err := a.tx.ExecContext(a.ctx,
-					`INSERT INTO instrument_events (instrument_id, event_id) VALUES (?, ?)`,
-					instID, eventID); err != nil {
+					`INSERT INTO instrument_events (instrument_id, event_id, is_repeating) VALUES (?, ?, ?)`,
+					instID, eventID, boolToIntParam(staged.repeats(sa.ArmNum, si.Name, unique))); err != nil {
 					return err
 				}
 			}

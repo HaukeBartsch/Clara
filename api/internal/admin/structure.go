@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -41,6 +42,7 @@ func (h *Handler) registerStructure(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/projects/{id}/instruments/export", h.exportInstruments)
 	mux.HandleFunc("PUT /api/v1/projects/{id}/instruments/{iid}", h.updateInstrument)
 	mux.HandleFunc("DELETE /api/v1/projects/{id}/instruments/{iid}", h.deleteInstrumentHTTP)
+	mux.HandleFunc("PUT /api/v1/projects/{id}/instruments/{iid}/repeating", h.putRepeating)
 
 	mux.HandleFunc("GET /api/v1/validationTypes", h.validationTypes)
 
@@ -1039,6 +1041,9 @@ func (h *Handler) updateEvent(w http.ResponseWriter, r *http.Request) {
 				if _, _, clash := d.eventByUniqueName(unique); clash {
 					return conflictf("unique event name '%s' already exists", unique)
 				}
+				// The mapping and the repeating designations name events by their
+				// unique name, so they follow it (REQ-DB-047).
+				d.renameMappedEvent(sa.ArmNum, se.UniqueEventName, unique)
 				se.EventName, se.UniqueEventName = label, unique
 			}
 		}
@@ -1636,6 +1641,9 @@ type instrumentObject struct {
 	FieldCount     int    `json:"field_count"`
 	IsSurvey       bool   `json:"is_survey"`
 	BranchingLogic string `json:"branching_logic"`
+	// RepeatingEvents names the events the instrument repeats at (REQ-API-154),
+	// arms by number and events in canonical order; [] when it repeats nowhere.
+	RepeatingEvents []string `json:"repeating_events"`
 }
 
 // listInstruments returns the project's instruments in position order with
@@ -1663,14 +1671,223 @@ func (h *Handler) listInstruments(w http.ResponseWriter, r *http.Request) {
 		errInternal(w)
 		return
 	}
+	repeating, err := h.repeatingEventsOf(ctx, projectID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
 	out := make([]instrumentObject, 0, len(instruments))
 	for _, i := range instruments {
 		out = append(out, instrumentObject{
 			ID: i.ID, Name: i.Name, Position: i.Position, FieldCount: counts[i.ID],
 			IsSurvey: i.IsSurvey, BranchingLogic: i.BranchingLogic.String,
+			RepeatingEvents: repeatingOrEmpty(repeating[i.ID]),
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// repeatingEventsOf maps instrument id → the events it repeats at (REQ-DB-047),
+// arms by number and events in canonical order (GD-15) — the instrument
+// object's repeating_events.
+func (h *Handler) repeatingEventsOf(ctx context.Context, projectID int64) (map[int64][]string, error) {
+	pairs, err := h.Store.ListInstrumentEvents(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	byEvent := map[int64][]int64{}
+	for _, p := range pairs {
+		if p.IsRepeating {
+			byEvent[p.EventID] = append(byEvent[p.EventID], p.InstrumentID)
+		}
+	}
+	out := map[int64][]string{}
+	if len(byEvent) == 0 {
+		return out, nil
+	}
+	arms, eventsByArm, err := h.CanonicalEvents(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range arms {
+		for _, e := range eventsByArm[a.ArmNum] {
+			for _, instID := range byEvent[e.ID] {
+				out[instID] = append(out[instID], e.UniqueEventName)
+			}
+		}
+	}
+	return out, nil
+}
+
+// repeatingOrEmpty renders a missing list as [] rather than null.
+func repeatingOrEmpty(events []string) []string {
+	if events == nil {
+		return []string{}
+	}
+	return events
+}
+
+// putRepeating designates the events one instrument repeats at (REQ-API-154):
+// {"events": [unique event names]} replaces the instrument's whole set, so []
+// turns repeating off everywhere. Every named event must be one the instrument
+// is mapped to (400), and a survey instrument cannot repeat (409, GD-9: one link
+// fills one form), nor can the first instrument, whose first field is the record
+// identifier (GD-8). Turning repeating off never deletes anything: the values of
+// further instances stay stored, hidden until the pair repeats again
+// (REQ-DB-048) — so the change is never breaking. project_admin; production
+// stages it like every structure change (§4.21).
+func (h *Handler) putRepeating(w http.ResponseWriter, r *http.Request) {
+	u, lv, projectID, ok := h.structureAccess(w, r)
+	if !ok || !h.requireProjectAdmin(w, r, lv) {
+		return
+	}
+	instID, ok := pathObjectID(r, "iid")
+	if !ok {
+		errBadRequest(w, "invalid instrument id")
+		return
+	}
+	ctx := r.Context()
+	var supplied map[string]json.RawMessage
+	if err := decodeBody(r, &supplied); err != nil {
+		errBadRequest(w, "malformed JSON body")
+		return
+	}
+	if !RejectUnknownAttrs(w, supplied, "events", "acknowledge_breaking") {
+		return
+	}
+	var events []string
+	raw, present := supplied["events"]
+	if !present || json.Unmarshal(raw, &events) != nil || events == nil {
+		errBadRequest(w, "events is required (a list of unique event names)")
+		return
+	}
+
+	staged, err := h.stagedRead(ctx, projectID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	if staged != nil {
+		if _, found := h.stagedInstrumentOr404(w, staged, instID); !found {
+			return
+		}
+	}
+	apply := func(d *stagedDesign) *designError {
+		si, found := d.instrument(instID)
+		if !found {
+			return validationf("instrument %d is not part of the staged design", instID)
+		}
+		for _, u := range events {
+			_, sa, ok := d.eventByUniqueName(u)
+			if !ok {
+				return validationf("unknown event name: %s", u)
+			}
+			if !d.mapped(sa.ArmNum, si.Name, u) {
+				return validationf("instrument %s is not mapped to event %s", si.Name, u)
+			}
+		}
+		if si.IsSurvey && len(events) > 0 {
+			return conflictf("a survey instrument cannot be repeating")
+		}
+		if d.isFirstInstrument(instID) && len(events) > 0 {
+			// The record identifier is its first field (GD-8) and belongs to the
+			// record, never to one of several instances.
+			return conflictf("the first instrument holds the record identifier and cannot be repeating")
+		}
+		d.setRepeating(si.Name, events)
+		return nil
+	}
+	target, set, breakingAcknowledged, ok := h.structureWrite(w, r, projectID, acknowledgeFrom(supplied), apply)
+	if !ok {
+		return
+	}
+	if target == writeStaged {
+		if !h.applyStagedChange(w, r, projectID, set, apply) {
+			return
+		}
+		obj, _ := set.instrumentObjectFor(instID)
+		writeJSON(w, http.StatusOK, obj)
+		return
+	}
+
+	inst, err := h.Store.GetInstrument(ctx, instID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	if inst == nil || inst.ProjectID != projectID {
+		errNotFound(w)
+		return
+	}
+	// The live design as a snapshot runs the same checks the staged path does,
+	// so the two cannot answer one request differently.
+	live, err := h.stagedDesignOf(ctx, projectID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	before := live.repeatingEvents(inst.Name)
+	if derr := apply(live); derr != nil {
+		writeDesignError(w, derr)
+		return
+	}
+	after := live.repeatingEvents(inst.Name)
+	eventIDs := make([]int64, 0, len(after))
+	for _, name := range after {
+		if e, _, ok := live.eventByUniqueName(name); ok {
+			eventIDs = append(eventIDs, e.ID)
+		}
+	}
+	if !equalStrings(before, after) {
+		tx, err := h.Store.DB.BeginTx(ctx, nil)
+		if err != nil {
+			errInternal(w)
+			return
+		}
+		defer tx.Rollback()
+		if err := h.Store.SetRepeatingEventsTx(ctx, tx, instID, eventIDs); err != nil {
+			errInternal(w)
+			return
+		}
+		if err := h.Audit.InsertTx(ctx, tx, audit.Entry{
+			EventType: audit.InstrumentUpdated, Source: audit.SourceUI,
+			UserID: u.ID, Email: u.Email, ProjectID: projectID,
+			Details: withBreakingAcknowledgement(map[string]any{"name": inst.Name, "changes": map[string]any{
+				"repeating_events": map[string]any{"old": before, "new": after},
+			}}, breakingAcknowledged),
+		}); err != nil {
+			errInternal(w)
+			return
+		}
+		if err := tx.Commit(); err != nil {
+			errInternal(w)
+			return
+		}
+		h.Store.BumpStructureCache()
+	}
+	counts, err := h.fieldCounts(ctx, projectID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, instrumentObject{
+		ID: inst.ID, Name: inst.Name, Position: inst.Position, FieldCount: counts[inst.ID],
+		IsSurvey: inst.IsSurvey, BranchingLogic: inst.BranchingLogic.String,
+		RepeatingEvents: after,
+	})
+}
+
+// equalStrings reports whether two lists hold the same names in the same order.
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // fieldCounts maps instrument id → number of fields (one grouped query).
@@ -1737,6 +1954,7 @@ func (h *Handler) createInstrument(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusCreated, instrumentObject{
 			ID: created.ID, Name: name, Position: created.Position, FieldCount: 0,
+			RepeatingEvents: []string{},
 		})
 		return
 	}
@@ -1764,6 +1982,7 @@ func (h *Handler) createInstrument(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusCreated, instrumentObject{
 		ID: inst.ID, Name: name, Position: inst.Position, FieldCount: 0,
+		RepeatingEvents: []string{},
 	})
 }
 
@@ -1794,6 +2013,14 @@ func (h *Handler) orderInstruments(w http.ResponseWriter, r *http.Request) {
 	apply := func(d *stagedDesign) *designError {
 		if !d.orderInstruments(body.Order) {
 			return validationf("order must list every instrument of the project exactly once")
+		}
+		if len(body.Order) == 0 {
+			return nil
+		}
+		if first, ok := d.instrument(body.Order[0]); ok && len(d.repeatingEvents(first.Name)) > 0 {
+			// The first instrument holds the record identifier (GD-8), which never
+			// belongs to one of several instances (REQ-API-154).
+			return conflictf("a repeating instrument cannot be the first instrument")
 		}
 		return nil
 	}
@@ -1835,6 +2062,17 @@ func (h *Handler) orderInstruments(w http.ResponseWriter, r *http.Request) {
 	member := map[int64]db.Instrument{}
 	for _, i := range instruments {
 		member[i.ID] = i
+	}
+	if len(body.Order) > 0 {
+		repeating, err := h.repeatingEventsOf(ctx, projectID)
+		if err != nil {
+			errInternal(w)
+			return
+		}
+		if len(repeating[body.Order[0]]) > 0 {
+			errConflict(w, "a repeating instrument cannot be the first instrument")
+			return
+		}
 	}
 	seen := map[int64]bool{}
 	for _, id := range body.Order {
@@ -1999,6 +2237,11 @@ func (h *Handler) updateInstrument(w http.ResponseWriter, r *http.Request) {
 			if err := json.Unmarshal(raw, &v); err != nil {
 				return validationf("is_survey must be a boolean")
 			}
+			if v && !si.IsSurvey && len(d.repeatingEvents(si.Name)) > 0 {
+				// One link fills one form (GD-9), so a repeating instrument is
+				// never a survey (REQ-API-154).
+				return conflictf("a repeating instrument cannot be a survey")
+			}
 			si.IsSurvey = v
 		}
 		if raw, present := supplied["branching_logic"]; present {
@@ -2064,6 +2307,19 @@ func (h *Handler) updateInstrument(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if v != inst.IsSurvey {
+			if v {
+				repeating, err := h.repeatingEventsOf(ctx, projectID)
+				if err != nil {
+					errInternal(w)
+					return
+				}
+				if len(repeating[instID]) > 0 {
+					// One link fills one form (GD-9), so a repeating instrument is
+					// never a survey (REQ-API-154).
+					errConflict(w, "a repeating instrument cannot be a survey")
+					return
+				}
+			}
 			changes["is_survey"] = map[string]any{"old": boolToIntJSON(inst.IsSurvey), "new": boolToIntJSON(v)}
 			next.IsSurvey = v
 		}
@@ -2091,11 +2347,29 @@ func (h *Handler) updateInstrument(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if len(changes) > 0 {
-		if err := h.Store.UpdateInstrument(ctx, &next); err != nil {
+		tx, err := h.Store.DB.BeginTx(ctx, nil)
+		if err != nil {
 			errInternal(w)
 			return
 		}
-		if err := h.Audit.Insert(ctx, audit.Entry{
+		defer tx.Rollback()
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE instruments SET name = ?, position = ?, is_survey = ?, branching_logic = ? WHERE id = ?`,
+			next.Name, next.Position, boolToIntParam(next.IsSurvey), nullStr(next.BranchingLogic), next.ID); err != nil {
+			errInternal(w)
+			return
+		}
+		if next.Name != inst.Name {
+			// Further instances of a repeating instrument are stored under its
+			// name (REQ-DB-048); they follow a rename in the same transaction.
+			if _, err := tx.ExecContext(ctx,
+				`UPDATE data SET repeating_instrument = ? WHERE project_id = ? AND repeating_instrument = ?`,
+				next.Name, projectID, inst.Name); err != nil {
+				errInternal(w)
+				return
+			}
+		}
+		if err := h.Audit.InsertTx(ctx, tx, audit.Entry{
 			EventType: audit.InstrumentUpdated, Source: audit.SourceUI,
 			UserID: u.ID, Email: u.Email, ProjectID: projectID,
 			Details: withBreakingAcknowledgement(map[string]any{"name": inst.Name, "changes": changes}, breakingAcknowledged),
@@ -2103,8 +2377,18 @@ func (h *Handler) updateInstrument(w http.ResponseWriter, r *http.Request) {
 			errInternal(w)
 			return
 		}
+		if err := tx.Commit(); err != nil {
+			errInternal(w)
+			return
+		}
+		h.Store.BumpStructureCache()
 	}
 	counts, err := h.fieldCounts(ctx, projectID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	repeating, err := h.repeatingEventsOf(ctx, projectID)
 	if err != nil {
 		errInternal(w)
 		return
@@ -2112,6 +2396,7 @@ func (h *Handler) updateInstrument(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, instrumentObject{
 		ID: next.ID, Name: next.Name, Position: next.Position, FieldCount: counts[next.ID],
 		IsSurvey: next.IsSurvey, BranchingLogic: next.BranchingLogic.String,
+		RepeatingEvents: repeatingOrEmpty(repeating[next.ID]),
 	})
 }
 
@@ -2300,9 +2585,17 @@ func (h *Handler) deleteInstrumentHTTP(w http.ResponseWriter, r *http.Request) {
 			errInternal(w)
 			return
 		}
+		// The shell keeps its mapping pairs, and with them their repeating
+		// designation, as it keeps its survey flag and branching logic.
+		repeating, err := h.repeatingEventsOf(ctx, projectID)
+		if err != nil {
+			errInternal(w)
+			return
+		}
 		writeJSON(w, http.StatusOK, instrumentObject{
 			ID: inst.ID, Name: "instrument", Position: inst.Position, FieldCount: 0,
 			IsSurvey: inst.IsSurvey, BranchingLogic: inst.BranchingLogic.String,
+			RepeatingEvents: repeatingOrEmpty(repeating[inst.ID]),
 		})
 		return
 	}
@@ -3553,24 +3846,43 @@ func (h *Handler) updateField(w http.ResponseWriter, r *http.Request) {
 // choice columns, whose absence reads as 0 (§6.3, REQ-DB-042).
 func (h *Handler) recomputeCalcField(ctx context.Context, tx *sql.Tx, u *db.User, projectID int64, instrument string, f db.Field, isBox func(string) bool) error {
 	rows, err := tx.QueryContext(ctx,
-		`SELECT DISTINCT e.unique_event_name
+		`SELECT DISTINCT e.unique_event_name, ie.is_repeating
 		 FROM events e JOIN instrument_events ie ON ie.event_id = e.id
 		 WHERE ie.instrument_id = ? AND e.project_id = ?`, f.InstrumentID, projectID)
 	if err != nil {
 		return err
 	}
 	var activeEvents []string
+	repeatingAt := map[string]bool{}
 	for rows.Next() {
 		var name string
-		if err := rows.Scan(&name); err != nil {
+		var repeating int
+		if err := rows.Scan(&name, &repeating); err != nil {
 			rows.Close()
 			return err
 		}
 		activeEvents = append(activeEvents, name)
+		repeatingAt[name] = repeating != 0
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return err
+	}
+	// A further instance of a repeating instrument reads its own instrument's
+	// fields at its own event from that instance, everything else from the first
+	// instance (REQ-VAL-045); ownNames are the value names of the field's
+	// instrument.
+	ownNames := map[string]bool{}
+	if len(repeatingAt) > 0 {
+		siblings, err := h.Store.ListFieldsByInstrument(ctx, projectID, f.InstrumentID)
+		if err != nil {
+			return err
+		}
+		for _, sf := range siblings {
+			for _, name := range storedNames(sf.FieldName, sf.FieldType, sf.Choices) {
+				ownNames[name] = true
+			}
+		}
 	}
 	recRows, err := tx.QueryContext(ctx,
 		`SELECT record_id FROM record_entities WHERE project_id = ?`, projectID)
@@ -3593,6 +3905,10 @@ func (h *Handler) recomputeCalcField(ctx context.Context, tx *sql.Tx, u *db.User
 	for _, recordID := range records {
 		vals, err := loadRecordValues(ctx, tx, projectID, recordID)
 		if err != nil {
+			return err
+		}
+		if err := h.recomputeFurtherInstances(ctx, tx, u, projectID, recordID, instrument, f, isBox,
+			vals, ownNames, repeatingAt); err != nil {
 			return err
 		}
 		for _, eventName := range activeEvents {
@@ -3627,8 +3943,101 @@ func (h *Handler) recomputeCalcField(ctx context.Context, tx *sql.Tx, u *db.User
 	return nil
 }
 
-// loadRecordValues loads one record's non-repeating values keyed by
-// "event|field" for expression resolution.
+// recomputeFurtherInstances is recomputeCalcField for the instances 2, 3, … of
+// a repeating instrument (REQ-VAL-045): each instance stored at a repeating
+// event is evaluated on its own, reading its instrument's fields at that event
+// from the instance and every other reference from the first instance (vals).
+// Instances at a pair that no longer repeats are hidden and left as they are
+// (REQ-DB-048).
+func (h *Handler) recomputeFurtherInstances(ctx context.Context, tx *sql.Tx, u *db.User, projectID int64,
+	recordID, instrument string, f db.Field, isBox func(string) bool,
+	vals map[string]string, ownNames map[string]bool, repeatingAt map[string]bool) error {
+	repeats := false
+	for _, r := range repeatingAt {
+		repeats = repeats || r
+	}
+	if !repeats {
+		return nil
+	}
+	rows, err := tx.QueryContext(ctx,
+		`SELECT unique_event_name, repeating_instance_number, field_name, value FROM data
+		 WHERE project_id = ? AND record_id = ? AND repeating_instrument = ? AND repeating_instance_number > 1`,
+		projectID, recordID, instrument)
+	if err != nil {
+		return err
+	}
+	type slot struct {
+		event    string
+		instance int
+	}
+	instances := map[slot]map[string]string{}
+	var order []slot
+	for rows.Next() {
+		var ev, fld, val string
+		var n int
+		if err := rows.Scan(&ev, &n, &fld, &val); err != nil {
+			rows.Close()
+			return err
+		}
+		if !repeatingAt[ev] {
+			continue
+		}
+		k := slot{ev, n}
+		if instances[k] == nil {
+			instances[k] = map[string]string{}
+			order = append(order, k)
+		}
+		instances[k][fld] = val
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	sort.Slice(order, func(i, j int) bool {
+		if order[i].event != order[j].event {
+			return order[i].event < order[j].event
+		}
+		return order[i].instance < order[j].instance
+	})
+	for _, k := range order {
+		own := instances[k]
+		value, _, err := validate.EvalCalc(f.Calculation.String, validate.UncheckedAsZero(func(ref validate.Ref) (string, bool) {
+			v, ok := vals[ref.Event+"|"+ref.Field]
+			if ref.Event == k.event && ownNames[ref.Field] {
+				v, ok = own[ref.Field]
+			}
+			return v, ok && v != ""
+		}, isBox))
+		if err != nil {
+			return err
+		}
+		oldVal := own[f.FieldName]
+		if oldVal == value {
+			continue
+		}
+		dv := &db.DataValue{ProjectID: projectID, RecordID: recordID, UniqueEventName: k.event,
+			RepeatingInstrument: instrument, RepeatingInstanceNumber: k.instance, FieldName: f.FieldName, Value: value}
+		if err := h.Store.UpsertDataValueTx(ctx, tx, dv); err != nil {
+			return err
+		}
+		if err := h.Audit.InsertTx(ctx, tx, audit.Entry{
+			EventType: audit.CalculatedRecomputed, Source: audit.SourceUI,
+			UserID: u.ID, Email: u.Email, ProjectID: projectID, TargetRecord: recordID,
+			Details: map[string]any{
+				"record_id": recordID, "field": f.FieldName,
+				"instrument": instrument, "event": k.event, "instance": k.instance,
+				"old": oldVal, "new": value,
+				"trigger_field": nil, "trigger_event": nil,
+			},
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// loadRecordValues loads one record's first-instance values keyed by
+// "event|field" for expression resolution (REQ-DB-048).
 func loadRecordValues(ctx context.Context, tx *sql.Tx, projectID int64, recordID string) (map[string]string, error) {
 	rows, err := tx.QueryContext(ctx,
 		`SELECT unique_event_name, field_name, value FROM data

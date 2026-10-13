@@ -50,7 +50,7 @@ func setCommitted(t *testing.T, s *Store, ctx context.Context, projectID int64,
 	if err != nil {
 		t.Fatalf("BeginTx: %v", err)
 	}
-	if _, err := s.SetInstrumentCompletionTx(ctx, tx, projectID, recordID, eventID, instrumentID, userID); err != nil {
+	if _, err := s.SetInstrumentCompletionTx(ctx, tx, projectID, recordID, eventID, instrumentID, 1, userID); err != nil {
 		t.Fatalf("SetInstrumentCompletionTx: %v", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -77,7 +77,7 @@ func TestSetInstrumentCompletionTx(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BeginTx: %v", err)
 	}
-	created, err := s.SetInstrumentCompletionTx(ctx, tx, projectID, recordID, eventID, instrumentID, userID)
+	created, err := s.SetInstrumentCompletionTx(ctx, tx, projectID, recordID, eventID, instrumentID, 1, userID)
 	if err != nil {
 		t.Fatalf("SetInstrumentCompletionTx: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestSetInstrumentCompletionTx(t *testing.T) {
 	}
 	// Repeating the call is a no-op — at most one row per triple (REQ-DB-036),
 	// and the caller learns nothing changed so it writes no second audit entry.
-	again, err := s.SetInstrumentCompletionTx(ctx, tx, projectID, recordID, eventID, instrumentID, userID)
+	again, err := s.SetInstrumentCompletionTx(ctx, tx, projectID, recordID, eventID, instrumentID, 1, userID)
 	if err != nil {
 		t.Fatalf("SetInstrumentCompletionTx repeat: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestSetInstrumentCompletionTxRollback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BeginTx: %v", err)
 	}
-	if _, err := s.SetInstrumentCompletionTx(ctx, tx, projectID, recordID, eventID, instrumentID, userID); err != nil {
+	if _, err := s.SetInstrumentCompletionTx(ctx, tx, projectID, recordID, eventID, instrumentID, 1, userID); err != nil {
 		t.Fatalf("SetInstrumentCompletionTx: %v", err)
 	}
 	// Rolling back drops the assignment exactly as it drops the audit entry
@@ -154,7 +154,7 @@ func TestClearInstrumentCompletionTx(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BeginTx: %v", err)
 	}
-	cleared, err := s.ClearInstrumentCompletionTx(ctx, tx, projectID, recordID, eventID, instrumentID)
+	cleared, err := s.ClearInstrumentCompletionTx(ctx, tx, projectID, recordID, eventID, instrumentID, 1)
 	if err != nil {
 		t.Fatalf("ClearInstrumentCompletionTx: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestClearInstrumentCompletionTx(t *testing.T) {
 		t.Fatalf("clear reported no row removed")
 	}
 	// Clearing an unfinished cell is the idempotent no-op (REQ-API-042).
-	again, err := s.ClearInstrumentCompletionTx(ctx, tx, projectID, recordID, eventID, instrumentID)
+	again, err := s.ClearInstrumentCompletionTx(ctx, tx, projectID, recordID, eventID, instrumentID, 1)
 	if err != nil {
 		t.Fatalf("ClearInstrumentCompletionTx repeat: %v", err)
 	}

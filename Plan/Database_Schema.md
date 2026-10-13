@@ -141,12 +141,13 @@ Maps users to projects, roles, and API tokens.
 The checkbox table (instrument x event pairs) that defines the design of a project arm.
 - instrument_id (Foreign Key)
 - event_id (Foreign Key)
+- is_repeating (Boolean - the pair is a repeating instrument: its form can be filled out more than once per record at that event, never for a survey or the first instrument; unmapping the pair drops it - REQ-DB-047)
 - UNIQUE (instrument_id, event_id)
 
 ### 10. Project Staging (production mode only)
 At most one open staging set per project: a snapshot of the staged design, applied to the live structure tables on commit (all in one transaction) and removed on commit or discard.
 - project_id (Primary Key, Foreign Key - one open set per project)
-- design (Text, JSON snapshot of the staged design: instruments with fields, arms with events, instrument-event mapping)
+- design (Text, JSON snapshot of the staged design: instruments with fields, arms with events, instrument-event mapping and its repeating pairs)
 - opened_by (Foreign Key, nullable)
 - opened_at (DateTime)
 
@@ -155,8 +156,8 @@ Entity-attribute-value layout, exactly as mandated by VISION_AND_REQUIREMENTS.md
 - project_id (Foreign Key)
 - record_id (String)
 - unique_event_name (String, includes arm information)
-- repeating_instrument (String, instrument name)
-- repeating_instance_number (Integer, starts with 1)
+- repeating_instrument (String, instrument name of instance 2, 3, … of a repeating instrument; empty for the first instance of every form, so switching repeating on moves no value - REQ-DB-048, DEV-DB-16)
+- repeating_instance_number (Integer, starts with 1; 1 for every form's first instance)
 - field_name (String)
 - value (Long Text / Binary)
 - UNIQUE (project_id, record_id, unique_event_name, repeating_instrument, repeating_instance_number, field_name) - it is not possible to add a second value for the same combination
@@ -169,7 +170,8 @@ The user's "finished" assignment at the end of a data-collection instrument — 
 - record_id (String)
 - event_id (Foreign Key)
 - instrument_id (Foreign Key)
+- repeat_instance (Integer, 1 for every form that does not repeat; the instance of a repeating instrument - REQ-DB-036/048)
 - completed_by (Foreign Key, nullable)
 - completed_at (DateTime)
-- PRIMARY KEY (project_id, record_id, event_id, instrument_id) - also the dashboard read path
+- PRIMARY KEY (project_id, record_id, event_id, instrument_id, repeat_instance) - also the dashboard read path
 - Survey instruments hold no completion state (GD-9).

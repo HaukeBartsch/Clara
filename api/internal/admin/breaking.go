@@ -474,10 +474,41 @@ func pairLabel(d *stagedDesign, k pairKey) string {
 	return inst + "@(unknown event)"
 }
 
+// repeatingSet is pairSet restricted to the pairs designated repeating
+// (REQ-DB-047).
+func repeatingSet(d *stagedDesign) map[pairKey]bool {
+	out := map[pairKey]bool{}
+	for _, i := range d.Instruments {
+		for _, a := range d.Arms {
+			for _, u := range d.Repeating[a.ArmNum][i.Name] {
+				if e, ok := eventInArm(a, u); ok {
+					out[pairKey{i.ID, e.ID}] = true
+				}
+			}
+		}
+	}
+	return out
+}
+
 func classifyMapping(active, staged *stagedDesign) ([]stagedChange, error) {
 	var out []stagedChange
 	activePairs := pairSet(active)
 	stagedPairs := pairSet(staged)
+	// Turning repeating on or off for a pair that stays mapped (REQ-API-154) is
+	// never breaking: further instances keep their values, hidden while the pair
+	// does not repeat (REQ-DB-048).
+	activeRepeating := repeatingSet(active)
+	stagedRepeating := repeatingSet(staged)
+	for key := range stagedPairs {
+		if !activePairs[key] || activeRepeating[key] == stagedRepeating[key] {
+			continue
+		}
+		kind := "repeating_off"
+		if stagedRepeating[key] {
+			kind = "repeating_on"
+		}
+		out = append(out, stagedChange{Kind: kind, Object: pairLabel(staged, key)})
+	}
 
 	for key := range activePairs {
 		if _, ok := stagedPairs[key]; !ok {

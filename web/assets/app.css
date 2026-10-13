@@ -313,6 +313,46 @@ h1 .clara-mode-badge {
   white-space: nowrap;
 }
 
+/* A repeating instrument's cell (REQ-UI-055): one dot per instance, then "+" for a new one.
+   The links stay small so a row of instances fits a narrow column. */
+.clara-instances {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.125rem;
+}
+
+.clara-instances .clara-state-link {
+  padding: 0.125rem 0.1875rem;
+}
+
+.clara-instance-more,
+.clara-instance-add {
+  font-size: 0.75rem;
+  line-height: 1;
+  padding: 0.1875rem 0.3125rem;
+  border-radius: var(--bs-border-radius-sm);
+  text-decoration: none;
+}
+
+.clara-instance-add {
+  border: 1px solid var(--bs-border-color);
+  font-weight: 600;
+}
+
+.clara-instance-add:hover,
+.clara-instance-add:focus-visible,
+.clara-instance-more:hover,
+.clara-instance-more:focus-visible {
+  background-color: var(--bs-tertiary-bg);
+}
+
+/* The Design page's "Repeating" dropdown (REQ-UI-054). */
+.clara-repeating-menu {
+  min-width: 16rem;
+}
+
 /* The required marker (REQ-VAL-028) and a required field left empty at submit. */
 .clara-required {
   color: var(--bs-danger-text-emphasis);

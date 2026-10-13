@@ -838,7 +838,7 @@
         "tags": ["Admin: Structure"],
         "operationId": "updateInstrument",
         "summary": "Update an instrument (REQ-API-101, REQ-API-130)",
-        "description": "`project_admin`; idempotent. Any subset of `{name, is_survey, branching_logic}`. A rename keeps the name unique — a collision → 409, an empty or non-string name → 400 `validation_error`. The rename is a label: stored values are keyed by field name and event, so nothing is rewritten. An invalid branching expression is rejected at design time → 400 `validation_error` (REQ-VAL-029). Audit `instrument_updated` with old and new values.",
+        "description": "`project_admin`; idempotent. Any subset of `{name, is_survey, branching_logic}`. A rename keeps the name unique — a collision → 409, an empty or non-string name → 400 `validation_error`. The rename is a label for a form's first instance — stored values are keyed by field name and event — while the further instances of a repeating instrument, stored under its name, move with it in the same transaction (REQ-DB-048). `is_survey: true` on an instrument that repeats anywhere → 409 (REQ-API-154). An invalid branching expression is rejected at design time → 400 `validation_error` (REQ-VAL-029). Audit `instrument_updated` with old and new values.",
         "parameters": [ { "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/InstrumentId" } ],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "minProperties": 1, "additionalProperties": false, "properties": { "name": { "type": "string" }, "is_survey": { "type": "boolean" }, "branching_logic": { "type": "string" } } }, "example": { "branching_logic": "[baseline][consent]=\"1\"" } } } },
         "responses": {
@@ -859,6 +859,24 @@
         "responses": {
           "200": { "description": "The last remaining instrument was reset — fields deleted, shell renamed to `instrument`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Instrument" } } } },
           "204": { "description": "The instrument was deleted." },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/projects/{id}/instruments/{iid}/repeating": {
+      "put": {
+        "tags": ["Admin: Structure"],
+        "operationId": "putInstrumentRepeating",
+        "summary": "Set the events an instrument repeats at (REQ-API-154)",
+        "description": "`project_admin`; idempotent. The list replaces the instrument's whole set of repeating events (REQ-DB-047); `[]` turns repeating off. Every name must be an event the instrument is mapped to → else 400 `validation_error`. A survey instrument (GD-9) and the first instrument (its first field is the record identifier, GD-8) → 409. Never breaking: turning repeating off keeps the further instances' values, hidden until the pair repeats again (REQ-DB-048). Staged in production like every structure write (diff kinds `repeating_on`/`repeating_off`). Audit `instrument_updated` with `changes.repeating_events`.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/InstrumentId" } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["events"], "additionalProperties": false, "properties": { "events": { "type": "array", "items": { "type": "string" }, "description": "Unique event names." }, "acknowledge_breaking": { "type": "boolean" } } }, "example": { "events": ["baseline_arm_1"] } } } },
+        "responses": {
+          "200": { "description": "The instrument with its `repeating_events`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Instrument" } } } },
+          "400": { "description": "`validation_error` — an unknown event or one the instrument is not mapped to; `invalid_request` when `events` is missing.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } } },
           "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
           "403": { "$ref": "#/components/responses/AdminForbidden" },
           "404": { "$ref": "#/components/responses/NotFound" },
@@ -1180,9 +1198,9 @@
         "tags": ["Admin: Records"],
         "operationId": "putInstrumentCompletion",
         "summary": "Set or clear instrument completion (REQ-API-110)",
-        "description": "Data access ≥ `view_edit` on the record's arm (+ record visibility); idempotent. A workflow annotation, not data entry — writes no field value and is not subject to analysis-mode write rules. Unknown record/event/instrument → 404; an unmapped pair → 409; a survey-marked instrument → 409 (its `finished` state is automatic). Audit `instrument_completed` / `instrument_uncompleted`.",
+        "description": "Data access ≥ `view_edit` on the record's arm (+ record visibility); idempotent. A workflow annotation, not data entry — writes no field value and is not subject to analysis-mode write rules. Unknown record/event/instrument → 404; an unmapped pair → 409; a survey-marked instrument → 409 (its `finished` state is automatic); an `instance` above 1 at a pair that does not repeat → 409. Audit `instrument_completed` / `instrument_uncompleted`, naming a further instance as `instance`.",
         "parameters": [ { "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/RecordId" }, { "$ref": "#/components/parameters/EventName" }, { "$ref": "#/components/parameters/InstrumentId" } ],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["state"], "additionalProperties": false, "properties": { "state": { "type": "string", "enum": ["finished", "unfinished"], "description": "`finished` sets the marker; `unfinished` clears it back to the derived no_data/some_data." } } } } } },
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["state"], "additionalProperties": false, "properties": { "state": { "type": "string", "enum": ["finished", "unfinished"], "description": "`finished` sets the marker; `unfinished` clears it back to the derived no_data/some_data." }, "instance": { "type": "integer", "minimum": 1, "default": 1, "description": "The instance of a repeating instrument (REQ-API-156); above 1 only where the pair repeats, else 409." } } } } } },
         "responses": {
           "200": { "description": "The resulting stored state.", "content": { "application/json": { "schema": { "type": "object", "required": ["state"], "properties": { "state": { "type": "string", "const": "finished" } } } } } },
           "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
@@ -1259,6 +1277,7 @@
           { "name": "event", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Filter by `unique_event_name`." },
           { "name": "field", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Filter by field name. A checkbox's name matches the changes of every one of its choice columns `<field_name>___<code>` (REQ-DB-042)." },
           { "name": "order", "in": "query", "required": false, "schema": { "type": "string", "enum": ["chrono", "newest"], "default": "chrono" }, "description": "Any other value → 400 `invalid_request` (REQ-API-137)." },
+          { "name": "instance", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1 }, "description": "Filter by form instance — 1 for every form that does not repeat (REQ-API-156). Not a positive integer → 400." },
           { "$ref": "#/components/parameters/Limit" },
           { "$ref": "#/components/parameters/Cursor" }
         ],
@@ -1774,8 +1793,9 @@
           "filterLogic": { "type": "string", "description": "Branching-logic expression (§3.6.3, Data_Validation_Design.md §7) filtering which records are returned; export only (REQ-API-025); never changes the sensitivity level." },
           "rawOrLabel": { "type": "string", "enum": ["raw", "label"], "default": "raw", "description": "Choice fields as codes or labels (REQ-API-027)." },
           "rawOrLabelHeaders": { "type": "string", "enum": ["raw", "label", "both"], "default": "raw", "description": "`both` renders each header as `<Field Label> (field_name)` (REQ-API-027)." },
-          "data": { "type": "string", "description": "Import rows in either REDCap encoding (§3.7.1): the indexed form parameters `data[i][key]=…`, or a single `data` parameter holding a JSON array of record objects (DEV-API-24). Its presence makes the call an import (REQ-API-012, REQ-API-031). Indexed parameters win when both encodings are present." },
+          "data": { "type": "string", "description": "Import rows in either REDCap encoding (§3.7.1): the indexed form parameters `data[i][key]=…`, or a single `data` parameter holding a JSON array of record objects (DEV-API-24). Its presence makes the call an import (REQ-API-012, REQ-API-031). Indexed parameters win when both encodings are present. A row naming `redcap_repeat_instrument` and `redcap_repeat_instance` fills that instance of an instrument repeating at the row's event (REQ-API-155)." },
           "returnContent": { "type": "string", "description": "With a record import: `count` answers `{\"count\": N}` for the rows applied; anything else keeps the §3.7.2 result rows (REQ-API-142)." },
+          "repeat_instance": { "type": "string", "description": "With `action=delete`: deletes one form instance only — `1` the first, `n` a further instance of a repeating instrument (REQ-API-155); without it every instance in scope goes. Not a positive integer → 400." },
           "tz": { "type": "string", "description": "IANA timezone name or ±HH:MM offset — timezone of collection for the call's date/date-time values; default APP_TIMEZONE (import only, GD-16, REQ-VAL-041)." },
           "overwriteBehavior": { "type": "string", "description": "Accepted and ignored (REQ-API-017): import always upserts." },
           "forceAutoNumber": { "type": "string", "description": "Accepted and ignored (REQ-API-017)." },
@@ -1786,7 +1806,7 @@
       },
       "ContentValue": {
         "type": "string",
-        "enum": ["project", "metadata", "event", "formEventMapping", "exportFieldNames", "generateNextRecordName", "record"],
+        "enum": ["project", "metadata", "event", "formEventMapping", "exportFieldNames", "generateNextRecordName", "repeatingFormsEvents", "record"],
         "description": "The dispatcher of the data API (REQ-API-012). With `content=record`: a call carrying `data` is an import, one without it an export; deletion needs `action=delete`."
       },
       "User": {
@@ -2109,9 +2129,10 @@
           "position": { "type": "integer" },
           "field_count": { "type": "integer" },
           "is_survey": { "type": "boolean", "description": "Survey-marked instruments always report `finished` completion (GD-9)." },
-          "branching_logic": { "type": "string" }
+          "branching_logic": { "type": "string" },
+          "repeating_events": { "type": "array", "items": { "type": "string" }, "description": "The events the instrument repeats at (REQ-API-154) — arms by number, events in canonical order; `[]` when none." }
         },
-        "example": { "id": 7, "name": "intake", "position": 1, "field_count": 24, "is_survey": false, "branching_logic": "" }
+        "example": { "id": 7, "name": "intake", "position": 1, "field_count": 24, "is_survey": false, "branching_logic": "", "repeating_events": [] }
       },
       "Field": {
         "type": "object",
@@ -2376,7 +2397,7 @@
         "required": ["record_id", "events"],
         "properties": {
           "record_id": { "type": "string" },
-          "events": { "type": "array", "items": { "type": "object", "required": ["unique_event_name", "instruments"], "properties": { "unique_event_name": { "type": "string" }, "instruments": { "type": "array", "description": "Only the cells that are not `no_data` (REQ-API-149); a mapped instrument absent here is `no_data`.", "items": { "type": "object", "required": ["name", "state"], "properties": { "name": { "type": "string" }, "state": { "type": "string", "enum": ["some_data", "finished"] } } } } } } }
+          "events": { "type": "array", "items": { "type": "object", "required": ["unique_event_name", "instruments"], "properties": { "unique_event_name": { "type": "string" }, "instruments": { "type": "array", "description": "Only the cells that are not `no_data` (REQ-API-149); a mapped instrument absent here is `no_data`.", "items": { "type": "object", "required": ["name", "state"], "properties": { "name": { "type": "string" }, "state": { "type": "string", "enum": ["no_data", "some_data", "finished"], "description": "The first instance's state; `no_data` only on a repeating instrument whose further instances hold something." }, "instances": { "type": "array", "description": "A repeating instrument only (REQ-API-156): every instance whose state is not `no_data`, ascending.", "items": { "type": "object", "required": ["instance", "state"], "properties": { "instance": { "type": "integer", "minimum": 1 }, "state": { "type": "string", "enum": ["some_data", "finished"] } } } } } } } } } }
         }
       },
       "AuditPage": {
@@ -2391,10 +2412,10 @@
         "type": "object",
         "required": ["entries", "next_cursor"],
         "properties": {
-          "entries": { "type": "array", "items": { "type": "object", "required": ["created_at", "action"], "properties": { "created_at": { "$ref": "#/components/schemas/Timestamp" }, "user_id": { "type": ["integer", "null"], "format": "int64" }, "user_display_name": { "type": ["string", "null"] }, "action": { "type": "string", "enum": ["create", "update", "delete"] }, "instrument": { "type": ["string", "null"] }, "event": { "type": ["string", "null"] }, "fields": { "type": "array", "items": { "type": "object", "required": ["field"], "properties": { "field": { "type": "string" }, "old": { "type": ["string", "null"], "description": "`null` for create." }, "new": { "type": ["string", "null"], "description": "`null` for delete — the `old` values are the deleted values (REQ-AUD-009)." } } } } } } },
+          "entries": { "type": "array", "items": { "type": "object", "required": ["created_at", "action"], "properties": { "created_at": { "$ref": "#/components/schemas/Timestamp" }, "user_id": { "type": ["integer", "null"], "format": "int64" }, "user_display_name": { "type": ["string", "null"] }, "action": { "type": "string", "enum": ["create", "update", "delete"] }, "instrument": { "type": ["string", "null"] }, "event": { "type": ["string", "null"] }, "instance": { "type": "integer", "minimum": 1, "description": "The form instance — 1 for every form that does not repeat (REQ-API-156)." }, "fields": { "type": "array", "items": { "type": "object", "required": ["field"], "properties": { "field": { "type": "string" }, "old": { "type": ["string", "null"], "description": "`null` for create." }, "new": { "type": ["string", "null"], "description": "`null` for delete — the `old` values are the deleted values (REQ-AUD-009)." } } } } } } },
           "next_cursor": { "type": ["string", "null"] }
         },
-        "example": { "entries": [ { "created_at": "2026-09-18 14:02:11", "user_id": 3, "user_display_name": "User", "action": "update", "instrument": "intake", "event": "baseline_arm_1", "fields": [ { "field": "age", "old": "41", "new": "42" } ] } ], "next_cursor": null }
+        "example": { "entries": [ { "created_at": "2026-09-18 14:02:11", "user_id": 3, "user_display_name": "User", "action": "update", "instrument": "intake", "event": "baseline_arm_1", "instance": 1, "fields": [ { "field": "age", "old": "41", "new": "42" } ] } ], "next_cursor": null }
       },
       "SurveyLink": {
         "type": "object",

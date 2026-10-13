@@ -1,12 +1,13 @@
 package dataapi
 
 // content=record&action=delete (API_Endpoints_Design.md §3.8, GD-3). The
-// call is scoped by records[] and optionally events[]/fields[]; a record's
-// identity row goes with its last value, and the audit entry carries the
-// deleted values (REQ-AUD-009).
+// call is scoped by records[] and optionally events[]/fields[] and
+// repeat_instance; a record's identity row goes with its last value, and the
+// audit entry carries the deleted values (REQ-AUD-009).
 
 import (
 	"net/http"
+	"strconv"
 
 	"csms/api/internal/audit"
 )
@@ -48,6 +49,18 @@ func (h *Handler) contentRecordDelete(w http.ResponseWriter, r *http.Request, en
 		// Deletion must name its records; an unscoped delete is rejected.
 		writeError(w, enc, http.StatusBadRequest, "Invalid request")
 		return
+	}
+	// repeat_instance narrows the delete to one form instance — the first
+	// (1) or a further one of a repeating instrument (REQ-API-155). Without it
+	// every instance in scope goes, hidden ones included (REQ-DB-048).
+	instance := 0
+	if p.RepeatInstance != "" {
+		n, err := strconv.Atoi(p.RepeatInstance)
+		if err != nil || n < 1 {
+			writeError(w, enc, http.StatusBadRequest, "Invalid request")
+			return
+		}
+		instance = n
 	}
 	d, err := h.loadDict(ctx, sub.Project.ID)
 	if err != nil {
@@ -109,7 +122,7 @@ func (h *Handler) contentRecordDelete(w http.ResponseWriter, r *http.Request, en
 			continue
 		}
 
-		removed, err := h.Store.DeleteRecordValuesTx(ctx, tx, sub.Project.ID, recordID, p.Events, fields)
+		removed, err := h.Store.DeleteRecordValuesTx(ctx, tx, sub.Project.ID, recordID, p.Events, fields, instance)
 		if err != nil {
 			tx.Rollback()
 			h.storeError(w, enc)

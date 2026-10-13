@@ -36,6 +36,9 @@ type Params struct {
 	TZ                string
 	Data              string // import payload as a JSON array (§3.7.1, REQ-API-031)
 	ReturnContent     string // "count" switches the import response (REQ-API-142)
+	// RepeatInstance narrows a delete to one form instance (REDCap's
+	// repeat_instance, REQ-API-155); "" = every instance.
+	RepeatInstance string
 
 	// HasData reports a `data` parameter in any encoding; for
 	// content=record its presence decides import vs export (REQ-API-012).
@@ -110,6 +113,7 @@ func ParseParams(r *http.Request) (Params, error) {
 		TZ:                single("tz"),
 		Data:              single("data"),
 		ReturnContent:     single("returnContent"),
+		RepeatInstance:    single("repeat_instance"),
 		HasData:           hasDataKey(body) || hasDataKey(query),
 	}, nil
 }

@@ -138,6 +138,9 @@ final class Router
             'handler' => 'commitStaging', 'guard' => 'login', 'action' => 'staging_commit'],
         ['method' => 'POST', 'pattern' => '/projects/{id}/design', 'controller' => Controllers\DesignController::class,
             'handler' => 'discardStaging', 'guard' => 'login', 'action' => 'staging_discard'],
+        // The repeating-instrument toggles of the instrument list (§7.1, REQ-UI-054).
+        ['method' => 'POST', 'pattern' => '/projects/{id}/design', 'controller' => Controllers\DesignController::class,
+            'handler' => 'saveRepeating', 'guard' => 'login', 'action' => 'save_repeating'],
         // The instrument import (§7.6, REQ-UI-053): preview, reorder, import, cancel.
         ['method' => 'POST', 'pattern' => '/projects/{id}/design', 'controller' => Controllers\DesignController::class,
             'handler' => 'importPreview', 'guard' => 'login', 'action' => 'import_preview'],

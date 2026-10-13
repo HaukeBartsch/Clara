@@ -4,11 +4,16 @@
  * position order; choosing one opens its field editor. Creating, reordering and the survey /
  * branching attributes of instruments belong to Setup block C (§6.2) — this page edits fields.
  *
+ * Each instrument's "Repeating" dropdown (REQ-UI-054) holds one switch per event it is
+ * mapped to: on, the form can be filled out more than once for a record at that event
+ * (REQ-API-154). Switching saves at once (design.js); without JavaScript the Save button does.
+ *
  * Below the list, the instrument import (§7.6, REQ-UI-053): REDCap instrument ZIPs or
  * data-dictionary CSVs, previewed through the API's dry run before anything is written.
  *
- * Reads: $instruments, $designUrl, $setupUrl, $import (DesignController::importView, or
- * null), $canEdit, and the structure-mode partial's inputs.
+ * Reads: $instruments, $repeating (DesignController::repeatingChoices), $designUrl, $setupUrl,
+ * $import (DesignController::importView, or null), $canEdit, and the structure-mode partial's
+ * inputs.
  */
 
 use Clara\View;
@@ -29,6 +34,7 @@ use Clara\View;
             <th scope="col" class="text-end"><?= View::e($view->t('setup.instrument.fields')) ?></th>
             <th scope="col"><?= View::e($view->t('setup.instrument.survey')) ?></th>
             <th scope="col"><?= View::e($view->t('setup.instrument.branching')) ?></th>
+            <th scope="col"><?= View::e($view->t('design.repeating.column')) ?></th>
         </tr></thead>
         <tbody>
         <?php foreach ($instruments as $instrument): ?>
@@ -37,6 +43,7 @@ use Clara\View;
                 <td class="text-end"><?= (int) ($instrument['field_count'] ?? 0) ?></td>
                 <td><?php if (!empty($instrument['is_survey'])): ?><span class="badge text-bg-info"><?= View::e($view->t('setup.instrument.survey_badge')) ?></span><?php endif; ?></td>
                 <td><code class="small"><?= View::e($instrument['branching_logic'] ?? '') ?></code></td>
+                <td><?php require __DIR__ . '/../partials/repeating-dropdown.php'; ?></td>
             </tr>
         <?php endforeach; ?>
         </tbody>

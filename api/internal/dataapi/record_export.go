@@ -405,7 +405,11 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 	// Stored finished assignments (§4.13, REQ-DB-036): the sparse set joined
 	// in memory per (record, event, instrument), as on the dashboard — only
 	// mapped pairs are visible (§ mapping_updated rule).
-	finished := map[string]bool{} // record|event|instrumentID
+	finished := map[string]bool{} // record|event|instrumentID|instance
+	// finishedFurther lists, per record|event|instrumentID, the further
+	// instances marked finished — an instance that holds no value but is
+	// finished still has a row (REQ-API-155).
+	finishedFurther := map[string][]int{}
 	evNameOf := map[int64]string{}
 	for _, e := range d.events {
 		evNameOf[e.EventID] = e.UniqueEventName
@@ -421,7 +425,11 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 			if !known {
 				continue // event unknown to the dictionary (deleted mid-read)
 			}
-			finished[completionKey(c.RecordID, name, c.InstrumentID)] = true
+			finished[completionKey(c.RecordID, name, c.InstrumentID, c.Instance)] = true
+			if c.Instance > 1 {
+				finishedFurther[completionKey(c.RecordID, name, c.InstrumentID, 1)] =
+					append(finishedFurther[completionKey(c.RecordID, name, c.InstrumentID, 1)], c.Instance)
+			}
 		}
 	}
 
@@ -485,9 +493,48 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		}
 	}
 	type wideSlot struct {
-		col   int
-		event string          // "" = bare name (single-event field)
-		comp  *dictInstrument // set = an <instrument>_complete slot, col unused
+		col      int
+		event    string          // "" = bare name (single-event field)
+		comp     *dictInstrument // set = an <instrument>_complete slot, col unused
+		instance int             // 0 = the first instance; n ≥ 2 = a further one (REQ-API-155)
+	}
+	// Further instances in the wide layout (REQ-API-155): the header names one
+	// slot per instance, so it needs the highest instance number of every
+	// repeating (instrument, event) among the records this call may return. One
+	// grouped read answers it; values are not read here.
+	maxInstance := map[string]int{} // instrument name|event -> highest instance
+	if wide && d.hasRepeating() {
+		candidates := map[string]bool{}
+		for _, id := range ids {
+			if wantRecords == nil || wantRecords[id] {
+				candidates[id] = true
+			}
+		}
+		rows, err := h.Store.DB.QueryContext(ctx,
+			`SELECT record_id, repeating_instrument, unique_event_name, MAX(repeating_instance_number)
+			 FROM data WHERE project_id = ? AND repeating_instrument <> ''
+			 GROUP BY record_id, repeating_instrument, unique_event_name`, s.ProjectID)
+		if err != nil {
+			s.fail(w, http.StatusInternalServerError, "Internal error")
+			return
+		}
+		for rows.Next() {
+			var record, instrument, event string
+			var n int
+			if err := rows.Scan(&record, &instrument, &event, &n); err != nil {
+				rows.Close()
+				s.fail(w, http.StatusInternalServerError, "Internal error")
+				return
+			}
+			if candidates[record] && d.repeats(event, instrument) && n > maxInstance[instrument+"|"+event] {
+				maxInstance[instrument+"|"+event] = n
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			s.fail(w, http.StatusInternalServerError, "Internal error")
+			return
+		}
 	}
 	// cols grouped by instrument, in position order — one pass, and the
 	// group walk below emits each instrument's block plus its completion
@@ -555,26 +602,48 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 				header = append(header, headerOf(cols[i]))
 				slots = append(slots, wideSlot{col: i, event: ev})
 			}
-			if !withComplete {
-				continue
-			}
-			if len(fieldEvents) > 1 {
-				for _, e := range fieldEvents {
-					// The completion state belongs to the pair like any other
-					// column: a refused pair loses its slot outright (§4.3).
-					if pairRefused(e.UniqueEventName, instr.ID) {
-						continue
+			if withComplete {
+				if len(fieldEvents) > 1 {
+					for _, e := range fieldEvents {
+						// The completion state belongs to the pair like any other
+						// column: a refused pair loses its slot outright (§4.3).
+						if pairRefused(e.UniqueEventName, instr.ID) {
+							continue
+						}
+						header = append(header, instr.Name+"_complete_"+e.UniqueEventName)
+						slots = append(slots, wideSlot{comp: &instr, event: e.UniqueEventName})
 					}
-					header = append(header, instr.Name+"_complete_"+e.UniqueEventName)
-					slots = append(slots, wideSlot{comp: &instr, event: e.UniqueEventName})
+				} else {
+					ev := ""
+					if len(fieldEvents) == 1 {
+						ev = fieldEvents[0].UniqueEventName
+					}
+					header = append(header, instr.Name+"_complete")
+					slots = append(slots, wideSlot{comp: &instr, event: ev})
 				}
-			} else {
-				ev := ""
-				if len(fieldEvents) == 1 {
-					ev = fieldEvents[0].UniqueEventName
+			}
+			// The further instances follow the instrument's own block: per event
+			// it repeats at, one block for each instance 2…n, its column names
+			// suffixed __<n> (REQ-API-155).
+			for _, e := range fieldEvents {
+				top := maxInstance[instr.Name+"|"+e.UniqueEventName]
+				for n := 2; n <= top; n++ {
+					suffix := "__" + strconv.Itoa(n)
+					if len(fieldEvents) > 1 {
+						suffix = "_" + e.UniqueEventName + suffix
+					}
+					for _, i := range colsOf[instr.ID] {
+						if !visible[i][e.UniqueEventName] {
+							continue
+						}
+						header = append(header, headerOf(cols[i])+suffix)
+						slots = append(slots, wideSlot{col: i, event: e.UniqueEventName, instance: n})
+					}
+					if withComplete && !pairRefused(e.UniqueEventName, instr.ID) {
+						header = append(header, instr.Name+"_complete"+suffix)
+						slots = append(slots, wideSlot{comp: &instr, event: e.UniqueEventName, instance: n})
+					}
 				}
-				header = append(header, instr.Name+"_complete")
-				slots = append(slots, wideSlot{comp: &instr, event: ev})
 			}
 		}
 	}
@@ -666,19 +735,10 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 			}
 			offsetDays, offsetReady = off, true
 		}
-		cell := func(c column, event string) string {
-			v := rv[event][c.f.FieldName]
-			if v == "" && event == "" {
-				// Bare-name lookups (wide single-event slots, event-less
-				// projects) scan the record's events; an event-qualified
-				// lookup — every flat row — stays exact.
-				for _, byField := range rv {
-					if x := byField[c.f.FieldName]; x != "" {
-						v = x
-						break
-					}
-				}
-			}
+		ri := d.instancesIndex(dvs)
+		// present renders one stored value of column c at event: the
+		// transformations of its pair, then presentation (REQ-API-026).
+		present := func(c column, event, v string) string {
 			if c.f.isChoiceColumn() {
 				// A box is checked or not: raw writes 1/0, labels the choice's
 				// text or nothing (REQ-EXP-053). The cell only exists where its
@@ -723,6 +783,22 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 			}
 			return v
 		}
+		// cell renders column c of the first instance at event.
+		cell := func(c column, event string) string {
+			v := rv[event][c.f.FieldName]
+			if v == "" && event == "" {
+				// Bare-name lookups (wide single-event slots, event-less
+				// projects) scan the record's events; an event-qualified
+				// lookup — every flat row — stays exact.
+				for _, byField := range rv {
+					if x := byField[c.f.FieldName]; x != "" {
+						v = x
+						break
+					}
+				}
+			}
+			return present(c, event, v)
+		}
 
 		// <instrument>_complete (REQ-API-134): the dashboard's three-state
 		// derivation rendered as 0/1/2. An exact event stays exact; a bare
@@ -741,7 +817,7 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 				return false
 			}
 			isFinished := func(ev string) bool {
-				return finished[completionKey(id, ev, instr.ID)] && mapped(instr.ID, ev)
+				return finished[completionKey(id, ev, instr.ID, 1)] && mapped(instr.ID, ev)
 			}
 			if event != "" {
 				if isFinished(event) {
@@ -767,50 +843,162 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 			}
 			return "0"
 		}
+		// instanceComplete is the same state for one instance of a repeating
+		// instrument at an exact event, read from that instance's values
+		// (REQ-API-155).
+		instanceComplete := func(instr dictInstrument, event, id string, instance int, values map[string]string) string {
+			if finished[completionKey(id, event, instr.ID, instance)] && mapped(instr.ID, event) {
+				return "2"
+			}
+			for name := range instrValueFields[instr.ID] {
+				if values[name] != "" {
+					return "1"
+				}
+			}
+			return "0"
+		}
+		// instanceValues is the value map of one instance: the first instance
+		// lives with the record's first-instance values (REQ-DB-048).
+		instanceValues := func(event, instrument string, instance int) map[string]string {
+			if instance <= 1 {
+				return rv[event]
+			}
+			return ri[instanceKey{event: event, instrument: instrument, instance: instance}]
+		}
+		// instancesOf lists the instances of a repeating instrument at an event
+		// that hold a value or are marked finished, ascending (REQ-API-155).
+		instancesOf := func(event string, instr dictInstrument) []int {
+			var out []int
+			first := finished[completionKey(id, event, instr.ID, 1)]
+			for name := range instrValueFields[instr.ID] {
+				first = first || rv[event][name] != ""
+			}
+			if first {
+				out = append(out, 1)
+			}
+			seen := map[int]bool{}
+			for _, n := range ri.numbers(event, instr.Name) {
+				seen[n] = true
+			}
+			for _, n := range finishedFurther[completionKey(id, event, instr.ID, 1)] {
+				seen[n] = true
+			}
+			further := make([]int, 0, len(seen))
+			for n := range seen {
+				further = append(further, n)
+			}
+			sort.Ints(further)
+			return append(out, further...)
+		}
 
 		if !wide {
-			// flat: one row per (record, event) that holds data (§3.6.2).
-			type rowSpec struct{ event string }
+			// flat: one row per (record, event) that holds data (§3.6.2) and —
+			// REDCap's layout — one row per instance of every instrument that
+			// repeats at that event, naming it in redcap_repeat_instrument and
+			// redcap_repeat_instance (REQ-API-155). The event's own row leaves the
+			// repeating instruments' columns empty; an instance row carries its
+			// own instrument's columns only.
+			type rowSpec struct {
+				event      string
+				instrument *dictInstrument // nil = the event's own row
+				instance   int
+				values     map[string]string // the instance's values (instance rows)
+			}
+			// ownHolds reports a first-instance value at the event outside the
+			// instruments repeating there — the content of the event's own row.
+			ownHolds := func(event string) bool {
+				for name := range rv[event] {
+					if f, ok := d.byName[name]; !ok || !d.repeats(event, f.Instrument) {
+						return true
+					}
+				}
+				return false
+			}
 			var specs []rowSpec
 			if d.hasEvents {
 				for _, e := range events {
+					ev := e.UniqueEventName
 					// A row is written for an event that holds data and delivers at
 					// least one permitted column: pairs in scope that all refused
 					// would leave a line naming nothing but the event itself.
-					if len(rv[e.UniqueEventName]) > 0 && !emptied(e.UniqueEventName) {
-						specs = append(specs, rowSpec{event: e.UniqueEventName})
+					if emptied(ev) {
+						continue
+					}
+					if ownHolds(ev) {
+						specs = append(specs, rowSpec{event: ev})
+					}
+					for k := range d.instruments {
+						instr := &d.instruments[k]
+						if !d.repeats(ev, instr.Name) || !hasBlock[instr.ID] || pairRefused(ev, instr.ID) {
+							continue
+						}
+						for _, n := range instancesOf(ev, *instr) {
+							specs = append(specs, rowSpec{event: ev, instrument: instr, instance: n,
+								values: instanceValues(ev, instr.Name, n)})
+						}
 					}
 				}
 			} else if len(dvs) > 0 {
 				specs = append(specs, rowSpec{})
 			}
+			// slotValue renders one slot of one row; ok is false where the row
+			// carries nothing of that slot's pair.
+			slotValue := func(rs rowSpec, sl wideSlot) (string, bool) {
+				instrID, instrName := int64(0), ""
+				if sl.comp != nil {
+					instrID, instrName = sl.comp.ID, sl.comp.Name
+				} else {
+					instrID, instrName = cols[sl.col].f.InstrumentID, cols[sl.col].f.Instrument
+				}
+				if rs.instrument != nil && instrID != rs.instrument.ID {
+					return "", false // an instance row carries its own instrument only
+				}
+				if rs.instrument == nil && d.repeats(rs.event, instrName) {
+					return "", false // left to the instrument's instance rows
+				}
+				if sl.comp != nil {
+					if pairRefused(rs.event, sl.comp.ID) {
+						// This row's pair refuses even its completion state; the cell
+						// reads as an absent value, like a refused value column.
+						return "", false
+					}
+					if rs.instrument != nil {
+						return instanceComplete(*sl.comp, rs.event, id, rs.instance, rs.values), true
+					}
+					return completeCell(*sl.comp, rs.event, id), true
+				}
+				if !visible[sl.col][rs.event] {
+					// This row's pair may not contribute, so the cell reads as an
+					// absent value (REQ-API-028) while the column stays for the
+					// events that do permit it.
+					return "", false
+				}
+				if rs.instrument != nil {
+					return present(cols[sl.col], rs.event, rs.values[cols[sl.col].f.FieldName]), true
+				}
+				return cell(cols[sl.col], rs.event), true
+			}
 			for _, rs := range specs {
 				cells := make([]string, 0, len(header))
 				if identifierCol >= 0 {
-					cells = append(cells, cell(cols[identifierCol], rs.event))
+					if rs.instrument != nil {
+						// The identifier is the record's (GD-8), stored with its first
+						// instance; an instance row names the record it belongs to.
+						cells = append(cells, present(cols[identifierCol], rs.event, id))
+					} else {
+						cells = append(cells, cell(cols[identifierCol], rs.event))
+					}
 				}
 				if d.hasEvents {
-					cells = append(cells, rs.event, "", "")
+					if rs.instrument != nil {
+						cells = append(cells, rs.event, rs.instrument.Name, strconv.Itoa(rs.instance))
+					} else {
+						cells = append(cells, rs.event, "", "")
+					}
 				}
 				for _, sl := range slots {
-					if sl.comp != nil {
-						if pairRefused(rs.event, sl.comp.ID) {
-							// This row's pair refuses even its completion state; the cell
-							// reads as an absent value, like a refused value column.
-							cells = append(cells, "")
-							continue
-						}
-						cells = append(cells, completeCell(*sl.comp, rs.event, id))
-						continue
-					}
-					if !visible[sl.col][rs.event] {
-						// This row's pair may not contribute, so the cell reads as an
-						// absent value (REQ-API-028) while the column stays for the
-						// events that do permit it.
-						cells = append(cells, "")
-						continue
-					}
-					cells = append(cells, cell(cols[sl.col], rs.event))
+					v, _ := slotValue(rs, sl)
+					cells = append(cells, v)
 				}
 				writeRow(cells)
 				returned = append(returned, id)
@@ -818,10 +1006,7 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 					if sl.comp != nil {
 						continue // the record-view list stays value-driven
 					}
-					if !visible[sl.col][rs.event] {
-						continue // nothing was delivered from this pair
-					}
-					if cellsValueHasData(cols[sl.col].f, cell(cols[sl.col], rs.event)) {
+					if v, ok := slotValue(rs, sl); ok && cellsValueHasData(cols[sl.col].f, v) {
 						instruments[cols[sl.col].f.Instrument] = true
 					}
 				}
@@ -829,6 +1014,26 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		} else if len(dvs) > 0 {
 			cells := make([]string, 0, len(header))
 			for _, sl := range slots {
+				if sl.instance > 1 {
+					// A further instance's slot (REQ-API-155); one this record does
+					// not have reads as an absent value.
+					if sl.comp != nil {
+						values := instanceValues(sl.event, sl.comp.Name, sl.instance)
+						if values == nil && !finished[completionKey(id, sl.event, sl.comp.ID, sl.instance)] {
+							cells = append(cells, "")
+							continue
+						}
+						cells = append(cells, instanceComplete(*sl.comp, sl.event, id, sl.instance, values))
+						continue
+					}
+					values := instanceValues(sl.event, cols[sl.col].f.Instrument, sl.instance)
+					if values == nil {
+						cells = append(cells, "")
+						continue
+					}
+					cells = append(cells, present(cols[sl.col], sl.event, values[cols[sl.col].f.FieldName]))
+					continue
+				}
 				if sl.comp != nil {
 					cells = append(cells, completeCell(*sl.comp, sl.event, id))
 					continue
@@ -919,9 +1124,11 @@ func cellsValueHasData(f recField, v string) bool {
 }
 
 // completionKey indexes the stored finished assignments by
-// (record, event, instrument) — the join key of the REQ-API-134 derivation.
-func completionKey(recordID, event string, instrumentID int64) string {
-	return recordID + "\x00" + event + "\x00" + strconv.FormatInt(instrumentID, 10)
+// (record, event, instrument, instance) — the join key of the REQ-API-134
+// derivation; instance is 1 for every form that does not repeat (REQ-DB-048).
+func completionKey(recordID, event string, instrumentID int64, instance int) string {
+	return recordID + "\x00" + event + "\x00" + strconv.FormatInt(instrumentID, 10) +
+		"\x00" + strconv.Itoa(max(instance, 1))
 }
 
 func toSet(vals []string) map[string]bool {
