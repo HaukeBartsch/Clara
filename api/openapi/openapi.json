@@ -84,7 +84,7 @@
         "tags": ["Data API"],
         "operationId": "dataApiPost",
         "summary": "REDCap-compatible data API (REQ-API-009…039)",
-        "description": "One endpoint dispatched by the `content` parameter with an `application/x-www-form-urlencoded` body. With `content=record`, a call carrying `data` is an import, one without it an export; deletion needs `action=delete`. Unknown parameters are accepted and ignored, never rejected (REQ-API-017). The token is the `token` parameter — never read from an `Authorization` header (REQ-API-010). Survey-link tokens are accepted only for the calls that render and fill their (record, instrument, event) triple: `content=metadata` (that instrument only) and a record import scoped to that record, instrument and event; everything else is 403 `Permission denied` (§3.10, REQ-API-083). A row submitted with a link token names none of that triple — the API takes record, instrument and event from the link, which is how the public survey page submits without learning the record identifier — while a row naming a different one is 403 rather than retargeted.\n\nError bodies are rendered in the requested response format (§3.2): 401 `Invalid token`, 400 `Invalid content`, 403 `Permission denied`, 403 `Project in analysis mode` for writes to an analysis-mode project, 429 `Rate limit exceeded` (with `Retry-After`). A request over the body-size or parameter bound is 400 naming the limit it crossed, answered before the token is looked at — never a 401 (REQ-API-144).",
+        "description": "One endpoint dispatched by the `content` parameter with an `application/x-www-form-urlencoded` body. With `content=record`, a call carrying `data` is an import, one without it an export; deletion needs `action=delete`. Unknown parameters are accepted and ignored, never rejected (REQ-API-017). The token is the `token` parameter — never read from an `Authorization` header (REQ-API-010). Survey-link tokens are accepted only for the calls that render and fill their (record, instrument, event) triple: `content=metadata` (that instrument only) and a record import scoped to that record, instrument and event; everything else is 403 `Permission denied` (§3.10, REQ-API-083). A row submitted with a link token names none of that triple — the API takes record, instrument and event from the link, which is how the public survey page submits without learning the record identifier — while a row naming a different one is 403 rather than retargeted.\n\nError bodies are rendered in the requested response format (§3.2): 401 `Invalid token`, 400 `Invalid content`, 403 `Permission denied`, 403 `Project in analysis mode` for writes to an analysis-mode project, 429 `Rate limit exceeded` (with `Retry-After`). A request over the body-size or parameter bound is 400 naming the limit it crossed, answered before the token is looked at — never a 401 (REQ-API-144).\n\nExample request bodies, shown unencoded — URL-encode each value when sending. The 200 response examples with the same title show the answers; all of them come from one example project (events `baseline_arm_1` and `6_month_arm_1`; instruments `intake`, `imaging`, and `exclusions` repeating at baseline):\n\n- **Records — export all records, flat (REQ-API-024/028)** — `token=…&content=record&format=json&type=flat&rawOrLabel=raw&rawOrLabelHeaders=raw&returnFormat=json`\n- **Records — selected records: records[]** — `token=…&content=record&format=json&type=flat&records[0]=8DISC041&returnFormat=json`\n- **Fields — selected fields: fields[]** — `token=…&content=record&format=json&type=flat&fields[0]=record_id&fields[1]=age&fields[2]=features&returnFormat=json`\n- **Forms — whole instruments: forms[]** — `token=…&content=record&format=json&type=flat&forms[0]=imaging&returnFormat=json`\n- **Events — selected events: events[]** — `token=…&content=record&format=json&type=flat&events[0]=6_month_arm_1&returnFormat=json`\n- **Records + fields + events combined** — `token=…&content=record&format=json&type=flat&records[0]=8DISC041&records[1]=8DISC042&fields[0]=record_id&fields[1]=study_date&fields[2]=series_count&events[0]=6_month_arm_1&returnFormat=json`\n- **Records filtered by filterLogic** — `token=…&content=record&format=json&type=flat&forms[0]=intake&filterLogic=[age] > 40&returnFormat=json`\n- **Labels instead of codes: rawOrLabel=label, rawOrLabelHeaders=label** — `token=…&content=record&format=json&type=flat&fields[0]=record_id&fields[1]=status&fields[2]=features&events[0]=baseline_arm_1&rawOrLabel=label&rawOrLabelHeaders=label&returnFormat=json`\n- **Repeating instrument instances (REQ-API-155)** — `token=…&content=record&format=json&type=flat&records[0]=8DISC042&fields[0]=record_id&fields[1]=excl_tag&fields[2]=excl_regexp&returnFormat=json`\n- **type=wide (compatibility mode, DEV-API-1)** — `token=…&content=record&format=json&type=wide&records[0]=8DISC041&fields[0]=record_id&fields[1]=study_date&fields[2]=series_count&returnFormat=json`\n- **CSV export with csvDelimiter** — `token=…&content=record&format=csv&type=flat&fields[0]=record_id&fields[1]=age&fields[2]=features&csvDelimiter=;`\n- **Import — JSON array in `data`, returnContent=count** — `token=…&content=record&format=json&type=flat&overwriteBehavior=normal&returnContent=count&data=[{\"record_id\":\"8DISC041\",\"redcap_event_name\":\"baseline_arm_1\",\"age\":37,\"status\":\"1\",\"features___1\":\"1\",\"study_date\":\"2026-03-02\",\"modality\":\"MR\",\"series_count\":18},{\"record_id\":\"8DISC041\",\"redcap_event_name\":\"6_month_arm_1\",\"study_date\":\"2026-09-01\",\"modality\":\"MR\",\"series_count\":22},{\"record_id\":\"8DISC042\",\"redcap_event_name\":\"baseline_arm_1\",\"age\":42,\"status\":\"2\",\"features___1\":\"1\",\"features___2\":\"1\",\"study_date\":\"2026-03-09\",\"modality\":\"CT\",\"series_count\":4}]&returnFormat=json`\n- **Import — indexed rows data[i][key], per-row result** — `token=…&content=record&format=json&type=flat&data[0][record_id]=8DISC043&data[0][redcap_event_name]=baseline_arm_1&data[0][age]=51&data[0][features___3]=1&data[1][record_id]=8DISC044&data[1][redcap_event_name]=baseline_arm_1&data[1][age]=abc&data[1][status]=9&returnFormat=json`\n- **Import — instances of a repeating instrument** — `token=…&content=record&format=json&type=flat&data=[{\"record_id\":\"8DISC042\",\"redcap_event_name\":\"baseline_arm_1\",\"redcap_repeat_instrument\":\"exclusions\",\"redcap_repeat_instance\":1,\"excl_tag\":\"0010,0010\",\"excl_regexp\":\".*\"},{\"record_id\":\"8DISC042\",\"redcap_event_name\":\"baseline_arm_1\",\"redcap_repeat_instrument\":\"exclusions\",\"redcap_repeat_instance\":2,\"excl_tag\":\"0008,0080\",\"excl_regexp\":\"^ACME\"}]&returnFormat=json`\n- **Delete — fields of one record at one event** — `token=…&content=record&action=delete&records[0]=8DISC041&events[0]=6_month_arm_1&fields[0]=series_count&returnFormat=json`\n- **Delete — one instance of a repeating instrument** — `token=…&content=record&action=delete&records[0]=8DISC042&events[0]=baseline_arm_1&fields[0]=excl_tag&fields[1]=excl_regexp&repeat_instance=2&returnFormat=json`\n- **Events — content=event** — `token=…&content=event&format=json&returnFormat=json`\n- **Forms × events — content=formEventMapping** — `token=…&content=formEventMapping&format=json&returnFormat=json`\n- **Forms — repeating instruments: content=repeatingFormsEvents** — `token=…&content=repeatingFormsEvents&format=json&returnFormat=json`\n- **Fields — data dictionary of selected forms: content=metadata&forms[]** — `token=…&content=metadata&forms[0]=intake&format=json&returnFormat=json`\n- **Fields — field names of selected forms: content=exportFieldNames&forms[]** — `token=…&content=exportFieldNames&forms[0]=intake&format=json&returnFormat=json`",
         "security": [],
         "parameters": [
           { "name": "Accept", "in": "header", "required": false, "schema": { "type": "string" }, "description": "text/csv is the REDCap default rendering; application/json selects JSON." }
@@ -93,7 +93,114 @@
           "required": true,
           "content": {
             "application/x-www-form-urlencoded": {
-              "schema": { "$ref": "#/components/schemas/DataApiRequest" }
+              "schema": { "$ref": "#/components/schemas/DataApiRequest" },
+              "examples": {
+                "recordExportAll": {
+                  "summary": "Records — export all records, flat (REQ-API-024/028)",
+                  "description": "No filter: every record visible to the token holder (data access group rule, REQ-API-092), one row per (record, event) and one per repeating instance.",
+                  "value": { "token": "8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "content": "record", "format": "json", "type": "flat", "rawOrLabel": "raw", "rawOrLabelHeaders": "raw", "returnFormat": "json" }
+                },
+                "recordExportRecords": {
+                  "summary": "Records — selected records: records[]",
+                  "description": "Indexed array syntax `records[0]=…`; repeated `records=…` works as well (REQ-API-015).",
+                  "value": { "token": "8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "content": "record", "format": "json", "type": "flat", "records[0]": "8DISC041", "returnFormat": "json" }
+                },
+                "recordExportFields": {
+                  "summary": "Fields — selected fields: fields[]",
+                  "description": "A checkbox named in `fields[]` exports all of its `<field>___<code>` columns (REQ-EXP-053). A `fields[]` export carries no `<instrument>_complete` columns (REQ-API-134). Include the record identifier among the fields — it is not added on its own.",
+                  "value": { "token": "8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "content": "record", "format": "json", "type": "flat", "fields[0]": "record_id", "fields[1]": "age", "fields[2]": "features", "returnFormat": "json" }
+                },
+                "recordExportForms": {
+                  "summary": "Forms — whole instruments: forms[]",
+                  "description": "Each instrument's block ends with `<instrument>_complete` (REQ-API-134). Filters intersect (REQ-API-024): an instrument list without the record identifier's instrument returns no `record_id` column.",
+                  "value": { "token": "8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "content": "record", "format": "json", "type": "flat", "forms[0]": "imaging", "returnFormat": "json" }
+                },
+                "recordExportEvents": {
+                  "summary": "Events — selected events: events[]",
+                  "description": "Unique event names as returned by `content=event`.",
+                  "value": { "token": "8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "content": "record", "format": "json", "type": "flat", "events[0]": "6_month_arm_1", "returnFormat": "json" }
+                },
+                "recordExportCombined": {
+                  "summary": "Records + fields + events combined",
+                  "description": "All filters intersect (REQ-API-024).",
+                  "value": { "token": "8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "content": "record", "format": "json", "type": "flat", "records[0]": "8DISC041", "records[1]": "8DISC042", "fields[0]": "record_id", "fields[1]": "study_date", "fields[2]": "series_count", "events[0]": "6_month_arm_1", "returnFormat": "json" }
+                },
+                "recordExportFilterLogic": {
+                  "summary": "Records filtered by filterLogic",
+                  "description": "Branching-logic expression (§3.6.3); a malformed expression is 400 before any output (REQ-API-025).",
+                  "value": { "token": "8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "content": "record", "format": "json", "type": "flat", "forms[0]": "intake", "filterLogic": "[age] > 40", "returnFormat": "json" }
+                },
+                "recordExportLabels": {
+                  "summary": "Labels instead of codes: rawOrLabel=label, rawOrLabelHeaders=label",
+                  "description": "Choice codes become their labels; a checked box exports its choice label and an unchecked one an empty string (REQ-EXP-053); headers become `<Field Label>` and `<Field Label>, <Choice Label>` (REQ-API-027).",
+                  "value": { "token": "8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "content": "record", "format": "json", "type": "flat", "fields[0]": "record_id", "fields[1]": "status", "fields[2]": "features", "events[0]": "baseline_arm_1", "rawOrLabel": "label", "rawOrLabelHeaders": "label", "returnFormat": "json" }
+                },
+                "recordExportRepeating": {
+                  "summary": "Repeating instrument instances (REQ-API-155)",
+                  "description": "Each instance is its own row naming `redcap_repeat_instrument` and `redcap_repeat_instance`; the event's own row leaves the repeating instrument's columns empty.",
+                  "value": { "token": "8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "content": "record", "format": "json", "type": "flat", "records[0]": "8DISC042", "fields[0]": "record_id", "fields[1]": "excl_tag", "fields[2]": "excl_regexp", "returnFormat": "json" }
+                },
+                "recordExportWide": {
+                  "summary": "type=wide (compatibility mode, DEV-API-1)",
+                  "description": "One row per record; a field mapped to several events repeats as `<field>_<unique_event_name>` (§3.6.2). The wide layout carries no record-identifier column.",
+                  "value": { "token": "8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "content": "record", "format": "json", "type": "wide", "records[0]": "8DISC041", "fields[0]": "record_id", "fields[1]": "study_date", "fields[2]": "series_count", "returnFormat": "json" }
+                },
+                "recordExportCsv": {
+                  "summary": "CSV export with csvDelimiter",
+                  "description": "`format=csv` (or no format at all) answers `text/csv` — see the `text/csv` media type of the 200 response.",
+                  "value": { "token": "8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "content": "record", "format": "csv", "type": "flat", "fields[0]": "record_id", "fields[1]": "age", "fields[2]": "features", "csvDelimiter": ";" }
+                },
+                "importJsonCount": {
+                  "summary": "Import — JSON array in `data`, returnContent=count",
+                  "description": "Rows are flat (no `form_name`): every key is stored on its own instrument. A project with events needs `redcap_event_name` (or `event_name`) per row (REQ-API-138). Numbers may be sent as JSON numbers. `overwriteBehavior` and `forceAutoNumber` are accepted and ignored (REQ-API-017).",
+                  "value": { "token": "8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "content": "record", "format": "json", "type": "flat", "overwriteBehavior": "normal", "returnContent": "count", "data": "[{\"record_id\":\"8DISC041\",\"redcap_event_name\":\"baseline_arm_1\",\"age\":37,\"status\":\"1\",\"features___1\":\"1\",\"study_date\":\"2026-03-02\",\"modality\":\"MR\",\"series_count\":18},{\"record_id\":\"8DISC041\",\"redcap_event_name\":\"6_month_arm_1\",\"study_date\":\"2026-09-01\",\"modality\":\"MR\",\"series_count\":22},{\"record_id\":\"8DISC042\",\"redcap_event_name\":\"baseline_arm_1\",\"age\":42,\"status\":\"2\",\"features___1\":\"1\",\"features___2\":\"1\",\"study_date\":\"2026-03-09\",\"modality\":\"CT\",\"series_count\":4}]", "returnFormat": "json" }
+                },
+                "importIndexed": {
+                  "summary": "Import — indexed rows data[i][key], per-row result",
+                  "description": "Without `returnContent=count` the answer is one result row per data row (REQ-API-034): `import_record_id` 1 added, 2 updated, 0 rejected with the reason in `import_form_name`. A rejected row stores nothing; the other rows are applied (REQ-API-035).",
+                  "value": { "token": "8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "content": "record", "format": "json", "type": "flat", "data[0][record_id]": "8DISC043", "data[0][redcap_event_name]": "baseline_arm_1", "data[0][age]": "51", "data[0][features___3]": "1", "data[1][record_id]": "8DISC044", "data[1][redcap_event_name]": "baseline_arm_1", "data[1][age]": "abc", "data[1][status]": "9", "returnFormat": "json" }
+                },
+                "importRepeating": {
+                  "summary": "Import — instances of a repeating instrument",
+                  "description": "`redcap_repeat_instrument` + `redcap_repeat_instance` fill that instance; instance 1 is the first instance's storage (REQ-API-155).",
+                  "value": { "token": "8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "content": "record", "format": "json", "type": "flat", "data": "[{\"record_id\":\"8DISC042\",\"redcap_event_name\":\"baseline_arm_1\",\"redcap_repeat_instrument\":\"exclusions\",\"redcap_repeat_instance\":1,\"excl_tag\":\"0010,0010\",\"excl_regexp\":\".*\"},{\"record_id\":\"8DISC042\",\"redcap_event_name\":\"baseline_arm_1\",\"redcap_repeat_instrument\":\"exclusions\",\"redcap_repeat_instance\":2,\"excl_tag\":\"0008,0080\",\"excl_regexp\":\"^ACME\"}]", "returnFormat": "json" }
+                },
+                "deleteFieldsAtEvent": {
+                  "summary": "Delete — fields of one record at one event",
+                  "description": "`action=delete` with `records[]`, narrowed by `events[]` and `fields[]` (REQ-API-036). `records[]` is required — an unscoped delete is 400.",
+                  "value": { "token": "8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "content": "record", "action": "delete", "records[0]": "8DISC041", "events[0]": "6_month_arm_1", "fields[0]": "series_count", "returnFormat": "json" }
+                },
+                "deleteInstance": {
+                  "summary": "Delete — one instance of a repeating instrument",
+                  "description": "`repeat_instance` narrows the delete to that instance (REQ-API-155).",
+                  "value": { "token": "8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "content": "record", "action": "delete", "records[0]": "8DISC042", "events[0]": "baseline_arm_1", "fields[0]": "excl_tag", "fields[1]": "excl_regexp", "repeat_instance": "2", "returnFormat": "json" }
+                },
+                "event": {
+                  "summary": "Events — content=event",
+                  "description": "All events of all arms in the canonical per-arm order (GD-15, REQ-API-020).",
+                  "value": { "token": "8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "content": "event", "format": "json", "returnFormat": "json" }
+                },
+                "formEventMapping": {
+                  "summary": "Forms × events — content=formEventMapping",
+                  "description": "Which instrument is collected at which event (REQ-API-021).",
+                  "value": { "token": "8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "content": "formEventMapping", "format": "json", "returnFormat": "json" }
+                },
+                "repeatingFormsEvents": {
+                  "summary": "Forms — repeating instruments: content=repeatingFormsEvents",
+                  "description": "The (event, instrument) pairs that repeat (REQ-API-155).",
+                  "value": { "token": "8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "content": "repeatingFormsEvents", "format": "json", "returnFormat": "json" }
+                },
+                "metadataForms": {
+                  "summary": "Fields — data dictionary of selected forms: content=metadata&forms[]",
+                  "description": "One row per field; a checkbox stays one row with its choices (REQ-API-019, REQ-EXP-053).",
+                  "value": { "token": "8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "content": "metadata", "forms[0]": "intake", "format": "json", "returnFormat": "json" }
+                },
+                "exportFieldNamesForms": {
+                  "summary": "Fields — field names of selected forms: content=exportFieldNames&forms[]",
+                  "description": "Restricted to `forms[]` when supplied (REQ-API-022).",
+                  "value": { "token": "8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "content": "exportFieldNames", "forms[0]": "intake", "format": "json", "returnFormat": "json" }
+                }
+              }
             }
           }
         },
@@ -114,11 +221,19 @@
                   },
                   "event": {
                     "summary": "content=event (REQ-API-020, canonical per-arm order GD-15)",
-                    "value": [{ "event_name": "baseline", "arm_num": "1", "unique_event_name": "baseline_arm_1", "event_id": "4" }]
+                    "value": [
+                      { "event_name": "baseline", "arm_num": 1, "unique_event_name": "baseline_arm_1", "event_id": 1 },
+                      { "event_name": "6_month", "arm_num": 1, "unique_event_name": "6_month_arm_1", "event_id": 2 }
+                    ]
                   },
                   "formEventMapping": {
                     "summary": "content=formEventMapping (REQ-API-021)",
-                    "value": [{ "form_name": "intake", "event_name": "baseline", "arm_num": "1", "unique_event_name": "baseline_arm_1", "form_event_mapping": "1" }]
+                    "value": [
+                      { "form_name": "intake", "event_name": "baseline", "arm_num": 1, "unique_event_name": "baseline_arm_1", "form_event_mapping": "1" },
+                      { "form_name": "imaging", "event_name": "baseline", "arm_num": 1, "unique_event_name": "baseline_arm_1", "form_event_mapping": "1" },
+                      { "form_name": "imaging", "event_name": "6_month", "arm_num": 1, "unique_event_name": "6_month_arm_1", "form_event_mapping": "1" },
+                      { "form_name": "exclusions", "event_name": "baseline", "arm_num": 1, "unique_event_name": "baseline_arm_1", "form_event_mapping": "1" }
+                    ]
                   },
                   "exportFieldNames": {
                     "summary": "content=exportFieldNames (REQ-API-022)",
@@ -126,7 +241,7 @@
                   },
                   "generateNextRecordName": {
                     "summary": "content=generateNextRecordName (REQ-API-023)",
-                    "value": { "next_record_name": "8DISC042" }
+                    "value": [{ "next_record_name": "8DISC042" }]
                   },
                   "recordExportFlat": {
                     "summary": "content=record export, type=flat (REQ-API-028; normative)",
@@ -135,8 +250,8 @@
                   "importResultRows": {
                     "summary": "content=record import — result rows (REQ-API-034; import_record_id 1 added, 2 updated, 0 validation error)",
                     "value": [
-                      { "record_id": "8DISC042", "form_name": "intake", "import_record_id": "2", "import_form_name": "intake" },
-                      { "record_id": "8DISC043", "form_name": "intake", "import_record_id": "0", "import_form_name": "Validation error: age: TYPE_INVALID — value \"abc\" is not a valid integer; status: CHOICE_INVALID — value \"9\" is not a choice of \"status\"" }
+                      { "record_id": "8DISC042", "form_name": "intake", "import_record_id": 2, "import_form_name": "intake" },
+                      { "record_id": "8DISC043", "form_name": "intake", "import_record_id": 0, "import_form_name": "Validation error: age: TYPE_INVALID — value \"abc\" is not a valid integer; status: CHOICE_INVALID — value \"9\" is not a choice of \"status\"" }
                     ]
                   },
                   "importCount": {
@@ -145,12 +260,132 @@
                   },
                   "deleteResult": {
                     "summary": "content=record&action=delete (REQ-API-036)",
-                    "value": [{ "record_id": "8DISC042", "form_name": "", "deleted": "1" }]
+                    "value": [{ "record_id": "8DISC042", "form_name": "", "deleted": 1 }]
+                  },
+                  "recordExportAll": {
+                    "summary": "Records — export all records, flat (REQ-API-024/028)",
+                    "value": [
+                      { "record_id": "8DISC041", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "", "redcap_repeat_instance": "", "age": "37", "status": "1", "features___1": "1", "features___2": "0", "features___3": "0", "intake_complete": "1", "study_date": "2026-03-02+00:00", "modality": "MR", "series_count": "18", "imaging_complete": "1", "excl_tag": "", "excl_regexp": "", "exclusions_complete": "" },
+                      { "record_id": "8DISC041", "redcap_event_name": "6_month_arm_1", "redcap_repeat_instrument": "", "redcap_repeat_instance": "", "age": "", "status": "", "features___1": "", "features___2": "", "features___3": "", "intake_complete": "1", "study_date": "2026-09-01+00:00", "modality": "MR", "series_count": "22", "imaging_complete": "1", "excl_tag": "", "excl_regexp": "", "exclusions_complete": "0" },
+                      { "record_id": "8DISC042", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "", "redcap_repeat_instance": "", "age": "42", "status": "2", "features___1": "1", "features___2": "1", "features___3": "0", "intake_complete": "1", "study_date": "2026-03-09+00:00", "modality": "CT", "series_count": "4", "imaging_complete": "1", "excl_tag": "", "excl_regexp": "", "exclusions_complete": "" },
+                      { "record_id": "8DISC042", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "exclusions", "redcap_repeat_instance": "1", "age": "", "status": "", "features___1": "", "features___2": "", "features___3": "", "intake_complete": "", "study_date": "", "modality": "", "series_count": "", "imaging_complete": "", "excl_tag": "0010,0010", "excl_regexp": ".*", "exclusions_complete": "1" },
+                      { "record_id": "8DISC042", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "exclusions", "redcap_repeat_instance": "2", "age": "", "status": "", "features___1": "", "features___2": "", "features___3": "", "intake_complete": "", "study_date": "", "modality": "", "series_count": "", "imaging_complete": "", "excl_tag": "0008,0080", "excl_regexp": "^ACME", "exclusions_complete": "1" },
+                      { "record_id": "8DISC043", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "", "redcap_repeat_instance": "", "age": "51", "status": "", "features___1": "0", "features___2": "0", "features___3": "1", "intake_complete": "1", "study_date": "", "modality": "", "series_count": "", "imaging_complete": "0", "excl_tag": "", "excl_regexp": "", "exclusions_complete": "" }
+                    ]
+                  },
+                  "recordExportRecords": {
+                    "summary": "Records — selected records: records[]",
+                    "value": [
+                      { "record_id": "8DISC041", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "", "redcap_repeat_instance": "", "age": "37", "status": "1", "features___1": "1", "features___2": "0", "features___3": "0", "intake_complete": "1", "study_date": "2026-03-02+00:00", "modality": "MR", "series_count": "18", "imaging_complete": "1", "excl_tag": "", "excl_regexp": "", "exclusions_complete": "" },
+                      { "record_id": "8DISC041", "redcap_event_name": "6_month_arm_1", "redcap_repeat_instrument": "", "redcap_repeat_instance": "", "age": "", "status": "", "features___1": "", "features___2": "", "features___3": "", "intake_complete": "1", "study_date": "2026-09-01+00:00", "modality": "MR", "series_count": "22", "imaging_complete": "1", "excl_tag": "", "excl_regexp": "", "exclusions_complete": "0" }
+                    ]
+                  },
+                  "recordExportFields": {
+                    "summary": "Fields — selected fields: fields[]",
+                    "value": [
+                      { "record_id": "8DISC041", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "", "redcap_repeat_instance": "", "age": "37", "features___1": "1", "features___2": "0", "features___3": "0" },
+                      { "record_id": "8DISC041", "redcap_event_name": "6_month_arm_1", "redcap_repeat_instrument": "", "redcap_repeat_instance": "", "age": "", "features___1": "", "features___2": "", "features___3": "" },
+                      { "record_id": "8DISC042", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "", "redcap_repeat_instance": "", "age": "42", "features___1": "1", "features___2": "1", "features___3": "0" },
+                      { "record_id": "8DISC043", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "", "redcap_repeat_instance": "", "age": "51", "features___1": "0", "features___2": "0", "features___3": "1" }
+                    ]
+                  },
+                  "recordExportForms": {
+                    "summary": "Forms — whole instruments: forms[]",
+                    "value": [
+                      { "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "", "redcap_repeat_instance": "", "study_date": "2026-03-02+00:00", "modality": "MR", "series_count": "18", "imaging_complete": "1" },
+                      { "redcap_event_name": "6_month_arm_1", "redcap_repeat_instrument": "", "redcap_repeat_instance": "", "study_date": "2026-09-01+00:00", "modality": "MR", "series_count": "22", "imaging_complete": "1" },
+                      { "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "", "redcap_repeat_instance": "", "study_date": "2026-03-09+00:00", "modality": "CT", "series_count": "4", "imaging_complete": "1" },
+                      { "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "", "redcap_repeat_instance": "", "study_date": "", "modality": "", "series_count": "", "imaging_complete": "0" }
+                    ]
+                  },
+                  "recordExportEvents": {
+                    "summary": "Events — selected events: events[]",
+                    "value": [{ "record_id": "8DISC041", "redcap_event_name": "6_month_arm_1", "redcap_repeat_instrument": "", "redcap_repeat_instance": "", "intake_complete": "1", "study_date": "2026-09-01+00:00", "modality": "MR", "series_count": "22", "imaging_complete": "1" }]
+                  },
+                  "recordExportCombined": {
+                    "summary": "Records + fields + events combined",
+                    "value": [{ "record_id": "8DISC041", "redcap_event_name": "6_month_arm_1", "redcap_repeat_instrument": "", "redcap_repeat_instance": "", "study_date": "2026-09-01+00:00", "series_count": "22" }]
+                  },
+                  "recordExportFilterLogic": {
+                    "summary": "Records filtered by filterLogic",
+                    "value": [
+                      { "record_id": "8DISC042", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "", "redcap_repeat_instance": "", "age": "42", "status": "2", "features___1": "1", "features___2": "1", "features___3": "0", "intake_complete": "1" },
+                      { "record_id": "8DISC043", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "", "redcap_repeat_instance": "", "age": "51", "status": "", "features___1": "0", "features___2": "0", "features___3": "1", "intake_complete": "1" }
+                    ]
+                  },
+                  "recordExportLabels": {
+                    "summary": "Labels instead of codes: rawOrLabel=label, rawOrLabelHeaders=label",
+                    "value": [
+                      { "Record ID": "8DISC041", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "", "redcap_repeat_instance": "", "Status": "Pending", "Project features, Pseudonymised": "Pseudonymised", "Project features, Imaging": "", "Project features, Biobank": "" },
+                      { "Record ID": "8DISC042", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "", "redcap_repeat_instance": "", "Status": "Done", "Project features, Pseudonymised": "Pseudonymised", "Project features, Imaging": "Imaging", "Project features, Biobank": "" },
+                      { "Record ID": "8DISC043", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "", "redcap_repeat_instance": "", "Status": "", "Project features, Pseudonymised": "", "Project features, Imaging": "", "Project features, Biobank": "Biobank" }
+                    ]
+                  },
+                  "recordExportRepeating": {
+                    "summary": "Repeating instrument instances (REQ-API-155)",
+                    "value": [
+                      { "record_id": "8DISC042", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "", "redcap_repeat_instance": "", "excl_tag": "", "excl_regexp": "" },
+                      { "record_id": "8DISC042", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "exclusions", "redcap_repeat_instance": "1", "excl_tag": "0010,0010", "excl_regexp": ".*" },
+                      { "record_id": "8DISC042", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "exclusions", "redcap_repeat_instance": "2", "excl_tag": "0008,0080", "excl_regexp": "^ACME" }
+                    ]
+                  },
+                  "recordExportWide": {
+                    "summary": "type=wide (compatibility mode, DEV-API-1)",
+                    "value": [{ "study_date_baseline_arm_1": "2026-03-02+00:00", "study_date_6_month_arm_1": "2026-09-01+00:00", "series_count_baseline_arm_1": "18", "series_count_6_month_arm_1": "22" }]
+                  },
+                  "importJsonCount": {
+                    "summary": "Import — JSON array in `data`, returnContent=count",
+                    "value": { "count": 3 }
+                  },
+                  "importIndexed": {
+                    "summary": "Import — indexed rows data[i][key], per-row result",
+                    "value": [
+                      { "record_id": "8DISC043", "form_name": "", "import_record_id": 1, "import_form_name": "" },
+                      { "record_id": "8DISC044", "form_name": "", "import_record_id": 0, "import_form_name": "Validation error: age: TYPE_INVALID — value \"abc\" is not a valid integer; status: CHOICE_INVALID — value \"9\" is not a choice of \"status\"" }
+                    ]
+                  },
+                  "importRepeating": {
+                    "summary": "Import — instances of a repeating instrument",
+                    "value": [
+                      { "record_id": "8DISC042", "form_name": "", "import_record_id": 2, "import_form_name": "" },
+                      { "record_id": "8DISC042", "form_name": "", "import_record_id": 2, "import_form_name": "" }
+                    ]
+                  },
+                  "deleteFieldsAtEvent": {
+                    "summary": "Delete — fields of one record at one event",
+                    "value": [{ "record_id": "8DISC041", "form_name": "", "deleted": 1 }]
+                  },
+                  "deleteInstance": {
+                    "summary": "Delete — one instance of a repeating instrument",
+                    "value": [{ "record_id": "8DISC042", "form_name": "", "deleted": 1 }]
+                  },
+                  "repeatingFormsEvents": {
+                    "summary": "Forms — repeating instruments: content=repeatingFormsEvents",
+                    "value": [{ "event_name": "baseline_arm_1", "form_name": "exclusions", "custom_form_label": "" }]
+                  },
+                  "metadataForms": {
+                    "summary": "Fields — data dictionary of selected forms: content=metadata&forms[]",
+                    "value": [
+                      { "field_name": "record_id", "form_name": "intake", "section_header": "", "field_type": "text", "field_label": "Record ID", "field_note": "", "select_choices_or_calculations": "", "choice_codes": "", "choice_labels": "", "validation_type": "", "validation_min": "", "validation_max": "", "required_field": "", "branching_logic": "", "matrix_group_name": "", "field_annotation": "", "record_identifier": "Y", "direct_identifier": "" },
+                      { "field_name": "age", "form_name": "intake", "section_header": "", "field_type": "text", "field_label": "Age", "field_note": "", "select_choices_or_calculations": "", "choice_codes": "", "choice_labels": "", "validation_type": "integer", "validation_min": "", "validation_max": "", "required_field": "", "branching_logic": "", "matrix_group_name": "", "field_annotation": "", "record_identifier": "", "direct_identifier": "" },
+                      { "field_name": "status", "form_name": "intake", "section_header": "", "field_type": "dropdown", "field_label": "Status", "field_note": "", "select_choices_or_calculations": "1, Pending | 2, Done", "choice_codes": "1,2", "choice_labels": "Pending,Done", "validation_type": "", "validation_min": "", "validation_max": "", "required_field": "", "branching_logic": "", "matrix_group_name": "", "field_annotation": "", "record_identifier": "", "direct_identifier": "" },
+                      { "field_name": "features", "form_name": "intake", "section_header": "", "field_type": "checkbox", "field_label": "Project features", "field_note": "", "select_choices_or_calculations": "1, Pseudonymised | 2, Imaging | 3, Biobank", "choice_codes": "1,2,3", "choice_labels": "Pseudonymised,Imaging,Biobank", "validation_type": "", "validation_min": "", "validation_max": "", "required_field": "", "branching_logic": "", "matrix_group_name": "", "field_annotation": "", "record_identifier": "", "direct_identifier": "" }
+                    ]
+                  },
+                  "exportFieldNamesForms": {
+                    "summary": "Fields — field names of selected forms: content=exportFieldNames&forms[]",
+                    "value": [
+                      { "field_name": "record_id", "form_name": "intake" },
+                      { "field_name": "age", "form_name": "intake" },
+                      { "field_name": "status", "form_name": "intake" },
+                      { "field_name": "features", "form_name": "intake" }
+                    ]
                   }
                 }
               },
               "text/csv": {
-                "schema": { "type": "string", "description": "The same result as CSV — the REDCap default when neither `format` nor `returnFormat` says otherwise. Streamed, quoted per standard CSV rules, honoring `csvDelimiter` (REQ-API-029)." }
+                "schema": { "type": "string", "description": "The same result as CSV — the REDCap default when neither `format` nor `returnFormat` says otherwise. Streamed, quoted per standard CSV rules, honoring `csvDelimiter` (REQ-API-029)." },
+                "example": "record_id;redcap_event_name;redcap_repeat_instrument;redcap_repeat_instance;age;features___1;features___2;features___3\n8DISC041;baseline_arm_1;;;37;1;0;0\n8DISC041;6_month_arm_1;;;;;;\n8DISC042;baseline_arm_1;;;42;1;1;0\n8DISC043;baseline_arm_1;;;51;0;0;1\n"
               }
             }
           },
@@ -164,7 +399,7 @@
         "tags": ["Data API"],
         "operationId": "dataApiGet",
         "summary": "REDCap-compatible data API via query string (REQ-API-009)",
-        "description": "`GET /api/` with the same parameters in the query string MUST also work. Behaviour, responses and errors are identical to `POST /api/`.",
+        "description": "`GET /api/` with the same parameters in the query string MUST also work. Behaviour, responses and errors are identical to `POST /api/`.\n\nExample calls — the answers are the 200 response examples shared with `POST /api/`; `[` and `]` may be sent unencoded or as `%5B`/`%5D`:\n\n- **All records, flat** — `/api/?token=…&content=record&format=json&type=flat`\n- **Selected records** — `/api/?token=…&content=record&format=json&type=flat&records[0]=8DISC041&records[1]=8DISC042`\n- **Selected fields** — `/api/?token=…&content=record&format=json&type=flat&fields[0]=record_id&fields[1]=age&fields[2]=features`\n- **Whole forms** — `/api/?token=…&content=record&format=json&type=flat&forms[0]=intake&forms[1]=imaging`\n- **Selected events** — `/api/?token=…&content=record&format=json&type=flat&events[0]=6_month_arm_1`\n- **Combined filters** — `/api/?token=…&content=record&format=json&type=flat&records[0]=8DISC041&fields[0]=record_id&fields[1]=series_count&events[0]=6_month_arm_1`\n- **filterLogic** — `/api/?token=…&content=record&format=json&type=flat&forms[0]=intake&filterLogic=%5Bage%5D%20%3E%2040`\n- **Labels** — `/api/?token=…&content=record&format=json&type=flat&fields[0]=record_id&fields[1]=status&rawOrLabel=label&rawOrLabelHeaders=label`\n- **CSV** — `/api/?token=…&content=record&format=csv&type=flat&fields[0]=record_id&fields[1]=age&csvDelimiter=%3B`\n- **Events** — `/api/?token=…&content=event&format=json`\n- **Forms × events** — `/api/?token=…&content=formEventMapping&format=json`\n- **Repeating forms** — `/api/?token=…&content=repeatingFormsEvents&format=json`\n- **Fields of a form** — `/api/?token=…&content=metadata&format=json&forms[0]=intake`\n- **Field names of a form** — `/api/?token=…&content=exportFieldNames&format=json&forms[0]=intake`\n\nA token in a URL can end up in proxy and server logs — prefer `POST /api/` with the token in the body.",
         "security": [],
         "parameters": [
           { "name": "token", "in": "query", "required": true, "schema": { "type": "string", "format": "uuid" }, "description": "Project API token or survey-link token (§3.10)." },
@@ -175,11 +410,11 @@
           { "name": "type", "in": "query", "required": false, "schema": { "type": "string", "enum": ["flat", "wide"], "default": "wide" }, "description": "`flat` is normative — one row per (record, event); `wide` is the simplified compatibility mode (§3.6.2, DEV-API-1)." },
           { "name": "csvDelimiter", "in": "query", "required": false, "schema": { "type": "string", "enum": ["", ",", ";", "|", "^", "\t", "tab"], "default": "," }, "description": "REDCap's set — tab as the character or by the name `tab`; empty value = comma. Any other value → 400 (REQ-API-029, REQ-EXP-013)." },
           { "name": "decimalCharacter", "in": "query", "required": false, "schema": { "type": "string", "enum": ["", ".", ","], "default": "" }, "description": "Record export: the decimal separator of calculated and floating-point values, in either format; empty value = the stored form (a period). Any other value → 400 (REQ-EXP-015)." },
-          { "name": "records", "in": "query", "required": false, "schema": { "type": "array", "items": { "type": "string" } }, "style": "form", "explode": true, "description": "Repeated values or the REDCap indexed syntax `records[0]=…` (REQ-API-015)." },
-          { "name": "fields", "in": "query", "required": false, "schema": { "type": "array", "items": { "type": "string" } }, "style": "form", "explode": true },
-          { "name": "forms", "in": "query", "required": false, "schema": { "type": "array", "items": { "type": "string" } }, "style": "form", "explode": true },
-          { "name": "events", "in": "query", "required": false, "schema": { "type": "array", "items": { "type": "string" } }, "style": "form", "explode": true },
-          { "name": "filterLogic", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Branching-logic expression filtering which records are returned; never changes the sensitivity level (REQ-API-025, §3.6.3)." },
+          { "name": "records", "in": "query", "required": false, "schema": { "type": "array", "items": { "type": "string" } }, "style": "form", "explode": true, "examples": { "one": { "summary": "one record", "value": ["8DISC041"] }, "several": { "summary": "two records", "value": ["8DISC041", "8DISC042"] } }, "description": "Repeated values or the REDCap indexed syntax `records[0]=…` (REQ-API-015)." },
+          { "name": "fields", "in": "query", "required": false, "schema": { "type": "array", "items": { "type": "string" } }, "style": "form", "explode": true, "examples": { "identifierAndAge": { "summary": "record_id and a field", "value": ["record_id", "age"] }, "checkbox": { "summary": "a checkbox — all its ___ columns", "value": ["record_id", "features"] } } },
+          { "name": "forms", "in": "query", "required": false, "schema": { "type": "array", "items": { "type": "string" } }, "style": "form", "explode": true, "examples": { "one": { "summary": "one instrument", "value": ["intake"] }, "several": { "summary": "two instruments", "value": ["intake", "imaging"] } } },
+          { "name": "events", "in": "query", "required": false, "schema": { "type": "array", "items": { "type": "string" } }, "style": "form", "explode": true, "examples": { "one": { "summary": "one event", "value": ["6_month_arm_1"] }, "several": { "summary": "two events", "value": ["baseline_arm_1", "6_month_arm_1"] } } },
+          { "name": "filterLogic", "in": "query", "required": false, "schema": { "type": "string" }, "examples": { "numeric": { "summary": "a number comparison", "value": "[age] > 40" }, "eventQualified": { "summary": "a value at one event", "value": "[baseline_arm_1][status] = \"2\"" } }, "description": "Branching-logic expression filtering which records are returned; never changes the sensitivity level (REQ-API-025, §3.6.3)." },
           { "name": "rawOrLabel", "in": "query", "required": false, "schema": { "type": "string", "enum": ["raw", "label"], "default": "raw" } },
           { "name": "rawOrLabelHeaders", "in": "query", "required": false, "schema": { "type": "string", "enum": ["raw", "label", "both"], "default": "raw" } }
         ],

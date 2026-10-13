@@ -842,6 +842,8 @@ The form for a record generates an error on "Safe": "The form contains invalid v
 
 Add an export as csv function to the Audits page. As Audits might be multi-GB in size warn the user for large exports (more than 1GB). 
 
+Make the "Projects" page the first open tab in the Control Panel.
+
 # Status currently 
 
 Security findings with no fix (detail in my previous message)
