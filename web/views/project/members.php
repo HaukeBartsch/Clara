@@ -4,7 +4,9 @@
  * "no role — full permissions" per REQ-AUTH-022, whether a token exists, account state), an
  * add form over the enabled accounts that are not members yet, and per-row role change, token
  * rotation and removal. A token value never appears in the table (REQ-API-005): a just-issued
- * one (add, rotate) is shown exactly once above it, read-only, with copy and warning (§3.5).
+ * one (add, rotate) is shown exactly once above it, read-only, with warning (§3.5) — masked
+ * and without its value until Show, which is audited; Copy comes with the shown value
+ * (REQ-UI-062).
  *
  * Per-member data-access-group assignment (§5.3 last row) is not on this page yet: no API read
  * returns a member's current groups, and a form that cannot show them would overwrite blindly.
@@ -15,7 +17,7 @@ use Clara\View;
 /** @var list<array<string, mixed>> $members */
 /** @var list<array<string, mixed>> $roles */
 /** @var list<array<string, mixed>> $candidates */
-/** @var array{token: string, email: string}|null $reveal */
+/** @var array{token: string, email: string, user_id: int, visible: bool}|null $reveal */
 $base = '/projects/' . (int) $projectId . '/members';
 $roleOptions = static function (?string $current) use ($roles, $view): string {
     $html = '<option value=""' . ($current === null ? ' selected' : '') . '>' . View::e($view->t('members.no_role')) . '</option>';
@@ -32,11 +34,22 @@ $roleOptions = static function (?string $current) use ($roles, $view): string {
 <?php if (!empty($reveal)): ?>
     <div class="alert alert-warning clara-token-reveal" role="status">
         <div class="fw-semibold mb-1"><?= View::e($view->t('members.token_for', ['email' => $reveal['email']])) ?></div>
-        <div class="input-group input-group-sm mb-1">
-            <input class="form-control font-monospace" type="text" readonly id="clara-new-token"
-                   value="<?= View::e($reveal['token']) ?>" aria-label="<?= View::e($view->t('members.token')) ?>">
-            <button class="btn btn-outline-secondary" type="button" data-clara-copy="#clara-new-token"><?= View::e($view->t('members.copy')) ?></button>
-        </div>
+        <form method="post" action="<?= $base ?>?action=<?= $reveal['visible'] ? 'hide_token' : 'show_token' ?>"
+              class="input-group input-group-sm mb-1">
+            <?= $view->csrfField() ?>
+            <?php if ($reveal['visible']): ?>
+                <input class="form-control font-monospace" type="text" readonly id="clara-new-token"
+                       value="<?= View::e($reveal['token']) ?>" aria-label="<?= View::e($view->t('members.token')) ?>">
+                <button class="btn btn-outline-secondary" type="submit" data-clara-token-hide><?= View::e($view->t('members.hide')) ?></button>
+                <button class="btn btn-outline-secondary" type="button" data-clara-copy="#clara-new-token"><?= View::e($view->t('members.copy')) ?></button>
+            <?php else: ?>
+                <?php // Masked: the value is not in the page at all until Show has been recorded. ?>
+                <input class="form-control font-monospace" type="password" readonly id="clara-new-token"
+                       value="" placeholder="<?= str_repeat("\u{2022}", 36) ?>"
+                       aria-label="<?= View::e($view->t('members.token_masked')) ?>">
+                <button class="btn btn-outline-secondary" type="submit" data-clara-token-show><?= View::e($view->t('members.show')) ?></button>
+            <?php endif; ?>
+        </form>
         <div class="small"><?= View::e($view->t('members.token_once')) ?></div>
     </div>
 <?php endif; ?>

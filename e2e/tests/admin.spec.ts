@@ -66,27 +66,46 @@ test.describe("administration surface (M3)", () => {
     await page.locator('form[action*="action=save_role"] button[type="submit"]').click()
     await expect(page.locator("table.clara-roles")).toContainText(roleName)
 
-    // Add the member with that role: the token is shown exactly once (§3.5).
+    // Add the member with that role: the token is shown exactly once (§3.5) — masked, its
+    // value only on the page after Show (REQ-UI-062).
     await page.locator("#clara-nav").getByRole("link", { name: "Members" }).click()
     await page.locator("#member-user").selectOption({ label: `${email} — Member ${tag}` })
     await page.selectOption("#member-role", roleName)
     await page.locator('form[action*="action=add_member"] button[type="submit"]').click()
     const reveal = page.locator("#clara-new-token")
     await expect(reveal).toBeVisible()
+    await expect(reveal).toHaveAttribute("type", "password")
+    await expect(reveal).toHaveValue("")
+    await expect(page.locator("[data-clara-copy]")).toHaveCount(0)
+    await page.locator("[data-clara-token-show]").click()
+    await expect(reveal).toHaveAttribute("type", "text")
     const firstToken = await reveal.inputValue()
     expect(firstToken).toMatch(/^[0-9a-f-]{36}$/)
+    await expect(page.locator('[data-clara-copy="#clara-new-token"]')).toBeVisible()
+    // Hide masks it again; the value leaves the page with it.
+    await page.locator("[data-clara-token-hide]").click()
+    await expect(reveal).toHaveAttribute("type", "password")
+    expect(await page.content()).not.toContain(firstToken)
     const row = page.locator(`table.clara-members tr:has-text("${email}")`)
     await expect(row).toContainText("issued")
     await page.reload()
     await expect(page.locator("#clara-new-token")).toHaveCount(0)
     await expect(page.locator("body")).not.toContainText(firstToken)
 
-    // Rotate (confirm): a new token, again shown once.
+    // Rotate (confirm): a new token, again shown once, masked.
     await row.locator('form[action*="action=rotate_token"] button').click()
     await confirmDialog(page)
     await expect(page.locator("#clara-new-token")).toBeVisible()
+    await page.locator("[data-clara-token-show]").click()
+    await expect(page.locator("[data-clara-token-hide]")).toBeVisible()
     const secondToken = await page.locator("#clara-new-token").inputValue()
     expect(secondToken).not.toBe(firstToken)
+
+    // The trail holds one token_viewed per Show, separate from the add's entries (REQ-AUD-033).
+    const projectRef = new URL(page.url()).pathname.split("/")[2]
+    await page.goto(`/admin?section=audits&project=${projectRef}&event_type=token_viewed`)
+    await expect(page.locator("table.clara-audits tbody tr", { hasText: "token_viewed" })).toHaveCount(2)
+    await page.goto(`/projects/${projectRef}/members`)
 
     // Remove (confirm): the member is gone.
     await page.locator(`table.clara-members tr:has-text("${email}") form[action*="action=remove_member"] button`).click()

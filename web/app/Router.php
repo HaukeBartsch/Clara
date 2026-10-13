@@ -261,6 +261,11 @@ final class Router
             'handler' => 'rotateToken', 'guard' => 'admin', 'action' => 'rotate_token'],
         ['method' => 'POST', 'pattern' => '/projects/{id}/members', 'controller' => Controllers\ProjectController::class,
             'handler' => 'removeMember', 'guard' => 'admin', 'action' => 'remove_member'],
+        // The just-issued token's Show (audited, REQ-AUD-033) and Hide (REQ-UI-062).
+        ['method' => 'POST', 'pattern' => '/projects/{id}/members', 'controller' => Controllers\ProjectController::class,
+            'handler' => 'showToken', 'guard' => 'admin', 'action' => 'show_token'],
+        ['method' => 'POST', 'pattern' => '/projects/{id}/members', 'controller' => Controllers\ProjectController::class,
+            'handler' => 'hideToken', 'guard' => 'admin', 'action' => 'hide_token'],
         ['method' => 'GET', 'pattern' => '/projects/{id}/roles', 'controller' => Controllers\ProjectController::class,
             'handler' => 'roles', 'guard' => 'admin'],
         ['method' => 'POST', 'pattern' => '/projects/{id}/roles', 'controller' => Controllers\ProjectController::class,

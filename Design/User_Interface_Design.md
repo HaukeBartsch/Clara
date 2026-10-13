@@ -199,7 +199,7 @@ Success confirmations (created/updated/removed) are one translated alert line at
 ### 3.5 Confirmations and destructive actions (GD-3, REQ-UI-015/027)
 
 - Destructive or hard-to-reverse actions open a Bootstrap **modal** stating the consequence, requiring an explicit confirm click (which carries the CSRF token): delete record/scoped values (§8.7), remove member (§5.3), delete group (§5.5), delete field with stored values (§7.2), revoke survey link (§8.7), delete arm/event where supported.
-- Token display (add/rotate, §5.3): the new token appears **exactly once** in a read-only `<input readonly>` with a **copy** button and a warning line that it will not be shown again (REQ-API-055, REQ-UI-013). The admin's copy is the only copy — the member later self-serves their own copy per REQ-API-102 (§8.6).
+- Token display (add/rotate, §5.3): the new token appears **exactly once**, **masked** — a read-only `<input type="password">` that is empty (a row of bullets as placeholder), so the page does not hold the value — with a **Show** button and a warning line that it will not be shown again (REQ-API-055, REQ-UI-013/062). Show is a form `POST …/members?action=show_token`: PHP has the view recorded (`POST …/users/{uid}/token-viewed`, `token_viewed`, REQ-AUD-033) and only on success redirects to the same reveal unmasked — a read-only text input, **Hide** (`action=hide_token`, nothing recorded) and **Copy**. A failed record keeps it masked with the §3.4 line. No copy is offered while masked, so every sight of the value is in the trail. Between the add/rotate redirect and the Show/Hide redirects PHP keeps the value in the session (`Session::holdReveal`), never in the browser; any other render of Members drops it, so a reload ends the reveal. The admin's copy is the only copy — the member later self-serves their own copy per REQ-API-102 (§8.6).
 
 ### 3.6 Lists, pagination, empty states
 
@@ -295,10 +295,11 @@ Data: `GET /api/v1/projects/{id}/users` (+ `GET …/data-access-groups` for the 
 
 | Action | Control | API | Notes |
 |---|---|---|---|
-| add member | form: user (email or id) + role select (the project's actual roles, possibly empty, plus **"no role"**) | `PUT …/users/{uid}` `{ "role": … }` | → 201 **with the new token** — shown once, read-only input + copy + warning (§3.5) |
+| add member | form: user (email or id) + role select (the project's actual roles, possibly empty, plus **"no role"**) | `PUT …/users/{uid}` `{ "role": … }` | → 201 **with the new token** — shown once, masked; Show (audited `token_viewed`) → read-only value + Hide + copy; warning (§3.5) |
 | change role | row select + apply | `PUT …/users/{uid}` `{ "role": … or null }` | "no role" = full permissions (REQ-AUTH-022) |
-| rotate token | row button, confirmation | `PUT …/users/{uid}` `{ "rotate_token": true }` | previous token invalid immediately (REQ-AUTH-030); new token shown once |
+| rotate token | row button, confirmation | `PUT …/users/{uid}` `{ "rotate_token": true }` | previous token invalid immediately (REQ-AUTH-030); new token shown once, masked like an add's (§3.5) |
 | remove member | row button, confirmation | `PUT …/users/{uid}` `{ "remove": true }` | token invalid immediately (REQ-API-055) |
+| show / hide the new token | Show / Hide in the reveal (add, rotate) | Show: `POST …/users/{uid}/token-viewed` first; Hide: none | `?action=show_token` / `hide_token`; the value reaches the page only after the view is recorded (REQ-UI-062, REQ-AUD-033) |
 | set group assignments | row checkboxes (assigned groups) + active-radio | `PUT …/users/{uid}/data-access-groups` | exactly one active when non-empty (§3.4 on 400) |
 
 Token values never appear in the table itself (`token_present` only, REQ-API-005) and never in logs.

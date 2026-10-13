@@ -68,7 +68,7 @@ final class ControlPanelController extends Controller
         'record_deleted', 'record_updated', 'role_created', 'settings_updated', 'staging_committed',
         'staging_discarded', 'staging_started', 'survey_link_issued', 'survey_link_revoked', 'survey_submitted',
         'tfa_disabled', 'tfa_enrolled', 'tfa_reset', 'token_issued', 'token_revoked', 'token_rotated',
-        'user_created', 'user_invited', 'user_updated',
+        'token_viewed', 'user_created', 'user_invited', 'user_updated',
     ];
 
     /** Audit rows per page (§3.6). */

@@ -358,6 +358,15 @@ describe('Control Panel — Translations (§5.7, REQ-UI-030)', function (): void
 });
 
 /** The body of the last PUT to an endpoint. */
+/** The reads of a Members render (§5.3) besides the project shell. */
+function m3_queue_members(): void
+{
+    api_route('/api/v1/projects/3/users', []);
+    api_route('/api/v1/projects/3/roles', []);
+    api_route('/api/v1/users', []);
+    api_route('/api/v1/projects/3', m3_detail());
+}
+
 function m3_last_put(string $fragment): array
 {
     $body = [];
@@ -381,7 +390,7 @@ describe('project page — Members (§5.3, REQ-UI-013)', function (): void {
         assert_same(0, api_calls_to('/api/v1/projects/3/users'));
     });
 
-    it('adds with the role name only, and shows the new token exactly once', function (): void {
+    it('adds with the role name only, and shows the new token exactly once — masked', function (): void {
         sign_in(['is_admin' => 1]);
         m3_queue_project();
         api_route('/api/v1/projects/3/users/9', ['user_id' => 9, 'email' => 'ada@example.org', 'token' => 'tok-secret-123'], 201);
@@ -392,16 +401,74 @@ describe('project page — Members (§5.3, REQ-UI-013)', function (): void {
         // The add form names the account by id only: the line names it from the API's answer.
         assert_contains('ada@example.org added.', implode(' ', array_column(Session::takeFlash(), 'text')));
 
-        api_route('/api/v1/projects/3/users', []);
-        api_route('/api/v1/projects/3/roles', []);
-        api_route('/api/v1/users', []);
-        api_route('/api/v1/projects/3', m3_detail());
+        m3_queue_members();
         $first = router_for(http_request('GET', '/projects/3/members', browser_headers()))->dispatch()->body();
         $second = router_for(http_request('GET', '/projects/3/members', browser_headers()))->dispatch()->body();
 
-        assert_contains('value="tok-secret-123"', $first);
-        assert_contains('data-clara-copy="#clara-new-token"', $first);
-        assert_not_contains('tok-secret-123', $second, 'the token is shown once');
+        // Masked (REQ-UI-062): the reveal is there, the value is not — not even hidden in the input.
+        assert_contains('Project token for ada@example.org', $first);
+        assert_same(1, preg_match('/<input[^>]*type="password"[^>]*id="clara-new-token"[^>]*value=""/', $first));
+        assert_contains('action=show_token', $first);
+        assert_not_contains('tok-secret-123', $first, 'a masked token is not in the page');
+        assert_not_contains('data-clara-copy="#clara-new-token"', $first, 'no copy before Show');
+        assert_not_contains('clara-new-token', $second, 'the reveal is shown once');
+        assert_same(0, api_calls_to('/token-viewed'));
+    });
+
+    it('records every Show as token_viewed before the value reaches the page (REQ-AUD-033)', function (): void {
+        sign_in(['is_admin' => 1]);
+        m3_queue_project();
+        api_route('/api/v1/projects/3/users/9/token-viewed', ['ok' => true]);
+        api_route('/api/v1/projects/3/users/9', ['user_id' => 9, 'email' => 'ada@example.org', 'token' => 'tok-secret-123']);
+        m3_queue_members();
+        m3_post('/projects/3/members', ['user_id' => '9'], 'rotate_token');
+        Session::takeFlash();
+        router_for(http_request('GET', '/projects/3/members', browser_headers()))->dispatch();
+
+        $show = m3_post('/projects/3/members', [], 'show_token');
+        assert_same('/projects/3/members', $show->headers()['Location']);
+        assert_same(['POST /api/v1/projects/3/users/9/token-viewed'], m3_calls('/token-viewed'));
+        assert_same('{}', api_request_raw('/token-viewed'), 'the call carries no value');
+        $shown = router_for(http_request('GET', '/projects/3/members', browser_headers()))->dispatch()->body();
+        assert_contains('value="tok-secret-123"', $shown);
+        assert_contains('data-clara-copy="#clara-new-token"', $shown);
+        assert_contains('action=hide_token', $shown);
+
+        // Hide masks it again and records nothing; a second Show is a second entry.
+        m3_post('/projects/3/members', [], 'hide_token');
+        $hidden = router_for(http_request('GET', '/projects/3/members', browser_headers()))->dispatch()->body();
+        assert_not_contains('tok-secret-123', $hidden);
+        assert_contains('action=show_token', $hidden);
+        assert_same(1, api_calls_to('/token-viewed'));
+        m3_post('/projects/3/members', [], 'show_token');
+        assert_same(2, api_calls_to('/token-viewed'));
+        assert_contains('value="tok-secret-123"',
+            router_for(http_request('GET', '/projects/3/members', browser_headers()))->dispatch()->body());
+
+        // Leaving the page ends the reveal: a reload drops it, and Show then has nothing to release.
+        router_for(http_request('GET', '/projects/3/members', browser_headers()))->dispatch();
+        m3_post('/projects/3/members', [], 'show_token');
+        assert_same(2, api_calls_to('/token-viewed'));
+        assert_contains('no longer on this page', implode(' ', array_column(Session::takeFlash(), 'text')));
+        assert_not_contains('tok-secret-123',
+            router_for(http_request('GET', '/projects/3/members', browser_headers()))->dispatch()->body());
+    });
+
+    it('keeps the token masked when the view cannot be recorded', function (): void {
+        sign_in(['is_admin' => 1]);
+        m3_queue_project();
+        api_route('/api/v1/projects/3/users/9/token-viewed', ['error' => 'internal', 'message' => 'x'], 500);
+        api_route('/api/v1/projects/3/users/9', ['user_id' => 9, 'email' => 'ada@example.org', 'token' => 'tok-secret-123'], 201);
+        m3_queue_members();
+        m3_post('/projects/3/members', ['user_id' => '9'], 'add_member');
+        Session::takeFlash();
+        router_for(http_request('GET', '/projects/3/members', browser_headers()))->dispatch();
+
+        m3_post('/projects/3/members', [], 'show_token');
+        assert_same(1, api_calls_to('/token-viewed'));
+        $body = router_for(http_request('GET', '/projects/3/members', browser_headers()))->dispatch()->body();
+        assert_not_contains('tok-secret-123', $body, 'no record, no value');
+        assert_contains('action=show_token', $body, 'the reveal stays, masked, for another try');
     });
 
     it('sends "no role" as null, rotation and removal as their single flag', function (): void {

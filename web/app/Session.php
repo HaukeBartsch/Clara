@@ -645,14 +645,49 @@ final class Session
 
     /**
      * Holds a just-issued project token for exactly one render (§3.5, REQ-UI-013): the
-     * add/rotate POST redirects, and the page it lands on shows the value once. The value
-     * lives only in this session entry until that render takes it.
+     * add/rotate POST redirects, and the page it lands on shows the reveal once. The value
+     * lives only in this session entry until that render takes it. `visible` says whether
+     * that render shows the value or keeps it masked — masked unless the administrator
+     * chose Show, which is audited (REQ-UI-062).
      *
-     * @param array{token: string, email: string} $reveal
+     * @param array{token: string, email: string, user_id: int, visible: bool} $reveal
      */
     public static function stashReveal(array $reveal): void
     {
         $_SESSION['_reveal'] = $reveal;
+    }
+
+    /**
+     * Keeps the reveal a Members render just took for that page's Show/Hide (REQ-UI-062):
+     * those POSTs release the value from here, never from the browser, and the next render
+     * that is not their redirect replaces it — null drops it, so a reload ends the reveal.
+     *
+     * @param array{token: string, email: string, user_id: int, visible: bool}|null $reveal
+     */
+    public static function holdReveal(int $projectId, ?array $reveal): void
+    {
+        if ($reveal === null) {
+            unset($_SESSION['_reveal_held']);
+
+            return;
+        }
+        $_SESSION['_reveal_held'] = ['project_id' => $projectId] + $reveal;
+    }
+
+    /**
+     * The reveal the Members page of this project is showing, or null when there is none.
+     *
+     * @return array{token: string, email: string, user_id: int, visible: bool}|null
+     */
+    public static function heldReveal(int $projectId): ?array
+    {
+        $held = $_SESSION['_reveal_held'] ?? null;
+        if (!is_array($held) || ($held['project_id'] ?? null) !== $projectId || !is_string($held['token'] ?? null)) {
+            return null;
+        }
+        unset($held['project_id']);
+
+        return $held;
     }
 
     /**
@@ -678,7 +713,7 @@ final class Session
         unset($_SESSION['proj_token_' . $projectId]);
     }
 
-    /** @return array{token: string, email: string}|null */
+    /** @return array{token: string, email: string, user_id: int, visible: bool}|null */
     public static function takeReveal(): ?array
     {
         $reveal = $_SESSION['_reveal'] ?? null;

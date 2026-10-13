@@ -110,6 +110,9 @@ test.describe("data entry and the record view (M5)", () => {
     const adminOption = await page.locator("#member-user option", { hasText: ADMIN_EMAIL }).getAttribute("value")
     await page.locator("#member-user").selectOption(adminOption ?? "")
     await page.locator('form[action*="action=add_member"] button[type="submit"]').click()
+    // The reveal arrives masked; Show (audited, REQ-AUD-033) puts the value on the page.
+    await page.locator("[data-clara-token-show]").click()
+    await expect(page.locator("[data-clara-token-hide]")).toBeVisible()
     const token = await page.locator("#clara-new-token").inputValue()
 
     // --- Record Status Dashboard: rows are the route's data region (REQ-UI-044) ---

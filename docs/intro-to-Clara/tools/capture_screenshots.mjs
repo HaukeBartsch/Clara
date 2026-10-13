@@ -256,6 +256,11 @@ await step("issue registry token", async () => {
       await page.locator("[data-clara-confirm-ok]").click()
       await settle()
     }
+    // The reveal arrives masked; Show (audited) puts the value on the page.
+    if ((await page.locator("[data-clara-token-show]").count()) > 0) {
+      await page.locator("[data-clara-token-show]").click()
+      await settle()
+    }
     const candidate = await page.locator("#clara-new-token").inputValue({ timeout: 10_000 })
     const check = await fetch(`${API}/api/`, {
       method: "POST",

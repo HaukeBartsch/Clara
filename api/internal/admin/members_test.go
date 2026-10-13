@@ -227,6 +227,60 @@ func TestMembersSelfServiceToken(t *testing.T) {
 	}
 }
 
+// TestMembersTokenViewed: every unmasking of a just-issued token is its own
+// token_viewed entry naming the member (REQ-AUD-033, REQ-API-160) — never the
+// value. is_admin only; a non-member or a body attribute writes nothing.
+func TestMembersTokenViewed(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	u := e.mustUser("member@example.org")
+	other := e.mustUser("other@example.org")
+	pid := e.mustProject("8DISC")
+
+	rec := e.do("PUT", "/api/v1/projects/1/users/"+itoa(u.ID), map[string]any{}, admin)
+	var added memberWithToken
+	e.decode(rec, &added)
+	path := "/api/v1/projects/1/users/" + itoa(u.ID) + "/token-viewed"
+
+	// Shown, hidden, shown again: two views, two entries.
+	for i := 0; i < 2; i++ {
+		if rec := e.do("POST", path, map[string]any{}, admin); rec.Code != http.StatusOK {
+			t.Fatalf("view %d status = %d, body = %s", i, rec.Code, rec.Body.String())
+		}
+	}
+	details := e.auditDetails("token_viewed", pid)
+	if len(details) != 2 || details[0]["member_email"] != "member@example.org" || len(details[0]) != 1 {
+		t.Errorf("token_viewed details = %v, want two {member_email: member@example.org}", details)
+	}
+	// The view is an entry of its own: the add's two entries stay as they were.
+	types := e.auditTypes()
+	if countType(types, "token_issued") != 1 || countType(types, "membership_changed") != 1 {
+		t.Errorf("audit types = %v, want one membership_changed + token_issued beside the views", types)
+	}
+	assertNoTokenInAudit(t, e, added.Token)
+
+	for _, c := range []struct {
+		name  string
+		path  string
+		body  map[string]any
+		actor *db.User
+		want  int
+	}{
+		{"non-admin", path, map[string]any{}, u, http.StatusForbidden},
+		{"non-member", "/api/v1/projects/1/users/" + itoa(other.ID) + "/token-viewed", map[string]any{}, admin, http.StatusNotFound},
+		{"unknown project", "/api/v1/projects/999/users/" + itoa(u.ID) + "/token-viewed", map[string]any{}, admin, http.StatusNotFound},
+		{"unknown user", "/api/v1/projects/1/users/999/token-viewed", map[string]any{}, admin, http.StatusNotFound},
+		{"body attribute", path, map[string]any{"token": added.Token}, admin, http.StatusBadRequest},
+	} {
+		if rec := e.do("POST", c.path, c.body, c.actor); rec.Code != c.want {
+			t.Errorf("%s: status = %d, want %d", c.name, rec.Code, c.want)
+		}
+	}
+	if n := countType(e.auditTypes(), "token_viewed"); n != 2 {
+		t.Errorf("token_viewed count = %d, want 2 (refused calls write nothing)", n)
+	}
+}
+
 // TestMembersRejectUnknownAndAmbiguousBodies: unknown attributes are 400 and
 // exactly one action attribute is required.
 func TestMembersRejectUnknownAndAmbiguousBodies(t *testing.T) {

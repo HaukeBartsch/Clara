@@ -833,6 +833,23 @@
         }
       }
     },
+    "/api/v1/projects/{id}/users/{uid}/token-viewed": {
+      "post": {
+        "tags": ["Admin: Projects"],
+        "operationId": "recordTokenViewed",
+        "summary": "Record that a just-issued token was shown (REQ-API-160)",
+        "description": "Requires `is_admin`. Records that the acting administrator unmasked member `{uid}`'s just-issued token on the Members page: one `token_viewed` audit entry `{\"member_email\": \"…\"}` per call, separate from the add's `membership_changed` + `token_issued` (REQ-AUD-033). The body is empty or `{}`; any attribute is 400. No token value travels in either direction — the UI holds it from the add/rotation response and shows it only after this call succeeded. An unknown project or user, or a non-member, is 404 with nothing written.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/UserIdPath" } ],
+        "requestBody": { "required": false, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false } } } },
+        "responses": {
+          "200": { "description": "The view is recorded.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OkResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
     "/api/v1/projects/{id}/users/{uid}/token": {
       "get": {
         "tags": ["Admin: Projects"],

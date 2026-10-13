@@ -75,6 +75,7 @@ const (
 	TokenIssued       = "token_issued"
 	TokenRotated      = "token_rotated"
 	TokenRevoked      = "token_revoked"
+	TokenViewed       = "token_viewed" // REQ-AUD-033: the administrator unmasked a just-issued token
 	RoleCreated       = "role_created"
 	RoleUpdated       = "role_updated" // REQ-API-143: before/after permission set, never values
 	I18nUpdated       = "i18n_updated"

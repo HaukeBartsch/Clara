@@ -559,6 +559,8 @@ Response shape for add and rotation:
 
 The token value appears only in the add/rotation response — never in logs (REQ-API-005) and never in audit `details` (`Audit_Logging_Design.md` §2, §3.4).
 
+**`POST /api/v1/projects/{id}/users/{uid}/token-viewed`** — records that the acting administrator unmasked member `{uid}`'s just-issued token on the Members page (REQ-API-160, `User_Interface_Design.md` §3.5). `is_admin` only. Body empty or `{}` — any attribute is 400 `invalid_request`; unknown project or user, or a non-member, is 404 with nothing written. → 200 `{ "ok": true }`. Audit `token_viewed` `{"member_email":"…"}` — one entry per call, separate from the add's `membership_changed` + `token_issued` (REQ-AUD-033). No token value travels in either direction: the UI already holds it from the add/rotation response and shows it only after this call succeeded, so the endpoint adds no new way to read a token.
+
 **`GET /api/v1/projects/{id}/users/{uid}/token`** — self-service fetch of the member's own token (REQ-API-102). `{uid}` MUST equal the acting user (`X-Internal-User-Id`) and the acting user MUST be a member of the project; any other case is a uniform 403 `forbidden` (never disclosed as missing, REQ-API-007). 200:
 
 ```json
@@ -1208,6 +1210,7 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirement.m
 | `GET /api/v1/projects/{id}` | data access ≥ `read_only` + visibility |
 | `PUT /api/v1/projects/{id}` | `project_admin` |
 | `GET/PUT …/users` (members), `GET/POST …/roles`, `PUT …/roles/{rid}` | `is_admin` |
+| `POST …/users/{uid}/token-viewed` (REQ-API-160) | `is_admin` |
 | `GET …/users/{uid}/token` | self-service: acting user is a member (REQ-API-102) |
 | arms, events, instruments, fields, mapping — mutations (POST/PUT/DELETE) | `project_admin` |
 | arms, events, instruments, fields, mapping — reads (GET) | data access ≥ `read_only` |

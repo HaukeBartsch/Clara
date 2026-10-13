@@ -264,7 +264,10 @@ final class ProjectController extends ProjectPageController
 
     // Members and tokens (§5.3, is_admin) -----------------------------------------------
 
-    /** GET /projects/{id}/members — the member table, the add form, a just-issued token once. */
+    /**
+     * GET /projects/{id}/members — the member table, the add form, a just-issued token once.
+     * The token arrives masked: its value reaches the page only after Show (REQ-UI-062).
+     */
     public function members(): Response
     {
         $detail = $this->projectDetail();
@@ -285,8 +288,74 @@ final class ProjectController extends ProjectPageController
             'members' => $members,
             'roles' => array_values(array_filter(is_array($roles) ? $roles : [], 'is_array')),
             'candidates' => $candidates,
-            'reveal' => Session::takeReveal(),
+            'reveal' => $this->takeMembersReveal($projectId),
         ]);
+    }
+
+    /**
+     * This render's reveal, kept for its Show/Hide (Session::holdReveal). A masked reveal
+     * carries no value into the view at all: the input stays empty until Show.
+     *
+     * @return array{token: string, email: string, user_id: int, visible: bool}|null
+     */
+    private function takeMembersReveal(int $projectId): ?array
+    {
+        $reveal = Session::takeReveal();
+        if ($reveal !== null) {
+            $reveal = [
+                'token' => (string) $reveal['token'],
+                'email' => (string) ($reveal['email'] ?? ''),
+                'user_id' => (int) ($reveal['user_id'] ?? 0),
+                'visible' => !empty($reveal['visible']),
+            ];
+        }
+        Session::holdReveal($projectId, $reveal);
+        if ($reveal !== null && !$reveal['visible']) {
+            $reveal['token'] = '';
+        }
+
+        return $reveal;
+    }
+
+    /**
+     * POST ?action=show_token — unmasks the just-issued token. The view is recorded first
+     * (`token_viewed`, REQ-AUD-033); only when the API has written it does the value reach
+     * the page, so every sight of it is in the trail. Each Show is one entry.
+     */
+    public function showToken(): Response
+    {
+        $projectId = $this->projectIdFromPath();
+        $back = Response::redirect('/projects/' . $projectId . '/members');
+        $held = Session::heldReveal($projectId);
+        if ($held === null || $held['user_id'] <= 0) {
+            $this->flashDanger($this->i18n->t('members.token_gone'));
+
+            return $back;
+        }
+        try {
+            $this->api->post('/api/v1/projects/' . $projectId . '/users/' . $held['user_id'] . '/token-viewed');
+        } catch (ApiException $e) {
+            $this->logger->info('project token view not recorded', ['code' => $e->code(), 'status' => $e->status()]);
+            $this->flashDanger($this->apiFailureMessage($e));
+            Session::stashReveal(['visible' => false] + $held);
+
+            return $back;
+        }
+        Session::stashReveal(['visible' => true] + $held);
+
+        return $back;
+    }
+
+    /** POST ?action=hide_token — masks the token again; nothing to record. */
+    public function hideToken(): Response
+    {
+        $projectId = $this->projectIdFromPath();
+        $held = Session::heldReveal($projectId);
+        if ($held !== null) {
+            Session::stashReveal(['visible' => false] + $held);
+        }
+
+        return Response::redirect('/projects/' . $projectId . '/members');
     }
 
     public function addMember(): Response
@@ -316,8 +385,8 @@ final class ProjectController extends ProjectPageController
 
     /**
      * `PUT …/users/{uid}` with exactly one of role / rotate_token / remove (§4.6). A response
-     * that carries a token (add 201, rotate 200) is held for one render — shown once with a
-     * copy button and the "will not be shown again" warning (§3.5, REQ-UI-013).
+     * that carries a token (add 201, rotate 200) is held for one render — shown once, masked,
+     * with Show and the "will not be shown again" warning (§3.5, REQ-UI-013/062).
      */
     private function memberWrite(int $uid, array $body, string $successKey): Response
     {
@@ -337,7 +406,8 @@ final class ProjectController extends ProjectPageController
         $email = is_array($answer) && is_string($answer['email'] ?? null) ? $answer['email'] : trim($this->request->field('email'));
         $token = is_array($answer) && is_string($answer['token'] ?? null) ? $answer['token'] : '';
         if ($token !== '') {
-            Session::stashReveal(['token' => $token, 'email' => $email]);
+            $memberId = is_array($answer) && is_int($answer['user_id'] ?? null) ? $answer['user_id'] : $uid;
+            Session::stashReveal(['token' => $token, 'email' => $email, 'user_id' => $memberId, 'visible' => false]);
         }
         $this->flashSuccess($this->i18n->t($successKey, ['email' => $email]));
 

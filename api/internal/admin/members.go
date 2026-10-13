@@ -11,12 +11,14 @@ import (
 )
 
 // registerMembers mounts §4.6: the member listing and the single mutation
-// point for membership (REQ-API-053…055), plus the self-service token fetch
-// (REQ-API-102). The two administrative endpoints require is_admin; the
-// self-service fetch requires only that the acting user is the member.
+// point for membership (REQ-API-053…055), the record of a just-issued token
+// being shown (REQ-API-160), plus the self-service token fetch (REQ-API-102).
+// The three administrative endpoints require is_admin; the self-service fetch
+// requires only that the acting user is the member.
 func (h *Handler) registerMembers(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/projects/{id}/users", h.listMembers)
 	mux.HandleFunc("PUT /api/v1/projects/{id}/users/{uid}", h.putMember)
+	mux.HandleFunc("POST /api/v1/projects/{id}/users/{uid}/token-viewed", h.tokenViewed)
 	mux.HandleFunc("GET /api/v1/projects/{id}/users/{uid}/token", h.fetchOwnToken)
 }
 
@@ -425,6 +427,76 @@ func (h *Handler) resolveRole(w http.ResponseWriter, ctx context.Context, projec
 		return nil, sql.NullInt64{}, false
 	}
 	return &role.RoleName, sql.NullInt64{Int64: role.ID, Valid: true}, true
+}
+
+// --- POST /api/v1/projects/{id}/users/{uid}/token-viewed (REQ-API-160) ---
+
+// tokenViewed records that the administrator unmasked a member's just-issued
+// token (REQ-AUD-033) — an entry of its own, beside the membership_changed
+// and token_issued/token_rotated entries of the add or rotation. The value
+// itself is neither sent nor returned: the UI holds it from the add/rotation
+// response and shows it only after this call succeeds, and offers no copy of
+// it before (User_Interface_Design.md §3.5). The body is empty or `{}`.
+// is_admin only; a non-member is 404, with nothing written.
+func (h *Handler) tokenViewed(w http.ResponseWriter, r *http.Request) {
+	actorUser, ok := requireAdmin(w, r)
+	if !ok {
+		return
+	}
+	ctx := r.Context()
+	projectID, ok := pathID(r, "id")
+	if !ok {
+		errBadRequest(w, "invalid project id")
+		return
+	}
+	userID, ok := pathID(r, "uid")
+	if !ok {
+		errBadRequest(w, "invalid user id")
+		return
+	}
+	var supplied map[string]json.RawMessage
+	if err := decodeBody(r, &supplied); err != nil {
+		errBadRequest(w, "malformed JSON body")
+		return
+	}
+	if !RejectUnknownAttrs(w, supplied) {
+		return
+	}
+
+	p, err := h.Store.GetProject(ctx, projectID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	if p == nil {
+		errNotFound(w)
+		return
+	}
+	target, err := h.Store.GetUser(ctx, userID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	if target == nil {
+		errNotFound(w)
+		return
+	}
+	a, err := h.Store.GetAssignment(ctx, target.ID, projectID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	if a == nil {
+		errNotFound(w)
+		return
+	}
+	if err := h.auditMember(ctx, actorUser, projectID, audit.TokenViewed, map[string]any{
+		"member_email": target.Email,
+	}); err != nil {
+		errInternal(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // --- GET /api/v1/projects/{id}/users/{uid}/token (REQ-API-102) ---
