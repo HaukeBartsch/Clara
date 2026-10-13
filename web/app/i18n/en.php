@@ -128,6 +128,12 @@ return [
     'admin.section.audits' => 'Audits',
     'admin.section.translations' => 'Translations',
     'admin.section.settings' => 'Settings',
+    'admin.section.api' => 'API documentation',
+    // The API documentation section (§5.9): the OpenAPI document of both API surfaces.
+    'admin.api.title' => 'API documentation',
+    'admin.api.intro' => 'Reference for both API surfaces: the REDCap-compatible data API at /api/, which project tokens call, and the administration API at /api/v1/, which only this application calls. Read-only — requests cannot be sent from here.',
+    'admin.api.loading' => 'Loading the API documentation…',
+    'admin.api.failed' => 'The API documentation could not be loaded.',
     // Only reachable by typing the URL: with no section built the header button is absent
     // rather than leading nowhere (§3.1, REQ-UI-003).
     'admin.none' => 'No administration function is available in this installation yet.',

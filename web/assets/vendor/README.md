@@ -113,3 +113,24 @@ host (verified against the CI ASM-TECH-2 pattern), so nothing reaches the
 network (`ASM-TECH-2`). The first table is the Control Panel's Translations
 key list (§5.7, `web/assets/js/translations.js`); its shared defaults live in
 `web/assets/app.js` (`REQ-UI-045`, `User_Interface_Design.md` §3.7).
+
+## Swagger UI (`swagger-ui-dist` bundle)
+
+| | |
+|---|---|
+| Source | `api/docs/swaggerui/` — the bundle the API already embeds for its internal `/docs` page |
+| Files taken | `swagger-ui-bundle.js`, `swagger-ui.css` (byte-identical copies) |
+| Integrity | JS `sha256:62df541529080464a7660adc793eab7128c6193ce3be24ddc1e0e0a4a63edc2f`, CSS `sha256:1ac324f7dcd27e4b9386b4bd6421271ec147e922a22c05ba24b11515e9aa6321` (`Design/Technology_Stack_Design.md` §3) |
+
+```sh
+mkdir -p web/assets/vendor/swagger-ui
+cp api/docs/swaggerui/swagger-ui-bundle.js api/docs/swaggerui/swagger-ui.css web/assets/vendor/swagger-ui/
+```
+
+Used only by the Control Panel's API documentation section (`web/assets/js/api-docs.js`,
+`User_Interface_Design.md` §5.9). The bundle is a **classic script** (webpack UMD attaching
+`SwaggerUIBundle` to the global object), so the section module loads it with a script element
+instead of importing it. Keep the two copies identical: when the API's bundle is upgraded,
+re-run the copy and update both hashes. Neither file carries a fetch reference to an external
+host (CI's ASM-TECH-2 check), and the section turns off the one network feature Swagger UI has
+by default — the online validator badge.

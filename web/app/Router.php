@@ -213,8 +213,9 @@ final class Router
 
         // The Control Panel (§5, REQ-UI-047): one is_admin route whose `?section=` picks the
         // section shown in the right-hand panel, defaulting to the first available.
-        // A JSON request receives the requested section's data region — currently only the
-        // Translations key list has one; every other section answers 406 (§2.1, REQ-UI-044).
+        // A JSON request receives the requested section's data region — the Translations key
+        // list, and the API documentation section's OpenAPI document; every other section
+        // answers 406 (§2.1, REQ-UI-044).
         ['method' => 'GET', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
             'handler' => 'index', 'guard' => 'admin', 'region' => 'translations'],
         ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,

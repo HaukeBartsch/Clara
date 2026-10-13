@@ -27,6 +27,7 @@ final class Navigation
             ['key' => 'audits', 'labelKey' => 'admin.section.audits', 'built' => true],
             ['key' => 'translations', 'labelKey' => 'admin.section.translations', 'built' => true],
             ['key' => 'settings', 'labelKey' => 'admin.section.settings', 'built' => true],
+            ['key' => 'api', 'labelKey' => 'admin.section.api', 'built' => true],
         ];
     }
 

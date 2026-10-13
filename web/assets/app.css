@@ -400,6 +400,20 @@ h1 .clara-mode-badge {
   word-break: break-word;
 }
 
+/* --- API documentation (§5.9, REQ-UI-057) --- */
+
+/* Swagger UI draws dark text on a transparent background; under a dark theme (§3.8) that would
+   be unreadable, so its panel keeps the light surface it was designed for. Authorize is
+   hidden: the page sends no request, so there is nothing to authorize. */
+.clara-api-docs {
+  background-color: #fff;
+  color: #3b4151;
+}
+
+.clara-api-docs .swagger-ui .auth-wrapper {
+  display: none;
+}
+
 /* --- responsive pass (M6; REQ-UI-032) --- */
 
 /* A wide table scrolls inside its .table-responsive wrapper. Absolutely positioned content in

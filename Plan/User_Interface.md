@@ -15,7 +15,7 @@ A left panel appears only where it switches between sections. The **project over
 
 ### 2. Control Panel (`is_admin`)
 - Purpose: Administration for authenticated and authorized (administrator) users, on **one page** reached from the header button — all installation-administration settings live here and nowhere else (REQ-UI-047).
-- Components: a left panel with the sections **Users**, **Projects**, **Audits**, **Translations**, **Settings**; the right-hand panel shows the section selected there. Project-scoped administration (assignments, roles, data access groups) belongs to the project page (§3), not to this page.
+- Components: a left panel with the sections **Users**, **Projects**, **Audits**, **Translations**, **Settings**, **API documentation** (the OpenAPI document of both API surfaces, read-only, REQ-UI-057); the right-hand panel shows the section selected there. Project-scoped administration (assignments, roles, data access groups) belongs to the project page (§3), not to this page.
     - User accounts: Create (enable) and manage normal user accounts; show each account's two-factor method and offer an administrator reset for lost devices (GD-21, REQ-UI-011/039).
 
 #### Login and two-factor (REQ-UI-007/038/039/042)

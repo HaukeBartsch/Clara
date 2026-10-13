@@ -18,6 +18,7 @@ use Clara\ApiException;
 use Clara\Navigation;
 use Clara\Response;
 use Clara\Session;
+use Clara\StreamSink;
 
 final class ControlPanelController extends Controller
 {
@@ -67,6 +68,7 @@ final class ControlPanelController extends Controller
             'audits' => $this->auditsPage(),
             'translations' => $this->translationsPage(),
             'settings' => $this->settingsPage(''),
+            'api' => $this->apiDocsPage(),
             default => $this->page('admin/none', [
                 'pageTitle' => $this->i18n->t('admin.title'),
             ], ['titleKey' => 'admin.title']),
@@ -514,6 +516,9 @@ final class ControlPanelController extends Controller
     public function data(): Response
     {
         $section = Navigation::resolveAdminSection($this->request->query('section'));
+        if (($section['key'] ?? '') === 'api') {
+            return $this->apiSpec();
+        }
         if (($section['key'] ?? '') !== 'translations') {
             return Response::notAcceptable();
         }
@@ -521,6 +526,48 @@ final class ControlPanelController extends Controller
         [, $language] = $this->translationLanguages();
 
         return Response::json(['language' => $language, 'rows' => $this->translationRows($language)]);
+    }
+
+    // --- API documentation (§5.9, REQ-UI-057) ----------------------------------------
+
+    /**
+     * The API documentation section: the API's own OpenAPI document rendered by the vendored
+     * Swagger UI, inside the Control Panel. The API's `/docs` page is never routed to a
+     * browser (INSTALL.md §13.1, REQ-TECH-018), so the section is how an administrator reads
+     * it; `api-docs.js` loads the bundle and reads the document from this section's data
+     * region. Read-only: the administration API it describes is not reachable from a browser.
+     */
+    private function apiDocsPage(): Response
+    {
+        return $this->section('api', 'admin/api', 'admin.api.title', [], [
+            'scripts' => ['/assets/js/api-docs.js'],
+            'styles' => ['/assets/vendor/swagger-ui/swagger-ui.css'],
+            'jsKeys' => ['admin.api.failed'],
+        ]);
+    }
+
+    /**
+     * The API documentation section's data region: `GET /openapi.json` passed through as the
+     * API serves it — verbatim, since decoding and re-encoding it would turn its empty objects
+     * into lists. A refusal before the first byte answers like any other data region (§3.4).
+     */
+    private function apiSpec(): Response
+    {
+        return Response::stream(function (StreamSink $sink): void {
+            try {
+                $this->api->stream('/openapi.json', [],
+                    static function (int $status, array $upstream) use ($sink): void {
+                        Session::close();
+                        $sink->begin(200, ['Content-Type' => 'application/json', 'Cache-Control' => 'no-store']);
+                    },
+                    static fn (string $chunk) => $sink->write($chunk)
+                );
+            } catch (ApiException $e) {
+                $this->logger->warn('api documentation unavailable', ['code' => $e->code(), 'status' => $e->status()]);
+                $sink->begin($e->status(), ['Content-Type' => 'application/json', 'Cache-Control' => 'no-store']);
+                $sink->write((string) json_encode(['error' => $e->code(), 'message' => $this->i18n->t('admin.api.failed')]));
+            }
+        });
     }
 
     /** The enabled languages and the one selected for editing (§5.7). */

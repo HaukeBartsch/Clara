@@ -33,6 +33,8 @@ The normative endpoint contracts — parameter tables, request/response schemas,
 - `GET /openapi.json` — the OpenAPI 3.1 document covering both surfaces.
 - `GET /docs` — Swagger UI (vendored static bundle; internal-only routing per `Technology_Stack_Design.md` §5).
 
+Neither is routed to a browser. Administrators read the document in the Control Panel's **API documentation** section, which receives `/openapi.json` through the web application as that section's data region (`User_Interface_Design.md` §5.9, REQ-UI-057).
+
 ## 3. Data API — `/api/`
 
 ### 3.1 Transport and Common Parameters (REQ-API-009…017)

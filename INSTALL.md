@@ -55,7 +55,7 @@ The deployment rules come from [Design/Technology_Stack_Design.md](Design/Techno
 ```
 
 - Only nginx is reachable from the network. The API, PHP-FPM and MariaDB listen on loopback or a local socket only.
-- The **data API** (`POST /api/`, the REDCap-compatible endpoint) is public. The **administration API** (`/api/v1/*`) and the API documentation (`/docs`, `/openapi.json`, `/healthz`) are never routed by nginx. Only PHP calls them, over loopback, with the shared `INTERNAL_SERVICE_TOKEN` (REQ-TECH-018, REQ-AUTH-014).
+- The **data API** (`POST /api/`, the REDCap-compatible endpoint) is public. The **administration API** (`/api/v1/*`) and the API documentation (`/docs`, `/openapi.json`, `/healthz`) are never routed by nginx. Only PHP calls them, over loopback, with the shared `INTERNAL_SERVICE_TOKEN` (REQ-TECH-018, REQ-AUTH-014). Administrators read the API documentation in the Control Panel (**API documentation**), which PHP fills from `/openapi.json`.
 - PHP holds the user session and renders pages. It contains no SQL: all data goes through the API (REQ-TECH-006).
 - The API applies database migrations itself every time it starts (REQ-DB-003). There is no separate migration tool.
 

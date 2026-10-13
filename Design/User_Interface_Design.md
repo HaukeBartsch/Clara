@@ -231,7 +231,7 @@ The start page after login (REQ-UI-009): **one content panel between header and 
 
 ## 5. Administration Interface — the Control Panel (`GET /admin`)
 
-One page carries every installation-administration function (REQ-UI-047, DEV-UI-15): the **Control Panel**, reached from the header button of §2.4 and from nothing else. It is a left-panel shell (§2.4 B) whose panel lists the sections in this order — **Users** (`section=users`, §5.1), **Projects** (`section=projects`, §5.2), **Audits** (`section=audits`, §5.6), **Translations** (`section=translations`, §5.7), **Settings** (`section=settings`, §5.8) — and whose right-hand panel shows the section selected there. `GET /admin` with no `section` renders the first available one; a section this build does not serve is absent from the panel rather than disabled (REQ-UI-003). Mutations stay `POST /admin?section=<name>&action=<name>` (§2.1, REQ-UI-005), and a JSON request's data region is that section's (§3.7, REQ-UI-044).
+One page carries every installation-administration function (REQ-UI-047, DEV-UI-15): the **Control Panel**, reached from the header button of §2.4 and from nothing else. It is a left-panel shell (§2.4 B) whose panel lists the sections in this order — **Users** (`section=users`, §5.1), **Projects** (`section=projects`, §5.2), **Audits** (`section=audits`, §5.6), **Translations** (`section=translations`, §5.7), **Settings** (`section=settings`, §5.8), **API documentation** (`section=api`, §5.9) — and whose right-hand panel shows the section selected there. `GET /admin` with no `section` renders the first available one; a section this build does not serve is absent from the panel rather than disabled (REQ-UI-003). Mutations stay `POST /admin?section=<name>&action=<name>` (§2.1, REQ-UI-005), and a JSON request's data region is that section's (§3.7, REQ-UI-044).
 
 §5.3/§5.4/§5.5 are **project-scoped** and live on the project page's left panel (§6.1 — master spec: the project offers "administer users in the project"); they are not Control Panel sections, because their permission comes from the project rather than from the installation (REQ-UI-047).
 
@@ -335,6 +335,15 @@ Data: `GET /api/v1/i18n/strings?language=<code>` (after `GET /api/v1/i18n/langua
 Data: `GET /api/v1/settings`; save → `PUT /api/v1/settings` (CSRF, §3.3; contract `API_Endpoints_Design.md` §4.22).
 
 - **Rate limiting (REQ-UI-043)**: an enabled/disabled switch (`rate_limit_enabled`), a requests-per-minute number input per source IP (`rate_limit_rpm`, ≥ 1, default 600) and a blockout-minutes number input (`rate_limit_block_minutes`, 1–1440, default 10), with helper text naming the scope ("limits every caller IP on both the data API and the administration surface; an IP over its per-minute budget is refused for this many minutes; applies immediately after saving"). Invalid values are rejected by the API (400) and surfaced per §3.4; applied changes are audit-logged (`settings_updated`, REQ-AUD-027).
+
+### 5.9 API documentation section (`GET /admin?section=api`, `is_admin`, REQ-UI-057)
+
+The OpenAPI document of both API surfaces (`API_Endpoints_Design.md` §2.2), rendered in the Control Panel by the Swagger UI bundle vendored under `web/assets/vendor/swagger-ui/` — the same bundle the API embeds. The API's `/docs` page is never routed to a browser (`INSTALL.md` §13.1), so this section is where an administrator reads it.
+
+- **Data**: the section's data region (§3.7, REQ-UI-044) — `GET /admin?section=api` with `Accept: application/json` streams `GET /openapi.json` through verbatim (decoding and re-encoding would turn its empty objects into lists). A page render reads nothing from the API; a failure answers the §3.4 JSON shape and the section shows *The API documentation could not be loaded.*
+- **Client**: `web/assets/js/api-docs.js` loads `swagger-ui-bundle.js` with a script element — it is a classic script attaching `SwaggerUIBundle` to the global object, not an ES module — reads the region with the shared fetch helper and hands the document to Swagger UI as an object. Everything comes from the application's origin, under its Content-Security-Policy.
+- **Read-only**: `supportedSubmitMethods: []` (no *Try it out*), `validatorUrl: null` (the default validator badge would ask a server on the internet, ASM-TECH-2), and the *Authorize* control hidden — the administration API is not reachable from a browser, and the data API takes project tokens, not the session.
+- **Themes**: Swagger UI draws dark text on a transparent background, so its panel keeps a light surface under every theme (§3.8).
 
 ## 6. Project Workspace
 
