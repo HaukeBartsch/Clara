@@ -26,4 +26,7 @@ web/sessions/
 # Playwright browser tests — development and CI tooling only, never served (REQ-TECH-028)
 e2e/node_modules/
 e2e/test-results/
+
+# presentation generator (docs/intro-to-Clara/tools) — documentation tooling only
+docs/intro-to-Clara/tools/node_modules/
 e2e/playwright-report/
