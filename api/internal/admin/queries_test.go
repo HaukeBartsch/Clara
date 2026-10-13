@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -395,6 +396,54 @@ func TestListAudit(t *testing.T) {
 	}
 	if len(seen) != 3 || seen[0] < seen[1] || seen[1] < seen[2] {
 		t.Fatalf("cursor walk: %v", seen)
+	}
+}
+
+// The listing names the record of a record-scoped event (Audit_Logging_Design.md
+// §6.4) — the Audits page's Record column — and null for every other event.
+func TestListAuditTargetRecord(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	admin := e.mustAdmin("admin@example.org")
+	p := e.mustProject("Study One")
+
+	if err := e.Audit.Insert(ctx, audit.Entry{
+		EventType: audit.ProjectUpdated, Source: audit.SourceUI,
+		UserID: admin.ID, Email: admin.Email, ProjectID: p,
+		Details: map[string]any{"changes": map[string]any{}},
+	}); err != nil {
+		t.Fatalf("audit insert: %v", err)
+	}
+	if err := e.Audit.Insert(ctx, audit.Entry{
+		EventType: audit.RecordUpdated, Source: audit.SourceAPI,
+		UserID: admin.ID, Email: admin.Email, ProjectID: p, TargetRecord: "HEART004",
+		Details: map[string]any{"action": "update", "record_id": "HEART004"},
+	}); err != nil {
+		t.Fatalf("audit insert: %v", err)
+	}
+
+	rec := e.do("GET", "/api/v1/audit?project="+itoa(p), nil, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("audit: got %d %s", rec.Code, rec.Body.String())
+	}
+	var page struct {
+		Entries []map[string]json.RawMessage `json:"entries"`
+	}
+	e.decode(rec, &page)
+	got := map[string]string{}
+	for _, entry := range page.Entries {
+		var code string
+		if err := json.Unmarshal(entry["event_type"], &code); err != nil {
+			t.Fatalf("event_type: %v", err)
+		}
+		raw, ok := entry["target_record"]
+		if !ok {
+			t.Fatalf("%s: no target_record key: %s", code, rec.Body.String())
+		}
+		got[code] = string(raw)
+	}
+	if got[audit.RecordUpdated] != `"HEART004"` || got[audit.ProjectUpdated] != "null" {
+		t.Fatalf("target_record: %v", got)
 	}
 }
 

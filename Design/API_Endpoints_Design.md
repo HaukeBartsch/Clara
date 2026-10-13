@@ -945,9 +945,12 @@ Reverse chronological (REQ-API-077). 200:
 ```json
 { "entries": [ { "id": 913, "created_at": "2026-09-18 14:02:11", "source": "ui",
                  "project_id": 33, "user_id": 3, "email": "user@example.org",
-                 "event_type": "record_updated", "details": { "action": "update", "…": "…" } } ],
+                 "event_type": "record_updated", "target_record": "8DISC001",
+                 "details": { "action": "update", "…": "…" } } ],
   "next_cursor": null }
 ```
+
+`target_record` names the record of a record-scoped event (`Audit_Logging_Design.md` §6.4) and is `null` for every other event; the Audits page shows it in its Record column (`User_Interface_Design.md` §5.6).
 
 Entries MAY carry the `token` column and payload values — the trail is the sole sanctioned carrier (REQ-AUD-007, `Audit_Logging_Design.md` §2). The endpoint is read-only: no endpoint exists that writes, updates, or deletes audit data (REQ-DB-024, REQ-API-077).
 

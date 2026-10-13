@@ -273,6 +273,26 @@ describe('Control Panel — Audits (§5.6, REQ-UI-016)', function (): void {
         assert_contains('&lt;b&gt;x&lt;/b&gt;', $body);
         assert_contains('cursor=abc123', $body, 'the next page carries the opaque cursor');
     });
+
+    it('names the record of a record-scoped event in the Record column, and nothing for others', function (): void {
+        sign_in(['is_admin' => 1]);
+        queue_shell();
+        api_route('/api/v1/audit', ['entries' => [
+            ['id' => 2, 'created_at' => '2026-10-13 20:08:38', 'source' => 'api', 'project_id' => 1, 'user_id' => 4,
+                'email' => 'ingrid.berg@example.org', 'event_type' => 'record_updated', 'target_record' => 'HEART004',
+                'details' => ['action' => 'update', 'record_id' => 'HEART004']],
+            ['id' => 1, 'created_at' => '2026-10-13 20:08:37', 'source' => 'ui', 'project_id' => 1, 'user_id' => 1,
+                'email' => 'admin@example.org', 'event_type' => 'project_updated', 'target_record' => null,
+                'details' => ['changes' => []]],
+        ], 'next_cursor' => null]);
+        api_route('/api/v1/projects', []);
+        api_route('/api/v1/users', []);
+
+        $body = router_for(http_request('GET', '/admin', browser_headers(), [], ['section' => 'audits']))->dispatch()->body();
+
+        assert_same(1, preg_match('#<code>record_updated</code></td>\s*<td class="small">HEART004</td>#', $body));
+        assert_same(1, preg_match('#<code>project_updated</code></td>\s*<td class="small"></td>#', $body));
+    });
 });
 
 describe('Control Panel — Translations (§5.7, REQ-UI-030)', function (): void {

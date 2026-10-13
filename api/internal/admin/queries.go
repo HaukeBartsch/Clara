@@ -396,16 +396,18 @@ func (h *Handler) recordStatus(w http.ResponseWriter, r *http.Request) {
 
 // auditEventEntry is one audit_events row of the §4.15 response; details is
 // the per-event JSON payload, rendered as-is (the trail is the sanctioned
-// carrier, REQ-AUD-007).
+// carrier, REQ-AUD-007). target_record names the record of a record-scoped
+// event (Audit_Logging_Design.md §6.4) and is null for every other event.
 type auditEventEntry struct {
-	ID        int64           `json:"id"`
-	CreatedAt string          `json:"created_at"`
-	Source    string          `json:"source"`
-	ProjectID *int64          `json:"project_id"`
-	UserID    *int64          `json:"user_id"`
-	Email     *string         `json:"email"`
-	EventType string          `json:"event_type"`
-	Details   json.RawMessage `json:"details"`
+	ID           int64           `json:"id"`
+	CreatedAt    string          `json:"created_at"`
+	Source       string          `json:"source"`
+	ProjectID    *int64          `json:"project_id"`
+	UserID       *int64          `json:"user_id"`
+	Email        *string         `json:"email"`
+	EventType    string          `json:"event_type"`
+	TargetRecord *string         `json:"target_record"`
+	Details      json.RawMessage `json:"details"`
 }
 
 // auditViewEntry is one audit_record_views row — the token is the only actor
@@ -530,7 +532,7 @@ func (h *Handler) listAudit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.Store.DB.QueryContext(ctx,
-		`SELECT id, created_at, source, project_id, user_id, email, event_type, details
+		`SELECT id, created_at, source, project_id, user_id, email, event_type, target_record, details
 		 FROM audit_events`+base, append(args, limit)...)
 	if err != nil {
 		errInternal(w)
@@ -547,10 +549,11 @@ func (h *Handler) listAudit(w http.ResponseWriter, r *http.Request) {
 			pid     sql.NullInt64
 			uid     sql.NullInt64
 			email   sql.NullString
+			target  sql.NullString
 			details sql.NullString
 		)
 		if err := rows.Scan(&e.ID, &created, &e.Source, &pid, &uid, &email,
-			&e.EventType, &details); err != nil {
+			&e.EventType, &target, &details); err != nil {
 			errInternal(w)
 			return
 		}
@@ -558,6 +561,7 @@ func (h *Handler) listAudit(w http.ResponseWriter, r *http.Request) {
 		e.ProjectID = Int64Ptr(pid)
 		e.UserID = Int64Ptr(uid)
 		e.Email = NullStrPtr(email)
+		e.TargetRecord = NullStrPtr(target)
 		if details.Valid {
 			e.Details = json.RawMessage(details.String)
 		}
