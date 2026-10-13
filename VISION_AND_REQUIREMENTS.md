@@ -858,6 +858,8 @@ Feature: Create a new web/ page "Training", that is linked on the first project 
 
 Feature: add a page to the Control Panel for admins called "Configuration Check". Use the information in INSTALL.md to create some checks that inform the user about issues with the current installation.
 
+**Status:** Done 2026-10-13 — Control Panel → **Configuration Check** (`?section=check`, between Settings and API documentation; REQ-UI-061, `User_Interface_Design.md` §5.10). About 40 checks in four server-rated groups — PHP runtime (version, required extensions, php-ldap, proc_open and the PHP CLI for LDAP sign-ins, OPcache, request-size and memory limits), the web layer's configuration and files (APP_ENV, HTTPS, WEB_PUBLIC_URL against the address in use, `.env` mode and CHANGE_ME placeholders, session directory, writable code, unencrypted sign-in sources), the API service and host, and the database (version, character set, time zone, max_allowed_packet, bind address, the `clara-db-grants runtime` lock-down, audit partitions) — the last two from a new `is_admin` endpoint `GET /api/v1/system/check` (REQ-API-159) that reports facts, never secret values. The browser adds INSTALL.md §13.1's smoke checks (internal paths 404 from outside, asset headers, HSTS); what no process can see (firewall, certificate trust, backups) is listed to check by hand. Each row names the INSTALL.md section with the fix; hardening a development checkout lacks is Info in development and Warning/Problem in production.
+
 Feature: Switch from the current set of funding sources to a more appropriate set for Oslo Sor Ost. Here is the list of hospitals in Helse Sor Ost:
 
 ```

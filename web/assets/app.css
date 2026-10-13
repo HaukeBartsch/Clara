@@ -414,6 +414,58 @@ h1 .clara-mode-badge {
   display: none;
 }
 
+/* --- Configuration Check (§5.10, REQ-UI-061) --- */
+
+/* One column grid for every group's table, so the groups line up; long paths and variable lists
+   wrap instead of widening the table. */
+.clara-config-check {
+  table-layout: fixed;
+}
+
+.clara-config-check th:nth-child(1) {
+  width: 7.5rem;
+}
+
+.clara-config-check th:nth-child(2) {
+  width: 28%;
+}
+
+.clara-config-check th:nth-child(4) {
+  width: 6rem;
+}
+
+.clara-config-check td {
+  overflow-wrap: anywhere;
+}
+
+/* On a phone the four columns would not fit: each row stacks — status beside the check's name,
+   then the finding and the guide's section beneath it. */
+@media (max-width: 575.98px) {
+  .clara-config-check,
+  .clara-config-check tbody {
+    display: block;
+  }
+
+  .clara-config-check thead {
+    display: none;
+  }
+
+  .clara-config-check tr {
+    display: grid;
+    grid-template-columns: 7rem 1fr;
+    border-bottom: var(--bs-border-width) solid var(--bs-border-color);
+  }
+
+  .clara-config-check td {
+    border-bottom: 0;
+  }
+
+  .clara-config-check td:nth-child(n + 3) {
+    grid-column: 2;
+    padding-top: 0;
+  }
+}
+
 /* --- Training (§2.7, REQ-UI-059) --- */
 
 /* Card pictures share one shape whatever size a plan's first picture has, cut from its top-left

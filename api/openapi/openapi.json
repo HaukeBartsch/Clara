@@ -24,7 +24,7 @@
     { "name": "Admin: Audit", "description": "Read-only audit log (REQ-API-077…078)." },
     { "name": "Admin: i18n", "description": "Languages, translation bundles and personal appearance (§4.19)." },
     { "name": "Admin: Modes & Staging", "description": "Project modes, end-of-project provision and the production staging set (§4.20–§4.21)." },
-    { "name": "Admin: Settings", "description": "System settings including the rate limiter (§4.22)." }
+    { "name": "Admin: Settings", "description": "System settings including the rate limiter (§4.22) and the configuration check (§4.24)." }
   ],
   "security": [
     { "InternalServiceToken": [], "InternalUserId": [] }
@@ -1971,6 +1971,20 @@
           "403": { "$ref": "#/components/responses/AdminForbidden" }
         }
       }
+    },
+    "/api/v1/system/check": {
+      "get": {
+        "tags": ["Admin: Settings"],
+        "operationId": "getSystemCheck",
+        "summary": "Read the installation facts for the Configuration Check (REQ-API-159)",
+        "description": "`is_admin`. Read-only, not audited. What only the API can see about the installation (INSTALL.md): its own configuration, the host it runs on, and the database through the application's own account. Facts, not ratings — the Control Panel's Configuration Check (REQ-UI-061) decides which value is a problem. A secret is never returned: `weak_secrets` names the variables whose value is empty, a development default, the `CHANGE_ME` placeholder or shorter than 16 characters. On SQLite only `connection`, `version` and `schema_version` of `database` are filled; a MariaDB value the account cannot read is `null`.",
+        "responses": {
+          "200": { "description": "The facts.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SystemCheck" } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "500": { "description": "The database could not be read." }
+        }
+      }
     }
   },
   "components": {
@@ -2806,6 +2820,68 @@
           "rate_limit_enabled": { "type": "boolean" },
           "rate_limit_rpm": { "type": "integer", "minimum": 1, "description": "Requests per rolling minute per source IP (default 600)." },
           "rate_limit_block_minutes": { "type": "integer", "minimum": 1, "maximum": 1440, "description": "Blockout after exceeding the budget (default 10; REQ-API-113)." }
+        }
+      },
+      "SystemCheck": {
+        "type": "object",
+        "required": ["app_env", "web_public_url", "api_addr", "api_listen_loopback", "running_as_root", "weak_secrets", "bootstrap",
+          "smtp_configured", "trusted_proxies_configured", "require_2fa", "app_timezone", "host", "database"],
+        "properties": {
+          "app_env": { "type": "string", "enum": ["development", "production"] },
+          "web_public_url": { "type": "string" },
+          "api_addr": { "type": "string", "description": "API_ADDR as configured." },
+          "api_listen_loopback": { "type": "boolean", "description": "API_ADDR binds a loopback address only." },
+          "running_as_root": { "type": ["boolean", "null"], "description": "The API process runs with effective user id 0; null where the platform has none." },
+          "weak_secrets": { "type": "array", "items": { "type": "string", "enum": ["INTERNAL_SERVICE_TOKEN", "ANON_SALT", "DB_PASSWORD"] } },
+          "bootstrap": {
+            "type": "object",
+            "properties": {
+              "password_configured": { "type": "boolean", "description": "ADMIN_BOOTSTRAP_PASSWORD is set." },
+              "password_unchanged": { "type": ["boolean", "null"], "description": "The ADMIN_BOOTSTRAP_EMAIL account still signs in with that password; null when it is not set or no such account exists." }
+            }
+          },
+          "smtp_configured": { "type": "boolean" },
+          "trusted_proxies_configured": { "type": "boolean", "description": "TRUSTED_PROXY_CIDRS is set." },
+          "require_2fa": { "type": "boolean" },
+          "app_timezone": { "type": "string" },
+          "host": {
+            "type": "object",
+            "properties": {
+              "clock_synchronized": { "type": ["boolean", "null"], "description": "The kernel clock is synchronized to a time source (adjtimex); null off Linux." },
+              "selinux": { "type": ["string", "null"], "enum": ["enforcing", "permissive", "disabled", null], "description": "null off Linux or when unreadable." }
+            }
+          },
+          "database": {
+            "type": "object",
+            "properties": {
+              "connection": { "type": "string", "enum": ["sqlite", "mariadb"] },
+              "schema_version": { "type": "integer" },
+              "version": { "type": "string", "description": "VERSION() on MariaDB, sqlite_version() on SQLite." },
+              "character_set_server": { "type": ["string", "null"] },
+              "collation_server": { "type": ["string", "null"] },
+              "database_character_set": { "type": ["string", "null"] },
+              "database_collation": { "type": ["string", "null"] },
+              "time_zone": { "type": ["string", "null"], "description": "@@global.time_zone." },
+              "system_time_zone": { "type": ["string", "null"] },
+              "max_allowed_packet": { "type": ["integer", "null"], "description": "Bytes." },
+              "bind_address": { "type": ["string", "null"], "description": "\"\" when unset (every interface)." },
+              "grants": {
+                "type": ["object", "null"],
+                "description": "The application account's effective privileges on its schema (global, schema and table grants; roles are not followed).",
+                "properties": {
+                  "account": { "type": "string", "description": "CURRENT_USER()." },
+                  "audit_writable": { "type": "array", "items": { "type": "string" }, "description": "Audit tables the account may UPDATE, DELETE or DROP — empty in the runtime state of REQ-DB-024." },
+                  "tables_missing_write": { "type": "array", "items": { "type": "string" }, "description": "Other base tables without UPDATE and DELETE." },
+                  "drop": { "type": "boolean", "description": "DROP held at schema or global level." }
+                }
+              },
+              "audit_partitions": {
+                "type": ["object", "null"],
+                "description": "Partition names per audit table (`p2026`, …); an unpartitioned table maps to an empty list.",
+                "additionalProperties": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          }
         }
       },
       "SettingsUpdate": {

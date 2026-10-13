@@ -763,6 +763,7 @@ curl -s http://127.0.0.1:8080/healthz                   # {"db":"ok","status":"o
 2. Sign in with `ADMIN_BOOTSTRAP_EMAIL` and the `ADMIN_BOOTSTRAP_PASSWORD` generated in section 6 (`grep ^ADMIN_BOOTSTRAP_PASSWORD= /opt/clara/.env`).
 3. Change that password right away at `/account/password`. Consider enrolling two-factor authentication at `/account/two-factor`.
 4. Create users and projects from the Control Panel. REDCap-API clients then call `POST https://clara.example.org/api/` with their project token.
+5. Open **Control Panel → Configuration Check**. It checks most of this guide from inside the running installation (PHP, `.env`, the API service, MariaDB settings and privileges, and the web server's routing as your browser sees it) and names the section of this guide for every finding.
 
 ---
 
@@ -865,7 +866,8 @@ clara-db-grants runtime
 systemctl start clara-api
 systemctl reload php-fpm
 
-# 5. verify (section 13.1), then remove the previous version
+# 5. verify (section 13.1 and Control Panel → Configuration Check),
+#    then remove the previous version
 rm -rf /opt/clara/bin.previous /opt/clara/web.previous
 ```
 
@@ -898,6 +900,8 @@ Each audit table has one partition per year (`p2026`, `p2027`, …). The API cre
 ---
 
 ## 17. Security checklist
+
+Control Panel → **Configuration Check** verifies most of these items automatically; the firewall, the certificate's trust and the backups remain yours to check.
 
 - [ ] `APP_ENV=production`; all four secrets are random and unique to this installation.
 - [ ] `/opt/clara/.env` is `root:clara 0640`; the code under `/opt/clara` is owned by root.

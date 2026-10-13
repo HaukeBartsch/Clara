@@ -1,7 +1,8 @@
 <?php
 // The Control Panel (User_Interface_Design.md §5, REQ-UI-047): the one is_admin page that
 // carries every installation-administration function. Its left panel lists the sections
-// (Projects, Users, Audits, Translations, Settings, API documentation — Clara\Navigation),
+// (Projects, Users, Audits, Translations, Settings, Configuration Check, API documentation —
+// Clara\Navigation),
 // `?section=` picks the one in the right-hand panel (Projects when absent), and every
 // mutation is a POST to /admin with its ?action= (§2.1, REQ-UI-005; the router has already
 // checked the CSRF token).
@@ -16,6 +17,7 @@ declare(strict_types=1);
 namespace Clara\Controllers;
 
 use Clara\ApiException;
+use Clara\ConfigCheck;
 use Clara\Navigation;
 use Clara\Response;
 use Clara\Session;
@@ -69,6 +71,7 @@ final class ControlPanelController extends Controller
             'audits' => $this->auditsPage(),
             'translations' => $this->translationsPage(),
             'settings' => $this->settingsPage(''),
+            'check' => $this->configCheckPage(),
             'api' => $this->apiDocsPage(),
             default => $this->page('admin/none', [
                 'pageTitle' => $this->i18n->t('admin.title'),
@@ -619,6 +622,55 @@ final class ControlPanelController extends Controller
         [, $language] = $this->translationLanguages();
 
         return Response::json(['language' => $language, 'rows' => $this->translationRows($language)]);
+    }
+
+    // --- Configuration Check (§5.10, REQ-UI-061) -------------------------------------
+
+    /**
+     * The Configuration Check section: INSTALL.md as checks. The PHP process probes itself,
+     * the API reports what only it can see — its configuration, its host, the database through
+     * its own account (`GET /api/v1/system/check`, REQ-API-159) — and ConfigCheck rates both;
+     * `config-check.js` adds the routing probes only a browser can make. An API that cannot
+     * answer is itself the finding, so a failure renders rather than throwing.
+     */
+    private function configCheckPage(): Response
+    {
+        $facts = null;
+        $apiError = '';
+        try {
+            $facts = $this->api->get('/api/v1/system/check');
+        } catch (ApiException $e) {
+            $this->logger->warn('configuration check: api facts unavailable', ['code' => $e->code(), 'status' => $e->status()]);
+            $apiError = $e->code();
+        }
+
+        $groups = ConfigCheck::evaluate($this->config, ConfigCheck::probe($this->config, $_SERVER), $facts, $apiError,
+            (int) gmdate('Y'));
+
+        return $this->section('check', 'admin/check', 'admin.check.title', [
+            'groups' => $groups,
+            'summary' => ConfigCheck::summary($groups),
+            'probes' => ConfigCheck::BROWSER_PROBES,
+            'manual' => ConfigCheck::MANUAL,
+        ], [
+            'scripts' => ['/assets/js/config-check.js'],
+            'jsKeys' => array_merge(
+                ['admin.check.status.ok', 'admin.check.status.warn', 'admin.check.status.fail', 'admin.check.status.info',
+                    'admin.check.status.skip', 'admin.check.status.pending', 'admin.check.browser.failed'],
+                self::probeKeys()
+            ),
+        ]);
+    }
+
+    /** The outcome lines config-check.js composes (REQ-UI-008): every browser probe's. */
+    private static function probeKeys(): array
+    {
+        return [
+            'admin.check.browser.admin_api.ok', 'admin.check.browser.admin_api.exposed',
+            'admin.check.browser.docs.ok', 'admin.check.browser.docs.exposed',
+            'admin.check.browser.assets.ok', 'admin.check.browser.assets.cache', 'admin.check.browser.assets.vendor',
+            'admin.check.browser.hsts.ok', 'admin.check.browser.hsts.missing', 'admin.check.browser.hsts.plain',
+        ];
     }
 
     // --- API documentation (§5.9, REQ-UI-057) ----------------------------------------

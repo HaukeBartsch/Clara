@@ -69,6 +69,7 @@ func New(store *db.Store, cfg *config.Config, aw *audit.Writer) *Handler {
 	h.registerCompletion(mux)
 	h.registerI18n(mux)
 	h.registerSettings(mux)
+	h.registerSystemCheck(mux)
 	h.Handler = mux
 	return h
 }

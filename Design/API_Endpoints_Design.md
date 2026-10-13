@@ -1166,6 +1166,27 @@ Every cell passes CSV formula neutralization (REQ-VAL-032) as record exports do;
 
 Every export that ends writes one `audit_export` entry naming the filters applied, the rows delivered, and `truncated: true` when the stream broke off before the last row (`Audit_Logging_Design.md` §3.5).
 
+### 4.24 Configuration check (REQ-API-159)
+
+**`GET /api/v1/system/check`** — `is_admin` only (403 `forbidden` otherwise); read-only and not audited. It feeds the Control Panel's Configuration Check (`User_Interface_Design.md` §5.10, REQ-UI-061) with what only the API can see. The answer is **facts, not ratings** — which value is a problem is decided by the web layer against `INSTALL.md` — and never a secret (REQ-CFG-021).
+
+| Field | Source |
+|---|------|
+| `app_env`, `web_public_url`, `api_addr`, `app_timezone`, `smtp_configured`, `trusted_proxies_configured`, `require_2fa` | the loaded configuration |
+| `api_listen_loopback` | `API_ADDR`'s host is `localhost` or a loopback IP |
+| `running_as_root` | effective user id 0; `null` where the platform has none |
+| `weak_secrets` | names among `INTERNAL_SERVICE_TOKEN`, `ANON_SALT` and (MariaDB) `DB_PASSWORD` whose value is empty, the development default, contains `CHANGE_ME`, or is shorter than 16 characters |
+| `bootstrap.password_configured`, `bootstrap.password_unchanged` | `ADMIN_BOOTSTRAP_PASSWORD` set; the `ADMIN_BOOTSTRAP_EMAIL` account's stored hash still verifies against it (one argon2id verification) — `null` when not set or no such account |
+| `host.clock_synchronized` | Linux `adjtimex(2)` read without mode bits: `TIME_ERROR` = unsynchronized; `null` elsewhere |
+| `host.selinux` | `/sys/fs/selinux/enforce` (`enforcing`/`permissive`; absent = `disabled`); `null` off Linux or unreadable |
+| `database.connection`, `version`, `schema_version` | the dialect; `VERSION()` / `sqlite_version()`; the migration table |
+| `database.character_set_server`, `collation_server`, `time_zone`, `system_time_zone`, `max_allowed_packet`, `bind_address` | MariaDB global variables (`bind_address` `""` when unset — every interface) |
+| `database.database_character_set`, `database_collation` | `information_schema.SCHEMATA` for `DATABASE()` |
+| `database.grants` | `CURRENT_USER()`'s rows in `information_schema.USER_PRIVILEGES`, `SCHEMA_PRIVILEGES` and `TABLE_PRIVILEGES` combined: `audit_writable` (audit tables with `UPDATE`, `DELETE` or `DROP`), `tables_missing_write` (other base tables lacking `UPDATE` or `DELETE` — a table a migration added after the last `clara-db-grants runtime`), `drop` (schema- or global-level `DROP`). Roles are not followed |
+| `database.audit_partitions` | partition names per audit table from `information_schema.PARTITIONS` (`Audit_Logging_Design.md` §6.1) |
+
+On SQLite only `connection`, `version` and `schema_version` are filled; every MariaDB field is `null`, as is any MariaDB value the account cannot read. A database that cannot be read at all answers 500 `internal`.
+
 ## 5. Permission summary
 
 The normative endpoint → permission mapping is in `API_Endpoints_Requirement.md` §4.21; it is reproduced here as an overview:
@@ -1199,6 +1220,7 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirement.m
 | `PUT …/active-data-access-group` | an assigned member (self-service) |
 | `GET /api/v1/audit` | `is_admin` (all projects) or a member of the queried project (REQ-API-078) |
 | `GET /api/v1/audit/export` (§4.23, REQ-API-158) | `is_admin` only (REQ-API-078) |
+| `GET /api/v1/system/check` (§4.24, REQ-API-159) | `is_admin` only |
 | `GET /i18n/languages`, `PUT /users/me/ui-language`, `PUT /users/me/ui-theme` (§4.19) | any authenticated user |
 | `GET/PUT /i18n/strings` | `is_admin` |
 | `POST …/end-provision` (§4.20) | `is_admin` (BR-009) |
