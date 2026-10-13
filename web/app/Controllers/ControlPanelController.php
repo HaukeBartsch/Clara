@@ -1,9 +1,10 @@
 <?php
 // The Control Panel (User_Interface_Design.md §5, REQ-UI-047): the one is_admin page that
 // carries every installation-administration function. Its left panel lists the sections
-// (Users, Projects, Audits, Translations, Settings — Clara\Navigation), `?section=` picks the
-// one in the right-hand panel, and every mutation is a POST to /admin with its ?action=
-// (§2.1, REQ-UI-005; the router has already checked the CSRF token).
+// (Projects, Users, Audits, Translations, Settings, API documentation — Clara\Navigation),
+// `?section=` picks the one in the right-hand panel (Projects when absent), and every
+// mutation is a POST to /admin with its ?action= (§2.1, REQ-UI-005; the router has already
+// checked the CSRF token).
 //
 // Each write sends exactly the attributes its endpoint whitelists — the administration API
 // answers 400 to anything else (Plan/Web_Implementation.md §7 rule 1) — and every outcome is

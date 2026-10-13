@@ -846,6 +846,8 @@ Add an export as csv function to the Audits page. As Audits might be multi-GB in
 
 Make the "Projects" page the first open tab in the Control Panel.
 
+**Status:** Done 2026-10-13 — Projects is the first entry of the Control Panel's left panel and the section `/admin` opens on; Users follows it (REQ-UI-047, `User_Interface_Design.md` §5; `Clara\Navigation::adminSections()`). Tests: `tests/php/control_panel_test.php`.
+
 Close all API Documentation drawers but keep the Data API open (and move it to the first position).
 
 Feature: Add a Sankey plot to the top of the API Documentation page that displays the information from the docs/index.md table (linking codes to relevance). Group the codes at two levels, first by thematic area (suitable for end-users at a hospital doing research studies) and a second grouping by Requirement/Plan/Design. If there is space figure out how to link each code to a test as well. Use the frontend javascript library d3.js to create the sankey diagram.

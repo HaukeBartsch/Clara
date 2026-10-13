@@ -53,7 +53,9 @@ test.describe("setup and designer (M4)", () => {
 
     // --- a project; entering it lands a project administrator on Setup (REQ-UI-017) ---
     await page.locator('header a[href="/admin"]').click()
-    await page.locator('#clara-nav a[href="/admin?section=projects"]').click()
+    // The Control Panel opens on Projects (REQ-UI-047); clicking its entry again would
+    // reload the page under the next step.
+    await expect(page.locator('#clara-nav a[href="/admin?section=projects"]')).toHaveAttribute("aria-current", "page")
     await page.locator("details.clara-create summary").click()
     await page.fill("#project-project_name", projectName)
     await page.selectOption("#project-organization", "HBE")

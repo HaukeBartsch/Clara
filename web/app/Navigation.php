@@ -15,15 +15,16 @@ final class Navigation
 {
     /**
      * Control Panel sections (§5, REQ-UI-047) in panel order. Every one is `is_admin` —
-     * the route guard decides that; this list decides what the panel shows.
+     * the route guard decides that; this list decides what the panel shows. The first
+     * entry is also the section `/admin` opens on, hence Projects ahead of Users.
      *
      * @return list<array{key: string, labelKey: string, built: bool}>
      */
     public static function adminSections(): array
     {
         return [
-            ['key' => 'users', 'labelKey' => 'admin.section.users', 'built' => true],
             ['key' => 'projects', 'labelKey' => 'admin.section.projects', 'built' => true],
+            ['key' => 'users', 'labelKey' => 'admin.section.users', 'built' => true],
             ['key' => 'audits', 'labelKey' => 'admin.section.audits', 'built' => true],
             ['key' => 'translations', 'labelKey' => 'admin.section.translations', 'built' => true],
             ['key' => 'settings', 'labelKey' => 'admin.section.settings', 'built' => true],
