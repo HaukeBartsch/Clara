@@ -850,6 +850,8 @@ Close all API Documentation drawers but keep the Data API open (and move it to t
 
 Feature: Add a Sankey plot to the top of the API Documentation page that displays the information from the docs/index.md table (linking codes to relevance). Group the codes at two levels, first by thematic area (suitable for end-users at a hospital doing research studies) and a second grouping by Requirement/Plan/Design. If there is space figure out how to link each code to a test as well. Use the frontend javascript library d3.js to create the sankey diagram.
 
+The Move a field function does not re-populate the "Move before" dropdown when the user switches to a different instrument in the first dropdown. Fix this issue. 
+
 # Status currently 
 
 Security findings with no fix (detail in my previous message)
