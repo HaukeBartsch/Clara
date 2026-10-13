@@ -123,16 +123,6 @@
   color: var(--bs-secondary-color);
 }
 
-/* A file picker styled as a button is a hidden <input type="file"> plus the .btn label
- * after it (Translations' "Import spreadsheet", §5.7). The page renders the input disabled
- * until its region has bound; Bootstrap's :disabled look reaches only real buttons, so
- * the label mirrors it here — a picker that cannot open looks it, rather than a live
- * button that ignores clicks. */
-input[type="file"]:disabled + label.btn {
-  pointer-events: none;
-  opacity: var(--bs-btn-disabled-opacity);
-}
-
 /* --- project rows on the dashboard (User_Interface_Design.md §4) --- */
 
 .clara-project-row td {

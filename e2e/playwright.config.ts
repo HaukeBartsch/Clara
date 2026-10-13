@@ -15,5 +15,9 @@ export default defineConfig({
     baseURL: process.env.CLARA_WEB_URL ?? "http://127.0.0.1:8080",
     trace: "retain-on-failure",
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    { name: "chromium", use: { ...devices["Desktop Chrome"] } },
+    // Safari's engine: catches WebKit-only rendering bugs (e.g. stale sibling-selector styles).
+    { name: "webkit", use: { ...devices["Desktop Safari"] } },
+  ],
 })

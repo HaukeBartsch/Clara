@@ -291,6 +291,13 @@ async function loadRows() {
         control.disabled = false
       }
     }
+    // The import picker's visible face is its .btn label, which carries its own disabled
+    // state: WebKit does not restyle an `input:disabled + label` sibling rule when the
+    // input's `disabled` flips, leaving the label greyed out and unclickable.
+    const importLabel = document.querySelector("label[for='tr-import-file']")
+    if (importLabel !== null) {
+      importLabel.classList.remove("disabled")
+    }
   })
 }
 

@@ -52,7 +52,7 @@ use Clara\View;
             <span class="small text-body-secondary" id="tr-status"></span>
             <button class="btn btn-sm btn-outline-secondary ms-auto" type="button" id="tr-export" disabled><?= View::e($view->t('admin.translations.export')) ?></button>
             <input type="file" id="tr-import-file" accept=".csv,.json,text/csv,application/json" class="visually-hidden" disabled>
-            <label class="btn btn-sm btn-outline-secondary" for="tr-import-file"><?= View::e($view->t('admin.translations.import')) ?></label>
+            <label class="btn btn-sm btn-outline-secondary disabled" for="tr-import-file"><?= View::e($view->t('admin.translations.import')) ?></label>
             <button class="btn btn-sm btn-primary" type="submit" id="tr-save" disabled><?= View::e($view->t('action.save')) ?></button>
         </div>
 

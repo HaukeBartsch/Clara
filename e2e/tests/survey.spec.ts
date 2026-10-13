@@ -164,7 +164,7 @@ test.describe("public survey page (M6)", () => {
   // REQ-UI-051: a participant created on the Record Status Dashboard is not stored until
   // something is imported for it, and the API holds no link for a record it does not have — so
   // "Get link" on the new participant's survey form stores it first, then issues the link.
-  test("a new participant gets a survey link without saving a form first", async ({ browser, page, request, baseURL }) => {
+  test("a new participant gets a survey link without saving a form first", async ({ browser, browserName, page, request, baseURL }) => {
     test.setTimeout(120_000)
     const tag = Date.now()
 
@@ -206,7 +206,9 @@ test.describe("public survey page (M6)", () => {
     await expect(page.locator("#record-event")).toHaveValue("baseline_arm_1")
     const link = await page.locator("#clara-survey-url").inputValue()
     expect(link.startsWith(`${baseURL}/s/`)).toBeTruthy()
-    await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: baseURL })
+    // WebKit knows no "clipboard-write" permission — there a click's user gesture is enough to write.
+    const clipboard = browserName === "webkit" ? ["clipboard-read"] : ["clipboard-read", "clipboard-write"]
+    await page.context().grantPermissions(clipboard, { origin: baseURL })
     await section.getByRole("button", { name: "Copy" }).click()
     await expect(section.getByRole("button", { name: "Copied" })).toBeVisible()
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(link)
