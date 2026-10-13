@@ -56,16 +56,22 @@ test.describe("record naming mode (Setup ↔ dashboard, REQ-UI-052)", () => {
     await expect(namingForm).toBeVisible()
     await expect(namingForm.locator("#naming-manual")).toBeChecked()
 
-    // --- manual mode: the dashboard offers the free-text field, not the auto button ---
+    // --- not yet a member: the administrator sees the project but holds no token, so the
+    // dashboard explains instead of offering a new-participant control (REQ-API-102) ---
     await page.goto(`${projectUrl}/record-status`)
-    await expect(page.locator('form[action*="action=new_record"] input[name="record_id"]')).toBeVisible()
-    await expect(page.getByRole("button", { name: "Add participant" })).toHaveCount(0)
+    await expect(page.locator(".clara-new-record-member-required")).toBeVisible()
+    await expect(page.locator('form[action*="action=new_record"]')).toHaveCount(0)
 
     // --- the acting user needs a project assignment for the data API (§8.6, REQ-API-102) ---
     await page.goto(`${projectUrl}/members`)
     const adminOption = await page.locator("#member-user option", { hasText: ADMIN_EMAIL }).getAttribute("value")
     await page.locator("#member-user").selectOption(adminOption ?? "")
     await page.locator('form[action*="action=add_member"] button[type="submit"]').click()
+
+    // --- manual mode: the dashboard offers the free-text field, not the auto button ---
+    await page.goto(`${projectUrl}/record-status`)
+    await expect(page.locator('form[action*="action=new_record"] input[name="record_id"]')).toBeVisible()
+    await expect(page.getByRole("button", { name: "Add participant" })).toHaveCount(0)
 
     // --- flip to auto on Setup ---
     await page.goto(`${projectUrl}/setup`)
