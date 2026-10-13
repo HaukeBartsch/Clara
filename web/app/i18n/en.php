@@ -721,6 +721,7 @@ return [
     'records.new.auto.add' => 'Add participant',
     'records.new.auto.help' => 'Participants are numbered automatically: adding one assigns the next free number. The record is stored when its first form is saved.',
     'records.new.invalid' => 'A record ID must not be empty, longer than 100 characters, or contain a slash or control characters.',
+    'records.new.not_member' => 'You are not a member of this project, so you cannot add participants or enter data here. An administrator can add you on the Members page.',
 
     // --- M5: record view and data entry (§8) ---
     'record.title' => 'Record',

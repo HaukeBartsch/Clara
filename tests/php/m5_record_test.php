@@ -85,7 +85,7 @@ function m5_entry(string $action, string $event, array $fields, string $at = '20
 }
 
 /** Every read the two pages make, in fake-transport match order (specific before prefix). */
-function m5_queue(string $level = 'view_edit', string $mode = 'development', bool $projectAdmin = false, ?array $status = null, ?array $history = null, bool $rights = false, ?array $link = null, ?string $naming = null): void
+function m5_queue(string $level = 'view_edit', string $mode = 'development', bool $projectAdmin = false, ?array $status = null, ?array $history = null, bool $rights = false, ?array $link = null, ?string $naming = null, bool $member = true): void
 {
     queue_shell();
     api_route('/api/v1/projects/3/mode', ['mode' => $mode, 'staging_open' => false]);
@@ -109,7 +109,9 @@ function m5_queue(string $level = 'view_edit', string $mode = 'development', boo
         ['id' => 12, 'name' => 'scores', 'position' => 2, 'field_count' => 1, 'is_survey' => true, 'branching_logic' => '[baseline_arm_1][age] > 18'],
     ]);
     api_route('/api/v1/projects/3/data-access-groups', [['id' => 5, 'name' => 'Center <A>']]);
-    api_route('/api/v1/projects/3/users/7/token', ['token' => 'tok-1']);
+    // The self-service token fetch: a member gets one; a non-member — an administrator who
+    // sees the project without belonging to it (REQ-API-102) — is answered 403.
+    api_route('/api/v1/projects/3/users/7/token', $member ? ['token' => 'tok-1'] : ['error' => 'forbidden'], $member ? 200 : 403);
     // The link report a survey pair's view reads on every render (§4.17, REQ-API-082): live by
     // default, so a test passes its own `state` when it needs another. Queued before the bare
     // project prefix below, which would otherwise answer it with a project detail.
@@ -303,6 +305,7 @@ describe('Record Status Dashboard (§6.3, REQ-UI-019)', function (): void {
     it('opens the record view on a valid new name and keeps an invalid one in the field', function (): void {
         sign_in(['csrf_token' => M5_CSRF]);
         queue_shell();
+        api_route('/api/v1/projects/3/users/7/token', ['token' => 'tok-1']);
 
         $ok = m5_post('/projects/3/record-status', ['record_id' => '8DISC 9', 'arm' => '1'], 'new_record');
         assert_same('/projects/3/records/8DISC%209?arm=1', $ok->headers()['Location']);
@@ -310,7 +313,37 @@ describe('Record Status Dashboard (§6.3, REQ-UI-019)', function (): void {
         $bad = m5_post('/projects/3/record-status', ['record_id' => 'a/b', 'arm' => '1'], 'new_record');
         assert_same('/projects/3/record-status', $bad->headers()['Location']);
         assert_same('a/b', $_SESSION['_stash']['new_record']['name']);
-        assert_same(0, count($GLOBALS['api_calls']) - api_calls_to('/i18n/'), 'nothing is stored by opening a participant');
+        // The token fetch proves membership; nothing else — and no store — is touched.
+        assert_same(0, count($GLOBALS['api_calls']) - api_calls_to('/i18n/') - api_calls_to('/users/7/token'),
+            'nothing is stored by opening a participant');
+    });
+
+    it('offers the form to a member but explains non-membership to one who holds no token (REQ-API-102)', function (): void {
+        sign_in();
+        m5_queue(member: false);
+
+        $body = m5_get('/projects/3/record-status')->body();
+
+        assert_not_contains('action=new_record', $body, 'the affordance that could only fail at Save is absent');
+        assert_contains('not a member of this project', $body);
+        // The dashboard itself stays readable — the refusal is about entry, not the page.
+        assert_contains('data-region="records"', $body);
+
+        // A read-only visit asks the membership question not at all.
+        resetApi();
+        m5_queue('read_only');
+        m5_get('/projects/3/record-status');
+        assert_same(0, api_calls_to('/users/7/token'), 'no offer, no token probe');
+    });
+
+    it('turns a new-participant post from a non-member back before opening the record view', function (): void {
+        sign_in(['csrf_token' => M5_CSRF]);
+        m5_queue(member: false);
+
+        $response = m5_post('/projects/3/record-status', ['record_id' => '8DISC042', 'arm' => '1'], 'new_record');
+
+        assert_same('/projects/3/record-status', $response->headers()['Location']);
+        assert_contains('not a member of this project', $_SESSION['_flash'][0]['text']);
     });
 
     it('auto-names through the data API with the member token, cached for the session (§8.6)', function (): void {

@@ -11,9 +11,12 @@
  *
  * New participant (§6.3): the control the project's naming mode offers — type a record ID, or
  * one click that assigns the next number (REQ-UI-052), never both; present only for a member
- * with data access ≥ view_edit on some arm, and never in analysis mode (§8.1).
+ * with data access ≥ view_edit on some arm, and never in analysis mode (§8.1). A viewer who
+ * holds no project token because they are not a member (REQ-API-102) gets the explanation in
+ * the form's place instead of an affordance that would only fail at Save.
  *
- * Reads: $arms, $newRecord (null | {arms, name, arm, naming}), $statusUrl, $recordBase.
+ * Reads: $arms, $newRecord (null | {arms, name, arm, naming}), $notMember, $statusUrl,
+ * $recordBase.
  */
 
 use Clara\View;
@@ -56,6 +59,12 @@ $activeArm = (int) ($arms[0]['arm_num'] ?? 0);
         </div>
         <div class="col-12 form-text mt-0"><?= View::e($view->t($autoNaming ? 'records.new.auto.help' : 'records.new.help')) ?></div>
     </form>
+<?php elseif (!empty($notMember)): ?>
+    <!-- The viewer sees the project without belonging to it (REQ-API-102): no token, so no
+         entry — say what to do about it where the new-participant control would have been. -->
+    <div class="alert alert-warning py-2 mb-3 clara-new-record-member-required" role="alert">
+        <?= View::e($view->t('records.new.not_member')) ?>
+    </div>
 <?php endif; ?>
 
 <!-- The colour code (§6.3). -->

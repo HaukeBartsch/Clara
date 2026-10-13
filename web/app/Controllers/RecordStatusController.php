@@ -17,7 +17,10 @@
 // `generateNextRecordName` (REQ-API-023), then the record view opens on it; nothing is stored
 // until its first import (REQ-API-033), which also places it in the member's active data
 // access group (REQ-API-093). Offered at data access ≥ `view_edit` on some arm, and never in
-// analysis mode (§8.1, REQ-UI-035).
+// analysis mode (§8.1, REQ-UI-035). Entry additionally needs the project token, which only a
+// member holds — an administrator may see a project without belonging to it (REQ-API-102) —
+// so membership is asked here, where the page can answer it with what to do about it, rather
+// than first at the Save of a form the user has already filled out.
 
 declare(strict_types=1);
 
@@ -81,13 +84,22 @@ final class RecordStatusController extends DataEntryController
 
         $proposed = Session::take('new_record');
 
+        // Entry is the token's right, and only a member holds one: an administrator may see
+        // a project without belonging to it (REQ-API-102), so the affordance is asked here —
+        // where the page can point to the Members page — rather than first at the Save of a
+        // form the user has already filled out. The fetch warms the cache every later data
+        // call reads (§8.6); it runs only when an offer would otherwise be made, so a purely
+        // read-only visit spends nothing extra.
+        $offer = $mode !== 'analysis' && $editableArms !== [];
+        $member = !$offer || $this->api->dataApi()->hasMemberToken($projectId);
+
         return $this->renderSection($detail, 'project/record_status', 'records.title', [
             'statusUrl' => '/projects/' . $projectId . '/record-status',
             'recordBase' => '/projects/' . $projectId . '/records/',
             'arms' => $arms,
             // §8.1 / REQ-UI-035: the new-participant affordance is absent in analysis mode,
             // and for a member who may enter data nowhere (REQ-UI-003).
-            'newRecord' => $mode !== 'analysis' && $editableArms !== [] ? [
+            'newRecord' => $offer && $member ? [
                 'arms' => $editableArms,
                 'name' => (string) ($proposed['name'] ?? ''),
                 'arm' => (int) ($proposed['arm'] ?? 0),
@@ -95,6 +107,8 @@ final class RecordStatusController extends DataEntryController
                 // both (REQ-UI-052): type a name, or one click that numbers the participant.
                 'naming' => (string) ($detail['record_naming'] ?? 'manual'),
             ] : null,
+            // The explanation that takes the form's place for a viewer who holds no token.
+            'notMember' => $offer && !$member,
         ], [
             'scripts' => ['/assets/app.js', '/assets/js/record-status.js'],
             'jsKeys' => ['js.loading', 'js.load_failed', 'js.retry', 'records.empty',
@@ -210,11 +224,21 @@ final class RecordStatusController extends DataEntryController
     /**
      * POST …/record-status?action=new_record — open the record view on a new participant
      * (§6.3). Only the name is checked here; the record exists once its first import stores
-     * it (REQ-API-033), and a name that already exists simply opens that record.
+     * it (REQ-API-033), and a name that already exists simply opens that record. A posting
+     * from a user who holds no token — one who was never offered the form — is turned back
+     * with the answer the dashboard gives (REQ-API-102).
      */
     public function create(): Response
     {
         $projectId = $this->projectIdFromPath();
+        $back = Response::redirect('/projects/' . $projectId . '/record-status');
+
+        if (!$this->api->dataApi()->hasMemberToken($projectId)) {
+            $this->flashDanger($this->i18n->t('record.not_member'));
+
+            return $back;
+        }
+
         $name = trim($this->request->field('record_id'));
         $arm = $this->fieldId('arm');
 
@@ -222,7 +246,7 @@ final class RecordStatusController extends DataEntryController
             $this->flashDanger($this->i18n->t('records.new.invalid'));
             Session::stash('new_record', ['name' => $name, 'arm' => $arm]);
 
-            return Response::redirect('/projects/' . $projectId . '/record-status');
+            return $back;
         }
 
         $target = self::recordUrl($projectId, $name);

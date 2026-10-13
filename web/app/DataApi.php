@@ -64,6 +64,32 @@ final class DataApi
     }
 
     /**
+     * Whether the acting user can enter data in this project at all — true when they hold
+     * its token, false when the self-service fetch answers 403 because no assignment names
+     * them (an administrator may see a project without belonging to it, REQ-API-102). A
+     * successful fetch warms the session cache every later call reads (§8.6); failures other
+     * than non-membership travel as they do on `forMember`.
+     */
+    public function hasMemberToken(int $projectId): bool
+    {
+        if (Session::cachedProjectToken($projectId) !== null) {
+            return true;
+        }
+
+        try {
+            $this->fetchToken($projectId);
+        } catch (ApiException $e) {
+            if ($e->code() === 'not_member') {
+                return false;
+            }
+
+            throw $e;
+        }
+
+        return true;
+    }
+
+    /**
      * Performs one call with an explicit token. Public for the survey page (§8.8), whose
      * credential is the link token rather than a member's.
      *
