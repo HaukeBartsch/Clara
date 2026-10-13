@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"time"
@@ -23,6 +24,7 @@ import (
 func (h *Handler) registerQueries(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/projects/{id}/record-status", h.recordStatus)
 	mux.HandleFunc("GET /api/v1/audit", h.listAudit)
+	mux.HandleFunc("GET /api/v1/audit/export", h.exportAudit)
 	mux.HandleFunc("GET /api/v1/projects/{id}/records/{record}/history", h.recordHistory)
 }
 
@@ -425,6 +427,68 @@ type auditPage struct {
 	NextCursor any `json:"next_cursor"`
 }
 
+// auditFilter is the parsed §4.15 filter set (REQ-API-077), shared by the
+// listing and the export (REQ-API-158): which table to read, and the WHERE
+// fragment the query parameters describe.
+type auditFilter struct {
+	table string // "events" | "views"
+	conds []string
+	args  []any
+}
+
+// parseAuditFilter validates type/project/user/event_type/from/to (UTC date or
+// datetime, inclusive) and builds the shared WHERE fragment. The returned
+// message is non-empty for a malformed value — the caller answers 400 with it.
+func parseAuditFilter(q url.Values) (*auditFilter, string) {
+	f := &auditFilter{table: q.Get("type"), conds: []string{"1=1"}}
+	if f.table == "" {
+		f.table = "events"
+	}
+	if f.table != "events" && f.table != "views" {
+		return nil, `type must be "events" or "views"`
+	}
+	if v := q.Get("project"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n <= 0 {
+			return nil, "invalid project filter"
+		}
+		f.conds = append(f.conds, "project_id = ?")
+		f.args = append(f.args, n)
+	}
+	if v := q.Get("user"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n <= 0 {
+			return nil, "invalid user filter"
+		}
+		f.conds = append(f.conds, "user_id = ?")
+		f.args = append(f.args, n)
+	}
+	if v := q.Get("event_type"); v != "" {
+		if f.table == "views" {
+			return nil, "the event_type filter applies to type=events only"
+		}
+		f.conds = append(f.conds, "event_type = ?")
+		f.args = append(f.args, v)
+	}
+	if v := q.Get("from"); v != "" {
+		from, ok := parseRangeBound(v, false)
+		if !ok {
+			return nil, "from must be a UTC date or datetime"
+		}
+		f.conds = append(f.conds, "created_at >= ?")
+		f.args = append(f.args, from)
+	}
+	if v := q.Get("to"); v != "" {
+		to, ok := parseRangeBound(v, true)
+		if !ok {
+			return nil, "to must be a UTC date or datetime"
+		}
+		f.conds = append(f.conds, "created_at <= ?")
+		f.args = append(f.args, to)
+	}
+	return f, ""
+}
+
 // listAudit returns audit entries in reverse chronological order with
 // limit/cursor pagination (§1 convention). Audit reads are reserved to
 // is_admin (REQ-API-078, finding F2): view entries carry the live data-API
@@ -436,55 +500,11 @@ func (h *Handler) listAudit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	q := r.URL.Query()
 
-	table := q.Get("type")
-	if table == "" {
-		table = "events"
-	}
-	if table != "events" && table != "views" {
-		errBadRequest(w, `type must be "events" or "views"`)
+	f, bad := parseAuditFilter(r.URL.Query())
+	if bad != "" {
+		errBadRequest(w, bad)
 		return
-	}
-
-	var projectFilter *int64
-	if v := q.Get("project"); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n <= 0 {
-			errBadRequest(w, "invalid project filter")
-			return
-		}
-		projectFilter = &n
-	}
-	var userFilter *int64
-	if v := q.Get("user"); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n <= 0 {
-			errBadRequest(w, "invalid user filter")
-			return
-		}
-		userFilter = &n
-	}
-	eventType := q.Get("event_type")
-	if eventType != "" && table == "views" {
-		errBadRequest(w, "the event_type filter applies to type=events only")
-		return
-	}
-	from := ""
-	if v := q.Get("from"); v != "" {
-		var ok bool
-		if from, ok = parseRangeBound(v, false); !ok {
-			errBadRequest(w, "from must be a UTC date or datetime")
-			return
-		}
-	}
-	to := ""
-	if v := q.Get("to"); v != "" {
-		var ok bool
-		if to, ok = parseRangeBound(v, true); !ok {
-			errBadRequest(w, "to must be a UTC date or datetime")
-			return
-		}
 	}
 
 	// The stable names audit_events / audit_record_views exist only after the
@@ -495,28 +515,7 @@ func (h *Handler) listAudit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	limit := ParseLimit(r)
-	conds := []string{"1=1"}
-	var args []any
-	if projectFilter != nil {
-		conds = append(conds, "project_id = ?")
-		args = append(args, *projectFilter)
-	}
-	if userFilter != nil {
-		conds = append(conds, "user_id = ?")
-		args = append(args, *userFilter)
-	}
-	if eventType != "" {
-		conds = append(conds, "event_type = ?")
-		args = append(args, eventType)
-	}
-	if from != "" {
-		conds = append(conds, "created_at >= ?")
-		args = append(args, from)
-	}
-	if to != "" {
-		conds = append(conds, "created_at <= ?")
-		args = append(args, to)
-	}
+	conds, args := f.conds, f.args
 	// Reverse-chronological cursor: strictly after the last-seen
 	// (created_at, id) pair in DESC order (§1).
 	if c := ParseCursor(r); c != nil {
@@ -525,7 +524,7 @@ func (h *Handler) listAudit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	base := " WHERE " + joinConditions(conds) + " ORDER BY created_at DESC, id DESC LIMIT ?"
-	if table == "views" {
+	if f.table == "views" {
 		h.queryAuditViews(w, ctx, base, args, limit)
 		return
 	}

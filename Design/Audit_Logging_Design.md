@@ -115,8 +115,9 @@ Field renames are `field_updated` with `"changes":{"name":{"old":"…","new":"�
 | Code | When | `details` payload |
 |---|---|---|
 | `export` | every data export on both surfaces — data API (`content=record` without `data`, REQ-API-012) and administration API (`GET /api/v1/projects/{id}/export`) | `{"surface":"data_api or ui","sensitivity":"export_full or export_no_identifiers or export_de_identified","pairs_dropped":0,"filters":{"records":["…"],"fields":["…"],"forms":["…"],"events":["…"],"filter_logic":"[age]=\"42\""}}` |
+| `audit_export` | every audit-trail export — `GET /api/v1/audit/export` (REQ-AUD-031, REQ-API-158) | `{"type":"events or views","rows":N,"truncated":false,"filters":{"project":7,"user":null,"event_type":"login_failure","from":"2026-01-01 00:00:00","to":null}}` — the filters as applied, unset ones `null`; `rows` counts the entries delivered, and `truncated` is `true` only when the stream broke off before the last row |
 
-Rules: omitted filters are empty arrays; `sensitivity` is the ladder name of the most protective level among the (instrument, event) pairs **actually delivered** per REQ-API-026/075 — never a higher level some individual pair would have permitted (`Data_Export_Anonymization_Design.md` §4.3); `pairs_dropped` counts the pairs in scope that contributed nothing for want of a level, so a reader can see a partly refused request; a record-view row (§4) is written **in addition** to this entry for data-API exports only — the table is keyed by the call's token, which a UI export does not have, so its `export` event alone is the trail (REQ-AUD-013).
+Rules: omitted filters are empty arrays; `sensitivity` is the ladder name of the most protective level among the (instrument, event) pairs **actually delivered** per REQ-API-026/075 — never a higher level some individual pair would have permitted (`Data_Export_Anonymization_Design.md` §4.3); `pairs_dropped` counts the pairs in scope that contributed nothing for want of a level, so a reader can see a partly refused request; a record-view row (§4) is written **in addition** to this entry for data-API exports only — the table is keyed by the call's token, which a UI export does not have, so its `export` event alone is the trail (REQ-AUD-013). `audit_export` describes a read of the trail itself rather than of record data — filters and counts, no values.
 
 ### 3.6 Survey events (REQ-AUD-021)
 
@@ -258,12 +259,13 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_record ON audit_events (project_id, 
 
 ## 7. Read Access
 
-Reads go through the two endpoints only (REQ-AUD-019; full contracts in `API_Endpoints_Design.md`):
+Reads go through the three endpoints below — the two of REQ-AUD-019 plus the export path REQ-AUD-031 adds (full contracts in `API_Endpoints_Design.md`):
 
 - `GET /api/v1/audit` — `is_admin` only; a non-admin gets the uniform 403 (REQ-API-078, finding F2). Both tables selected by `type=events|views`, reverse-chronological, `limit`/`cursor` pagination, filters: `project`, `user`, `event_type`, `from`, `to` (UTC).
 - `GET /api/v1/projects/{id}/records/{record}/history` — chronological, per record; filters `instrument`, `event`, `field`; `limit`/`cursor`. Served by `idx_audit_events_record` (§6.4); the `field` filter matches `details.fields[].field` within the record-scoped page (REQ-API-080). History is transparent across the yearly rollover because queries always use the stable name (REQ-AUD-006).
+- `GET /api/v1/audit/export` — `is_admin` only, same gate as the listing (REQ-AUD-031); the same filters, no `limit`/`cursor`: every matching entry streams chronologically as CSV in a ZIP container (member `audit_events.csv` / `audit_record_views.csv`, written straight to the response — never buffered whole, REQ-TECH-011), and `estimate=1` answers `{rows, estimated_bytes}` for the > 1 GiB confirmation (REQ-AUD-032). Every export writes one `audit_export` entry (§3.5).
 
-Both endpoints are read-only; no endpoint exists that writes, updates, or deletes audit data (REQ-DB-024, REQ-API-077).
+All three endpoints are read-only; no endpoint exists that writes, updates, or deletes audit data beyond its own trail entries (REQ-DB-024, REQ-API-077).
 
 ## 8. Resolved Deferred Items
 

@@ -38,7 +38,7 @@ final class ControlPanelController extends Controller
      * Sources (`api`/`ui`/`system`) are not event types and are not listed.
      */
     public const AUDIT_EVENT_TYPES = [
-        'account_auto_disabled', 'admin_rejected', 'arm_created', 'arm_deleted', 'arm_reordered', 'arm_updated',
+        'account_auto_disabled', 'admin_rejected', 'arm_created', 'arm_deleted', 'arm_reordered', 'arm_updated', 'audit_export',
         'calculated_recomputed', 'dag_active_switched', 'dag_created', 'dag_deleted', 'dag_membership_changed',
         'dag_record_assigned', 'event_created', 'event_deleted', 'event_reordered', 'event_updated', 'export',
         'field_created', 'field_deleted', 'field_moved', 'field_reordered', 'field_updated', 'instrument_completed',
@@ -425,20 +425,22 @@ final class ControlPanelController extends Controller
             'from' => $this->dateParam($this->request->query('from')),
             'to' => $this->dateParam($this->request->query('to')),
         ];
+        // The Export control (REQ-UI-057) rides the same filter form: `download=1` streams
+        // the ZIP, `estimate=1` prices it for the > 1 GiB warning (REQ-AUD-032). Both reuse
+        // the allowlisted filters — nothing from the browser reaches the API unchecked.
+        $filtered = $this->auditFilterQuery($filters);
+        if ($this->request->query('download') === '1') {
+            return $this->auditExportStream($filtered);
+        }
+        if ($this->request->query('estimate') === '1') {
+            return $this->auditExportEstimate($filtered);
+        }
+
         $cursor = $this->request->query('cursor');
         $cursor = preg_match('/^[A-Za-z0-9_=-]{1,512}$/', $cursor) === 1 ? $cursor : '';
 
-        $query = ['type' => $filters['type'], 'limit' => (string) self::AUDIT_PAGE];
-        foreach (['project', 'user'] as $key) {
-            if ($filters[$key] !== '0') {
-                $query[$key] = $filters[$key];
-            }
-        }
-        foreach (['event_type', 'from', 'to'] as $key) {
-            if ($filters[$key] !== '') {
-                $query[$key] = $filters[$key];
-            }
-        }
+        $query = $filtered;
+        $query['limit'] = (string) self::AUDIT_PAGE;
         if ($cursor !== '') {
             $query['cursor'] = $cursor;
         }
@@ -465,7 +467,97 @@ final class ControlPanelController extends Controller
             'users' => is_array($users) ? array_values(array_filter($users, 'is_array')) : [],
             'eventTypes' => self::AUDIT_EVENT_TYPES,
             'error' => $error,
+        ], [
+            'scripts' => ['/assets/js/audits.js'],
+            'jsKeys' => ['admin.audits.export.warning_title', 'admin.audits.export.warning_body', 'admin.audits.export.confirm'],
         ]);
+    }
+
+    /**
+     * The audited filters as API query parameters (the listing and the export share them):
+     * `type` always, the rest only when set — a 0 id or empty string means "all".
+     *
+     * @param array<string, string> $filters
+     * @return array<string, scalar>
+     */
+    private function auditFilterQuery(array $filters): array
+    {
+        $query = ['type' => $filters['type']];
+        foreach (['project', 'user'] as $key) {
+            if ($filters[$key] !== '0') {
+                $query[$key] = $filters[$key];
+            }
+        }
+        foreach (['event_type', 'from', 'to'] as $key) {
+            if ($filters[$key] !== '') {
+                $query[$key] = $filters[$key];
+            }
+        }
+
+        return $query;
+    }
+
+    /**
+     * `estimate=1` (REQ-API-158): the API's {rows, estimated_bytes} passed straight through
+     * as JSON for audits.js. A failure answers JSON too — the JS treats any non-ok estimate
+     * as "start the export without a warning" rather than blocking it.
+     *
+     * @param array<string, scalar> $query
+     */
+    private function auditExportEstimate(array $query): Response
+    {
+        try {
+            $estimate = $this->api->get('/api/v1/audit/export', $query + ['estimate' => '1']);
+        } catch (ApiException $e) {
+            return Response::json(['error' => $e->code()], max($e->status(), 400));
+        }
+
+        return Response::json($estimate);
+    }
+
+    /**
+     * `download=1` (REQ-AUD-031): the API's ZIP streamed to the browser — one chunk at a
+     * time, never materialized (REQ-TECH-011), the mechanics of ExportController::download.
+     * A refusal arrives before any byte and flashes on the Audits page; a transfer that
+     * breaks off later can only be logged.
+     *
+     * @param array<string, scalar> $query
+     */
+    private function auditExportStream(array $query): Response
+    {
+        return Response::stream(function (StreamSink $sink) use ($query): void {
+            try {
+                $this->api->stream('/api/v1/audit/export', $query,
+                    static function (int $status, array $upstream) use ($sink): void {
+                        // The download holds the session lock open otherwise (Session::close).
+                        Session::close();
+                        $sink->begin(200, [
+                            'Content-Type' => 'application/zip',
+                            'Content-Disposition' => self::auditZipDisposition($upstream['content-disposition'] ?? ''),
+                            'Cache-Control' => 'no-store',
+                            // Asks nginx not to buffer the proxied body (Technology_Stack §5).
+                            'X-Accel-Buffering' => 'no',
+                        ]);
+                    },
+                    static fn (string $chunk) => $sink->write($chunk)
+                );
+            } catch (ApiException $e) {
+                $this->logger->info('audit export refused', ['code' => $e->code(), 'status' => $e->status()]);
+                Session::flash('danger', $this->apiFailureMessage($e));
+                $sink->begin(303, ['Location' => '/admin?section=audits', 'Cache-Control' => 'no-store']);
+            }
+        });
+    }
+
+    /** The API's sanitized `audit_<type>_<date>_<time>.zip` name passed through — a value
+     *  that is not a plain zip filename falls back to a locally built one. */
+    private static function auditZipDisposition(string $upstream): string
+    {
+        if (preg_match('/filename="([A-Za-z0-9._-]{1,128}\.zip)"/', $upstream, $m) === 1) {
+            return 'attachment; filename="' . $m[1] . '"';
+        }
+
+        return 'attachment; filename="audit_export_' . gmdate('Y-m-d_Hi') . '.zip"';
     }
 
     private function dateParam(string $raw): string

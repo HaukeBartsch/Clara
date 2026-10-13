@@ -251,6 +251,10 @@ return [
     'admin.audits.pages' => 'Audit pages',
     'admin.audits.first' => 'First page',
     'admin.audits.next' => 'Next',
+    'admin.audits.export' => 'Export CSV',
+    'admin.audits.export.warning_title' => 'This export is large',
+    'admin.audits.export.warning_body' => 'The current filters match an estimated {size} of audit data. A large export can take a long time and load the server. Export anyway?',
+    'admin.audits.export.confirm' => 'Export anyway',
 
     // Control Panel — Translations (§5.7, REQ-UI-030).
     'admin.translations.title' => 'Translations',

@@ -241,6 +241,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 |---|------|
 | REQ-API-077 | `GET /api/v1/audit` MUST return audit entries (`audit_events` and `audit_record_views`, selected by a `type` parameter) in reverse chronological order with pagination (limit/cursor). It MUST be read-only: no endpoint MUST exist that writes, updates, or deletes audit data (REQ-DB-024). |
 | REQ-API-078 | Audit log access MUST be restricted to `is_admin` acting users (finding F2): only an `is_admin` user MAY read `GET /api/v1/audit`, across all projects; any other acting user MUST receive the uniform 403 that never discloses existence (REQ-API-007). A project filter parameter MUST be supported (ASM-API-2). |
+| REQ-API-158 | `GET /api/v1/audit/export` MUST export the audit trail as CSV in a ZIP container (`application/zip`, one member — `audit_events.csv` or `audit_record_views.csv` — delivered as an attachment named `audit_<type>_<YYYY-MM-DD>_<HHMM>.zip`, UTC). It MUST accept the same filters as `GET /api/v1/audit` (REQ-API-077: `type`, `project`, `user`, `event_type`, `from`, `to`) and apply them across **all** matching entries — pagination never bounds an export — streaming the entries chronologically without materializing the log in memory (REQ-AUD-031, REQ-TECH-011). With `estimate=1` it MUST answer instead with JSON `{"rows": N, "estimated_bytes": M}` for the same filter set — a bounded, advisory estimate the caller uses to warn before an export above 1 GiB (REQ-AUD-032). Access is reserved to `is_admin`, every other acting user receiving the uniform 403 (REQ-API-078); every export MUST be audit-logged as `audit_export` (REQ-AUD-011). |
 
 ### 4.15 Record history
 
@@ -328,6 +329,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 | `GET /i18n/languages`, `PUT /users/me/ui-language` | any authenticated user |
 | `GET/PUT /i18n/strings` | `is_admin` |
 | `GET /api/v1/audit` | `is_admin` only (REQ-API-078) |
+| `GET /api/v1/audit/export` | `is_admin` only (REQ-API-078, REQ-API-158) |
 | `GET .../mode` | data access ≥ `read_only` |
 | `PUT .../mode` (§4.19) | `is_admin` — a project's own `project_admin` is rejected (403) |
 | staging start/commit/discard (§4.19) | `project_admin` |

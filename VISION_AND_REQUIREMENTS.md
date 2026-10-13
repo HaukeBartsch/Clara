@@ -842,6 +842,8 @@ The form for a record generates an error on "Safe": "The form contains invalid v
 
 Add an export as csv function to the Audits page. As Audits might be multi-GB in size warn the user for large exports (more than 1GB). 
 
+**Status:** Done 2026-10-13 — the Audits page exports the trail its filter bar selects (log type, project, user, event type, from/to) as CSV inside a ZIP, every matching entry whatever the listing's pagination (REQ-AUD-031, REQ-API-158: `GET /api/v1/audit/export`, streamed end to end per REQ-TECH-011; each export records one `audit_export` entry — filters and counts, no values). Above an estimated 1 GiB the page asks first, naming the size (`estimate=1`, REQ-AUD-032); a failed estimate starts the export unwarned rather than blocked (REQ-UI-057). Tests: `api/internal/admin/audit_export_test.go`, `tests/php/audit_export_test.php`, `e2e/tests/audits-export.spec.ts`.
+
 Make the "Projects" page the first open tab in the Control Panel.
 
 Close all API Documentation drawers but keep the Data API open (and move it to the first position).

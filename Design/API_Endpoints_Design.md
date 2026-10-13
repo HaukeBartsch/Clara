@@ -1145,6 +1145,27 @@ Both endpoints require `is_admin`; a call by a non-admin is rejected (403 `forbi
 | `GET /api/v1/settings` | 200 — `{ "rate_limit_enabled": false, "rate_limit_rpm": 600, "rate_limit_block_minutes": 10 }` (the effective values: the stored row when present, the seeded default otherwise) |
 | `PUT /api/v1/settings` | Body: any subset of the fields (idempotent, REQ-API-042). Validation: `rate_limit_enabled` a boolean; `rate_limit_rpm` an integer ≥ 1; `rate_limit_block_minutes` an integer 1–1440 — else 400 `bad_request`; unknown attributes → 400. The upper bound keeps a mistyped value from locking every caller out for days. 200 — the full settings object after the update. Audit `settings_updated` with the old and new value of each changed key (REQ-AUD-027); a PUT that changes nothing writes no entry |
 
+### 4.23 Audit log export (REQ-API-158)
+
+**`GET /api/v1/audit/export`** — `is_admin` only; any other acting user gets the uniform 403 (REQ-API-078). Query parameters are the §4.15 filters (`type`, `project`, `user`, `event_type`, `from`, `to`) plus:
+
+| Parameter | Meaning |
+|---|------|
+| `estimate` | `1` — answer the JSON estimate instead of the file (below) |
+
+There is no `limit`/`cursor`: an export covers **every** entry the filters match, never just one page (REQ-AUD-031); filter values validate exactly as for the listing (else 400 `invalid_request`).
+
+Default response — `application/zip`, streamed: a ZIP written straight to the response (`archive/zip` over the `ResponseWriter`; non-seekable output, so entries carry data descriptors) holding one deflate-compressed CSV member named `audit_events.csv` or `audit_record_views.csv` by `type`, with `Content-Disposition: attachment; filename="audit_<type>_<YYYY-MM-DD>_<HHMM>.zip"` (UTC, the name sanitized of quotes and path characters as the dictionary ZIP's is) and `Cache-Control: no-store`. Entries are written **chronologically** (`created_at, id` ascending — an archive reads front to back, unlike the reverse-chronological listing), one row per entry behind a header row:
+
+- events: `id, created_at, source, user_id, email, token, project_id, arm_num, role, target_record, event_type, details` — the full fixed-column set plus the payload as stored JSON text (`Audit_Logging_Design.md` §2);
+- views: `id, created_at, user_id, email, token, project_id, record_ids, instruments`.
+
+Every cell passes CSV formula neutralization (REQ-VAL-032) as record exports do; the response carries no BOM (REQ-EXP-016). One row in hand at a time — the log is never materialized (REQ-TECH-011).
+
+`estimate=1` → 200 `{ "rows": 48213, "estimated_bytes": 15728640 }`: `rows` is the exact count of matching entries; `estimated_bytes` = rows × the average row byte length sampled from at most the newest 1000 matching rows — a bounded, advisory figure for the > 1 GiB confirmation (REQ-AUD-032), never a promise.
+
+Every export that ends writes one `audit_export` entry naming the filters applied, the rows delivered, and `truncated: true` when the stream broke off before the last row (`Audit_Logging_Design.md` §3.5).
+
 ## 5. Permission summary
 
 The normative endpoint → permission mapping is in `API_Endpoints_Requirement.md` §4.21; it is reproduced here as an overview:
@@ -1177,6 +1198,7 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirement.m
 | `PUT …/users/{uid}/data-access-groups` | `is_admin` |
 | `PUT …/active-data-access-group` | an assigned member (self-service) |
 | `GET /api/v1/audit` | `is_admin` (all projects) or a member of the queried project (REQ-API-078) |
+| `GET /api/v1/audit/export` (§4.23, REQ-API-158) | `is_admin` only (REQ-API-078) |
 | `GET /i18n/languages`, `PUT /users/me/ui-language`, `PUT /users/me/ui-theme` (§4.19) | any authenticated user |
 | `GET/PUT /i18n/strings` | `is_admin` |
 | `POST …/end-provision` (§4.20) | `is_admin` (BR-009) |

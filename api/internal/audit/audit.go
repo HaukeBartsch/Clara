@@ -88,7 +88,8 @@ const (
 	PasswordResetCompleted = "password_reset_completed" // REQ-AUD-029, GD-23
 
 	// §3.5 export events
-	Export = "export"
+	Export      = "export"
+	AuditExport = "audit_export" // REQ-AUD-031: a read of the trail itself, not of record data
 
 	// §3.6 survey events
 	SurveySubmitted   = "survey_submitted"

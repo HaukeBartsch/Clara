@@ -3,7 +3,8 @@
  * Control Panel — Audits (§5.6, REQ-UI-016). Read-only: a filter bar (a GET form, so a page
  * is reloadable — §3.6), the reverse-chronological table, and each entry's `details` as an
  * escaped key/value list in a disclosure (§3.2, REQ-UI-004). There is no write control on this
- * page (REQ-DB-024). Pagination follows the API's opaque forward cursor: "Next" carries it,
+ * page (REQ-DB-024); the Export control downloads the filtered trail as zip-compressed CSV
+ * (REQ-UI-057). Pagination follows the API's opaque forward cursor: "Next" carries it,
  * and "First page" returns to the newest entries (the cursor cannot be walked backwards).
  */
 
@@ -79,8 +80,12 @@ $renderValue = static fn (mixed $value): string => is_scalar($value) || $value =
         <label class="form-label mb-0 small" for="audit-to"><?= View::e($view->t('admin.audits.to')) ?></label>
         <input class="form-control form-control-sm" type="date" id="audit-to" name="to" value="<?= View::e($filters['to']) ?>">
     </div>
-    <div class="col-12 col-md-2">
+    <div class="col-12 col-md-3">
         <button class="btn btn-sm btn-outline-primary" type="submit"><?= View::e($view->t('admin.audits.filter')) ?></button>
+        <!-- The Export control (REQ-UI-057): a GET submit carrying the form's filters plus
+             download=1; audits.js prices it first and confirms above 1 GiB (REQ-AUD-032).
+             Without JS the click downloads straight — the estimate is advisory. -->
+        <button class="btn btn-sm btn-outline-success" type="submit" name="download" value="1"><?= View::e($view->t('admin.audits.export')) ?></button>
         <a class="btn btn-sm btn-link" href="/admin?section=audits"><?= View::e($view->t('admin.audits.reset')) ?></a>
     </div>
 </form>

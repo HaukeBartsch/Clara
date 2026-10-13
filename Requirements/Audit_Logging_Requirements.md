@@ -63,6 +63,8 @@ Defines the requirements for the system's audit trail: the two append-only audit
 |---|------|
 | REQ-AUD-019 | The audit trail MUST be readable only through `GET /api/v1/audit` (REQ-API-077) and the record history endpoint (REQ-API-079); both MUST be read-only and paginated; `GET /api/v1/audit` MUST be reserved to `is_admin` acting users, who MAY query all projects — a non-admin MUST receive a uniform 403 (REQ-API-078, finding F2). The record history endpoint keeps its project-visibility gate (REQ-API-079). |
 | REQ-AUD-020 | The audit tables MUST be indexed to support the read access patterns: time range, project, user, event type, and record (REQ-API-077 pagination, REQ-API-079 record history, at the reference scale of REQ-DB-025; DEV-AUD-2). |
+| REQ-AUD-031 | The audit trail MUST be exportable as CSV in a ZIP container through `GET /api/v1/audit/export` (REQ-API-158) — a third read path beside the two of REQ-AUD-019, under the same gate: `is_admin` only, every other acting user receiving the uniform 403 (REQ-API-078). The export MUST honor the listing's filters (`type`, `project`, `user`, `event_type`, `from`, `to`) and MUST include every matching entry regardless of pagination; it MUST be streamed without materializing the log in memory (REQ-TECH-011), and every export MUST be recorded as an `audit_export` event (REQ-AUD-011, BR-008). |
+| REQ-AUD-032 | Before an export estimated to exceed 1 GiB the user MUST be warned with the estimate and asked to confirm it (master spec: "As Audits might be multi-GB in size warn the user for large exports (more than 1GB)"). The estimate is advisory — a confirmed or smaller export still delivers every matching entry (REQ-AUD-031). |
 
 ## 7. Assumptions
 

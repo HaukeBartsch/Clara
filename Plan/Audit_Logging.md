@@ -9,6 +9,7 @@ This document outlines the strategy for tracking user activity and data changes 
 - Project Structure: Changes to instruments, fields, or project settings.
 - Project Modes: Mode changes (with the keep-or-delete decision for development to production) and the staging lifecycle - start, commit (including the breaking changes acknowledged), discard, and the acknowledgement carried by a structure change applied in analysis mode.
 - Exports: Full or anonymized data exports.
+- Audit Trail Export: A downloadable zip-compressed CSV copy of the trail itself from the Audits page, reserved to administrators, honoring the read filters and covering every matching entry; each export is itself an audited event, and exports estimated above 1 GiB are confirmed first (REQ-AUD-031/032).
 
 ## Log Details
 Each log entry will include:
