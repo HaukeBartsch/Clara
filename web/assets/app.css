@@ -147,7 +147,7 @@
 
 .clara-standalone-card {
   width: 100%;
-  max-width: 46rem;
+  max-width: 56rem;
 }
 
 /* --- source tiles: the login page's source-name picker (§2.2, REQ-UI-042) --- */
@@ -197,8 +197,8 @@
 
 .clara-source-name {
   display: block;
-  font-size: 1.5rem;
-  font-weight: 300;
+  font-size: 1rem;
+  font-weight: 500;
   line-height: 1.2;
   overflow-wrap: break-word;
   hyphens: auto;
