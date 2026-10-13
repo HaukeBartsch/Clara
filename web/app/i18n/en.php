@@ -441,9 +441,9 @@ return [
     'admin.projects.created' => 'Project {name} created.',
     'admin.projects.updated' => 'Project {name} updated.',
     'admin.projects.open_new' => 'Open {name}',
-    'admin.projects.participant_names_help' => 'Record naming pattern, e.g. 8DISC[0-9][0-9][0-9] or 0001_01.',
     'admin.projects.field.project_name' => 'Project name',
     'admin.projects.field.organization' => 'Main supporting institution',
+    'admin.projects.organization.other' => 'Other',
     'admin.projects.field.pi_name' => 'Principal investigator',
     'admin.projects.field.pi_email' => 'Principal investigator e-mail',
     'admin.projects.field.dm_name' => 'Data manager',
@@ -453,7 +453,6 @@ return [
     'admin.projects.field.rek_end_date' => 'REK end date',
     'admin.projects.field.start_date' => 'Start date',
     'admin.projects.field.end_date' => 'End date',
-    'admin.projects.field.participant_names' => 'Participant name pattern',
 
     // Control Panel — Audits (§5.6, REQ-UI-016).
     'admin.audits.title' => 'Audits',

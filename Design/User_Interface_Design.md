@@ -279,9 +279,9 @@ The `is_admin` flag is provisioned by the bootstrap mechanism at setup (GD-4, RE
 
 **Create** — a single form covering the simplified creation fields of REQ-DB-006 (GD-17), submitting `POST /api/v1/projects`:
 
-- identity: `project_name` (unique — a 409 shows the conflict message, §3.4), `organization` (select of the REQ-DB-006 enumeration — **the main supporting institution**), `pi_name`, `pi_email`, `dm_name`, `dm_email`;
+- identity: `project_name` (unique — a 409 shows the conflict message, §3.4), `organization` (select of the REQ-DB-006 enumeration — **the main supporting institution**: the option value is the short code that is stored, e.g. `OUS`, the option text the hospital with its sites, e.g. "Oslo University Hospital, Rikshospitalet, Ullevål, Radiumhospitalet, Aker"; NAT EU follows the hospitals and Other — translated — comes last; on edit a project stored under a code no longer offered keeps it as an extra option), `pi_name`, `pi_email`, `dm_name`, `dm_email`;
 - ethics and time: `rek_number`, `rek_start_date`, `rek_end_date`, `start_date`, `end_date`;
-- naming: `participant_names` (naming pattern — `8DISC[0-9][0-9][0-9]` or `0001_01`, REQ-DB-007).
+- naming: `participant_names` (naming pattern — `8DISC[0-9][0-9][0-9]` or `0001_01`, REQ-DB-007) is **not displayed** (2026-10-13): a hidden input carries it, derived from the project name on create — upper case, spaces to underscores, `_[0-9][0-9][0-9]` (`admin.js`; the controller applies the same rule when the form arrives without one) — and the stored value on edit. It remains a project attribute and is still shown read-only on the project overview (§6.1).
 
 The option flags, the end-user-contract confirmation, the end provision, and the initial-events list are **absent from the form** (GD-17, REQ-DB-032): the owner MAY record them later as data in an ordinary instrument (e.g. `DataTransferProjects`), and events are added in the project's Setup page (§6.2 B). Creation makes the project with **arm 1 only** (`API_Endpoints_Design.md` §4.5); the page then offers a link straight into the new project's setup to add its events.
 

@@ -50,10 +50,9 @@ test.describe("administration surface (M3)", () => {
     await page.locator('#clara-nav a[href="/admin?section=projects"]').click()
     await page.locator("details.clara-create summary").click()
     await page.fill("#project-project_name", projectName)
-    await page.selectOption("#project-organization", "HBE")
+    await page.selectOption("#project-organization", "OUS")
     await page.fill("#project-pi_name", "Principal Investigator")
     await page.fill("#project-pi_email", "pi@example.org")
-    await page.fill("#project-participant_names", "M3[0-9][0-9][0-9]")
     await page.locator('form[action*="action=create_project"] button[type="submit"]').click()
     await page.getByRole("link", { name: `Open ${projectName}` }).click()
     await expect(page.locator("header")).toContainText(projectName)
@@ -96,7 +95,7 @@ test.describe("administration surface (M3)", () => {
     await expect(page.locator("table.clara-members")).not.toContainText(email)
   })
 
-  test("the participant name pattern follows the project name until it is edited by hand", async ({ page }) => {
+  test("the form offers the Helse Sør-Øst institutions and derives the hidden name pattern", async ({ page }) => {
     const tag = Date.now()
 
     await signInAsAdmin(page)
@@ -106,18 +105,32 @@ test.describe("administration surface (M3)", () => {
     await expect(page.locator('#clara-nav a[href="/admin?section=projects"]')).toHaveAttribute("aria-current", "page")
     await page.locator("details.clara-create summary").click()
 
-    // Typing the name pre-fills the pattern: upper case, spaces to underscores, counter suffix.
+    // The institution select stores the short code and shows the hospital with its sites.
+    const organization = page.locator("#project-organization")
+    await expect(organization.locator('option[value="OUS"]'))
+      .toHaveText("Oslo University Hospital, Rikshospitalet, Ullevål, Radiumhospitalet, Aker")
+    await expect(organization.locator('option[value="NAT EU"]')).toHaveCount(1)
+    await expect(organization.locator('option[value="OTHER"]')).toHaveText("Other")
+    await expect(organization.locator('option[value="HBE"]')).toHaveCount(0)
+
+    // The participant name pattern is not displayed; it follows the name: upper case, spaces
+    // to underscores, counter suffix.
+    const pattern = page.locator("#project-participant_names")
+    await expect(pattern).toBeHidden()
     await page.fill("#project-project_name", `Auto Pattern ${tag}`)
-    await expect(page.locator("#project-participant_names")).toHaveValue(`AUTO_PATTERN_${tag}_[0-9][0-9][0-9]`)
-
-    // A hand-typed pattern survives further name changes …
-    await page.fill("#project-participant_names", "HAND[0-9][0-9][0-9]")
+    await expect(pattern).toHaveValue(`AUTO_PATTERN_${tag}_[0-9][0-9][0-9]`)
     await page.fill("#project-project_name", `Renamed ${tag}`)
-    await expect(page.locator("#project-participant_names")).toHaveValue("HAND[0-9][0-9][0-9]")
+    await expect(pattern).toHaveValue(`RENAMED_${tag}_[0-9][0-9][0-9]`)
 
-    // … but an emptied one is derived again — "not entered yet" means empty.
-    await page.fill("#project-participant_names", "")
-    await page.fill("#project-project_name", `Renamed Again ${tag}`)
-    await expect(page.locator("#project-participant_names")).toHaveValue(`RENAMED_AGAIN_${tag}_[0-9][0-9][0-9]`)
+    // … and is what the project is created with.
+    await organization.selectOption("SUN")
+    await page.fill("#project-pi_name", "Principal Investigator")
+    await page.fill("#project-pi_email", "pi@example.org")
+    await page.locator('form[action*="action=create_project"] button[type="submit"]').click()
+    await page.getByRole("link", { name: `Open Renamed ${tag}` }).click()
+    // The project overview still shows the stored pattern, read-only (§6.1).
+    await page.locator('#clara-nav a[href$="/overview"]').click()
+    await expect(page.locator("main")).toContainText(`RENAMED_${tag}_[0-9][0-9][0-9]`)
+    await expect(page.locator("main")).toContainText("SUN")
   })
 })

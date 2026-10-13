@@ -25,8 +25,24 @@ use Clara\StreamSink;
 
 final class ControlPanelController extends Controller
 {
-    /** The main supporting institutions of REQ-DB-006 (GD-17) — the organization select. */
-    public const ORGANIZATIONS = ['OTHER', 'VEST', 'HBE', 'SUS', 'FOR', 'FON', 'UIB', 'UIS', 'HVL', 'NAT EU'];
+    /**
+     * The main supporting institutions of REQ-DB-006 (GD-17) — the organization select: the
+     * stored code => its display text (the hospitals of Helse Sør-Øst with their sites). OTHER's
+     * text is translated (`admin.projects.organization.other`), hence empty here.
+     */
+    public const ORGANIZATIONS = [
+        'OUS' => 'Oslo University Hospital, Rikshospitalet, Ullevål, Radiumhospitalet, Aker',
+        'Ahus' => 'Akershus University Hospital, Nordbyhagen (Lørenskog), Kongsvinger',
+        'SØ' => 'Sykehuset Østfold, Kalnes (Sarpsborg), Moss',
+        'SiV' => 'Sykehuset i Vestfold, Tønsberg, Larvik',
+        'ST' => 'Sykehuset Telemark, Skien, Notodden, Porsgrunn, Rjukan',
+        'SSHF' => 'Sørlandet Sykehus, Kristiansand, Arendal, Flekkefjord',
+        'SI' => 'Sykehuset Innlandet, Hamar, Elverum, Lillehammer, Gjøvik, Kongsvinger (psychiatry)',
+        'VVHF' => 'Vestre Viken, Drammen, Bærum, Ringerike (Hønefoss), Kongsberg',
+        'SUN' => 'Sunnaas Sykehus, Nesodden (Specialized rehabilitation hospital)',
+        'NAT EU' => 'NAT EU',
+        'OTHER' => '',
+    ];
 
     /** The optional project attributes (§5.2): empty on edit means "clear" (null). */
     private const PROJECT_OPTIONAL = [
@@ -404,8 +420,21 @@ final class ControlPanelController extends Controller
         foreach (array_merge(self::PROJECT_REQUIRED, self::PROJECT_OPTIONAL) as $attr) {
             $form[$attr] = trim($this->request->field($attr));
         }
+        // The pattern is not shown on the form: admin.js derives it from the name, an edit
+        // carries the stored one, and without JavaScript the same derivation happens here.
+        if ($form['participant_names'] === '') {
+            $form['participant_names'] = self::derivedPattern($form['project_name']);
+        }
 
         return $form;
+    }
+
+    /** The project-name-derived pattern (admin.js derivedPattern): upper case, spaces to underscores, three-digit counter. */
+    public static function derivedPattern(string $name): string
+    {
+        $base = str_replace(' ', '_', mb_strtoupper(trim($name)));
+
+        return $base === '' ? '' : $base . '_[0-9][0-9][0-9]';
     }
 
     private function idParam(string $raw): int

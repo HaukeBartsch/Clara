@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
 CREATE TABLE IF NOT EXISTS projects (            -- REQ-DB-006 (simplified, GD-17)
     id                          INTEGER PRIMARY KEY,
     project_name                VARCHAR(255) NOT NULL UNIQUE,
-    organization                VARCHAR(16)  NOT NULL,   -- main supporting institution: OTHER, VEST, HBE, SUS, FOR, FON, UIB, UIS, HVL, NAT EU
+    organization                VARCHAR(16)  NOT NULL,   -- main supporting institution: OUS, Ahus, SØ, SiV, ST, SSHF, SI, VVHF, SUN, NAT EU, OTHER
     pi_name                     VARCHAR(255) NOT NULL,
     pi_email                    VARCHAR(254) NOT NULL,
     dm_name                     VARCHAR(255),

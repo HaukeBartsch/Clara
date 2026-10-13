@@ -874,6 +874,8 @@ Vestre Viken	VVHF	Drammen, Bærum, Ringerike (Hønefoss), Kongsberg
 Sunnaas Sykehus	SUN	Nesodden (Specialized rehabilitation hospital)
 ```
 
+**Status:** Done 2026-10-13 — the Control Panel's Projects form offers these hospitals as the main supporting institution, stored by short code and shown with their sites (e.g. value `OUS`, text "Oslo University Hospital, Rikshospitalet, Ullevål, Radiumhospitalet, Aker"), followed by NAT EU and Other; the previous codes (VEST, HBE, SUS, FOR, FON, UIB, UIS, HVL) are no longer offered, but a project stored under one keeps it on edit (REQ-DB-006, REQ-UI-012, `User_Interface_Design.md` §5.2). The participant name pattern is no longer displayed on that form: it is derived from the project name on create and kept unchanged on edit. Tests: `tests/php/m3_admin_test.php`, `e2e/tests/admin.spec.ts`.
+
 
 # Presentation
 

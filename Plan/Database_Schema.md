@@ -8,7 +8,7 @@ This document outlines the core database tables required for the system. The sch
 Stores project-level metadata (see the project creation form in VISION_AND_REQUIREMENTS.md).
 - id (Primary Key)
 - project_name (String, Unique)
-- organization (String: OTHER, VEST, HBE, SUS, FOR, FON, UIB, UIS, HVL, NAT EU)
+- organization (String: OUS, Ahus, SØ, SiV, ST, SSHF, SI, VVHF, SUN, NAT EU, OTHER)
 - pi_name (String)
 - pi_email (String)
 - dm_name (String, Data Manager)

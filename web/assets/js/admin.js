@@ -10,8 +10,10 @@
 // 3. Reopening (§6.7/§6.8): a server-rendered modal carrying data-clara-autoshow opens on load —
 //    the commit dialog after a refused commit, the breaking-change question after a save the
 //    API sent back for acknowledgement.
-// 4. Naming prefill (§5.2): on the Projects form an untouched participant name pattern follows
+// 4. Naming prefill (§5.2): on the Projects form the hidden participant name pattern follows
 //    the project name — uppercased, spaces to underscores, plus a three-digit counter suffix.
+//    An edit's stored pattern is left alone (ControlPanelController::derivedPattern mirrors
+//    the rule for a create without JavaScript).
 
 import { el, ready, t } from "../app.js"
 

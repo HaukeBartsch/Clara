@@ -130,7 +130,7 @@ await page.locator('header a[href="/admin"]').waitFor()
 
 // --- projects --------------------------------------------------------------------
 
-const createProject = async (name, { organization, piName, piEmail, participantPattern }) => {
+const createProject = async (name, { organization, piName, piEmail }) => {
   await page.goto(`${WEB}/admin?section=projects`)
   await settle()
   await page.locator("details.clara-create summary").click()
@@ -138,7 +138,6 @@ const createProject = async (name, { organization, piName, piEmail, participantP
   if (organization) await page.selectOption("#project-organization", organization)
   if (piName) await page.fill("#project-pi_name", piName)
   if (piEmail) await page.fill("#project-pi_email", piEmail)
-  if (participantPattern) await page.fill("#project-participant_names", participantPattern)
   await page.locator('form[action*="action=create_project"] button[type="submit"]').click()
   await page.getByRole("link", { name: `Open ${name}` }).click()
   await page.waitForURL(/\/projects\/\d+/, { timeout: 15_000 })
@@ -181,7 +180,7 @@ let pr2maskId = null
 
 await step(`create project ${registryName}`, async () => {
   registryId = await createProject(registryName, {
-    organization: "HBE",
+    organization: "OUS",
     piName: "FIONA System Administrator",
     piEmail: "fiona@example.org",
   })
@@ -200,10 +199,9 @@ await step("add admin member (registry)", addSelfAsMember)
 
 await step(`create project ${pr2maskName}`, async () => {
   pr2maskId = await createProject(pr2maskName, {
-    organization: "HBE",
+    organization: "OUS",
     piName: "Principal Investigator",
     piEmail: "pi@example.org",
-    participantPattern: "IMP[0-9][0-9][0-9]",
   })
 })
 

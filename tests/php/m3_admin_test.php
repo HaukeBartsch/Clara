@@ -204,6 +204,46 @@ describe('Control Panel — Projects (§5.2, REQ-UI-012)', function (): void {
         assert_same('EMIT', $body['project_name']);
         assert_same(['PUT /api/v1/projects/12'], m3_calls('/api/v1/projects/12'));
     });
+
+    it('offers the Helse Sør-Øst institutions by code and does not display the name pattern', function (): void {
+        sign_in(['is_admin' => 1]);
+        queue_shell();
+        api_route('/api/v1/projects', []);
+
+        $body = router_for(http_request('GET', '/admin', browser_headers(), [], ['section' => 'projects']))->dispatch()->body();
+
+        assert_contains('<option value="OUS">Oslo University Hospital, Rikshospitalet, Ullevål, Radiumhospitalet, Aker</option>', $body);
+        assert_contains('<option value="SUN">Sunnaas Sykehus, Nesodden (Specialized rehabilitation hospital)</option>', $body);
+        assert_contains('<option value="NAT EU">NAT EU</option>', $body);
+        assert_contains('<option value="OTHER">Other</option>', $body);
+        assert_same(0, preg_match('/value="HBE"/', $body), 'the previous codes are gone');
+        assert_same(1, preg_match('/<input type="hidden" id="project-participant_names" name="participant_names"/', $body));
+        assert_same(0, preg_match('/<label[^>]*for="project-participant_names"/', $body), 'no label for the pattern');
+    });
+
+    it('keeps a project\'s retired institution code selectable on edit', function (): void {
+        sign_in(['is_admin' => 1]);
+        queue_shell();
+        api_route('/api/v1/projects/12', ['id' => 12, 'project_name' => 'EMIT', 'organization' => 'HBE',
+            'pi_name' => 'PI', 'pi_email' => 'pi@example.org', 'participant_names' => 'E[0-9][0-9]']);
+        api_route('/api/v1/projects', []);
+
+        $body = router_for(http_request('GET', '/admin', browser_headers(), [], ['section' => 'projects', 'edit' => '12']))->dispatch()->body();
+
+        assert_contains('<option value="HBE" selected>HBE</option>', $body);
+        assert_contains('name="participant_names" value="E[0-9][0-9]"', $body);
+    });
+
+    it('derives the pattern from the name when the form carries none (no JavaScript)', function (): void {
+        sign_in(['is_admin' => 1]);
+        queue_shell();
+        api_route('/api/v1/projects', ['id' => 13, 'project_name' => 'Heart study'], 201);
+
+        m3_post('/admin', ['project_name' => ' Heart study ', 'organization' => 'OUS', 'pi_name' => 'PI',
+            'pi_email' => 'pi@example.org', 'participant_names' => ''], 'create_project');
+
+        assert_same('HEART_STUDY_[0-9][0-9][0-9]', api_request_body('/api/v1/projects')['participant_names']);
+    });
 });
 
 describe('Control Panel — Audits (§5.6, REQ-UI-016)', function (): void {

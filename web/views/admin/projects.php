@@ -11,8 +11,14 @@ use Clara\View;
 
 /** @var list<array<string, mixed>> $projects */
 /** @var array<string, string> $form */
-/** @var list<string> $organizations */
+/** @var array<string, string> $organizations code => display text ('' = translated) */
 $form = $form ?? [];
+// A project saved under a code no longer offered (VEST, HBE, … before 2026-10-13) keeps it
+// selectable on edit rather than losing it to the empty option.
+$storedOrganization = $form['organization'] ?? '';
+if ($storedOrganization !== '' && !array_key_exists($storedOrganization, $organizations)) {
+    $organizations[$storedOrganization] = $storedOrganization;
+}
 $editId = (int) ($editId ?? 0);
 $createdId = (int) ($createdId ?? 0);
 $value = static fn (string $key): string => View::e($form[$key] ?? '');
@@ -61,20 +67,17 @@ foreach ($projects as $project) {
                         <label class="form-label" for="project-organization"><?= View::e($view->t('admin.projects.field.organization')) ?> *</label>
                         <select class="form-select form-select-sm" id="project-organization" name="organization" required>
                             <option value=""></option>
-                            <?php foreach ($organizations as $organization): ?>
-                                <option value="<?= View::e($organization) ?>"<?= ($form['organization'] ?? '') === $organization ? ' selected' : '' ?>><?= View::e($organization) ?></option>
+                            <?php foreach ($organizations as $code => $text): ?>
+                                <?php $code = (string) $code; ?>
+                                <option value="<?= View::e($code) ?>"<?= $storedOrganization === $code ? ' selected' : '' ?>><?= View::e($text !== '' ? $text : $view->t('admin.projects.organization.' . strtolower($code))) ?></option>
                             <?php endforeach; ?>
                         </select>
                     </div>
                 <?php endif; ?>
             <?php endforeach; ?>
-            <div class="col-md-6">
-                <label class="form-label" for="project-participant_names"><?= View::e($view->t('admin.projects.field.participant_names')) ?> *</label>
-                <input class="form-control form-control-sm font-monospace" type="text" id="project-participant_names" name="participant_names"
-                       value="<?= $value('participant_names') ?>" required placeholder="8DISC[0-9][0-9][0-9]">
-                <div class="form-text"><?= View::e($view->t('admin.projects.participant_names_help')) ?></div>
-            </div>
         </div>
+        <?php // Not displayed (2026-10-13): derived from the project name on create, the stored one on edit. ?>
+        <input type="hidden" id="project-participant_names" name="participant_names" value="<?= $value('participant_names') ?>">
         <div class="d-flex gap-2 mt-2">
             <button class="btn btn-sm btn-primary" type="submit"><?= View::e($view->t($editId !== 0 ? 'action.save' : 'admin.projects.create_submit')) ?></button>
             <?php if ($editId !== 0): ?>
