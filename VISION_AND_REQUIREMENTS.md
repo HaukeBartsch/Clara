@@ -832,8 +832,8 @@ For error message in the web interface "Something went wrong. Please try again; 
 
 Add a list of properties for each field. The only property currently is "@READONLY". If a field has such a property as "Field Annotation" the API can still enter values. The user (form and survey) can only see but not change/enter the content (inactive).
 
-For project Export there should be two buttons. One to download the Data Dictionary for a project (download as a named zip file with an instrument.csv inside). A second export type should be for the data (records with all values) in the project.
-
 On the Record Status Dashboard I get an error message: "Nothing was saved: some values are not valid. The reasons are shown below each field.". Nothing is displayed below any of the fields.
 
 On the Design page (lists instruments) add a button to each instrument to enable this instrument as a "Repeating Instrument" for one or more events. In the Record Status Dashboard such a repeating instrument can be opened with "+" and filled out a second time (as repeating_instance == 2, first form is repeating_instance == 1 etc.).
+
+Designer screen feature: Fields should be movable to a specific position across instruments in a project. In the Designer, the Fields of <project> has an "Edit" and a "Remove" button. Add a new "Move" button that opens a modal dialog specific to the current field. With a selection dropdown for all instruments (in the project, select current instrument) and a dropdown of all fields in that selected instrument. The dialog should allow the user to "Move the current field before the selected field" out of the current instrument into the target instrument (can also be the current instrument).
