@@ -25,6 +25,11 @@ describe('Move a field (§7.2, REQ-UI-056)', function (): void {
         assert_contains('<option value="end">(end of the instrument)</option>', $body);
         // The dialog reads nothing on render: another instrument's fields come from the region.
         assert_same(0, m4_count('GET', '/instruments/12/fields'));
+        // The Move buttons and the instrument picker render disabled; design.js enables them
+        // once the dialog is wired, so a script that did not run leaves no dead control.
+        assert_contains('data-bs-target="#clara-move" disabled', $body);
+        assert_same(0, preg_match_all('/<button [^>]*data-bs-target="#clara-move"(?![^>]*\bdisabled\b)[^>]*>/', $body));
+        assert_same(1, preg_match('/<select [^>]*id="move-instrument"[^>]*\bdisabled\b/', $body));
     });
 
     it('offers no Move while production has no open staging set (§6.7)', function (): void {

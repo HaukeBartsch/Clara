@@ -78,7 +78,8 @@ $fieldOption = static function (array $field): string {
                             <?php endif; ?>
                         <?php endforeach; ?>
                         <a class="btn btn-sm btn-outline-primary" href="<?= View::e($editorUrl . '?field=' . $fid . '#field-form') ?>"><?= View::e($view->t('setup.edit')) ?></a>
-                        <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="modal" data-bs-target="#clara-move"
+                        <!-- Disabled until design.js has wired the Move dialog (§7.2). -->
+                        <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="modal" data-bs-target="#clara-move" disabled
                                 data-clara-move-field="<?= $fid ?>" data-clara-move-name="<?= View::e($field['field_name'] ?? '') ?>"
                                 aria-label="<?= View::e($view->t('design.move.title', ['name' => (string) ($field['field_name'] ?? '')])) ?>"><?= View::e($view->t('design.move.button')) ?></button>
                         <form method="post" action="<?= View::e($act('delete_field')) ?>" class="d-inline"
@@ -102,7 +103,10 @@ $fieldOption = static function (array $field): string {
 
 <?php if ($canEdit && $fields !== []): ?>
     <!-- The Move dialog (§7.2, REQ-UI-056): one per page. The field and, for another instrument,
-         its fields are filled in by design.js; this instrument's fields are rendered here. -->
+         its fields are filled in by design.js; this instrument's fields are rendered here. The
+         row buttons and the instrument picker start disabled and design.js enables them once it
+         has wired the dialog, so a script that did not load shows an inactive control rather
+         than a picker whose change re-populates nothing. -->
     <div class="modal fade" id="clara-move" tabindex="-1" aria-labelledby="clara-move-title" aria-hidden="true"
          data-clara-move data-clara-region="<?= View::e($editorUrl) ?>" data-clara-instrument="<?= $instrumentId ?>">
         <div class="modal-dialog">
@@ -116,7 +120,7 @@ $fieldOption = static function (array $field): string {
                 </div>
                 <div class="modal-body">
                     <label class="form-label mb-0 small" for="move-instrument"><?= View::e($view->t('design.move.instrument')) ?></label>
-                    <select class="form-select form-select-sm mb-2" id="move-instrument" name="target_iid" data-clara-move-instrument>
+                    <select class="form-select form-select-sm mb-2" id="move-instrument" name="target_iid" data-clara-move-instrument disabled>
                         <?php foreach ($instruments as $option): ?>
                             <option value="<?= (int) ($option['id'] ?? 0) ?>"<?= (int) ($option['id'] ?? 0) === $instrumentId ? ' selected' : '' ?>><?= View::e($option['name'] ?? '') ?></option>
                         <?php endforeach; ?>

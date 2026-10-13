@@ -16,7 +16,8 @@
 // 4. The Move dialog of the field list (REQ-UI-056): fills in the field the row's button
 //    names, offers this instrument's fields as rendered and another instrument's from the
 //    page route's data region, and defaults to the place the field holds — so an untouched
-//    dialog moves nothing — or to the end of another instrument.
+//    dialog moves nothing — or to the end of another instrument. The rows' Move buttons and
+//    the instrument picker render disabled and are enabled here once the dialog is wired.
 
 import { el, fetchJson, ready, t } from "../app.js"
 
@@ -279,6 +280,13 @@ function wireMove(dialog) {
     showTarget()
   })
   instrument.addEventListener("change", showTarget)
+
+  // Wired: the picker and the rows' Move buttons come alive only now — the page renders them
+  // disabled, so a script that never ran leaves them visibly inactive, not silently dead.
+  instrument.disabled = false
+  for (const button of document.querySelectorAll(`[data-bs-target="#${dialog.id}"][data-clara-move-field]`)) {
+    button.disabled = false
+  }
 }
 
 ready(() => {

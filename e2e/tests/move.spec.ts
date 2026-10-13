@@ -93,6 +93,8 @@ test.describe("moving a field (REQ-UI-056)", () => {
 
     // --- the dialog: this instrument chosen, the field's own place preselected ---
     await page.goto(instrumentEditor)
+    // The buttons render disabled; design.js enables them once the dialog is wired.
+    await expect(page.getByRole("button", { name: "Move field age", exact: true })).toBeEnabled()
     await page.getByRole("button", { name: "Move field age", exact: true }).click()
     const dialog = page.locator("#clara-move")
     await expect(dialog).toBeVisible()
@@ -105,6 +107,12 @@ test.describe("moving a field (REQ-UI-056)", () => {
     await dialog.locator("#move-instrument").selectOption({ label: "visits" })
     await expect(dialog.locator("#move-before option")).toHaveText(["visit_note — Visit note", "(end of the instrument)"])
     await expect(dialog.locator("#move-before option:checked")).toHaveText("(end of the instrument)")
+    // Every switch re-populates "Move before": back to this instrument, then out again.
+    await dialog.locator("#move-instrument").selectOption({ label: "instrument" })
+    await expect(dialog.locator("#move-before option")).toHaveText(["record_id — Record ID", "weight — Weight", "(end of the instrument)"])
+    await expect(dialog.locator("#move-before option:checked")).toHaveText("weight — Weight")
+    await dialog.locator("#move-instrument").selectOption({ label: "visits" })
+    await expect(dialog.locator("#move-before option")).toHaveText(["visit_note — Visit note", "(end of the instrument)"])
     await dialog.locator("#move-before").selectOption({ label: "visit_note — Visit note" })
     await dialog.getByRole("button", { name: "Move", exact: true }).click()
 
