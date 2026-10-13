@@ -1,8 +1,8 @@
 <?php
 // The Control Panel's API documentation section (§5.9, REQ-UI-057): its left-panel entry, the
-// page that hosts Swagger UI, and the data region that passes the API's OpenAPI document on
-// verbatim — the API's own /docs page is never routed to a browser (INSTALL.md §13.1). Built
-// on the M6 fixtures (RecordingSink), which run before this file.
+// page that hosts Swagger UI and the relevance Sankey (REQ-UI-060), and the data region that
+// passes the API's OpenAPI document on verbatim — the API's own /docs page is never routed to a
+// browser (INSTALL.md §13.1). Built on the M6 fixtures (RecordingSink), which run before this file.
 
 declare(strict_types=1);
 
@@ -43,6 +43,41 @@ describe('API documentation section (§5.9, REQ-UI-057)', function (): void {
         assert_contains('href="/admin?section=api"', $body);
         assert_contains('aria-current="page"', $body);
         assert_same(0, api_calls_to('/openapi.json'));
+    });
+
+    it('embeds the relevance Sankey above the document (REQ-UI-060)', function (): void {
+        sign_in(['is_admin' => 1]);
+        queue_shell();
+
+        $body = router_for(http_request('GET', '/admin', browser_headers(), [], ['section' => 'api']))->dispatch()->body();
+
+        assert_contains('data-clara-relevance-sankey', $body);
+        // At the top of the section: before the Swagger host.
+        assert_true(strpos($body, 'data-clara-relevance-sankey') < strpos($body, 'data-clara-api-docs'));
+
+        // The payload is the generated structure with translated labels — three columns, and the
+        // class totals that the classification document states (docs/Requirement_Relevance_Classification.md).
+        assert_true(preg_match('#<script type="application/json" data-clara-sankey-data>(.*?)</script>#s', $body, $m) === 1);
+        $payload = json_decode($m[1], true);
+        assert_true(is_array($payload));
+
+        $byId = [];
+        foreach ($payload['nodes'] as $node) {
+            $byId[$node['id']] = $node;
+            assert_true(($node['label'] ?? '') !== '', 'labels are translated server-side (REQ-UI-008)');
+        }
+        foreach (['a-api-endpoints', 'g-api-endpoints-req', 'c-security', 'c-resilience'] as $id) {
+            assert_true(isset($byId[$id]), "missing node {$id}");
+        }
+        assert_same('REQ-API', $byId['g-api-endpoints-req']['label']);
+
+        $security = 0;
+        foreach ($payload['links'] as $link) {
+            if ($link['target'] === 'c-security') {
+                $security += $link['value'];
+            }
+        }
+        assert_same($byId['c-security']['codes'], $security);
     });
 
     it('passes the OpenAPI document on byte for byte as its data region', function (): void {

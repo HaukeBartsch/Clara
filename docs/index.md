@@ -46,7 +46,7 @@ relevance into five categories. A code appears under every category that applies
 - **scalability** — graceful growth in data volume, users and projects: storage model, partitioning and rollover, avoiding full rewrites, concurrency.
 - **resilience** — correct behavior under failure and protection of data integrity: transactions and atomicity, idempotence, immutability, health checks, enforced invariants.
 
-Totals across all documents: security 363, performance 26, workflow 282, scalability 62, resilience 125 (codes may carry more than one category).
+Totals across all documents: security 363, performance 26, workflow 283, scalability 62, resilience 125 (codes may carry more than one category).
 
 | Relevance | Codes |
 |---|------|
@@ -104,6 +104,6 @@ Totals across all documents: security 363, performance 26, workflow 282, scalabi
 | `Requirements/User_Interface_Requirements.md` ||
 | security | REQ-UI-002, REQ-UI-003, REQ-UI-004, REQ-UI-005, REQ-UI-007, REQ-UI-009, REQ-UI-011, REQ-UI-013, REQ-UI-014, REQ-UI-015, REQ-UI-016, REQ-UI-017, REQ-UI-026, REQ-UI-027, REQ-UI-028, REQ-UI-030, REQ-UI-032, REQ-UI-038, REQ-UI-039, REQ-UI-042, REQ-UI-043, REQ-UI-044, REQ-UI-045, REQ-UI-046, REQ-UI-047, REQ-UI-049, REQ-UI-050, ASM-UI-3, DEV-UI-1, DEV-UI-5, DEV-UI-10, DEV-UI-11 |
 | performance | REQ-UI-016, REQ-UI-020 |
-| workflow | REQ-UI-001, REQ-UI-006, REQ-UI-008, REQ-UI-009, REQ-UI-010, REQ-UI-011, REQ-UI-012, REQ-UI-013, REQ-UI-014, REQ-UI-015, REQ-UI-017, REQ-UI-018, REQ-UI-019, REQ-UI-020, REQ-UI-021, REQ-UI-022, REQ-UI-023, REQ-UI-024, REQ-UI-025, REQ-UI-026, REQ-UI-027, REQ-UI-028, REQ-UI-029, REQ-UI-030, REQ-UI-032, REQ-UI-033, REQ-UI-034, REQ-UI-035, REQ-UI-036, REQ-UI-037, REQ-UI-040, REQ-UI-041, REQ-UI-045, REQ-UI-046, REQ-UI-047, REQ-UI-048, REQ-UI-049, REQ-UI-052, ASM-UI-1, ASM-UI-2, ASM-UI-3, DEV-UI-2, DEV-UI-4, DEV-UI-5, DEV-UI-6, DEV-UI-7, DEV-UI-8, DEV-UI-9, DEV-UI-12, DEV-UI-14, DEV-UI-15 |
+| workflow | REQ-UI-001, REQ-UI-006, REQ-UI-008, REQ-UI-009, REQ-UI-010, REQ-UI-011, REQ-UI-012, REQ-UI-013, REQ-UI-014, REQ-UI-015, REQ-UI-017, REQ-UI-018, REQ-UI-019, REQ-UI-020, REQ-UI-021, REQ-UI-022, REQ-UI-023, REQ-UI-024, REQ-UI-025, REQ-UI-026, REQ-UI-027, REQ-UI-028, REQ-UI-029, REQ-UI-030, REQ-UI-032, REQ-UI-033, REQ-UI-034, REQ-UI-035, REQ-UI-036, REQ-UI-037, REQ-UI-040, REQ-UI-041, REQ-UI-045, REQ-UI-046, REQ-UI-047, REQ-UI-048, REQ-UI-049, REQ-UI-052, ASM-UI-1, ASM-UI-2, ASM-UI-3, DEV-UI-2, DEV-UI-4, DEV-UI-5, DEV-UI-6, DEV-UI-7, DEV-UI-8, DEV-UI-9, DEV-UI-12, DEV-UI-14, DEV-UI-15, REQ-UI-060 |
 | scalability | REQ-UI-019 |
 | resilience | REQ-UI-021, REQ-UI-022, REQ-UI-023, REQ-UI-031, REQ-UI-033, REQ-UI-034, REQ-UI-035, REQ-UI-037, REQ-UI-040, REQ-UI-044, REQ-UI-050, DEV-UI-3 |

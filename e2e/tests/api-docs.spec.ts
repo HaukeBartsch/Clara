@@ -3,8 +3,9 @@ import { expect, test, type Page } from "@playwright/test"
 // The Control Panel's API documentation section (REQ-UI-057): the left panel links it, and the
 // section renders the API's OpenAPI document with the vendored Swagger UI — read-only, the Data
 // API first and the only section open, under the application's Content-Security-Policy, with
-// nothing fetched from outside the application.
-// Driven as the bootstrap administrator of `e2e/dev-stack.sh`.
+// nothing fetched from outside the application. Above it sits the relevance Sankey (REQ-UI-060),
+// drawn by the vendored d3 pair from the JSON embedded in the page. Driven as the bootstrap
+// administrator of `e2e/dev-stack.sh`.
 
 const ADMIN_EMAIL = "admin@example.org"
 const ADMIN_PASSWORD = "clara-dev-481516-pw" // dev-stack.sh: "${stack_seed}-pw", development only
@@ -18,20 +19,27 @@ async function signInAsAdmin(page: Page): Promise<void> {
   await expect(page.locator('header a[href="/admin"]')).toBeVisible()
 }
 
+/** Console errors and requests to other origins — the section must produce neither. */
+function watchForProblems(page: Page): { problems: string[]; outside: string[] } {
+  const problems: string[] = []
+  const outside: string[] = []
+  page.on("console", (message) => {
+    if (message.type() === "error") problems.push(message.text())
+  })
+  const origin = new URL(process.env.CLARA_WEB_URL ?? "http://127.0.0.1:8090").origin
+  page.on("request", (request) => {
+    const url = new URL(request.url())
+    if (url.protocol.startsWith("http") && url.origin !== origin) outside.push(request.url())
+  })
+
+  return { problems, outside }
+}
+
 test.describe("API documentation in the Control Panel (REQ-UI-057)", () => {
   test.skip(!process.env.CLARA_WEB_URL, "CLARA_WEB_URL not set — no running web/ application to drive")
 
   test("the left panel opens the OpenAPI document, rendered read-only", async ({ page }) => {
-    const problems: string[] = []
-    const outside: string[] = []
-    page.on("console", (message) => {
-      if (message.type() === "error") problems.push(message.text())
-    })
-    const origin = new URL(process.env.CLARA_WEB_URL ?? "http://127.0.0.1:8090").origin
-    page.on("request", (request) => {
-      const url = new URL(request.url())
-      if (url.protocol.startsWith("http") && url.origin !== origin) outside.push(request.url())
-    })
+    const { problems, outside } = watchForProblems(page)
 
     await signInAsAdmin(page)
     await page.locator('header a[href="/admin"]').click()
@@ -57,6 +65,32 @@ test.describe("API documentation in the Control Panel (REQ-UI-057)", () => {
     await move.first().click()
     await expect(docs.locator(".opblock.is-open")).toContainText("REQ-API-157")
     await expect(docs.locator(".try-out__btn")).toHaveCount(0)
+
+    expect(problems).toEqual([])
+    expect(outside).toEqual([])
+  })
+
+  test("the relevance Sankey sits above the document and draws from the embedded payload (REQ-UI-060)", async ({ page }) => {
+    const { problems, outside } = watchForProblems(page)
+
+    await signInAsAdmin(page)
+    await page.goto("/admin?section=api")
+
+    // The vendored d3 + d3-sankey pair renders the embedded structure: bands, nodes, labels.
+    const canvas = page.locator("[data-clara-relevance-sankey]")
+    await expect(canvas.locator("svg.clara-sankey path.clara-sankey-link").first()).toBeVisible()
+    // Every node of the three columns gets a rect and a label (the payload carries 44).
+    await expect(canvas.locator("g.clara-sankey-node")).toHaveCount(44)
+    await expect(canvas.locator(".clara-sankey-label", { hasText: "Data exchange with study systems" })).toBeVisible()
+
+    // The five relevance classes, in the classification's own order, are the legend.
+    await expect(canvas.locator(".clara-sankey-legend-item")).toHaveCount(5)
+    await expect(canvas.locator(".clara-sankey-legend-item").first()).toContainText("security")
+
+    // At the top of the section: above the Swagger host.
+    const box = await canvas.boundingBox()
+    const docsBox = await page.locator("[data-clara-api-docs]").boundingBox()
+    expect(box?.y).toBeLessThan(docsBox?.y ?? 0)
 
     expect(problems).toEqual([])
     expect(outside).toEqual([])

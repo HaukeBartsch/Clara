@@ -507,6 +507,73 @@ h1 .clara-mode-badge {
   max-width: 48rem;
 }
 
+/* API documentation relevance Sankey (REQ-UI-060, User_Interface_Design.md §5.9). The five class
+   colours are painted by the renderer (fixed hues for both themes); everything textual follows
+   the theme through Bootstrap variables. Labels carry a halo of the page background so they stay
+   readable where bands pass behind them. */
+.clara-relevance-sankey-canvas {
+  overflow-x: auto;
+}
+
+.clara-sankey {
+  display: block;
+}
+
+.clara-sankey text {
+  fill: var(--bs-body-color);
+  font-size: 11px;
+  paint-order: stroke;
+  stroke: var(--bs-body-bg);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+.clara-sankey .clara-sankey-label-group {
+  font-size: 10px;
+}
+
+/* Area and family nodes stay neutral so the class column carries the colour; class nodes take
+   their inline fill from the renderer. */
+.clara-sankey-col-0 rect,
+.clara-sankey-col-1 rect {
+  fill: var(--bs-secondary-color);
+  opacity: 0.85;
+}
+
+.clara-sankey-link {
+  fill: none;
+  stroke-opacity: 0.38;
+}
+
+/* Hover dims every band and lights the hovered one (or a node's own flows). */
+.clara-relevance-sankey-canvas.clara-sankey-hover .clara-sankey-link {
+  stroke-opacity: 0.07;
+}
+
+.clara-relevance-sankey-canvas.clara-sankey-hover .clara-sankey-link.is-active {
+  stroke-opacity: 0.65;
+}
+
+.clara-sankey-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin-bottom: 0.375rem;
+  color: var(--bs-secondary-color);
+}
+
+.clara-sankey-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.clara-sankey-legend-dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+}
+
 /* --- responsive pass (M6; REQ-UI-032) --- */
 
 /* A wide table scrolls inside its .table-responsive wrapper. Absolutely positioned content in

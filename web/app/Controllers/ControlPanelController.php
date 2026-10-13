@@ -623,19 +623,76 @@ final class ControlPanelController extends Controller
     // --- API documentation (§5.9, REQ-UI-057) ----------------------------------------
 
     /**
-     * The API documentation section: the API's own OpenAPI document rendered by the vendored
-     * Swagger UI, inside the Control Panel. The API's `/docs` page is never routed to a
-     * browser (INSTALL.md §13.1, REQ-TECH-018), so the section is how an administrator reads
-     * it; `api-docs.js` loads the bundle and reads the document from this section's data
-     * region. Read-only: the administration API it describes is not reachable from a browser.
+     * The API documentation section: the relevance Sankey of REQ-UI-060 above the API's own
+     * OpenAPI document rendered by the vendored Swagger UI, inside the Control Panel. The API's
+     * `/docs` page is never routed to a browser (INSTALL.md §13.1, REQ-TECH-018), so the section
+     * is how an administrator reads it; `api-docs.js` loads both libraries — d3 for the diagram,
+     * Swagger UI for the document — and reads the document from this section's data region.
+     * Read-only: the administration API it describes is not reachable from a browser.
      */
     private function apiDocsPage(): Response
     {
-        return $this->section('api', 'admin/api', 'admin.api.title', [], [
+        return $this->section('api', 'admin/api', 'admin.api.title', [
+            'sankey' => $this->relevanceSankey(),
+        ], [
             'scripts' => ['/assets/js/api-docs.js'],
             'styles' => ['/assets/vendor/swagger-ui/swagger-ui.css'],
-            'jsKeys' => ['admin.api.failed'],
+            'jsKeys' => ['admin.api.failed', 'admin.api.sankey.tooltip.codes', 'admin.api.sankey.tooltip.link'],
         ]);
+    }
+
+    /**
+     * The relevance Sankey's render payload (REQ-UI-060, §5.9): the generated code-to-relevance
+     * structure with every visible line translated server-side (REQ-UI-008) — area one-liners and
+     * class names from the catalog, group nodes carrying their code family prefix verbatim. The
+     * file is generated from docs/Requirement_Relevance_Classification.md by
+     * tools/build_relevance_sankey.php; when it is absent the section simply renders without the
+     * diagram — documentation of the OpenAPI document never depends on the classification build.
+     *
+     * @return array{nodes: list<array<string, mixed>>, links: list<array<string, mixed>>}|null
+     */
+    private function relevanceSankey(): ?array
+    {
+        $path = CLARA_WEB_ROOT . '/app/data/relevance_sankey.php';
+        if (!is_file($path)) {
+            return null;
+        }
+
+        $data = require $path;
+        if (!is_array($data) || !isset($data['nodes'], $data['links'])) {
+            $this->logger->warn('relevance sankey data unreadable', ['path' => $path]);
+
+            return null;
+        }
+
+        $nodes = [];
+        foreach ($data['nodes'] as $node) {
+            if (($node['column'] ?? -1) === 0) {
+                $label = $this->i18n->t('admin.api.sankey.feature.' . $node['area']);
+                $class = null;
+            } elseif ($node['column'] === 1) {
+                $label = (string) $node['prefix'];
+                $class = null;
+            } else {
+                $label = $this->i18n->t('admin.api.sankey.class.' . $node['class']);
+                $class = $this->i18n->t('admin.api.sankey.class_desc.' . $node['class']);
+            }
+
+            $nodes[] = array_filter([
+                'id' => $node['id'],
+                // The class id is data, not display — the renderer colours each class by it.
+                'class' => $node['class'] ?? null,
+                'column' => $node['column'],
+                'order' => $node['order'],
+                'label' => $label,
+                // Group nodes carry the family word for their tooltip ("REQ-API · requirement").
+                'kind' => isset($node['kind']) ? $this->i18n->t('admin.api.sankey.kind.' . $node['kind']) : null,
+                'desc' => $class,
+                'codes' => $node['codes'] ?? null,
+            ], static fn (mixed $v): bool => $v !== null);
+        }
+
+        return ['nodes' => $nodes, 'links' => $data['links']];
     }
 
     /**

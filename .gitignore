@@ -6,6 +6,12 @@
 
 # development database (REQ-CFG-009: per-developer SQLite file)
 data/
+# ...but the generated relevance Sankey structure ships with the web app
+# (REQ-UI-059): production carries only bin/, web/ and .env, so this committed
+# artifact is the only place the classification data reaches the browser.
+!web/app/data/
+/web/app/data/*
+!/web/app/data/relevance_sankey.php
 *.sqlite
 *.sqlite-journal
 *.sqlite-wal

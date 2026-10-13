@@ -134,3 +134,33 @@ instead of importing it. Keep the two copies identical: when the API's bundle is
 re-run the copy and update both hashes. Neither file carries a fetch reference to an external
 host (CI's ASM-TECH-2 check), and the section turns off the one network feature Swagger UI has
 by default — the online validator badge.
+
+## d3 + d3-sankey (relevance Sankey)
+
+| | |
+|---|---|
+| Source | unpkg `d3@7.9.0` and `d3-sankey@0.12.3` (npm, MIT — both `LICENSE` files taken along) |
+| Files taken | `dist/d3.min.js` → `d3.v7.min.js`, `dist/d3-sankey.min.js`, `LICENSE` × 2 |
+| Version pin | d3 7.9.0, d3-sankey 0.12.3 (`Design/Technology_Stack_Design.md` §3 carries the integrity hashes and review dates) |
+
+```sh
+mkdir -p web/assets/vendor/d3
+curl -sf https://unpkg.com/d3@7.9.0/dist/d3.min.js \
+  -o web/assets/vendor/d3/d3.v7.min.js
+curl -sf https://unpkg.com/d3@7.9.0/LICENSE \
+  -o web/assets/vendor/d3/LICENSE-d3
+curl -sf https://unpkg.com/d3-sankey@0.12.3/dist/d3-sankey.min.js \
+  -o web/assets/vendor/d3/d3-sankey.min.js
+curl -sf https://unpkg.com/d3-sankey@0.12.3/LICENSE \
+  -o web/assets/vendor/d3/LICENSE-d3-sankey
+```
+
+Used only by the Control Panel's API documentation section to draw the
+relevance Sankey (`REQ-UI-060`, `User_Interface_Design.md` §5.9). Both are
+**classic UMD scripts** — d3 attaches `d3` to the global object and d3-sankey
+extends that same global with `sankey` — so `web/assets/js/api-docs.js` loads
+them with script elements, d3 first (the Swagger bundle's precedent), never as
+imports. The data is a generated structure embedded in the page
+(`tools/build_relevance_sankey.php` → `web/app/data/relevance_sankey.php`);
+neither library fetches anything at runtime and neither file carries an
+external reference (CI's ASM-TECH-2 check).

@@ -62,6 +62,11 @@ if hits=$(grep -rInoE "$external_reference" "$root/web"); then
 	exit 1
 fi
 
+echo "==> relevance Sankey data is fresh (REQ-UI-060)"
+# web/app/data/relevance_sankey.php ships inside web/ (production carries no docs/, INSTALL.md §3)
+# and must match its source table in docs/Requirement_Relevance_Classification.md.
+php "$root/tools/build_relevance_sankey.php" --check
+
 echo "==> PHP smoke harness (tests/php/run.php)"
 # No framework and no HTTP: a fake transport answers in place of the API (§6).
 php "$root/tests/php/run.php"
