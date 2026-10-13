@@ -133,7 +133,7 @@ $user_name = check_logged();
        <tbody>
   <script src="//ajax.googleapis.com/ajax/libs/jquery/1.8.3/jquery.min.js"></script>
   <script src="//ajax.googleapis.com/ajax/libs/jqueryui/1.9.2/jquery-ui.min.js"></script>
-  <script src="//maps.googleapis.com/maps/api/js?sensor=false&libraries=places,geometry,visualization&v=3.exp&key=AIzaSyDyQ724f8tTmdRYiVncVyMiJCYDp-Tc6YU"></script>
+  <script src="//maps.googleapis.com/maps/api/js?sensor=false&libraries=places,geometry,visualization&v=3.exp&key=YOUR_API_KEY"></script>
 
 <?php
               $count = 0;
