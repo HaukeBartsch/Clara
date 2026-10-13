@@ -842,7 +842,7 @@ The form for a record generates an error on "Safe": "The form contains invalid v
 
 Add an export as csv function to the Audits page. As Audits might be multi-GB in size warn the user for large exports (more than 1GB). 
 
-**Status:** Done 2026-10-13 — the Audits page exports the trail its filter bar selects (log type, project, user, event type, from/to) as CSV inside a ZIP, every matching entry whatever the listing's pagination (REQ-AUD-031, REQ-API-158: `GET /api/v1/audit/export`, streamed end to end per REQ-TECH-011; each export records one `audit_export` entry — filters and counts, no values). Above an estimated 1 GiB the page asks first, naming the size (`estimate=1`, REQ-AUD-032); a failed estimate starts the export unwarned rather than blocked (REQ-UI-058). Tests: `api/internal/admin/audit_export_test.go`, `tests/php/audit_export_test.php`, `e2e/tests/audits-export.spec.ts`.
+**Status:** Done 2026-10-13 — the Audits page exports the trail its filter bar selects (log type, project, user, event type, from/to) as CSV inside a ZIP, every matching entry whatever the listing's pagination (REQ-AUD-031, REQ-API-158: `GET /api/v1/audit/export`, streamed end to end per REQ-TECH-011; each export records one `audit_export` entry — filters and counts, no values). Above an estimated 1 GiB the page asks first, naming the size (`estimate=1`, REQ-AUD-032); a failed estimate starts the export unwarned rather than blocked (REQ-UI-057). Tests: `api/internal/admin/audit_export_test.go`, `tests/php/audit_export_test.php`, `e2e/tests/audits-export.spec.ts`.
 
 Make the "Projects" page the first open tab in the Control Panel.
 
@@ -853,6 +853,11 @@ Feature: Add a Sankey plot to the top of the API Documentation page that display
 Bugfix: The Move a field function does not re-populate the "Move before" dropdown when the user switches to a different instrument in the first dropdown. Fix this issue. 
 
 Feature: Create a new web/ page "Training", that is linked on the first project selection screen header (next to "Control Panel"). This application should show bootstrap cards for a number of training plans. Each training plan is shows with a picture and a short text like "create a new project", "add a user to a project", etc.. If the user clicks on a training plan a modal opens that lists a training plan text and above the text a training plan gallery image viewer (similar to Bootstrap Image Gallery). The text of each plan and all images (in order) should be stored in individual sub-directories inside assets/ (so they are easy to add/edit). Create example plans for the above "create a new project", "create data collection forms", "collect data", "export data" and "export audit trails".
+
+# Presentation
+
+Start the design of a presentation of this project for a non-technical audience. Focus first on the need to replace the existing API to support a multi-hospital setup for FIONA, a system for research data capture in Radiology. Secondly focus on the api/ that is a silent component that FIONA is using to organize projects, to store intermittened information for incoming DICOM image series and users transfer requests to target research projects. Lastly introduce the web/ interface on a functional level. Organize the provided features thematically. Use illustrative screenshots from the application (with demo projects) as seen on an iPad screen. Store this presentation into a new sub-folder in docs/intro-to-Clara/. If possible create the presentation so that apples keynote.page can display it.
+Add a page about authentication and authorization, explain the Hospital names and the possible authentication (list of features).
 
 
 # Status currently 
