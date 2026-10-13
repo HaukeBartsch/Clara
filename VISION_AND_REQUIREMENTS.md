@@ -840,6 +840,7 @@ Designer screen feature: Fields should be movable to a specific position across 
 
 The form for a record generates an error on "Safe": "The form contains invalid values" without alerting the user to what values are invalid. Mark the form fields "invalid" and mention the field description of the first field generating the message.
 
+Add an export as csv function to the Audits page. As Audits might be multi-GB in size warn the user for large exports (more than 1GB). 
 
 # Status currently 
 
