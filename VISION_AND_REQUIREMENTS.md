@@ -837,3 +837,38 @@ On the Record Status Dashboard I get an error message: "Nothing was saved: some 
 On the Design page (lists instruments) add a button to each instrument to enable this instrument as a "Repeating Instrument" for one or more events. In the Record Status Dashboard such a repeating instrument can be opened with "+" and filled out a second time (as repeating_instance == 2, first form is repeating_instance == 1 etc.).
 
 Designer screen feature: Fields should be movable to a specific position across instruments in a project. In the Designer, the Fields of <project> has an "Edit" and a "Remove" button. Add a new "Move" button that opens a modal dialog specific to the current field. With a selection dropdown for all instruments (in the project, select current instrument) and a dropdown of all fields in that selected instrument. The dialog should allow the user to "Move the current field before the selected field" out of the current instrument into the target instrument (can also be the current instrument).
+
+The form for a record generates an error on "Safe": "The form contains invalid values" without alerting the user to what values are invalid. Mark the form fields "invalid" and mention the field description of the first field generating the message.
+
+
+# Status currently 
+
+Security findings with no fix (detail in my previous message)
+
+F6 filterLogic probing on de-identified exports · F7 plaintext tokens at rest (+ REQ-API-102 re-fetch, a Req-change) · F8 shared listener / APP_ENV defaults to development / no token-length rule / no reference nginx config · F9 spoofable X-Real-IP · F13 account enumeration · F14 open redirect — only partially mitigated (/\evil.example still passes safeNext()) · F15 unswept limiter maps, email-only lockout key · F18 recovery-code & TOTP-step races + unencrypted secrets (email codes are now atomic) · F19 token in query string · F20 fail-open role-less member · plus the two acknowledged leftovers: OIDC email_verified (F10) and SESSION_DIR=/tmp/csms-sessions (F17).
+
+"Corrections for interface" — 2 items left
+
+- GD-8 first-field reorder is still a hard error — the doc asks for an acceptable warning dialog, undoable by moving the field back. Still errBadRequest("reordering would move the record identifier field (GD-8)") at api/internal/admin/structure.go:1819, 1866, 3934, 3986.
+- Repeating instruments in the UI — no Design-page toggle to enable an instrument as repeating per event, and no "+" on the Record Status Dashboard for instance 2, 3…; nothing in web/ mentions repeating at all (the data model/API already carry repeat instances).
+- Smaller: the dictionary export button delivers a bare instrument.csv, while the doc says "named zip file with an instrument.csv inside" (ExportController.php) — worth confirming zip is still wanted.
+
+The other twelve correction items are done and verifiable in code (checkbox type, name normalization, staged-commit "-2" fix, descriptive/header types, e2e running-component check, translations spreadsheet I/O, record-naming modes, arm rename, detailed error messages, @READONLY, two export buttons, per-field save reasons).
+
+Scattered feature requirements — 4 items left
+
+- Performance metrics in the API (response times, memory for DB ops) — no metrics code exists at all.
+- Upgradability / rolling versioned update installation (clara_v1.0.0 folder drop + admin UI to run it + DB version bump) — nothing anywhere in code or docs.
+- Technical-debt list (node/nvm/composer/php/libraries with version ranges, split dev-env/api/web, added to docs/index.md) — absent from docs/.
+- Minor: translation upload doesn't trigger the specified LANGUAGE_CACHE invalidation — bundles are per-session and only refresh on language switch or re-login (I18n.php, Session::cachedBundle).
+
+Open-ended questions in the doc, never answered with a decision
+
+- The REDCap-style aggregate import error ({"error":"The following values of redcap_event_name are invalid: …"}) — Clara answers per-row CONTENT_INVALID messages instead; nobody has recorded whether that satisfies the ask.
+- "Check if other functionality in api/ can be implemented by using official packages" — no recorded outcome.
+
+Explicitly parked ("Later")
+
+WebLLM admin interface via MCP — still marked Later, untouched. (The JWT question was answered/not adopted, argon2id landed, export features were done 2026-10-11.)
+
+Everything else in the document — rate limiting with Control-Panel thresholds, named parallel auth-source racing, per-field record history, timezones, TOTP+email 2FA, per-event survey links, the role permission matrix, the project page flow, relevance classification — is implemented and traceable to REQ IDs. The security table above plus the six concrete items are the real backlog; F6–F9 would be where I'd start.
