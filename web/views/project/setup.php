@@ -210,7 +210,7 @@ $nullable = static fn (mixed $v): string => $v === null ? '' : (string) $v;
 </section>
 
 <!-- Blocks B and D — per arm, one tab each, arm 1 by default. -->
-<section aria-labelledby="setup-per-arm">
+<section class="mb-4" aria-labelledby="setup-per-arm">
     <h2 class="h6" id="setup-per-arm"><?= View::e($view->t('setup.per_arm')) ?></h2>
     <ul class="nav nav-tabs mb-2" role="tablist">
         <?php foreach ($arms as $arm): ?>

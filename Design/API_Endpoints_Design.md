@@ -99,12 +99,12 @@ Any valid token for the project suffices. JSON response (array with one object):
 ```json
 [{
   "project_id": "33",
-  "project_name": "8DISC",
-  "project_title": "8DISC study",
+  "project_name": "MOBA",
+  "project_title": "MOBA study",
   "project_description": "",
-  "project_pi_name": "Ansgar Espeland",
-  "project_pi_email": "ansgar.espeland@example.org",
-  "project_rek_number": "REK-2026/123",
+  "project_pi_name": "Ole Bull",
+  "project_pi_email": "ole.bull@example.org",
+  "project_rek_number": "REK-202/123",
   "project_rek_start_date": "2026-01-01",
   "project_rek_end_date": "2028-01-01",
   "project_start_date": "2026-01-01",
@@ -170,10 +170,10 @@ All require data access ≥ `read_only` except `generateNextRecordName` (≥ `vi
 | `event` (REQ-API-020) | `[ {"event_name":"baseline","arm_num":1,"unique_event_name":"baseline_arm_1","custom_event_label":null,"event_id":4}, … ]` — `custom_event_label` is not stored: always `null` (an empty CSV cell), present because naive REDCap parsers read the key — events in the **canonical per-arm order** (GD-15: timepoint events by `period` ascending, ties by position; then no-timepoint events by position) |
 | `formEventMapping` (REQ-API-021) | `[ {"form_name":"intake","event_name":"baseline","arm_num":1,"unique_event_name":"baseline_arm_1","form_event_mapping":"1"}, … ]` — events in the canonical per-arm order (GD-15) |
 | `exportFieldNames` (REQ-API-022) | `[ {"field_name":"record_id","form_name":"intake"}, … ]` — restricted to `forms[]` when supplied |
-| `generateNextRecordName` (REQ-API-023) | `[ { "next_record_name": "8DISC042" } ]` — a one-row array like the other contents |
+| `generateNextRecordName` (REQ-API-023) | `[ { "next_record_name": "MOBA042" } ]` — a one-row array like the other contents |
 | `repeatingFormsEvents` (REQ-API-155) | `[ {"event_name":"baseline_arm_1","form_name":"visits","custom_form_label":""}, … ]` — the repeating pairs (REQ-DB-047), events in canonical order, instruments by position; read-only — a call carrying `data` is 400 (the designation is the administration API's, §4.10) |
 
-`generateNextRecordName` follows the project's naming pattern (REQ-DB-007) — digit-placeholder style (`8DISC[0-9][0-9][0-9]`) and counter-prefix style (`0001_01`, width preserved) — and MUST NOT return a name an existing record already holds (REQ-API-023). The next name is one counter step above the greatest existing name of the same shape (max + 1); names freed by deleted records are not reused (no gap-filling, REQ-API-023). While the project's record naming mode is `auto` (REQ-DB-045) it answers the next plain integer strictly above every numeric record id of the project instead — the first name is `1`, and ids that are not all digits never advance the counter nor collide with it (REQ-API-151).
+`generateNextRecordName` follows the project's naming pattern (REQ-DB-007) — digit-placeholder style (`MOBA[0-9][0-9][0-9]`) and counter-prefix style (`0001_01`, width preserved) — and MUST NOT return a name an existing record already holds (REQ-API-023). The next name is one counter step above the greatest existing name of the same shape (max + 1); names freed by deleted records are not reused (no gap-filling, REQ-API-023). While the project's record naming mode is `auto` (REQ-DB-045) it answers the next plain integer strictly above every numeric record id of the project instead — the first name is `1`, and ids that are not all digits never advance the counter nor collide with it (REQ-API-151).
 
 ### 3.6 Record export — `content=record` without `data` (REQ-API-012)
 
@@ -198,7 +198,7 @@ An explicit `action=export` may accompany the call and changes nothing; a `data`
 ```json
 [
   {
-    "record_id": "8DISC042",
+    "record_id": "MOBA042",
     "redcap_event_name": "baseline_arm_1",
     "redcap_repeat_instrument": "",
     "redcap_repeat_instance": "",
@@ -216,11 +216,11 @@ An explicit `action=export` may accompany the call and changes nothing; a `data`
 
 ```json
 [
-  { "record_id": "8DISC042", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "", "redcap_repeat_instance": "",
+  { "record_id": "MOBA042", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "", "redcap_repeat_instance": "",
     "age": "42", "intake_complete": "1", "visit_score": "", "visits_complete": "" },
-  { "record_id": "8DISC042", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "visits", "redcap_repeat_instance": 1,
+  { "record_id": "MOBA042", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "visits", "redcap_repeat_instance": 1,
     "age": "", "intake_complete": "", "visit_score": "3", "visits_complete": "1" },
-  { "record_id": "8DISC042", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "visits", "redcap_repeat_instance": 2,
+  { "record_id": "MOBA042", "redcap_event_name": "baseline_arm_1", "redcap_repeat_instrument": "visits", "redcap_repeat_instance": 2,
     "age": "", "intake_complete": "", "visit_score": "5", "visits_complete": "2" }
 ]
 ```
@@ -241,9 +241,9 @@ Each row is a (record, form, event) tuple of field values, supplied in either RE
 
 ```
 token=…&content=record
-&data[0][record_id]=8DISC042&data[0][form_name]=intake&data[0][event_name]=baseline_arm_1
+&data[0][record_id]=MOBA042&data[0][form_name]=intake&data[0][event_name]=baseline_arm_1
 &data[0][age]=42&data[0][status]=2&data[0][notes]=ok
-&data[1][record_id]=8DISC043&data[1][form_name]=intake&data[1][event_name]=baseline_arm_1
+&data[1][record_id]=MOBA043&data[1][form_name]=intake&data[1][event_name]=baseline_arm_1
 &data[1][age]=&data[1][status]=1
 ```
 
@@ -274,8 +274,8 @@ With `returnContent=count` the response is HTTP 200 and the number of rows appli
 
 ```json
 [
-  { "record_id": "8DISC042", "form_name": "intake", "import_record_id": 2, "import_form_name": "intake" },
-  { "record_id": "8DISC043", "form_name": "intake", "import_record_id": 0,
+  { "record_id": "MOBA042", "form_name": "intake", "import_record_id": 2, "import_form_name": "intake" },
+  { "record_id": "MOBA043", "form_name": "intake", "import_record_id": 0,
     "import_form_name": "Validation error: age: TYPE_INVALID — value \"abc\" is not a valid integer; status: CHOICE_INVALID — value \"9\" is not a choice of \"status\"" }
 ]
 ```
@@ -299,12 +299,12 @@ The master spec's "Error messages by api" note shows one invalid value reported 
 
 Requires the **delete instrument values** right on every (instrument, event) pair whose values the call clears — all-or-nothing (REQ-API-036). In analysis mode the call is rejected — 403 `Project in analysis mode` (GD-20, REQ-API-109). Removes the record's values — scoped by the supplied `records[]`/`events[]`/`fields[]` (a `checkbox` named in `fields[]` scopes to every one of its choice columns, where its values are stored — REQ-DB-042), or the whole record — and, when a record's last value is removed, the record itself. Audit: `record_deleted` **with the deleted values** (REQ-AUD-009, `Audit_Logging_Design.md` §3.2).
 
-Request: `token=…&content=record&action=delete&records[0]=8DISC042` (optionally `events[]`/`fields[]` to scope, and `repeat_instance` — REDCap's parameter — to delete one instance only: `1` the first, `n` a further instance of a repeating instrument, REQ-API-155; without it every instance in scope goes, hidden ones included; a value that is no positive integer is 400).
+Request: `token=…&content=record&action=delete&records[0]=MOBA042` (optionally `events[]`/`fields[]` to scope, and `repeat_instance` — REDCap's parameter — to delete one instance only: `1` the first, `n` a further instance of a repeating instrument, REQ-API-155; without it every instance in scope goes, hidden ones included; a value that is no positive integer is 400).
 
 Response (JSON):
 
 ```json
-[ { "record_id": "8DISC042", "form_name": "", "deleted": 1 } ]
+[ { "record_id": "MOBA042", "form_name": "", "deleted": 1 } ]
 ```
 
 ### 3.9 Rate Limiting (REQ-API-038, REQ-API-113, REQ-CFG-020)
@@ -367,7 +367,7 @@ Every other `content` (including `export` and `delete`), another record, or anot
 Every error is a JSON object with a consistent shape:
 
 ```json
-{ "error": "conflict", "message": "project name '8DISC' already exists", "status": 409 }
+{ "error": "conflict", "message": "project name 'MOBA' already exists", "status": 409 }
 ```
 
 `error` is a stable machine code (callers may branch on it); `message` is human-readable and MUST NOT leak internal details (REQ-API-006). A project or record the acting user is not entitled to is rejected with the uniform 403 `forbidden` — never disclosed as missing (REQ-API-007).
@@ -488,19 +488,19 @@ Administrator (requires `is_admin`), REQ-API-116: `POST /api/v1/users/{id}/tfa/r
 **`GET /api/v1/projects`** — project visibility only (`is_admin` or member, REQ-AUTH-026); projects outside the acting user's visibility do not appear (REQ-API-007). 200 — dashboard summaries:
 
 ```json
-[ { "id": 33, "project_name": "8DISC", "organization": "NAT EU", "record_count": 42, "instrument_count": 5, "field_count": 128 } ]
+[ { "id": 33, "project_name": "MOBA", "organization": "NAT EU", "record_count": 42, "instrument_count": 5, "field_count": 128 } ]
 ```
 
 **`POST /api/v1/projects`** — `is_admin` (master spec: administrator users create projects). Body — the creation fields of the simplified `projects` (GD-17, REQ-DB-006):
 
 ```json
 {
-  "project_name": "8DISC", "organization": "NAT EU",
-  "pi_name": "Ansgar Espeland", "pi_email": "ansgar.espeland@example.org",
-  "dm_name": "Lars Akslen", "dm_email": "lars.akslen@uib.no",
-  "rek_number": "REK-2026/123", "rek_start_date": "2026-01-01", "rek_end_date": "2028-01-01",
+  "project_name": "MOBA", "organization": "NAT EU",
+  "pi_name": "Ole Bull", "pi_email": "ole.bull@example.org",
+  "dm_name": "Alexander Bull", "dm_email": "alexander.bull@example.org",
+  "rek_number": "REK-202/123", "rek_start_date": "2026-01-01", "rek_end_date": "2028-01-01",
   "start_date": "2026-01-01", "end_date": "2028-01-01",
-  "participant_names": "8DISC[0-9][0-9][0-9]",
+  "participant_names": "MOBA[0-9][0-9][0-9]",
   "record_naming": "manual"
 }
 ```
@@ -511,7 +511,7 @@ The removed attributes — `end_provision`, the `option_*` flags, `agreed_to_end
 
 ```json
 {
-  "id": 33, "project_name": "8DISC", "…": "…(all metadata fields)",
+  "id": 33, "project_name": "MOBA", "…": "…(all metadata fields)",
   "record_count": 42,
   "arms": [ { "arm_num": 1, "name": "", "events": [ { "id": 4, "event_name": "baseline", "unique_event_name": "baseline_arm_1", "period": 0, "safe_region_start": null, "safe_region_end": null, "position": 1 } ] } ],
   "instruments": [ { "id": 7, "name": "intake", "position": 1, "field_count": 24 } ],
@@ -877,13 +877,13 @@ An instrument is active for data entry once it is mapped to at least one event (
 **`GET /api/v1/projects/{id}/record-status`** — data access ≥ `read_only` + record visibility (REQ-AUTH-045). 200 — all visible records, with their instruments per event in the instrument order of each arm and a **three-state** completion state per (record, event, instrument), listed **sparsely** (REQ-API-149, DEV-API-26):
 
 ```json
-[ { "record_id": "8DISC042",
+[ { "record_id": "MOBA042",
     "events": [ { "unique_event_name": "baseline_arm_1",
                   "instruments": [ { "name": "intake", "state": "finished" },
                                    { "name": "scores", "state": "some_data" } ] },
                 { "unique_event_name": "week_4_arm_1",
                   "instruments": [] } ] },
-  { "record_id": "8DISC043",
+  { "record_id": "MOBA043",
     "events": [ { "unique_event_name": "baseline_arm_1", "instruments": [] },
                 { "unique_event_name": "week_4_arm_1",   "instruments": [] } ] } ]
 ```
@@ -949,7 +949,7 @@ Reverse chronological (REQ-API-077). 200:
 ```json
 { "entries": [ { "id": 913, "created_at": "2026-09-18 14:02:11", "source": "ui",
                  "project_id": 33, "user_id": 3, "email": "user@example.org",
-                 "event_type": "record_updated", "target_record": "8DISC001",
+                 "event_type": "record_updated", "target_record": "MOBA001",
                  "details": { "action": "update", "…": "…" } } ],
   "next_cursor": null }
 ```
