@@ -974,9 +974,14 @@ final class RecordController extends DataEntryController
         ];
     }
 
-    /** An event or instrument name as the forms carry it (`[a-z0-9_]`, REQ-DB-011/013). */
+    /**
+     * An event or instrument name as the forms carry it: up to 100 characters of `[A-Za-z0-9_]`.
+     * Neither name carries a case rule (REQ-DB-011 — uniqueness in the project is the API's only
+     * constraint); the lower-case restriction belongs to field names (REQ-DB-013), so an
+     * instrument renamed to capitals must still reach data entry.
+     */
     private static function isName(string $value): bool
     {
-        return preg_match('/^[a-z0-9_]{1,100}$/', $value) === 1;
+        return preg_match('/^[A-Za-z0-9_]{1,100}$/', $value) === 1;
     }
 }
