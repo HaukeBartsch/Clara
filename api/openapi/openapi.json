@@ -224,7 +224,7 @@
                 "examples": {
                   "project": {
                     "summary": "content=project (REQ-API-018)",
-                    "value": [{ "project_id": "33", "project_name": "8DISC", "project_title": "8DISC study", "project_description": "", "project_pi_name": "Ansgar Espeland", "project_pi_email": "ansgar.espeland@example.org", "project_rek_number": "REK-2026/123", "project_rek_start_date": "2026-01-01", "project_rek_end_date": "2028-01-01", "project_start_date": "2026-01-01", "project_end_date": "2028-01-01", "project_end_provision": "", "project_organizational": "NAT EU", "project_creation_time": "2026-01-01 09:00:00", "project_pat_import_folder": "", "surveys_enabled": "0", "randomization_enabled": "0" }]
+                    "value": [{ "project_id": "33", "project_name": "8DISC", "project_title": "8DISC study", "project_description": "", "project_pi_name": "Ole Bull", "project_pi_email": "ole.bull@example.org", "project_rek_number": "REK-2026/123", "project_rek_start_date": "2026-01-01", "project_rek_end_date": "2028-01-01", "project_start_date": "2026-01-01", "project_end_date": "2028-01-01", "project_end_provision": "", "project_organizational": "NAT EU", "project_creation_time": "2026-01-01 09:00:00", "project_pat_import_folder": "", "surveys_enabled": "0", "randomization_enabled": "0" }]
                   },
                   "metadata": {
                     "summary": "content=metadata (REQ-API-019)",

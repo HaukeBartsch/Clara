@@ -20,7 +20,7 @@ function project_home_detail(array $overrides = []): array
         'id' => 3,
         'project_name' => '8DISC',
         'organization' => 'NAT EU',
-        'pi_name' => 'Ansgar Espeland',
+        'pi_name' => 'Ole Bull',
         'pi_email' => 'pi@example.org',
         'dm_name' => null,
         'dm_email' => null,
@@ -136,7 +136,7 @@ describe('project page (§6.1, REQ-UI-017)', function (): void {
         $response = router_for(http_request('GET', '/projects/3/overview', browser_headers()))->dispatch();
 
         assert_contains('REK-2026/123', $response->body());
-        assert_contains('Ansgar Espeland', $response->body());
+        assert_contains('Ole Bull', $response->body());
         // dm_name and the empty dates are null in the response: no row, no empty label.
         assert_not_contains('Data manager', $response->body());
     });

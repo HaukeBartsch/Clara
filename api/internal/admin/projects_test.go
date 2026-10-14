@@ -38,7 +38,7 @@ func TestProjectsCreateSingleArmAndAudit(t *testing.T) {
 
 	rec := e.do("POST", "/api/v1/projects", map[string]any{
 		"project_name": "8DISC", "organization": "NAT EU",
-		"pi_name": "Ansgar Espeland", "pi_email": "ansgar@example.org",
+		"pi_name": "Ole Bull", "pi_email": "ole@example.org",
 		"rek_start_date":    "2026-01-01",
 		"participant_names": "8DISC[0-9][0-9][0-9]",
 	}, admin)
@@ -48,7 +48,7 @@ func TestProjectsCreateSingleArmAndAudit(t *testing.T) {
 	var p projectObject
 	e.decode(rec, &p)
 	if p.ProjectName != "8DISC" || p.Organization != "NAT EU" ||
-		p.PIEmail != "ansgar@example.org" || p.CreationTime == "" {
+		p.PIEmail != "ole@example.org" || p.CreationTime == "" {
 		t.Errorf("project = %+v", p)
 	}
 	if p.DMName != nil {

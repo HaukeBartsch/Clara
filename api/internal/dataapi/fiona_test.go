@@ -73,8 +73,8 @@ func newFionaFixture(t *testing.T) *fionaFixture {
 	pid, err := s.CreateProject(ctx, &db.Project{
 		ProjectName:      "DataTransferProjects",
 		Organization:     "Helse Vest",
-		PIName:           "Ansgar Espeland",
-		PIEmail:          "ansgar@example.org",
+		PIName:           "Ole Bull",
+		PIEmail:          "ole@example.org",
 		RekNumber:        sql.NullString{String: "2019/36045", Valid: true},
 		StartDate:        sql.NullString{String: "2019-04-11", Valid: true},
 		ParticipantNames: "8DISC[0-9][0-9][0-9]",
@@ -189,8 +189,8 @@ func TestFionaExportProject(t *testing.T) {
 	for key, want := range map[string]string{
 		"project_name":             "DataTransferProjects",
 		"project_title":            "DataTransferProjects",
-		"project_pi_name":          "Ansgar Espeland",
-		"project_pi_email":         "ansgar@example.org",
+		"project_pi_name":          "Ole Bull",
+		"project_pi_email":         "ole@example.org",
 		"project_rek_number":       "2019/36045",
 		"project_start_date":       "2019-04-11",
 		"is_longitudinal":          "1", // events exist (REQ-API-018)
