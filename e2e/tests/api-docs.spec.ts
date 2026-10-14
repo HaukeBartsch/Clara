@@ -83,6 +83,18 @@ test.describe("API documentation in the Control Panel (REQ-UI-057)", () => {
     await expect(canvas.locator("g.clara-sankey-node")).toHaveCount(44)
     await expect(canvas.locator(".clara-sankey-label", { hasText: "Data exchange with study systems" })).toBeVisible()
 
+    // Only the last column is pinned: the relevance classes keep the classification's order —
+    // read top to bottom, their payload `order` never decreases. Areas and families follow d3.
+    const keptOrder = await page.evaluate(() => {
+      const data = JSON.parse(document.querySelector("script[data-clara-sankey-data]")!.textContent!)
+      const orderById = new Map(data.nodes.map((n: { id: string; order: number }) => [n.id, n.order]))
+      const orders = [...document.querySelectorAll("g.clara-sankey-col-2")]
+        .sort((a, b) => Number(a.querySelector("rect")?.getAttribute("y")) - Number(b.querySelector("rect")?.getAttribute("y")))
+        .map((node) => orderById.get(node.getAttribute("data-id")))
+      return orders.every((order, i, all) => i === 0 || (all[i - 1] as number) <= order)
+    })
+    expect(keptOrder).toBe(true)
+
     // The five relevance classes, in the classification's own order, are the legend.
     await expect(canvas.locator(".clara-sankey-legend-item")).toHaveCount(5)
     await expect(canvas.locator(".clara-sankey-legend-item").first()).toContainText("security")

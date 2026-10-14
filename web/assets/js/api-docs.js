@@ -112,19 +112,32 @@ const renderSankey = async (canvas, payload) => {
   const height = Math.max(560, groups * 22 + 48)
   const margin = { left: 200, right: 120, top: 10, bottom: 10 }
 
-  const layout = d3.sankey()
+  const pad = Math.max(4, Math.min(10, height / groups / 3))
+  const sankey = () => d3.sankey()
     .nodeId((node) => node.id)
     .nodeWidth(14)
-    .nodePadding(Math.max(4, Math.min(10, height / groups / 3)))
-    // The generated `order` keeps areas in document order with their families below them, and
-    // the classes in the classification's own order — the same picture on every render.
-    .nodeSort((a, b) => a.order - b.order)
+    .nodePadding(pad)
     .extent([[margin.left, margin.top], [width - margin.right, height - margin.bottom]])
-
-  const graph = layout({
+  const graphData = () => ({
     nodes: payload.nodes.map((node) => ({ ...node })),
     links: payload.links.map((link) => ({ ...link })),
   })
+
+  // Only the last column — the relevance classes, in the classification's own order — is pinned;
+  // areas and families follow d3-sankey's flow. The library offers one comparator for every
+  // column, so "free" comes from a first pass with no comparator at all: the top-to-bottom
+  // sequences that pass gives columns 0 and 1 are what their nodes keep in the second pass.
+  const free = sankey()(graphData())
+  const rank = new Map()
+  for (const column of [0, 1]) {
+    const sequence = free.nodes.filter((node) => node.column === column).sort((a, b) => a.y0 - b.y0)
+    sequence.forEach((node, index) => rank.set(node.id, index))
+  }
+
+  // d3 has no randomness, so this stays the same picture on every render.
+  const graph = sankey()
+    .nodeSort((a, b) => (a.column === 2 ? a.order - b.order : rank.get(a.id) - rank.get(b.id)))
+    (graphData())
 
   // The SVG is decorative next to its labelled section and the classification table it mirrors;
   // aria-hidden keeps screen readers on the text, which carries every value.
