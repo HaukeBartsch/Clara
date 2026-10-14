@@ -152,7 +152,7 @@ final class DesignController extends StructureController
         $events = array_values(array_unique(array_filter($this->request->fieldList('events'),
             static fn (string $event): bool => preg_match('/^[a-z0-9_]{1,100}$/', $event) === 1)));
         if ($iid === 0) {
-            $this->flashDanger($this->i18n->t('error.invalid_request'));
+            $this->flashDanger($this->invalidRequest('iid'));
 
             return Response::redirect($designUrl);
         }
@@ -487,7 +487,11 @@ final class DesignController extends StructureController
         $beforeId = $before === 'end' ? 0 : self::parseObjectId($before);
         $name = $this->request->field('name');
         if ($fieldId === 0 || $targetId === 0 || ($before !== 'end' && $beforeId === 0)) {
-            $this->flashDanger($this->i18n->t('error.invalid_request'));
+            $this->flashDanger($this->invalidRequest(
+                ...($fieldId === 0 ? ['field_id'] : []),
+                ...($targetId === 0 ? ['target_iid'] : []),
+                ...($before !== 'end' && $beforeId === 0 ? ['before_field_id'] : [])
+            ));
 
             return Response::redirect($this->editorUrl($iid));
         }

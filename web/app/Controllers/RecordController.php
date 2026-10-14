@@ -182,7 +182,10 @@ final class RecordController extends DataEntryController
         $back = Response::redirect(self::recordUrl($projectId, $record, $event, $instrument, $instance));
 
         if (!self::isName($event) || !self::isName($instrument)) {
-            $this->flashDanger($this->i18n->t('error.invalid_request'));
+            $this->flashDanger($this->invalidRequest(
+                ...(self::isName($event) ? [] : ['event']),
+                ...(self::isName($instrument) ? [] : ['instrument'])
+            ));
 
             return $back;
         }
@@ -268,7 +271,11 @@ final class RecordController extends DataEntryController
         if (!in_array($scope, ['record', 'event', 'instrument', 'instance'], true)
             || ($scope !== 'record' && !self::isName($event))
             || ($scope === 'instance' && $instance === 0)) {
-            $this->flashDanger($this->i18n->t('error.invalid_request'));
+            $this->flashDanger($this->invalidRequest(
+                ...(in_array($scope, ['record', 'event', 'instrument', 'instance'], true) ? [] : ['scope']),
+                ...($scope !== 'record' && !self::isName($event) ? ['event'] : []),
+                ...($scope === 'instance' && $instance === 0 ? ['instance'] : [])
+            ));
 
             return $back;
         }
@@ -908,7 +915,10 @@ final class RecordController extends DataEntryController
         $back = Response::redirect(self::recordUrl($projectId, $record, $event, $instrument));
 
         if (!self::isName($event) || !self::isName($instrument)) {
-            $this->flashDanger($this->i18n->t('error.invalid_request'));
+            $this->flashDanger($this->invalidRequest(
+                ...(self::isName($event) ? [] : ['event']),
+                ...(self::isName($instrument) ? [] : ['instrument'])
+            ));
 
             return $back;
         }

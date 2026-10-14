@@ -114,7 +114,7 @@ final class DataApi
         if ($status === 0) {
             $this->logger->error('data api unreachable', ['content' => $content]);
 
-            throw new ApiException('internal', 'the API is not reachable', 502, [], 'POST /api/ content=' . $content);
+            throw new ApiException('unreachable', 'the API is not reachable', 502, [], 'POST /api/ content=' . $content);
         }
 
         $decoded = json_decode($response['body'], true);

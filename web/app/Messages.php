@@ -90,6 +90,9 @@ final class Messages
         }
 
         $lead = match ($e->code()) {
+            // The backend never answered — a transport failure, not the form's fault and
+            // not the API's 500. Say which party is responsible rather than blame the page.
+            'unreachable' => self::withReference($i18n, $i18n->t('error.unreachable'), $e, $ref, $isDevelopment),
             'invalid_request' => $i18n->t('error.invalid_request'),
             'validation_error' => '',
             'forbidden' => $i18n->t('error.forbidden'),
@@ -125,7 +128,16 @@ final class Messages
      */
     private static function generic(I18n $i18n, ApiException $e, string $ref, bool $isDevelopment): string
     {
-        $text = $i18n->t('error.generic');
+        return self::withReference($i18n, $i18n->t('error.generic'), $e, $ref, $isDevelopment);
+    }
+
+    /**
+     * A failure line's debugging affordances (REQ-UI-050): the correlation reference and,
+     * in development only, the technical detail. Shared by the generic line and every other
+     * lead that stands in for it (an unreachable backend), so both carry the same suffixes.
+     */
+    private static function withReference(I18n $i18n, string $text, ApiException $e, string $ref, bool $isDevelopment): string
+    {
         if ($ref !== '') {
             $text .= ' ' . $i18n->t('error.reference', ['ref' => $ref]);
         }

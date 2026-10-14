@@ -112,7 +112,7 @@ final class ProjectController extends ProjectPageController
         $back = Response::redirect('/projects/' . $projectId . '/overview');
         $target = $this->request->field('mode');
         if (!in_array($target, self::MODES, true)) {
-            $this->flashDanger($this->i18n->t('error.invalid_request'));
+            $this->flashDanger($this->invalidRequest('mode'));
 
             return $back;
         }

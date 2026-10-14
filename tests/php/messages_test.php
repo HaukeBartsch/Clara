@@ -67,6 +67,20 @@ describe('API errors → user messages (§3.4)', function (): void {
         assert_not_contains('sql', $text);
     });
 
+    it('names the backend service when it could not be reached — never the form', function (): void {
+        $text = Messages::forApiException(translator(), failure('unreachable', 'the API is not reachable', 502));
+
+        assert_contains('could not reach its backend service', $text);
+        assert_not_contains('form', $text, 'a transport failure blames the service, not the page');
+    });
+
+    it('carries the reference on the unreachable line too (REQ-UI-050)', function (): void {
+        $text = Messages::forApiException(translator(), failure('unreachable', '', 502), 'a3f9c21e');
+
+        assert_contains('could not reach its backend service', $text);
+        assert_contains('Reference: a3f9c21e', $text);
+    });
+
     it('carries the request reference on the generic line (REQ-UI-050)', function (): void {
         $text = Messages::forApiException(translator(), failure('internal', 'boom', 500), 'a3f9c21e');
 

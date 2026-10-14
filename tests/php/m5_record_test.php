@@ -402,6 +402,29 @@ describe('Record Status Dashboard (§6.3, REQ-UI-019)', function (): void {
         assert_same('/projects/3/records/7?arm=1', $response->headers()['Location']);
         assert_same(1, data_api_calls('content=generateNextRecordName'));
     });
+
+    it('names the backend service — not the form — when it does not answer at add-participant', function (): void {
+        sign_in(['csrf_token' => M5_CSRF]);
+        m5_queue(naming: 'auto');
+        // The data API call fails at transport level (status 0): nothing behind it answered.
+        api_route('data:content=generateNextRecordName', '', 0);
+
+        $response = m5_post('/projects/3/record-status', ['arm' => '1'], 'create_auto');
+
+        assert_same('/projects/3/record-status', $response->headers()['Location']);
+        $text = $_SESSION['_flash'][0]['text'];
+        assert_contains('could not reach its backend service', $text);
+        assert_not_contains('form contains invalid values', $text, 'a dead backend is never the form\'s fault');
+    });
+
+    it('names the responsible fields when a save posts malformed event or instrument names', function (): void {
+        sign_in(['csrf_token' => M5_CSRF]);
+        m5_queue();
+
+        m5_post('/projects/3/records/8DISC001', ['event' => 'Bad Event', 'instrument' => '', 'iid' => '7'], 'save');
+
+        assert_contains('The form contains invalid values: event, instrument', $_SESSION['_flash'][0]['text']);
+    });
 });
 
 describe('record view (§8, REQ-UI-025…027)', function (): void {

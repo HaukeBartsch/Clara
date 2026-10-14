@@ -137,7 +137,7 @@ final class ApiClient
         if ($response['status'] === 0) {
             $this->logger->error('api unreachable', ['method' => 'GET', 'path' => $path]);
 
-            throw new ApiException('internal', 'the API is not reachable', 502, [], 'GET ' . $path);
+            throw new ApiException('unreachable', 'the API is not reachable', 502, [], 'GET ' . $path);
         }
 
         $decoded = json_decode($response['body'], true);
@@ -281,7 +281,7 @@ final class ApiClient
             // The API is unreachable: an operator problem, never a detail to show.
             $this->logger->error('api unreachable', ['method' => $method, 'path' => $path]);
 
-            throw new ApiException('internal', 'the API is not reachable', 502, [], $method . ' ' . $path);
+            throw new ApiException('unreachable', 'the API is not reachable', 502, [], $method . ' ' . $path);
         }
 
         $decoded = null;

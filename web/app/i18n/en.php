@@ -700,6 +700,9 @@ return [
     'error.generic' => 'Something went wrong. Please try again; if it continues, contact your administrator.',
     'error.reference' => 'Reference: {ref}',
     'error.invalid_request' => 'The form contains invalid values',
+    // The backend service never answered (transport failure): nothing on the page is at fault,
+    // so the line names the responsible party instead of the form.
+    'error.unreachable' => 'The application could not reach its backend service. Please try again; if it continues, contact your administrator.',
     // The self-service password change (§2.6): the one line a rejected credential gets.
     'error.bad_password' => 'The current password is not correct.',
     'error.forbidden' => 'You do not have permission for this action',

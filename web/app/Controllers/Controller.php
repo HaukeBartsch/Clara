@@ -66,6 +66,20 @@ abstract class Controller
     }
 
     /**
+     * The §3.4 invalid-request line for a value this layer rejected itself: it names the
+     * posted field(s) that failed, so an alert never blames "the form" without saying which
+     * control is responsible — the same shape as when the API's message names the offending
+     * attribute (Messages). The names are the form's own field names, matching what the API
+     * reports for its attributes.
+     */
+    protected function invalidRequest(string ...$fields): string
+    {
+        return $fields === []
+            ? $this->i18n->t('error.invalid_request')
+            : $this->i18n->t('error.invalid_request') . ': ' . implode(', ', $fields);
+    }
+
+    /**
      * The user line for a failed API call, carrying this request's correlation
      * reference and — in development only — the technical detail (REQ-UI-050).
      * Controllers flash or render failures through this rather than calling
