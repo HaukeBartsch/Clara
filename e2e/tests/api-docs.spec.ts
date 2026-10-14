@@ -83,18 +83,19 @@ test.describe("API documentation in the Control Panel (REQ-UI-057)", () => {
     await expect(canvas.locator("g.clara-sankey-node")).toHaveCount(44)
     await expect(canvas.locator(".clara-sankey-label", { hasText: "Data exchange with study systems" })).toBeVisible()
 
-    // The first column stacks its areas longest label first, top to bottom.
+    // The first column stacks its areas widest rendered label first, top to bottom — measured on
+    // screen, since a proportional font makes character count no proxy for visible length.
     await expect(canvas.locator("g.clara-sankey-col-0")).toHaveCount(10)
-    const stackedLengths = await canvas.locator("g.clara-sankey-col-0").evaluateAll((nodes) =>
+    const stackedWidths = await canvas.locator("g.clara-sankey-col-0").evaluateAll((nodes) =>
       nodes
         .map((node) => ({
           y: Number(node.querySelector("rect")?.getAttribute("y") ?? 0),
-          length: (node.querySelector("text")?.textContent ?? "").length,
+          width: (node.querySelector("text") as SVGTextContentElement | null)?.getComputedTextLength() ?? 0,
         }))
         .sort((a, b) => a.y - b.y)
-        .map((node) => node.length),
+        .map((node) => node.width),
     )
-    expect(stackedLengths).toEqual([...stackedLengths].sort((a, b) => b - a))
+    expect(stackedWidths).toEqual([...stackedWidths].sort((a, b) => b - a))
 
     // The five relevance classes, in the classification's own order, are the legend.
     await expect(canvas.locator(".clara-sankey-legend-item")).toHaveCount(5)

@@ -105,6 +105,8 @@ const nodeTooltip = (node) => {
 
 const renderSankey = async (canvas, payload) => {
   const d3 = await loadSankeyLibs()
+  // Geist arrives with the stylesheet; measuring before it is ready would sort on fallback metrics.
+  await document.fonts.ready
 
   canvas.replaceChildren()
   const width = Math.max(canvas.clientWidth || 960, 720)
@@ -112,15 +114,28 @@ const renderSankey = async (canvas, payload) => {
   const height = Math.max(560, groups * 22 + 48)
   const margin = { left: 200, right: 120, top: 10, bottom: 10 }
 
+  // A proportional font makes character count no proxy for rendered length, so each area label is
+  // measured once in pixels — in a scratch svg carrying the diagram's own class, under the same
+  // stylesheet rules as the real labels. Added and removed within this task: nothing paints it.
+  const widths = new Map()
+  const scratch = d3.select(canvas).append("svg").attr("class", "clara-sankey")
+  for (const node of payload.nodes) {
+    if (node.column === 0) {
+      const text = scratch.append("text").attr("class", "clara-sankey-label").text(node.label)
+      widths.set(node.id, text.node().getComputedTextLength())
+    }
+  }
+  scratch.remove()
+
   const layout = d3.sankey()
     .nodeId((node) => node.id)
     .nodeWidth(14)
     .nodePadding(Math.max(4, Math.min(10, height / groups / 3)))
     // The generated `order` keeps families grouped under their area and the classes in the
-    // classification's own order; the areas themselves stack longest label first, so the left
+    // classification's own order; the areas themselves stack widest label first, so the left
     // column reads as a descending staircase. d3-sankey applies this comparator within each
     // column and skips its own relaxation re-sort — the same picture on every render.
-    .nodeSort((a, b) => (a.column === 0 ? b.label.length - a.label.length || a.order - b.order : a.order - b.order))
+    .nodeSort((a, b) => (a.column === 0 ? widths.get(b.id) - widths.get(a.id) || a.order - b.order : a.order - b.order))
     .extent([[margin.left, margin.top], [width - margin.right, height - margin.bottom]])
 
   const graph = layout({
