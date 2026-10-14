@@ -864,6 +864,35 @@
         }
       }
     },
+    "/api/v1/users/me/projects": {
+      "get": {
+        "tags": ["Admin: Projects"],
+        "operationId": "listMyMemberships",
+        "summary": "List my own project memberships (REQ-API-161)",
+        "description": "Any authenticated user acting on themselves. One entry per project the acting user is a **member** of, in project-id order, with the role name (`null` = role-less, full permissions — REQ-AUTH-022). Membership, not visibility: an administrator sees every project (REQ-API-049) but is listed here only where they are a member. No token value — every membership has one (REQ-API-005). Not audited.",
+        "responses": {
+          "200": { "description": "The acting user's memberships, possibly empty.", "content": { "application/json": { "schema": { "type": "array", "items": { "type": "object", "required": ["project_id", "project_name", "role"], "properties": { "project_id": { "type": "integer", "format": "int64" }, "project_name": { "type": "string" }, "role": { "type": ["string", "null"] } } } } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
+        }
+      }
+    },
+    "/api/v1/users/me/projects/{id}/token-reveal": {
+      "post": {
+        "tags": ["Admin: Projects"],
+        "operationId": "revealOwnToken",
+        "summary": "Reveal my own project token, audited (REQ-API-162)",
+        "description": "Self-service: returns the acting member's own token for project `{id}` and records the view as one `token_viewed` audit entry `{\"member_email\": \"<own address>\"}` per call (REQ-AUD-033). The entry is written before the value is answered. The body is empty or `{}`; any attribute is 400. A project the acting user is not a member of — unknown or not — is the uniform 403 `forbidden` (REQ-API-007), with nothing written. The value MUST NOT be logged.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "requestBody": { "required": false, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false } } } },
+        "responses": {
+          "200": { "description": "The member's API token; the view is recorded.", "content": { "application/json": { "schema": { "type": "object", "required": ["token"], "properties": { "token": { "type": "string", "format": "uuid" } } } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
+        }
+      }
+    },
     "/api/v1/projects/{id}/roles": {
       "get": {
         "tags": ["Admin: Projects"],

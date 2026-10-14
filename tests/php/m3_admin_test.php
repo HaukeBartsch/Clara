@@ -578,8 +578,8 @@ describe('project page — Groups (§5.5, REQ-UI-015)', function (): void {
     });
 });
 
-describe('footer switches (§2.1, §3.8, §9)', function (): void {
-    it('reaches the language and theme handlers with the bare POST the footer forms send', function (): void {
+describe('language and theme switches (§2.1, §2.8, §3.8, §9)', function (): void {
+    it('reaches the language and theme handlers with the bare POST the account page forms send', function (): void {
         sign_in();
         queue_shell();
         api_route('/api/v1/users/me/ui-language', ['ui_language' => 'nb']);

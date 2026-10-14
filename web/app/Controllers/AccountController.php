@@ -1,9 +1,14 @@
 <?php
-// The three dedicated POST routes of the shell's Account section: sign out
-// (§2.4), the language selector (§9) and the theme selector (§3.8). All three are
-// CSRF-protected like every other mutation (REQ-UI-005) and both selectors
-// redirect back, applying from the next page load — the page already rendered
-// keeps its strings and its stylesheet (§9, REQ-UI-041).
+// The account page (§2.8, REQ-UI-063) and the three dedicated POST routes it hosts: sign
+// out (§2.4), the language selector (§9) and the theme selector (§3.8). All three are
+// CSRF-protected like every other mutation (REQ-UI-005) and both selectors redirect back,
+// applying from the next page load — the page already rendered keeps its strings and its
+// stylesheet (§9, REQ-UI-041). Sign out is also offered by the header's account menu.
+//
+// The Project tokens section shows the member's own tokens masked; Show asks the API for one
+// value, which records the view first (REQ-API-162, REQ-AUD-033), and the value is rendered
+// straight from that response — like the recovery codes of §2.5, it is stored nowhere, so a
+// reload or Hide (a plain GET) is the masked page again.
 
 declare(strict_types=1);
 
@@ -11,11 +16,86 @@ namespace Clara\Controllers;
 
 use Clara\ApiException;
 use Clara\Config;
+use Clara\Navigation;
 use Clara\Response;
 use Clara\Session;
 
 final class AccountController extends Controller
 {
+    /** GET /account — Profile: who is signed in, language, theme, sign out (§2.8). */
+    public function index(): Response
+    {
+        return $this->page('account/profile', [
+            'pageTitle' => $this->i18n->t('account.section.profile'),
+            'email' => Session::email(),
+            'nav' => Navigation::accountNav('profile'),
+        ], ['titleKey' => '']);
+    }
+
+    /** GET /account/tokens — the member's own project tokens, every one masked (§2.8). */
+    public function tokens(): Response
+    {
+        return $this->tokensPage(null);
+    }
+
+    /**
+     * POST /account/tokens?action=show_token — unmasks one project's token. The API records the
+     * view before it answers the value (REQ-API-162), so only a recorded view reaches the page;
+     * a refusal keeps every token masked with the §3.4 line. Each Show is one entry.
+     */
+    public function showToken(): Response
+    {
+        $projectId = $this->fieldId('project_id');
+        if ($projectId <= 0) {
+            $this->flashDanger($this->invalidRequest('project_id'));
+
+            return Response::redirect('/account/tokens');
+        }
+        try {
+            $answer = $this->api->post('/api/v1/users/me/projects/' . $projectId . '/token-reveal');
+        } catch (ApiException $e) {
+            $this->logger->info('own token reveal refused', ['code' => $e->code(), 'status' => $e->status()]);
+            $this->flashDanger($this->apiFailureMessage($e));
+
+            return Response::redirect('/account/tokens');
+        }
+        $token = is_array($answer) && is_string($answer['token'] ?? null) ? $answer['token'] : '';
+        if ($token === '') {
+            return Response::redirect('/account/tokens');
+        }
+
+        return $this->tokensPage(['project_id' => $projectId, 'token' => $token]);
+    }
+
+    /**
+     * The Project tokens section with at most one token shown — the one just revealed.
+     *
+     * @param array{project_id: int, token: string}|null $shown
+     */
+    private function tokensPage(?array $shown): Response
+    {
+        $memberships = $this->api->get('/api/v1/users/me/projects');
+
+        return $this->page('account/tokens', [
+            'pageTitle' => $this->i18n->t('account.section.tokens'),
+            'memberships' => array_values(array_filter(is_array($memberships) ? $memberships : [], 'is_array')),
+            'shown' => $shown,
+            'nav' => Navigation::accountNav('tokens'),
+        ], [
+            'titleKey' => '',
+            'scripts' => ['/assets/app.js', '/assets/js/admin.js'],
+            'jsKeys' => ['admin.confirm.title', 'action.cancel', 'admin.confirm.ok', 'tfa.copied'],
+        ]);
+    }
+
+    /** A positive integer form field, or 0. */
+    private function fieldId(string $name): int
+    {
+        $raw = $this->request->field($name);
+
+        return preg_match('/^\d{1,18}$/', $raw) === 1 ? (int) $raw : 0;
+    }
+
     /** POST /logout — Sequence D: audit first, then destroy (REQ-UI-007). */
     public function logout(): Response
     {
@@ -88,8 +168,8 @@ final class AccountController extends Controller
      * The e-mail address is shown read-only and there is no field for it: identity
      * changes go through an administrator (REQ-AUTH-061). An account that authenticates
      * through a provider has no local password to change, so the page says so instead of
-     * posting something the API must refuse with 409 `no_local_credential`; the footer
-     * already hides the entry for such an account (§2.4, GD-23).
+     * posting something the API must refuse with 409 `no_local_credential`; the account
+     * page's panel already hides the entry for such an account (§2.8, GD-23).
      */
     public function password(): Response
     {
@@ -150,6 +230,7 @@ final class AccountController extends Controller
             'error' => $error,
             'hasLocalCredential' => Session::hasLocalCredential(),
             'email' => Session::email(),
+            'nav' => Navigation::accountNav('password'),
         ], [
             'titleKey' => '',
             'scripts' => ['/assets/app.js', '/assets/js/password.js'],

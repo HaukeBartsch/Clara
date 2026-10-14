@@ -1,12 +1,13 @@
 // The administration pages' behaviour — the Control Panel (§5) and the project page's
-// Members / Roles / Groups (§5.3–§5.5). One module for that logical section (REQ-UI-045); no
-// UI string lives here — every label comes from the injected data-i18n block (REQ-UI-008).
+// Members / Roles / Groups (§5.3–§5.5), plus the Copy of the account page's Project tokens
+// (§2.8). One module for that logical section (REQ-UI-045); no UI string lives here — every
+// label comes from the injected data-i18n block (REQ-UI-008).
 //
 // 1. Confirmations (§3.5): a form carrying data-clara-confirm="<consequence>" opens a
 //    Bootstrap modal stating it; only the modal's confirm button submits the form, so the
 //    CSRF token rides with the confirm click like every other mutation (§3.3).
 // 2. Copy (§3.5): a button carrying data-clara-copy="<selector>" copies that element's value
-//    — the once-shown project token.
+//    — a shown project token.
 // 3. Reopening (§6.7/§6.8): a server-rendered modal carrying data-clara-autoshow opens on load —
 //    the commit dialog after a refused commit, the breaking-change question after a save the
 //    API sent back for acknowledgement.

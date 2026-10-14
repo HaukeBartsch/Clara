@@ -68,7 +68,7 @@ test.describe("responsive pass (M6)", () => {
       `${base}/records/R001/instruments/${survey.id}/survey-link?event=baseline_arm_1`)).url as string
 
     const pages = [
-      "/", "/account/two-factor", "/account/password",
+      "/", "/account", "/account/tokens", "/account/two-factor", "/account/password",
       "/admin?section=users", "/admin?section=projects", "/admin?section=audits",
       "/admin?section=translations", "/admin?section=settings",
       `/projects/${project.id}/overview`, `/projects/${project.id}/setup`, `/projects/${project.id}/design`,
@@ -95,7 +95,7 @@ test.describe("responsive pass (M6)", () => {
       await page.fill("#login-email", ADMIN_EMAIL)
       await page.fill("#login-password", ADMIN_PASSWORD)
       await page.locator('form[action="/login?action=credentials"] button[type="submit"]').click()
-      await expect(page.locator("footer")).toContainText("Sign out")
+      await expect(page.locator("#clara-account-menu")).toBeVisible()
 
       for (const path of pages) {
         await page.goto(path)

@@ -97,7 +97,7 @@ web/
 │   ├── Auth.php                  # require_login(); local/LDAP/OAuth2 flows; tfa_pending gate
 │   ├── Csrf.php                  # issue/validate (REQ-UI-005)
 │   ├── Permissions.php           # gating predicates over P0-a's payload — the single place §3.1 lives
-│   ├── Navigation.php            # the two left panels + the default-section rule (§2.4, REQ-UI-046/047)
+│   ├── Navigation.php            # the three left panels + the default-section rule (§2.4, REQ-UI-046/047/063)
 │   ├── View.php                  # layout + template render, e() escaping, CSP header (REQ-TECH-020)
 │   ├── I18n.php                  # English catalog + bundle overlay, t(), JS-string injection (§9)
 │   ├── Messages.php              # API error code → translated line (§3.4 table); the generic line carries the request reference, plus technical detail in development (REQ-UI-050)
@@ -105,7 +105,7 @@ web/
 │   └── i18n/en.php               # English source of truth (REQ-DB-031)
 ├── app/Controllers/…             # one class per page group of §2.1 (Login, Dashboard, ControlPanel, Project, Setup, Record, …)
 ├── views/
-│   ├── layout/shell.php          # header + content panel + footer; renders a left panel only when the page supplies one (§2.4)
+│   ├── layout/shell.php          # header (with the account menu) + content panel; renders a left panel only when the page supplies one (§2.4)
 │   ├── layout/standalone.php     # login, password pages (§2.4 — no navigation)
 │   ├── layout/survey.php         # public survey shell (§8.8)
 │   ├── partials/nav-panel.php    # the left panel of a section-bearing page — entries computed by app/Navigation.php (§2.4, REQ-UI-046/047)

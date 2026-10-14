@@ -12,14 +12,17 @@ import (
 
 // registerMembers mounts §4.6: the member listing and the single mutation
 // point for membership (REQ-API-053…055), the record of a just-issued token
-// being shown (REQ-API-160), plus the self-service token fetch (REQ-API-102).
-// The three administrative endpoints require is_admin; the self-service fetch
-// requires only that the acting user is the member.
+// being shown (REQ-API-160), plus the self-service token fetch (REQ-API-102),
+// and the account page's own memberships and audited token reveal
+// (REQ-API-161/162). The three administrative endpoints require is_admin; the
+// self-service ones require only that the acting user is the member.
 func (h *Handler) registerMembers(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/projects/{id}/users", h.listMembers)
 	mux.HandleFunc("PUT /api/v1/projects/{id}/users/{uid}", h.putMember)
 	mux.HandleFunc("POST /api/v1/projects/{id}/users/{uid}/token-viewed", h.tokenViewed)
 	mux.HandleFunc("GET /api/v1/projects/{id}/users/{uid}/token", h.fetchOwnToken)
+	mux.HandleFunc("GET /api/v1/users/me/projects", h.listMyMemberships)
+	mux.HandleFunc("POST /api/v1/users/me/projects/{id}/token-reveal", h.revealOwnToken)
 }
 
 // --- member objects (§4.6) ---
@@ -528,6 +531,105 @@ func (h *Handler) fetchOwnToken(w http.ResponseWriter, r *http.Request) {
 	}
 	if a == nil {
 		errForbidden(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"token": a.Token})
+}
+
+// --- GET /api/v1/users/me/projects (REQ-API-161) ---
+
+// membershipObject is one of the acting user's own memberships, as the
+// account page lists them beside a masked token (User_Interface_Design.md
+// §2.8). It carries no token value — only that one exists, which every
+// membership has (REQ-API-005) — and the role name, null for a role-less
+// member with full permissions (REQ-AUTH-022).
+type membershipObject struct {
+	ProjectID   int64   `json:"project_id"`
+	ProjectName string  `json:"project_name"`
+	Role        *string `json:"role"`
+}
+
+// listMyMemberships lists the projects the acting user is a member of, in
+// project-id order. It is membership, not visibility: an administrator sees
+// every project (REQ-API-049) but holds a token only where they are a member,
+// so this list is theirs alone. Any authenticated user; nothing is audited —
+// it discloses no value.
+func (h *Handler) listMyMemberships(w http.ResponseWriter, r *http.Request) {
+	u, ok := actor(r)
+	if !ok {
+		errForbidden(w)
+		return
+	}
+	ctx := r.Context()
+	assignments, err := h.Store.ListAssignmentsByUser(ctx, u.ID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	out := make([]membershipObject, 0, len(assignments))
+	for _, a := range assignments {
+		p, err := h.Store.GetProject(ctx, a.ProjectID)
+		if err != nil {
+			errInternal(w)
+			return
+		}
+		if p == nil {
+			continue
+		}
+		roles, err := h.projectRoles(ctx, a.ProjectID)
+		if err != nil {
+			errInternal(w)
+			return
+		}
+		out = append(out, membershipObject{
+			ProjectID: p.ID, ProjectName: p.ProjectName, Role: roleName(roles, a.RoleID),
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// --- POST /api/v1/users/me/projects/{id}/token-reveal (REQ-API-162) ---
+
+// revealOwnToken returns the acting member's own token for project {id} and
+// records that they viewed it, as one token_viewed entry naming themselves
+// (REQ-AUD-033). The entry is written first and the value is answered only
+// once it is stored, so a reveal the trail does not hold cannot happen. Each
+// call is one view. The body is empty or `{}`; a project the acting user is
+// not a member of — unknown or not — is the uniform 403 (REQ-API-007), with
+// nothing written.
+func (h *Handler) revealOwnToken(w http.ResponseWriter, r *http.Request) {
+	u, ok := actor(r)
+	if !ok {
+		errForbidden(w)
+		return
+	}
+	projectID, ok := pathID(r, "id")
+	if !ok {
+		errForbidden(w)
+		return
+	}
+	var supplied map[string]json.RawMessage
+	if err := decodeBody(r, &supplied); err != nil {
+		errBadRequest(w, "malformed JSON body")
+		return
+	}
+	if !RejectUnknownAttrs(w, supplied) {
+		return
+	}
+	ctx := r.Context()
+	a, err := h.Store.GetAssignment(ctx, u.ID, projectID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	if a == nil {
+		errForbidden(w)
+		return
+	}
+	if err := h.auditMember(ctx, u, projectID, audit.TokenViewed, map[string]any{
+		"member_email": u.Email,
+	}); err != nil {
+		errInternal(w)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"token": a.Token})

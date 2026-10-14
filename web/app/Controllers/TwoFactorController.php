@@ -24,6 +24,7 @@ namespace Clara\Controllers;
 
 use Clara\ApiException;
 use Clara\Messages;
+use Clara\Navigation;
 use Clara\Response;
 
 final class TwoFactorController extends Controller
@@ -216,6 +217,8 @@ final class TwoFactorController extends Controller
             'error' => (string) ($view['error'] ?? ''),
             // The e-mail method is offered unless this very render learned it cannot be.
             'emailAvailable' => empty($view['emailUnavailable']),
+            // A section of the account page (§2.8, REQ-UI-063).
+            'nav' => Navigation::accountNav('two_factor'),
         ], [
             'titleKey' => '',
             'scripts' => ['/assets/app.js', '/assets/js/two_factor.js'],

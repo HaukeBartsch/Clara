@@ -37,7 +37,7 @@
   --clara-sidebar-width: 17rem;
 }
 
-/* --- shell: brand bar, sidebar + content panel, footer (User_Interface_Design.md §2.4) --- */
+/* --- shell: brand bar, sidebar + content panel (User_Interface_Design.md §2.4) --- */
 
 .clara-shell {
   display: flex;
@@ -73,6 +73,20 @@
   /* A long table inside the panel must not widen the page. */
   min-width: 0;
   padding: 1.25rem 1.5rem 2rem;
+}
+
+/* The header's account menu names the user (§2.4): a long display name is cut with an
+ * ellipsis rather than pushing the header wider than a phone (REQ-UI-008). */
+.clara-account-menu .dropdown-toggle {
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The Profile section's selector labels line up (§2.8). */
+.clara-account-label {
+  min-width: 6rem;
 }
 
 .clara-brand {

@@ -34,7 +34,7 @@ async function signIn(page: Page, email: string, password: string): Promise<void
   await page.fill("#login-email", email)
   await page.fill("#login-password", password)
   await page.locator('form[action="/login?action=credentials"] button[type="submit"]').click()
-  await expect(page.locator("footer")).toContainText("Sign out")
+  await expect(page.locator("#clara-account-menu")).toBeVisible()
 }
 
 async function newPage(browser: Browser): Promise<Page> {

@@ -277,9 +277,17 @@ final class Router
         ['method' => 'POST', 'pattern' => '/projects/{id}/groups', 'controller' => Controllers\ProjectController::class,
             'handler' => 'deleteGroup', 'guard' => 'login', 'action' => 'delete_group'],
 
-        // Self-service account pages (§2.4 item 4): the second factor (§2.5) and the
-        // local password (§2.6). Both live in the shell; both are mutations on their
-        // own route with ?action= like every other write (§2.1).
+        // The account page (§2.8, REQ-UI-063), reached from the header's account menu: its
+        // sections are Profile, Project tokens, the second factor (§2.5) and the local
+        // password (§2.6). All live in the shell with the account panel; mutations are on
+        // their own route with ?action= like every other write (§2.1). Show is audited by
+        // the API (REQ-API-162); Hide is a plain GET of the section.
+        ['method' => 'GET', 'pattern' => '/account', 'controller' => Controllers\AccountController::class,
+            'handler' => 'index', 'guard' => 'login'],
+        ['method' => 'GET', 'pattern' => '/account/tokens', 'controller' => Controllers\AccountController::class,
+            'handler' => 'tokens', 'guard' => 'login'],
+        ['method' => 'POST', 'pattern' => '/account/tokens', 'controller' => Controllers\AccountController::class,
+            'handler' => 'showToken', 'guard' => 'login', 'action' => 'show_token'],
         ['method' => 'GET', 'pattern' => '/account/two-factor', 'controller' => Controllers\TwoFactorController::class,
             'handler' => 'index', 'guard' => 'login'],
         ['method' => 'POST', 'pattern' => '/account/two-factor', 'controller' => Controllers\TwoFactorController::class,
@@ -315,8 +323,8 @@ final class Router
 
         ['method' => 'POST', 'pattern' => '/logout', 'controller' => Controllers\AccountController::class,
             'handler' => 'logout', 'guard' => 'login'],
-        // Dedicated POST routes (§2.1: `POST /lang`, `POST /theme`) — the footer forms post to
-        // the bare path, so no ?action= is required (it was, and every switch answered 404).
+        // Dedicated POST routes (§2.1: `POST /lang`, `POST /theme`) — the account page's forms
+        // post to the bare path, so no ?action= is required (it was, and every switch answered 404).
         ['method' => 'POST', 'pattern' => '/lang', 'controller' => Controllers\AccountController::class,
             'handler' => 'language', 'guard' => 'login'],
         ['method' => 'POST', 'pattern' => '/theme', 'controller' => Controllers\AccountController::class,

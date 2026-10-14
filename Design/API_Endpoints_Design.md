@@ -569,7 +569,20 @@ The token value appears only in the add/rotation response — never in logs (REQ
 { "token": "8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83" }
 ```
 
-The value MUST NOT be logged (REQ-API-005). No audit event is written for the fetch itself — it is credential plumbing; the data-API calls that present the token carry it in the fixed `token` column (`Audit_Logging_Design.md` §2, REQ-AUD-018). This is the source the PHP layer uses to present the member's token to the data API for UI data entry (ASM-API-3; `User_Interface_Design.md` §8.6).
+The value MUST NOT be logged (REQ-API-005). No audit event is written for the fetch itself — it is credential plumbing; the data-API calls that present the token carry it in the fixed `token` column (`Audit_Logging_Design.md` §2, REQ-AUD-018). This is the source the PHP layer uses to present the member's token to the data API for UI data entry (ASM-API-3; `User_Interface_Design.md` §8.6). A person **seeing** their own token goes through the audited reveal below instead.
+
+**`GET /api/v1/users/me/projects`** — the acting user's own memberships, for the account page's Project tokens section (REQ-API-161, `User_Interface_Design.md` §2.8). Any authenticated user. Membership, not visibility: an `is_admin` user sees every project (REQ-API-049) but is listed only where they are a member, since only a membership carries a token. No token value; not audited. 200, in project-id order, possibly `[]`:
+
+```json
+[
+  { "project_id": 3, "project_name": "8DISC", "role": null },
+  { "project_id": 5, "project_name": "EMIT-23", "role": "data-entry" }
+]
+```
+
+`role` is the role name, `null` for a role-less member with full permissions (REQ-AUTH-022).
+
+**`POST /api/v1/users/me/projects/{id}/token-reveal`** — the member's audited view of their own token (REQ-API-162). Body empty or `{}` — any attribute is 400 `invalid_request`. The acting user MUST be a member of project `{id}`; otherwise — unknown project included — the uniform 403 `forbidden` (REQ-API-007), with nothing written. The `token_viewed` entry `{"member_email":"<own address>"}` (REQ-AUD-033) is written **first**; only once it is stored does the endpoint answer 200 `{ "token": "…" }` — the same shape as the fetch above. A failed write is a 500 with no value, so every view the UI shows is in the trail. Each call is one entry; the value MUST NOT be logged (REQ-API-005). Unlike `token-viewed`, which only records a view of a value the UI already holds, this endpoint both records and returns, because the account page holds no value until Show.
 
 ### 4.7 Roles (REQ-API-056…057)
 
@@ -1214,6 +1227,8 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirement.m
 | `GET/PUT …/users` (members), `GET/POST …/roles`, `PUT …/roles/{rid}` | `is_admin` |
 | `POST …/users/{uid}/token-viewed` (REQ-API-160) | `is_admin` |
 | `GET …/users/{uid}/token` | self-service: acting user is a member (REQ-API-102) |
+| `GET /users/me/projects` (REQ-API-161) | any authenticated user (self) |
+| `POST /users/me/projects/{id}/token-reveal` (REQ-API-162) | self-service: acting user is a member |
 | arms, events, instruments, fields, mapping — mutations (POST/PUT/DELETE) | `project_admin` |
 | arms, events, instruments, fields, mapping — reads (GET) | data access ≥ `read_only` |
 | `GET …/record-status`, `GET …/records/{record}/history` | data access ≥ `read_only` (+ record visibility) |

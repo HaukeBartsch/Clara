@@ -31,21 +31,28 @@ function contrastRatio(fg: string, bg: string): number {
   return (hi + 0.05) / (lo + 0.05)
 }
 
+// The selector lives on the account page (§2.8); the spec comes back to the page it was on.
 async function selectTheme(page: Page, value: string): Promise<void> {
+  const back = page.url()
+  await page.goto("/account")
   await page.selectOption("#clara-theme", value)
   await page.locator('form[action="/theme"] button[type="submit"]').click()
   // Redirects back to `next`, so assert on the selector itself rather than a URL.
   await expect(page.locator("#clara-theme")).toHaveValue(value)
+  await page.goto(back)
 }
 
 test.describe("theme selector (REQ-UI-040)", () => {
   test.skip(!process.env.CLARA_WEB_URL, "CLARA_WEB_URL not set — no running web/ application to drive")
 
   async function themeOptions(page: Page): Promise<string[]> {
+    const back = page.url()
+    await page.goto("/account")
     const options = await page.locator("#clara-theme option").evaluateAll((els) =>
       els.map((el) => el.getAttribute("value")).filter((v): v is string => v !== null),
     )
     expect(options.length).toBeGreaterThan(1) // "default" plus the installed themes
+    await page.goto(back)
     return options
   }
 

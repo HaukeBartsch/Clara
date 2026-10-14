@@ -516,7 +516,7 @@ return [
     'members.token_present' => 'issued',
     'members.token_absent' => 'none',
     'members.token_for' => 'Project token for {email}',
-    'members.token_once' => 'Each Show is recorded in the audit trail. Once you leave this page the token will not be shown again; the member can later fetch their own copy.',
+    'members.token_once' => 'Each Show is recorded in the audit trail. Once you leave this page the token will not be shown again; the member can view it later on their own account page.',
     'members.token_masked' => 'Token (hidden)',
     'members.show' => 'Show',
     'members.hide' => 'Hide',
@@ -650,6 +650,17 @@ return [
     'tfa.email_unavailable' => 'Codes by e-mail are not available on this installation: it has no mail server configured.',
     'tfa.failure.no_email' => 'This installation cannot send e-mail, so a code by e-mail is not available. Use an authenticator app instead.',
     'tfa.failure.send_failed' => 'The code could not be sent. Try again shortly or use a recovery code.',
+
+    // --- the account page (§2.8, REQ-UI-063) ---
+    'account.section.profile' => 'Profile',
+    'account.section.tokens' => 'Project tokens',
+    'account.profile.name' => 'Name',
+    'account.profile.email' => 'E-mail address',
+    'account.profile.preferences' => 'Preferences',
+    'account.tokens.intro' => 'Your data-API token for each project you are a member of. A token carries your permissions in that project: keep it secret.',
+    'account.tokens.project' => 'Project',
+    'account.tokens.empty' => 'You are not a member of any project, so you hold no project token.',
+    'account.tokens.audited' => 'Each Show is recorded in the audit trail.',
 
     // --- change own password (§2.6, REQ-AUTH-061) ---
     'account.password.title' => 'Change password',

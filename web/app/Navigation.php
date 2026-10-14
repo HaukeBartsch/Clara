@@ -64,6 +64,49 @@ final class Navigation
     }
 
     /**
+     * The account page's sections (§2.8, REQ-UI-063) in panel order — every one is the acting
+     * user's own, so the only gate is the Password entry: it exists only for an account with a
+     * local credential to change (GD-23); an entry whose only outcome is "this account signs
+     * in through a provider" offers nothing (§3.1). `/account` opens on Profile.
+     *
+     * @return list<array{key: string, path: string, labelKey: string}>
+     */
+    public static function accountSections(): array
+    {
+        $sections = [
+            ['key' => 'profile', 'path' => '/account', 'labelKey' => 'account.section.profile'],
+            ['key' => 'tokens', 'path' => '/account/tokens', 'labelKey' => 'account.section.tokens'],
+            ['key' => 'two_factor', 'path' => '/account/two-factor', 'labelKey' => 'nav.two_factor'],
+        ];
+        if (Session::hasLocalCredential()) {
+            $sections[] = ['key' => 'password', 'path' => '/account/password', 'labelKey' => 'nav.password'];
+        }
+
+        return $sections;
+    }
+
+    /**
+     * The account page's left panel with `$key` marked — explicitly, because Profile's path
+     * `/account` is a prefix of every other section's (§2.4 B).
+     *
+     * @return array{headingKey: string, items: list<array{path: string, labelKey: string, active: bool}>}
+     */
+    public static function accountNav(string $key): array
+    {
+        return [
+            'headingKey' => 'nav.account',
+            'items' => array_map(
+                static fn (array $section): array => [
+                    'path' => $section['path'],
+                    'labelKey' => $section['labelKey'],
+                    'active' => $section['key'] === $key,
+                ],
+                self::accountSections()
+            ),
+        ];
+    }
+
+    /**
      * The project page's candidate entries (§6.1, REQ-UI-017) in canonical order, each
      * carrying the two answers the panels need: may this member use it (`allowed`), and does
      * this build serve it (`built`). Splitting them out keeps the permission rule — Setup and

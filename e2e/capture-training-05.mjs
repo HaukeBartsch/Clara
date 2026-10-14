@@ -201,7 +201,7 @@ async function signIn(context, who) {
   await page.fill("#login-email", who.email)
   await page.fill("#login-password", who.password)
   await page.locator('form[action="/login?action=credentials"] button[type="submit"]').click()
-  await page.locator("footer").getByText("Sign out").waitFor()
+  await page.locator("#clara-account-menu").waitFor()
   return page
 }
 

@@ -1,9 +1,9 @@
 <?php
 /**
- * The application shell (§2.4): header, an optional left panel, the content panel and
- * the footer. One shell serves the three page shapes — the project overview renders no
- * left panel at all (REQ-UI-009), while the project page and the Control Panel pass one
- * in `$nav` (REQ-UI-046/047). Selecting a panel item is a plain GET to that route,
+ * The application shell (§2.4): header, an optional left panel and the content panel.
+ * One shell serves every page shape — the project overview renders no left panel at all
+ * (REQ-UI-009), while the project page, the Control Panel and the account page pass one
+ * in `$nav` (REQ-UI-046/047/063). Selecting a panel item is a plain GET to that route,
  * rendered back into this shell: a shared multi-page layout, not a single-page app
  * (REQ-UI-001).
  *
@@ -116,6 +116,27 @@ $controlPanel = $view->isAdmin() && Navigation::controlPanelExists();
                 <a class="btn btn-sm btn-outline-primary<?= $view->isActive('/admin') ? ' active' : '' ?>"
                    href="/admin"><?= View::e($view->t('nav.control_panel')) ?></a>
             <?php endif; ?>
+            <?php if ($view->isAuthenticated()): ?>
+                <!-- The account menu (§2.4, REQ-UI-063): user-scoped rather than project-scoped,
+                     so it sits in the header and stays put while a panel changes. It names the
+                     user and offers the account page and a one-click Sign out (REQ-UI-007). -->
+                <div class="dropdown clara-account-menu">
+                    <button class="btn btn-sm btn-outline-secondary dropdown-toggle<?= $view->isActive('/account') ? ' active' : '' ?>"
+                            type="button" id="clara-account-menu" data-bs-toggle="dropdown" aria-expanded="false">
+                        <?= View::e($view->displayName()) ?>
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="clara-account-menu">
+                        <li><a class="dropdown-item" href="/account"><?= View::e($view->t('nav.account')) ?></a></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li>
+                            <form method="post" action="/logout">
+                                <?= $view->csrfField() ?>
+                                <button class="dropdown-item text-danger" type="submit"><?= View::e($view->t('nav.sign_out')) ?></button>
+                            </form>
+                        </li>
+                    </ul>
+                </div>
+            <?php endif; ?>
         </div>
     </div>
 </header>
@@ -130,62 +151,6 @@ $controlPanel = $view->isAdmin() && Navigation::controlPanelExists();
         <?= $content ?>
     </main>
 </div>
-
-<footer class="border-top py-2">
-    <div class="container-fluid d-flex flex-wrap align-items-center gap-3 px-3">
-        <?php if ($view->isAuthenticated()): ?>
-            <form method="post" action="/lang" class="d-flex align-items-center gap-2">
-                <?= $view->csrfField() ?>
-                <input type="hidden" name="next" value="<?= View::e($view->currentPath()) ?>">
-                <label class="form-label mb-0 small text-body-secondary" for="clara-language"><?= View::e($view->t('language.label')) ?></label>
-                <select class="form-select form-select-sm w-auto" id="clara-language" name="language">
-                    <?php foreach ($view->languages() as $language): ?>
-                        <option value="<?= View::e($language['code']) ?>"<?= $language['code'] === $view->currentLanguage() ? ' selected' : '' ?>>
-                            <?= View::e($language['display_name']) ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-                <button class="btn btn-sm btn-outline-secondary" type="submit"><?= View::e($view->t('action.save')) ?></button>
-            </form>
-
-            <form method="post" action="/theme" class="d-flex align-items-center gap-2">
-                <?= $view->csrfField() ?>
-                <input type="hidden" name="next" value="<?= View::e($view->currentPath()) ?>">
-                <label class="form-label mb-0 small text-body-secondary" for="clara-theme"><?= View::e($view->t('theme.label')) ?></label>
-                <select class="form-select form-select-sm w-auto" id="clara-theme" name="theme">
-                    <option value="default"<?= $view->selectedTheme() === null ? ' selected' : '' ?>>
-                        <?= View::e($view->t('theme.default')) ?>
-                    </option>
-                    <?php foreach ($view->installedThemes() as $theme): ?>
-                        <option value="<?= View::e($theme['id']) ?>"<?= $view->selectedTheme() === $theme['id'] ? ' selected' : '' ?>>
-                            <?= View::e($theme['label']) ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-                <button class="btn btn-sm btn-outline-secondary" type="submit"><?= View::e($view->t('action.save')) ?></button>
-            </form>
-
-            <!-- Account entries (§2.4): user-scoped, so they live outside any section
-                 panel and stay put while the panel changes. The password link appears only
-                 for an account with a local credential to change (GD-23) — an entry whose
-                 only outcome is "this account signs in through a provider" offers nothing
-                 (§3.1). -->
-            <nav class="clara-account-links d-flex flex-wrap gap-2" aria-label="<?= View::e($view->t('nav.account')) ?>">
-                <a class="small" href="/account/two-factor"><?= View::e($view->t('nav.two_factor')) ?></a>
-                <?php if ($view->hasLocalCredential()): ?>
-                    <a class="small" href="/account/password"><?= View::e($view->t('nav.password')) ?></a>
-                <?php endif; ?>
-            </nav>
-
-            <span class="ms-auto text-body-secondary small"><?= View::e($view->displayName()) ?></span>
-
-            <form method="post" action="/logout" class="d-flex">
-                <?= $view->csrfField() ?>
-                <button class="btn btn-sm btn-outline-danger" type="submit"><?= View::e($view->t('nav.sign_out')) ?></button>
-            </form>
-        <?php endif; ?>
-    </div>
-</footer>
 
 <!-- Bootstrap's bundle JS (Popper included), vendored and same-origin. -->
 <script src="/assets/vendor/bootstrap/bootstrap.bundle.min.js"></script>
