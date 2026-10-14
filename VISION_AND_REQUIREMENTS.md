@@ -876,6 +876,18 @@ Sunnaas Sykehus	SUN	Nesodden (Specialized rehabilitation hospital)
 
 **Status:** Done 2026-10-13 — the Control Panel's Projects form offers these hospitals as the main supporting institution, stored by short code and shown with their sites (e.g. value `OUS`, text "Oslo University Hospital, Rikshospitalet, Ullevål, Radiumhospitalet, Aker"), followed by NAT EU and Other; the previous codes (VEST, HBE, SUS, FOR, FON, UIB, UIS, HVL) are no longer offered, but a project stored under one keeps it on edit (REQ-DB-006, REQ-UI-012, `User_Interface_Design.md` §5.2). The participant name pattern is no longer displayed on that form: it is derived from the project name on create and kept unchanged on edit. Tests: `tests/php/m3_admin_test.php`, `e2e/tests/admin.spec.ts`.
 
+## Repeating instruments
+
+If an instrument is repeating for a specific event in the Record Status Dashboard show a dropdown on the "clara-instances" which lists "Series #1", "Series #2". If there is only a single instance or the instrument is not repeating keep the current display (bubble only).
+
+## Overview display for a project
+
+Only show the pattern for naming records if the project is using "Type record id". Do not show it in "Auto name" mode.
+
+## Organize fields differently
+
+The Setup screen functionality for "Instruments" (edit, remove and add instrument) should move to the Design screen that already shows a similar table (allows to import and to set repeating by event).
+
 
 # Presentation
 
