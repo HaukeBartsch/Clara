@@ -116,9 +116,11 @@ const renderSankey = async (canvas, payload) => {
     .nodeId((node) => node.id)
     .nodeWidth(14)
     .nodePadding(Math.max(4, Math.min(10, height / groups / 3)))
-    // The generated `order` keeps areas in document order with their families below them, and
-    // the classes in the classification's own order — the same picture on every render.
-    .nodeSort((a, b) => a.order - b.order)
+    // The generated `order` keeps families grouped under their area and the classes in the
+    // classification's own order; the areas themselves stack longest label first, so the left
+    // column reads as a descending staircase. d3-sankey applies this comparator within each
+    // column and skips its own relaxation re-sort — the same picture on every render.
+    .nodeSort((a, b) => (a.column === 0 ? b.label.length - a.label.length || a.order - b.order : a.order - b.order))
     .extent([[margin.left, margin.top], [width - margin.right, height - margin.bottom]])
 
   const graph = layout({
