@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -86,6 +87,41 @@ func (l *RateLimiter) Allow(key string, lim Limit, now time.Time) (bool, time.Du
 	}
 	l.hits[key] = append(keep, now)
 	return true, 0
+}
+
+// BlockedIP is one source IP currently inside its blockout (§3.9, REQ-API-164).
+type BlockedIP struct {
+	IP               string `json:"ip"`
+	BlockedUntil     string `json:"blocked_until"`     // canonical UTC (REQ-DB-005)
+	SecondsRemaining int    `json:"seconds_remaining"` // whole seconds, rounded up
+}
+
+// Blocked snapshots the source IPs blocked at now, sorted by address
+// (GET /api/v1/system/blocked-ips, REQ-API-164). Read-only: it never mutates
+// limiter state — the sweep stays inside Allow — and filters expired entries
+// at read time, so the answer is correct even when traffic has stopped and no
+// sweep has run. Nil-safe: a handler built without a limiter sees an empty
+// list, never a panic.
+func (l *RateLimiter) Blocked(now time.Time) []BlockedIP {
+	if l == nil {
+		return []BlockedIP{}
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := make([]BlockedIP, 0, len(l.blocked))
+	for ip, until := range l.blocked {
+		if !until.After(now) {
+			continue
+		}
+		d := until.Sub(now)
+		out = append(out, BlockedIP{
+			IP:               ip,
+			BlockedUntil:     until.UTC().Format("2006-01-02 15:04:05"),
+			SecondsRemaining: int((d + time.Second - time.Nanosecond) / time.Second),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].IP < out[j].IP })
+	return out
 }
 
 // sweepLocked drops keys with no live state — block expired and window

@@ -2059,6 +2059,34 @@
           }
         }
       }
+    },
+    "/api/v1/system/blocked-ips": {
+      "get": {
+        "tags": [
+          "Admin: Settings"
+        ],
+        "operationId": "getSystemBlockedIps",
+        "summary": "List the rate-limiter blockouts (REQ-API-164)",
+        "description": "`is_admin`. Read-only, not audited. Every source IP currently inside its blockout with the moment the block expires, plus the effective enable flag and both thresholds (API_Endpoints_Design.md §4.26). Live limiter state at request time: nothing is persisted and blocks reset on restart like the limiter itself. Source addresses are personal data shown to administrators only.",
+        "responses": {
+          "200": {
+            "description": "The current blockout list.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlockedIpList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedServiceToken"
+          },
+          "403": {
+            "$ref": "#/components/responses/AdminForbidden"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2440,6 +2468,50 @@
           "count": {
             "type": "integer",
             "minimum": 0
+          }
+        }
+      },
+      "BlockedIpList": {
+        "type": "object",
+        "required": ["generated_at", "enabled", "rpm", "block_minutes", "blocked"],
+        "properties": {
+          "generated_at": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether rate limiting is on (REQ-API-112) — lets a reader tell \"nothing blocked\" from \"limiter off\"."
+          },
+          "rpm": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The effective per-minute budget per source IP."
+          },
+          "block_minutes": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The effective blockout period in minutes (REQ-API-113)."
+          },
+          "blocked": {
+            "type": "array",
+            "description": "One entry per blocked source IP, sorted by address.",
+            "items": {
+              "type": "object",
+              "required": ["ip", "blocked_until", "seconds_remaining"],
+              "properties": {
+                "ip": {
+                  "type": "string"
+                },
+                "blocked_until": {
+                  "$ref": "#/components/schemas/Timestamp"
+                },
+                "seconds_remaining": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Whole seconds until the block expires, rounded up."
+                }
+              }
+            }
           }
         }
       },

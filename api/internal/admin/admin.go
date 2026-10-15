@@ -31,15 +31,20 @@ import (
 // Handler serves the administration API against one store. Areas register
 // their routes on the mux passed to New (registerAuth, registerUsers, …).
 type Handler struct {
-	Store   *db.Store
-	Cfg     *config.Config
-	Audit   *audit.Writer
-	Mail    *mailer.Mailer   // email second-factor codes and setup links (REQ-AUTH-057/060/062)
-	Data    *dataapi.Handler // serves the shared streaming export core (§4.14)
+	Store *db.Store
+	Cfg   *config.Config
+	Audit *audit.Writer
+	Mail  *mailer.Mailer   // email second-factor codes and setup links (REQ-AUTH-057/060/062)
+	Data  *dataapi.Handler // serves the shared streaming export core (§4.14)
 	// Metrics is the process performance registry served by
 	// GET /api/v1/system/metrics (§4.25, REQ-API-163); nil yields an empty
 	// snapshot.
 	Metrics *metrics.Registry
+	// Limiter is the shared per-source-IP rate limiter whose blockouts
+	// GET /api/v1/system/blocked-ips reports (§4.26, REQ-API-164) — the very
+	// instance httpapi's middleware and the data API call Allow on. Nil yields
+	// an empty list.
+	Limiter *dataapi.RateLimiter
 	// Handler is the /api/v1/ mux built by New. The concrete type lets the
 	// httpapi middleware resolve low-cardinality route labels from it
 	// (mux.Handler) without duplicating the pattern table (REQ-API-163).
@@ -55,9 +60,11 @@ type Handler struct {
 
 // New builds the administration handler and registers every area's routes.
 // reg is the process performance registry (REQ-API-163); nil disables the
-// metrics endpoint content but keeps everything else working.
-func New(store *db.Store, cfg *config.Config, aw *audit.Writer, reg *metrics.Registry) *Handler {
-	h := &Handler{Store: store, Cfg: cfg, Audit: aw, Mail: mailer.New(cfg), Metrics: reg,
+// metrics endpoint content but keeps everything else working. limiter is the
+// shared rate limiter whose blockouts §4.26 reports (REQ-API-164); nil yields
+// an empty blocked list.
+func New(store *db.Store, cfg *config.Config, aw *audit.Writer, reg *metrics.Registry, limiter *dataapi.RateLimiter) *Handler {
+	h := &Handler{Store: store, Cfg: cfg, Audit: aw, Mail: mailer.New(cfg), Metrics: reg, Limiter: limiter,
 		Data:     &dataapi.Handler{Store: store, Cfg: cfg, Audit: aw, Metrics: reg},
 		tfaSends: newSendLimiter(), resetSends: newAddressLimiter(), lockouts: newAuthLockout()}
 	mux := http.NewServeMux()
@@ -81,6 +88,7 @@ func New(store *db.Store, cfg *config.Config, aw *audit.Writer, reg *metrics.Reg
 	h.registerSettings(mux)
 	h.registerSystemCheck(mux)
 	h.registerSystemMetrics(mux)
+	h.registerSystemBlockedIps(mux)
 	h.Handler = mux
 	return h
 }

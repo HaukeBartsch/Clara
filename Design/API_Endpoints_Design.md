@@ -1249,6 +1249,20 @@ The HTTP grid brackets the 300 ms p95 admin-read target (REQ-TECH-010) on the §
 
 **Sufficiency** (REQ-API-163's evaluation goal): per-route p95 against REQ-TECH-010/011, DB verb totals and durations against "is the database the bottleneck", pool waits against CPU/memory headroom (`process.*`) — enough to decide whether an infrastructure or database extension is warranted, from one JSON document.
 
+### 4.26 Rate-limit blocks (REQ-API-164)
+
+**`GET /api/v1/system/blocked-ips`** — `is_admin` only (403 `forbidden` otherwise); read-only and not audited, like §4.24/§4.25. The live state of the per-source-IP rate limiter (§3.9, REQ-API-038/113): every source IP currently inside its blockout with the moment its block expires, plus the effective enable flag and both thresholds (read from the system settings like every other request, REQ-API-112). The answer comes from the one shared limiter instance at request time — nothing is persisted and blocks reset on restart like the limiter itself; expired entries never surface even when traffic has stopped and the periodic sweep inside `Allow` has not run.
+
+Unlike §4.25's never-user-data snapshot, **this payload carries source IP addresses — personal data** — which is exactly why it sits behind the same `is_admin` boundary as the limiter's settings (REQ-API-007) and is consumed only by the Control Panel's Monitoring section (REQ-UI-064).
+
+| Field | Unit / source |
+|---|------|
+| `generated_at` | snapshot time, canonical UTC (REQ-DB-005) — clients align ticks to it rather than their own clock |
+| `enabled`, `rpm`, `block_minutes` | the effective settings (`RateLimitSettings`) so a reader can tell "nothing blocked" from "limiter off" |
+| `blocked[]` | one entry per blocked source IP, sorted by address: `ip`, `blocked_until` (canonical UTC), `seconds_remaining` (whole seconds, rounded up) |
+
+The Monitoring page polls this endpoint once per second next to `/system/metrics`; both calls ride the administration chain and count against the limiter like any other request — with a low `rate_limit_rpm` an open Monitoring page can spend the budget of PHP's source address and show itself blocked. That is honest behaviour, not a defect: the blockout exists precisely to refuse over-frequent callers.
+
 ## 5. Permission summary
 
 The normative endpoint → permission mapping is in `API_Endpoints_Requirement.md` §4.22; it is reproduced here as an overview:
@@ -1287,6 +1301,7 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirement.m
 | `GET /api/v1/audit/export` (§4.23, REQ-API-158) | `is_admin` only (REQ-API-078) |
 | `GET /api/v1/system/check` (§4.24, REQ-API-159) | `is_admin` only |
 | `GET /api/v1/system/metrics` (§4.25, REQ-API-163) | `is_admin` only |
+| `GET /api/v1/system/blocked-ips` (§4.26, REQ-API-164) | `is_admin` only |
 | `GET /i18n/languages`, `PUT /users/me/ui-language`, `PUT /users/me/ui-theme` (§4.19) | any authenticated user |
 | `GET/PUT /i18n/strings` | `is_admin` |
 | `POST …/end-provision` (§4.20) | `is_admin` (BR-009) |

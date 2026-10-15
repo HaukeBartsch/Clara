@@ -32,7 +32,9 @@ test.describe("Configuration Check in the Control Panel (REQ-UI-061)", () => {
     await page.locator('header a[href="/admin"]').click()
     const nav = page.locator("#clara-nav")
     const labels = await nav.getByRole("link").allInnerTexts()
-    expect(labels.indexOf("Configuration Check")).toBe(labels.indexOf("Settings") + 1)
+    // REQ-UI-064 inserted Monitoring between Settings and Configuration Check (REQ-UI-047).
+    expect(labels.indexOf("Monitoring")).toBe(labels.indexOf("Settings") + 1)
+    expect(labels.indexOf("Configuration Check")).toBe(labels.indexOf("Monitoring") + 1)
     expect(labels.indexOf("API documentation")).toBe(labels.indexOf("Configuration Check") + 1)
 
     await nav.getByRole("link", { name: "Configuration Check" }).click()

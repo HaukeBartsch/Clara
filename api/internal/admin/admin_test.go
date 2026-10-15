@@ -51,7 +51,7 @@ func newEnv(t *testing.T) *env {
 	if err := aw.EnsureYear(ctx); err != nil {
 		t.Fatalf("EnsureYear: %v", err)
 	}
-	return &env{t: t, Store: store, Cfg: cfg, Audit: aw, Handler: New(store, cfg, aw, nil)}
+	return &env{t: t, Store: store, Cfg: cfg, Audit: aw, Handler: New(store, cfg, aw, nil, nil)}
 }
 
 // do runs one request against the administration mux. A non-nil actor is

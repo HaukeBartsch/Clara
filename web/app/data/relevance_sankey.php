@@ -21,7 +21,7 @@ return array (
       'column' => 0,
       'order' => 0,
       'area' => 'api-endpoints',
-      'codes' => 195,
+      'codes' => 197,
     ),
     1 => 
     array (
@@ -30,7 +30,7 @@ return array (
       'order' => 0,
       'prefix' => 'REQ-API',
       'kind' => 'req',
-      'codes' => 161,
+      'codes' => 163,
     ),
     2 => 
     array (
@@ -327,7 +327,7 @@ return array (
       'column' => 0,
       'order' => 9,
       'area' => 'user-interface',
-      'codes' => 84,
+      'codes' => 85,
     ),
     36 => 
     array (
@@ -336,7 +336,7 @@ return array (
       'order' => 90,
       'prefix' => 'REQ-UI',
       'kind' => 'req',
-      'codes' => 63,
+      'codes' => 64,
     ),
     37 => 
     array (
@@ -362,7 +362,7 @@ return array (
       'column' => 2,
       'order' => 0,
       'class' => 'security',
-      'codes' => 387,
+      'codes' => 388,
     ),
     40 => 
     array (
@@ -370,7 +370,7 @@ return array (
       'column' => 2,
       'order' => 1,
       'class' => 'performance',
-      'codes' => 34,
+      'codes' => 36,
     ),
     41 => 
     array (
@@ -378,7 +378,7 @@ return array (
       'column' => 2,
       'order' => 2,
       'class' => 'workflow',
-      'codes' => 333,
+      'codes' => 334,
     ),
     42 => 
     array (
@@ -386,7 +386,7 @@ return array (
       'column' => 2,
       'order' => 3,
       'class' => 'scalability',
-      'codes' => 64,
+      'codes' => 65,
     ),
     43 => 
     array (
@@ -403,19 +403,19 @@ return array (
     array (
       'source' => 'a-api-endpoints',
       'target' => 'g-api-endpoints-req',
-      'value' => 234,
+      'value' => 237,
     ),
     1 => 
     array (
       'source' => 'g-api-endpoints-req',
       'target' => 'c-security',
-      'value' => 80,
+      'value' => 81,
     ),
     2 => 
     array (
       'source' => 'g-api-endpoints-req',
       'target' => 'c-performance',
-      'value' => 8,
+      'value' => 9,
     ),
     3 => 
     array (
@@ -427,7 +427,7 @@ return array (
     array (
       'source' => 'g-api-endpoints-req',
       'target' => 'c-scalability',
-      'value' => 7,
+      'value' => 8,
     ),
     5 => 
     array (
@@ -1111,7 +1111,7 @@ return array (
     array (
       'source' => 'a-user-interface',
       'target' => 'g-user-interface-req',
-      'value' => 101,
+      'value' => 103,
     ),
     119 => 
     array (
@@ -1123,13 +1123,13 @@ return array (
     array (
       'source' => 'g-user-interface-req',
       'target' => 'c-performance',
-      'value' => 4,
+      'value' => 5,
     ),
     121 => 
     array (
       'source' => 'g-user-interface-req',
       'target' => 'c-workflow',
-      'value' => 50,
+      'value' => 51,
     ),
     122 => 
     array (

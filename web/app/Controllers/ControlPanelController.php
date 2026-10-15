@@ -89,6 +89,7 @@ final class ControlPanelController extends Controller
             'audits' => $this->auditsPage(),
             'translations' => $this->translationsPage(),
             'settings' => $this->settingsPage(''),
+            'monitoring' => $this->monitoringPage(),
             'check' => $this->configCheckPage(),
             'api' => $this->apiDocsPage(),
             default => $this->page('admin/none', [
@@ -638,13 +639,18 @@ final class ControlPanelController extends Controller
     /**
      * The data region of `GET /admin` for `Accept: application/json` (§2.1, REQ-UI-044):
      * the Translations section's key rows — exactly what its rendered table would show,
-     * nothing more. Every other section carries no region and answers 406.
+     * nothing more — and the Monitoring section's combined `{metrics, rate_limit}` snapshot
+     * pair (§5.11, REQ-UI-064), which its script re-reads once per second. Every other
+     * section carries no region and answers 406.
      */
     public function data(): Response
     {
         $section = Navigation::resolveAdminSection($this->request->query('section'));
         if (($section['key'] ?? '') === 'api') {
             return $this->apiSpec();
+        }
+        if (($section['key'] ?? '') === 'monitoring') {
+            return Response::json($this->monitoringFacts());
         }
         if (($section['key'] ?? '') !== 'translations') {
             return Response::notAcceptable();
@@ -702,6 +708,68 @@ final class ControlPanelController extends Controller
             'admin.check.browser.assets.ok', 'admin.check.browser.assets.cache', 'admin.check.browser.assets.vendor',
             'admin.check.browser.hsts.ok', 'admin.check.browser.hsts.missing', 'admin.check.browser.hsts.plain',
         ];
+    }
+
+    // --- Monitoring (§5.11, REQ-UI-064) ----------------------------------------------
+
+    /**
+     * The Monitoring section: live API performance and rate-limiter state. The server-rendered
+     * first paint reads the same two endpoints the page then polls — `GET /api/v1/system/metrics`
+     * (Design §4.25, REQ-API-163) and `GET /api/v1/system/blocked-ips` (§4.26, REQ-API-164) —
+     * and `monitoring.js` takes over: once a second while the page is visible it re-reads this
+     * section's data region, appends the sample to a browser-side buffer, and redraws the d3
+     * line charts of the last hour as observed since the page was opened. An API that cannot
+     * answer is itself the finding, so a failure renders rather than throwing.
+     */
+    private function monitoringPage(): Response
+    {
+        $facts = $this->monitoringFacts();
+
+        return $this->section('monitoring', 'admin/monitoring', 'admin.monitoring.title', [
+            'metrics' => $facts['metrics'],
+            'metricsError' => $facts['metrics_error'],
+            'rateLimit' => $facts['rate_limit'],
+            'rateLimitError' => $facts['rate_limit_error'],
+        ], [
+            // d3 is a UMD library attaching to the global; module scripts run in document
+            // order, so monitoring.js sees it. Static extras — no dynamic loadScript dance.
+            'scripts' => ['/assets/vendor/d3/d3.v7.min.js', '/assets/js/monitoring.js'],
+            'jsKeys' => [
+                'admin.monitoring.stat.rps', 'admin.monitoring.stat.latency', 'admin.monitoring.stat.goroutines',
+                'admin.monitoring.stat.heap', 'admin.monitoring.stat.pool', 'admin.monitoring.stat.waits',
+                'admin.monitoring.stat.throughput', 'admin.monitoring.stat.blocked', 'admin.monitoring.stat.uptime',
+                'admin.monitoring.chart.rps', 'admin.monitoring.chart.latency', 'admin.monitoring.chart.goroutines',
+                'admin.monitoring.chart.heap', 'admin.monitoring.chart.pool', 'admin.monitoring.chart.waits',
+                'admin.monitoring.chart.gc', 'admin.monitoring.chart.throughput',
+                'admin.monitoring.blocked.none', 'admin.monitoring.blocked.on', 'admin.monitoring.blocked.off',
+                'admin.monitoring.failed', 'admin.monitoring.updated',
+            ],
+        ]);
+    }
+
+    /**
+     * The Monitoring section's two upstream reads (§5.11): each key is null with its error code
+     * when that endpoint cannot be reached — the page and the data region (REQ-UI-044) render
+     * either way, and one failing endpoint must not hide the other's live numbers. The data
+     * region answers with this same object once per second while the page is open.
+     *
+     * @return array{metrics: ?array<mixed>, metrics_error: ?string, rate_limit: ?array<mixed>, rate_limit_error: ?string}
+     */
+    private function monitoringFacts(): array
+    {
+        $out = [];
+        foreach (['metrics' => '/api/v1/system/metrics', 'rate_limit' => '/api/v1/system/blocked-ips'] as $key => $path) {
+            try {
+                $out[$key] = $this->api->get($path);
+                $out[$key . '_error'] = null;
+            } catch (ApiException $e) {
+                $this->logger->warn('monitoring: api facts unavailable', ['endpoint' => $path, 'code' => $e->code(), 'status' => $e->status()]);
+                $out[$key] = null;
+                $out[$key . '_error'] = $e->code();
+            }
+        }
+
+        return $out;
     }
 
     // --- API documentation (§5.9, REQ-UI-057) ----------------------------------------

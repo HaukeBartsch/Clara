@@ -314,6 +314,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 | ID | Requirement |
 |---|------|
 | REQ-API-163 | The API MUST measure its own performance in process memory only — nothing measured is persisted, and all values reset on restart: per registered route pattern and method the request count, a fixed-bucket latency histogram with `p50`/`p95`/`p99` estimates and status-class counts, and total request/response payload bytes; for the data API additionally per supported `content` value (a fixed vocabulary — an unknown value never becomes a label); per database statement by verb (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `COMMIT`, `ROLLBACK`, other) the count, duration histogram, error count and rows read or written; connection-pool waits and dial counts; and process-level Go runtime memory and GC statistics. Measurement MUST NOT alter behavior; it MUST NOT record SQL statement text, parameters or stored values (no PHI crosses the statement boundary), and label cardinality is bounded by construction — server-side route templates only, never a path value, id or token. `GET /api/v1/system/metrics` MUST expose the snapshot as JSON, reserved to `is_admin` (403 otherwise; REQ-API-007), read-only and not audited like REQ-API-159, and MUST NOT contain secrets or user data. The information MUST suffice to evaluate extensions to the infrastructure that runs the API and to the database system it talks to against the reference-hardware targets of `Technology_Stack_Design.md` §7 (REQ-TECH-010/011; vision "Performance metrics as part of api"). |
+| REQ-API-164 | The API MUST expose the rate limiter's current state (REQ-API-038, REQ-API-113) as `GET /api/v1/system/blocked-ips`: every source IP currently inside its blockout with the moment its block expires, together with the effective enable flag and both thresholds — reserved to `is_admin` (403 otherwise; REQ-API-007), read-only and not audited like REQ-API-159. The answer comes from live limiter state at request time; nothing is persisted and blocks reset on restart like the limiter itself. Because source addresses are personal data, the endpoint reveals them to no one but installation administrators (the Control Panel's Monitoring section, REQ-UI-064). |
 
 ### 4.22 Permission summary
 
@@ -344,6 +345,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 | `GET /api/v1/audit/export` | `is_admin` only (REQ-API-078, REQ-API-158) |
 | `GET /api/v1/system/check` | `is_admin` only (REQ-API-159) |
 | `GET /api/v1/system/metrics` | `is_admin` only (REQ-API-163) |
+| `GET /api/v1/system/blocked-ips` | `is_admin` only (REQ-API-164) |
 | `GET .../mode` | data access ≥ `read_only` |
 | `PUT .../mode` (§4.19) | `is_admin` — a project's own `project_admin` is rejected (403) |
 | staging start/commit/discard (§4.19) | `project_admin` |
