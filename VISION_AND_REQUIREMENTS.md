@@ -558,8 +558,11 @@ Keep a list of technical debt. Include things like node, nvm, composer, php and 
 
 For admin users add a webllm based interface that can access the api (read only mode, or read and write) through an mcp server. The webllm application should preload a model for tool use and stream responses to the user (see for example https://github.com/OpenLinkSoftware/WebLLM-Tools-Sample). Use cases are:
 - request information about projects
+- add new records to a project using a list of record_ids or a spreadsheet with additional fields
+- suggest a design for a longitudinal study (Setup), ask for good event names, assign instruments, make them surveys if needed and make them repeatable
 - statistics about stored data in a project (marginal statistics, t-tests and linear mixed effects models)
 - answer questions about data stored in different projects - like distribution of "sex at birth" variables by project
+For info graphics use ggplot2 or matplotlib.
 
 ## Better documentation
 
@@ -930,3 +933,19 @@ Explicitly parked ("Later")
 WebLLM admin interface via MCP — still marked Later, untouched. (The JWT question was answered/not adopted, argon2id landed, export features were done 2026-10-11.)
 
 Everything else in the document — rate limiting with Control-Panel thresholds, named parallel auth-source racing, per-field record history, timezones, TOTP+email 2FA, per-event survey links, the role permission matrix, the project page flow, relevance classification — is implemented and traceable to REQ IDs. The security table above plus the six concrete items are the real backlog; F6–F9 would be where I'd start.
+
+
+
+## New field type "transfer" for cross-project data transfers
+
+Add a new field type "transfer". Such a field is represented by a button to trigger its action. The button is displayed in normal data entry view, disabled in surveys. The "Choices, Calculations, OR Slider Labels" for a transfer field contains copy instructions that a) link a field on the current instrument [field] with a record in a target project (perform a create new record action) as [project][field]. Additional copy instructions transfer information from the current instrument [field] to [project][event][field] in the other project's new record as [project][event][field] (assumes field values to be copied to the target projects new record). If the target record already exists no new record is created but field values are still being copied over (update the values in the other projects record field). 
+
+Here an example coding for the transfer button (use '#' to indicate comments till end of line, newlines and spaces for copy operations belonging to the created field, alias "new_record" has no further function yet):
+
+```
+create [field] [project][record_id] as new_record:     # create a new named record in [project] with record name [field]
+  copy [field]  [project][baseline][place_for_field1]  # copy the value of the current instruments field to the new records [event][place_for_field1]
+  copy [field2] [project][baseline][place_for_field2]  # copy the value of the current instruments field to the new records [event][place_for_field2]
+  ...
+```
+
