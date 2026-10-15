@@ -16,7 +16,7 @@ import (
 
 func TestOpenAPIJSONEndpoint(t *testing.T) {
 	e := newEnv(t)
-	mux := NewMux(e.Store, e.Cfg, e.Audit)
+	mux := NewMux(e.Store, e.Cfg, e.Audit, nil)
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/openapi.json", nil))
@@ -53,7 +53,7 @@ func TestOpenAPIJSONEndpoint(t *testing.T) {
 
 func TestDocsUIEndpoint(t *testing.T) {
 	e := newEnv(t)
-	mux := NewMux(e.Store, e.Cfg, e.Audit)
+	mux := NewMux(e.Store, e.Cfg, e.Audit, nil)
 
 	for _, path := range []string{"/docs", "/docs/"} {
 		rec := httptest.NewRecorder()
@@ -75,7 +75,7 @@ func TestDocsUIEndpoint(t *testing.T) {
 
 func TestDocsAssetsServed(t *testing.T) {
 	e := newEnv(t)
-	mux := NewMux(e.Store, e.Cfg, e.Audit)
+	mux := NewMux(e.Store, e.Cfg, e.Audit, nil)
 
 	cases := []struct {
 		path        string

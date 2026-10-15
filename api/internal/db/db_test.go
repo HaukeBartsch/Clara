@@ -16,7 +16,7 @@ import (
 
 func TestOpenUnknownConnection(t *testing.T) {
 	cfg := &config.Config{AppEnv: "development", DBConnection: "postgres", AnonSalt: "s"}
-	s, err := Open(cfg)
+	s, err := Open(cfg, nil)
 	if err == nil {
 		s.Close()
 		t.Fatalf("Open with DB_CONNECTION=postgres succeeded, want an error")
@@ -33,7 +33,7 @@ func TestOpenSQLiteSelectsDialect(t *testing.T) {
 		DBDatabase:   filepath.Join(t.TempDir(), "open.sqlite"),
 		AnonSalt:     "test-salt",
 	}
-	s, err := Open(cfg)
+	s, err := Open(cfg, nil)
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestOpenUnreachableDatabaseFailsFast(t *testing.T) {
 		DBDatabase:   filepath.Join(t.TempDir(), "missing-dir", "test.sqlite"),
 		AnonSalt:     "test-salt",
 	}
-	s, err := Open(cfg)
+	s, err := Open(cfg, nil)
 	if err == nil {
 		s.Close()
 		t.Fatalf("Open on an unwritable path succeeded, want a ping failure")

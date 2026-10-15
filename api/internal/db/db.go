@@ -11,6 +11,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"csms/api/internal/config"
+	"csms/api/internal/metrics"
 )
 
 // Dialect identifies the storage engine in use.
@@ -53,8 +54,10 @@ func (s *Store) BumpStructureCache() { s.structGen.Add(1) }
 
 // Open connects to the configured database (REQ-DB-002), sets sane pool
 // limits, and verifies connectivity (REQ-TECH-014: fail fast on an
-// unreachable database).
-func Open(cfg *config.Config) (*Store, error) {
+// unreachable database). When reg != nil the connection is instrumented
+// transparently (REQ-API-163, driverwrap.go); callers that do not want
+// metrics — tests included — pass nil and get the plain sql.Open path.
+func Open(cfg *config.Config, reg *metrics.Registry) (*Store, error) {
 	var (
 		driver string
 		dsn    string
@@ -84,7 +87,7 @@ func Open(cfg *config.Config) (*Store, error) {
 		return nil, fmt.Errorf("unknown DB_CONNECTION %q", cfg.DBConnection)
 	}
 
-	db, err := sql.Open(driver, dsn)
+	db, err := openDB(d, driver, dsn, reg)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}

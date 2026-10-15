@@ -54,7 +54,7 @@ func newFionaFixture(t *testing.T) *fionaFixture {
 		AppTimezone:      "UTC",
 	}
 	testdb.Use(t, cfg)
-	s, err := db.Open(cfg)
+	s, err := db.Open(cfg, nil)
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}

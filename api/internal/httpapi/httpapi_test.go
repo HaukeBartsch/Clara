@@ -52,7 +52,7 @@ func newEnv(t *testing.T) *env {
 		WebPublicURL:         "https://csms.example.org",
 	}
 	testdb.Use(t, cfg)
-	store, err := db.Open(cfg)
+	store, err := db.Open(cfg, nil)
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
@@ -778,7 +778,7 @@ func retryAfter(t *testing.T, rec *httptest.ResponseRecorder) int {
 func TestNewMuxRouting(t *testing.T) {
 	e := newEnv(t)
 	root := e.mustAdmin("root@example.org")
-	mux := NewMux(e.Store, e.Cfg, e.Audit)
+	mux := NewMux(e.Store, e.Cfg, e.Audit, nil)
 
 	t.Run("GET /healthz", func(t *testing.T) {
 		rec := serve(t, mux, httptest.NewRequest(http.MethodGet, "/healthz", nil))

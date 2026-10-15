@@ -20,27 +20,46 @@ import (
 	"csms/api/internal/config"
 	"csms/api/internal/dataapi"
 	"csms/api/internal/db"
+	"csms/api/internal/metrics"
 )
 
 // NewMux builds the full route table. The administration surface is wrapped
 // in the service-token boundary; the data API and health endpoint are public
 // (nginx additionally keeps /api/v1/* and /docs off the public network —
-// Technology_Stack_Design.md §5).
-func NewMux(store *db.Store, cfg *config.Config, aw *audit.Writer) http.Handler {
+// Technology_Stack_Design.md §5). reg instruments every mount but the docs
+// endpoints (REQ-API-163); nil leaves the chain exactly as it was.
+func NewMux(store *db.Store, cfg *config.Config, aw *audit.Writer, reg *metrics.Registry) http.Handler {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("GET /healthz", healthHandler(store))
+	mux.Handle("GET /healthz", metrics.Middleware(reg, metrics.StaticRoute("/healthz"), healthHandler(store)))
 
 	registerDocs(mux)
 
-	data := &dataapi.Handler{Store: store, Cfg: cfg, Limiter: dataapi.NewRateLimiter(), Audit: aw}
-	mux.Handle("/api/", data)
+	data := &dataapi.Handler{Store: store, Cfg: cfg, Limiter: dataapi.NewRateLimiter(), Audit: aw, Metrics: reg}
+	mux.Handle("/api/", metrics.Middleware(reg, metrics.StaticRoute("/api/"), data))
 
-	adminAPI := admin.New(store, cfg, aw)
-	mux.Handle("/api/v1/", rateLimit(store, cfg, data.Limiter,
-		structureInvalidation(store, AdminBoundary(adminAPI.Handler, store, cfg, aw))))
+	adminAPI := admin.New(store, cfg, aw, reg)
+	// Metrics outermost on the administration chain so rate-limit 429s and
+	// boundary 401/403 land inside the measured latency (REQ-API-163).
+	mux.Handle("/api/v1/", metrics.Middleware(reg, adminRoute(adminAPI.Handler),
+		rateLimit(store, cfg, data.Limiter,
+			structureInvalidation(store, AdminBoundary(adminAPI.Handler, store, cfg, aw)))))
 
 	return mux
+}
+
+// adminRoute resolves the low-cardinality label for an administration request
+// from the admin mux's own registered patterns (REQ-API-163): mux.Handler(r)
+// reports the matched pattern — including its method token, e.g.
+// "GET /api/v1/projects/{id}" — without invoking it, and "" when nothing
+// matches (unknown path or wrong method), which observes as "unmatched". The
+// resolver is a pure lookup on the server's own table, so concrete path
+// values never mint a label; metrics.Middleware strips the method token.
+func adminRoute(mux *http.ServeMux) func(*http.Request) string {
+	return func(r *http.Request) string {
+		_, pattern := mux.Handler(r)
+		return pattern
+	}
 }
 
 // structurePaths are the administration prefixes whose writes can change a

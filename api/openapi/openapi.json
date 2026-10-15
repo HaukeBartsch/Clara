@@ -2031,6 +2031,34 @@
           "500": { "description": "The database could not be read." }
         }
       }
+    },
+    "/api/v1/system/metrics": {
+      "get": {
+        "tags": [
+          "Admin: Settings"
+        ],
+        "operationId": "getSystemMetrics",
+        "summary": "Read the in-process performance snapshot (REQ-API-163)",
+        "description": "`is_admin`. Read-only, not audited. Per-route latency histograms and payload bytes, data API timings per content value, database statement timings with row counts per verb, connection dial and pool statistics, process memory and GC — sufficient to evaluate infrastructure and database extensions against the REQ-TECH-010/011 targets (API_Endpoints_Design.md §4.25). Values are measured in memory only and reset on restart. Labels come from closed sets (server-side route templates, the content vocabulary, a fixed verb enum): no path value, token or query text ever appears. Percentiles are estimates interpolated inside the histogram buckets.",
+        "responses": {
+          "200": {
+            "description": "The snapshot.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MetricsSnapshot"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedServiceToken"
+          },
+          "403": {
+            "$ref": "#/components/responses/AdminForbidden"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2117,6 +2145,304 @@
       }
     },
     "schemas": {
+      "MetricsSnapshot": {
+        "type": "object",
+        "description": "In-process performance snapshot (API_Endpoints_Design.md §4.25). Schema rule: fields may be added; existing field names and units never change.",
+        "required": [
+          "generated_at",
+          "uptime_seconds",
+          "process",
+          "http",
+          "data_api",
+          "db"
+        ],
+        "properties": {
+          "generated_at": {
+            "type": "string",
+            "description": "Canonical UTC timestamp of the snapshot."
+          },
+          "uptime_seconds": {
+            "type": "number"
+          },
+          "process": {
+            "type": "object",
+            "description": "Go runtime facts for this API process.",
+            "properties": {
+              "goroutines": {
+                "type": "integer"
+              },
+              "heap_alloc_bytes": {
+                "type": "integer",
+                "description": "Heap bytes in use."
+              },
+              "heap_sys_bytes": {
+                "type": "integer"
+              },
+              "total_alloc_bytes": {
+                "type": "integer",
+                "description": "Cumulative allocated, including reclaimed."
+              },
+              "sys_bytes": {
+                "type": "integer"
+              },
+              "num_gc": {
+                "type": "integer"
+              },
+              "gc_pause_total_ms": {
+                "type": "number"
+              },
+              "gc_pause_last_ms": {
+                "type": "number"
+              },
+              "gc_pause_p50_ms": {
+                "type": "number"
+              },
+              "gc_pause_p95_ms": {
+                "type": "number"
+              },
+              "gc_pause_max_ms": {
+                "type": "number"
+              }
+            }
+          },
+          "http": {
+            "type": "object",
+            "properties": {
+              "requests_total": {
+                "type": "integer"
+              },
+              "routes": {
+                "type": "array",
+                "description": "Sorted by label.",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "route": {
+                      "type": "string",
+                      "description": "Server-side route template with method, e.g. `GET /api/v1/projects/{id}`, `POST /api/`; `OTHER unmatched` when no pattern matched."
+                    },
+                    "status_2xx": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "status_3xx": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "status_4xx": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "status_5xx": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "count": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "sum_ms": {
+                      "type": "number"
+                    },
+                    "mean_ms": {
+                      "type": "number"
+                    },
+                    "p50_ms": {
+                      "type": "number",
+                      "description": "Histogram estimate: linear interpolation inside the bucket."
+                    },
+                    "p95_ms": {
+                      "type": "number"
+                    },
+                    "p99_ms": {
+                      "type": "number"
+                    },
+                    "buckets_le_ms": {
+                      "type": "array",
+                      "description": "Cumulative counts; the last entry is `+Inf` and equals `count`.",
+                      "items": {
+                        "$ref": "#/components/schemas/MetricsBucket"
+                      }
+                    },
+                    "req_bytes_total": {
+                      "type": "integer",
+                      "description": "Sum of request body bytes (`ContentLength` when known, else counted)."
+                    },
+                    "resp_bytes_total": {
+                      "type": "integer",
+                      "description": "Sum of response body bytes."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "data_api": {
+            "type": "object",
+            "properties": {
+              "calls": {
+                "type": "array",
+                "description": "One entry per observed content value, sorted.",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "content": {
+                      "type": "string",
+                      "description": "Fixed vocabulary value; `other` for anything a caller invented or omitted."
+                    },
+                    "count": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "sum_ms": {
+                      "type": "number"
+                    },
+                    "mean_ms": {
+                      "type": "number"
+                    },
+                    "p50_ms": {
+                      "type": "number",
+                      "description": "Histogram estimate: linear interpolation inside the bucket."
+                    },
+                    "p95_ms": {
+                      "type": "number"
+                    },
+                    "p99_ms": {
+                      "type": "number"
+                    },
+                    "buckets_le_ms": {
+                      "type": "array",
+                      "description": "Cumulative counts; the last entry is `+Inf` and equals `count`.",
+                      "items": {
+                        "$ref": "#/components/schemas/MetricsBucket"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "db": {
+            "type": "object",
+            "properties": {
+              "statements": {
+                "type": "array",
+                "description": "One entry per verb seen, sorted.",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "verb": {
+                      "type": "string",
+                      "enum": [
+                        "SELECT",
+                        "INSERT",
+                        "UPDATE",
+                        "DELETE",
+                        "COMMIT",
+                        "ROLLBACK",
+                        "OTHER"
+                      ]
+                    },
+                    "count": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "sum_ms": {
+                      "type": "number"
+                    },
+                    "mean_ms": {
+                      "type": "number"
+                    },
+                    "p50_ms": {
+                      "type": "number",
+                      "description": "Histogram estimate: linear interpolation inside the bucket."
+                    },
+                    "p95_ms": {
+                      "type": "number"
+                    },
+                    "p99_ms": {
+                      "type": "number"
+                    },
+                    "buckets_le_ms": {
+                      "type": "array",
+                      "description": "Cumulative counts; the last entry is `+Inf` and equals `count`.",
+                      "items": {
+                        "$ref": "#/components/schemas/MetricsBucket"
+                      }
+                    },
+                    "errors": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "rows_total": {
+                      "type": "integer",
+                      "description": "Rows the drivers reported: queries count rows read, writes `RowsAffected`; unknown counts contribute nothing."
+                    }
+                  }
+                }
+              },
+              "connections_dialed_total": {
+                "type": "integer"
+              },
+              "dial_sum_ms": {
+                "type": "number"
+              },
+              "dial_errors": {
+                "type": "integer"
+              },
+              "pool": {
+                "type": "object",
+                "description": "Live `database/sql` pool stats.",
+                "properties": {
+                  "max_open": {
+                    "type": "integer"
+                  },
+                  "open": {
+                    "type": "integer"
+                  },
+                  "in_use": {
+                    "type": "integer"
+                  },
+                  "idle": {
+                    "type": "integer"
+                  },
+                  "wait_count": {
+                    "type": "integer",
+                    "description": "Cumulative pool waits — rises when the pool is the bottleneck."
+                  },
+                  "wait_ms": {
+                    "type": "integer"
+                  },
+                  "max_idle_closed": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "MetricsBucket": {
+        "type": "object",
+        "properties": {
+          "le_ms": {
+            "description": "Upper bound in milliseconds, inclusive; the string `+Inf` on the last bucket.",
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "const": "+Inf"
+              }
+            ]
+          },
+          "count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
       "Timestamp": {
         "type": "string",
         "description": "System timestamp in UTC, `YYYY-MM-DD HH:MM:SS` (§1).",

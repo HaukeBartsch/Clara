@@ -220,7 +220,7 @@ func TestSystemCheckRuntimeGrants(t *testing.T) {
 
 	cfg := *e.Cfg
 	cfg.DBUsername, cfg.DBPassword = account, "check-password-1"
-	store, err := db.Open(&cfg)
+	store, err := db.Open(&cfg, nil)
 	if err != nil {
 		t.Fatalf("open as %s: %v", account, err)
 	}

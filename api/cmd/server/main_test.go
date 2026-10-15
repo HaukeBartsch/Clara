@@ -28,7 +28,7 @@ func openTestStore(t *testing.T) *db.Store {
 		InternalServiceToken: "test-token",
 	}
 	testdb.Use(t, cfg)
-	store, err := db.Open(cfg)
+	store, err := db.Open(cfg, nil)
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}

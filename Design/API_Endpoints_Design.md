@@ -1207,9 +1207,51 @@ Every export that ends writes one `audit_export` entry naming the filters applie
 
 On SQLite only `connection`, `version` and `schema_version` are filled; every MariaDB field is `null`, as is any MariaDB value the account cannot read. A database that cannot be read at all answers 500 `internal`.
 
+### 4.25 Performance metrics (REQ-API-163)
+
+**`GET /api/v1/system/metrics`** — `is_admin` only (403 `forbidden` otherwise); read-only and not audited, like §4.24. The API's own performance snapshot, in process memory: **nothing measured is persisted and all values reset on restart** — deliberate zero-config, no environment variable (the endpoint adds no network surface behind the §4.1 boundary and nginx, costs about one timestamp pair plus one mutex per operation, and its memory is bounded by fixed label vocabularies). Facts, never ratings; never a secret, user data, or SQL text.
+
+**Measurement points** (`internal/metrics`, standard library only — no new dependency):
+
+- An HTTP middleware mounted **outermost** on both measured surfaces: `/healthz`, `/api/`, and the whole `/api/v1/` chain — so rate-limit 429s and boundary 401/403 rejections are inside the measured latency (desired traffic accounting). The documentation endpoints stay uninstrumented. Route labels come from the server-side registered pattern only (`http.RequestPatternFromContext`, resp. a pure `ServeMux.Handler` lookup on the administration mux), else `"unmatched"`; the metrics endpoint counts itself.
+- Inside the data API handler, after parameters parse: one observation per call keyed by the fixed `content` vocabulary (`project`, `event`, `metadata`, `formEventMapping`, `exportFieldNames`, `repeatingFormsEvents`, `generateNextRecordName`, `record`) — anything else lands in `"other"`, so a caller string never mints a series.
+- A transparent `database/sql` connector wrapper (`sql.OpenDB` around the driver's own connector): per statement by **verb** (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `COMMIT`, `ROLLBACK`, `OTHER` — from the leading word only; the query text is never retained, and neither parameters nor row values are ever observed), rows read (counted through `Next`, recorded once at exhaustion or close) or written (`RowsAffected`), duration, error flag; per connection dial duration/count. Statements inside transactions flow through the same path; commit/rollback timings surface SQLite fsync cost.
+- Process numbers from `runtime.ReadMemStats` and `sql.DB.Stats()`, read when the snapshot is taken — not per operation.
+
+**Labels are closed sets by construction**: server-side route templates, the content vocabulary above, the verb enum, and an HTTP-method allow-list (anything else → `OTHER`). No id, path value, token or query text ever becomes a label; cardinality cannot grow beyond the server's own registrations.
+
+**Latency histograms** use fixed cumulative buckets in ms; percentiles are Prometheus-style linear interpolations **inside** the bucket — estimates, with the top open bucket clamped to its lower bound:
+
+| Surface | Bucket upper bounds (ms) |
+|---|---|
+| HTTP | 0.5, 1, 2.5, 5, 10, 20, 30, 50, 75, 100, 150, 200, 300, 400, 500, 750, 1000, 2500, 5000, 10000, 30000 |
+| DB statement | 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 30, 50, 75, 100, 150, 200, 300, 500, 1000, 3000, 10000 |
+
+The HTTP grid brackets the 300 ms p95 admin-read target (REQ-TECH-010) on the §7 reference hardware; the DB grid spans sub-100 µs SQLite point reads to multi-second export queries and covers the `busy_timeout(5000)` wait.
+
+**Response shape.** Schema rule: fields may be added; existing field names and units never change; unknown verbs or content values appear as data, never as new fields. Timestamps are canonical UTC (REQ-DB-005).
+
+| Field | Unit / source |
+|---|---|
+| `generated_at`, `uptime_seconds` | snapshot time; since process start |
+| `process.goroutines` | `runtime.NumGoroutine` |
+| `process.heap_alloc_bytes`, `heap_sys_bytes`, `total_alloc_bytes`, `sys_bytes` | `runtime.MemStats` (`HeapAlloc` = heap in use) |
+| `process.num_gc`, `gc_pause_total_ms`, `gc_pause_last_ms`, `gc_pause_p50_ms`, `gc_pause_p95_ms`, `gc_pause_max_ms` | `runtime.MemStats` GC pause ring (last ≤256 pauses; percentiles are estimates) |
+| `http.requests_total`, `http.routes[]` | middleware totals; routes sorted by label |
+| `routes[].route` | server pattern + method, e.g. `"GET /api/v1/projects/{id}"`, or `"unmatched"` |
+| `routes[].count`, `status_2xx`…`status_5xx` | request count per status class |
+| `routes[].sum_ms`, `mean_ms`, `p50_ms`, `p95_ms`, `p99_ms`, `buckets_le_ms[]` | latency histogram (`{"le_ms": …, "count": …}`, cumulative, last bucket `"le_ms": "+Inf"`) |
+| `routes[].req_bytes_total`, `resp_bytes_total` | payload bytes (request body length; response body as written) |
+| `data_api.calls[]` | per content value: `content`, `count`, `sum_ms`, `mean_ms`, percentiles, `buckets_le_ms[]` |
+| `db.statements[]` | per verb: `verb`, `count`, `errors`, `rows_total` (sum of rows the drivers reported — queries count rows read, writes `RowsAffected`; where a driver cannot answer, nothing is added), durations as above |
+| `db.connections_dialed_total`, `dial_sum_ms`, `dial_errors` | connector wrapper dials |
+| `db.pool.*` | `sql.DBStats`: `max_open`, `open`, `in_use`, `idle`, `wait_count`, `wait_ms`, `max_idle_closed` — pool starvation reads as a rising `wait_count` next to `in_use == max_open` |
+
+**Sufficiency** (REQ-API-163's evaluation goal): per-route p95 against REQ-TECH-010/011, DB verb totals and durations against "is the database the bottleneck", pool waits against CPU/memory headroom (`process.*`) — enough to decide whether an infrastructure or database extension is warranted, from one JSON document.
+
 ## 5. Permission summary
 
-The normative endpoint → permission mapping is in `API_Endpoints_Requirement.md` §4.21; it is reproduced here as an overview:
+The normative endpoint → permission mapping is in `API_Endpoints_Requirement.md` §4.22; it is reproduced here as an overview:
 
 | Endpoints | Required permission |
 |---|------|
@@ -1244,6 +1286,7 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirement.m
 | `GET /api/v1/audit` | `is_admin` (all projects) or a member of the queried project (REQ-API-078) |
 | `GET /api/v1/audit/export` (§4.23, REQ-API-158) | `is_admin` only (REQ-API-078) |
 | `GET /api/v1/system/check` (§4.24, REQ-API-159) | `is_admin` only |
+| `GET /api/v1/system/metrics` (§4.25, REQ-API-163) | `is_admin` only |
 | `GET /i18n/languages`, `PUT /users/me/ui-language`, `PUT /users/me/ui-theme` (§4.19) | any authenticated user |
 | `GET/PUT /i18n/strings` | `is_admin` |
 | `POST …/end-provision` (§4.20) | `is_admin` (BR-009) |

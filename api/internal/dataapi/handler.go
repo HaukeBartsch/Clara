@@ -14,6 +14,7 @@ import (
 	"csms/api/internal/audit"
 	"csms/api/internal/config"
 	"csms/api/internal/db"
+	"csms/api/internal/metrics"
 )
 
 // Handler serves the data API against one store.
@@ -22,6 +23,9 @@ type Handler struct {
 	Cfg     *config.Config
 	Limiter *RateLimiter  // nil = rate limiting off (default, REQ-CFG-020)
 	Audit   *audit.Writer // nil = audit writes skipped (unit tests)
+	// Metrics receives one observation per dispatched call keyed by the
+	// closed content vocabulary (REQ-API-163); nil turns it off.
+	Metrics *metrics.Registry
 
 	// Structure caches shared across calls; see dictcache.go. Both are used
 	// under their internal locks, so the zero values work in place.
@@ -62,6 +66,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, "csv", http.StatusBadRequest, paramsErrorMessage(err))
 		return
 	}
+	// One observation per dispatched call keyed by the closed content
+	// vocabulary (REQ-API-163): started now, recorded on return, so the
+	// duration covers rate limiting, token resolution and the handler work —
+	// everything after the parameters are known. Unknown or missing content
+	// lands in "other" inside ObserveContent; no caller string mints a series.
+	callStart := time.Now()
+	defer func() { h.Metrics.ObserveContent(p.Content, time.Since(callStart)) }()
+
 	enc := p.Encoding()
 
 	// Rate limiting is per source IP, thresholds from the system settings

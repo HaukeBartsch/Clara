@@ -84,7 +84,7 @@ func testHandler(t *testing.T) (h *Handler, full, readonly string) {
 		AnonSalt:     "test-salt",
 	}
 	testdb.Use(t, cfg)
-	s, err := db.Open(cfg)
+	s, err := db.Open(cfg, nil)
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}

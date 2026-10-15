@@ -38,7 +38,7 @@ func newEnv(t *testing.T) *env {
 		AuthPasswordTokenTTLDays: 7,
 	}
 	testdb.Use(t, cfg)
-	store, err := db.Open(cfg)
+	store, err := db.Open(cfg, nil)
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}
@@ -51,7 +51,7 @@ func newEnv(t *testing.T) *env {
 	if err := aw.EnsureYear(ctx); err != nil {
 		t.Fatalf("EnsureYear: %v", err)
 	}
-	return &env{t: t, Store: store, Cfg: cfg, Audit: aw, Handler: New(store, cfg, aw)}
+	return &env{t: t, Store: store, Cfg: cfg, Audit: aw, Handler: New(store, cfg, aw, nil)}
 }
 
 // do runs one request against the administration mux. A non-nil actor is

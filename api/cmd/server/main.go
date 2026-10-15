@@ -23,6 +23,7 @@ import (
 	"csms/api/internal/config"
 	"csms/api/internal/db"
 	"csms/api/internal/httpapi"
+	"csms/api/internal/metrics"
 	"csms/api/internal/passhash"
 )
 
@@ -53,7 +54,12 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	store, err := db.Open(cfg) // fail fast on an unreachable database (REQ-TECH-014)
+	// Performance metrics registry: always-on, in-process only
+	// (REQ-API-163); one registry feeds the DB driver wrapper, the route
+	// middleware and the /api/v1/system/metrics endpoint.
+	reg := metrics.New()
+
+	store, err := db.Open(cfg, reg) // fail fast on an unreachable database (REQ-TECH-014)
 	if err != nil {
 		return err
 	}
@@ -78,7 +84,7 @@ func run() error {
 		return fmt.Errorf("audit rollover: %w", err)
 	}
 
-	mux := httpapi.NewMux(store, cfg, aw)
+	mux := httpapi.NewMux(store, cfg, aw, reg)
 
 	srv := &http.Server{
 		Addr:              cfg.APIAddr,

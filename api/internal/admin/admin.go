@@ -25,6 +25,7 @@ import (
 	"csms/api/internal/dataapi"
 	"csms/api/internal/db"
 	"csms/api/internal/mailer"
+	"csms/api/internal/metrics"
 )
 
 // Handler serves the administration API against one store. Areas register
@@ -35,7 +36,14 @@ type Handler struct {
 	Audit   *audit.Writer
 	Mail    *mailer.Mailer   // email second-factor codes and setup links (REQ-AUTH-057/060/062)
 	Data    *dataapi.Handler // serves the shared streaming export core (§4.14)
-	Handler http.Handler     // the /api/v1/ mux, built by New
+	// Metrics is the process performance registry served by
+	// GET /api/v1/system/metrics (§4.25, REQ-API-163); nil yields an empty
+	// snapshot.
+	Metrics *metrics.Registry
+	// Handler is the /api/v1/ mux built by New. The concrete type lets the
+	// httpapi middleware resolve low-cardinality route labels from it
+	// (mux.Handler) without duplicating the pattern table (REQ-API-163).
+	Handler *http.ServeMux
 
 	// SendMail overrides Mail.Send for tests; nil uses the configured relay.
 	SendMail func(to, subject, body string) error
@@ -46,9 +54,11 @@ type Handler struct {
 }
 
 // New builds the administration handler and registers every area's routes.
-func New(store *db.Store, cfg *config.Config, aw *audit.Writer) *Handler {
-	h := &Handler{Store: store, Cfg: cfg, Audit: aw, Mail: mailer.New(cfg),
-		Data:     &dataapi.Handler{Store: store, Cfg: cfg, Audit: aw},
+// reg is the process performance registry (REQ-API-163); nil disables the
+// metrics endpoint content but keeps everything else working.
+func New(store *db.Store, cfg *config.Config, aw *audit.Writer, reg *metrics.Registry) *Handler {
+	h := &Handler{Store: store, Cfg: cfg, Audit: aw, Mail: mailer.New(cfg), Metrics: reg,
+		Data:     &dataapi.Handler{Store: store, Cfg: cfg, Audit: aw, Metrics: reg},
 		tfaSends: newSendLimiter(), resetSends: newAddressLimiter(), lockouts: newAuthLockout()}
 	mux := http.NewServeMux()
 	h.registerAuth(mux)
@@ -70,6 +80,7 @@ func New(store *db.Store, cfg *config.Config, aw *audit.Writer) *Handler {
 	h.registerI18n(mux)
 	h.registerSettings(mux)
 	h.registerSystemCheck(mux)
+	h.registerSystemMetrics(mux)
 	h.Handler = mux
 	return h
 }

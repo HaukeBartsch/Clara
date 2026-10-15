@@ -21,7 +21,7 @@ func openStore(t *testing.T) (*db.Store, *config.Config) {
 		DBDatabase:   filepath.Join(t.TempDir(), "authz-test.sqlite"),
 	}
 	testdb.Use(t, cfg)
-	s, err := db.Open(cfg)
+	s, err := db.Open(cfg, nil)
 	if err != nil {
 		t.Fatalf("db.Open: %v", err)
 	}

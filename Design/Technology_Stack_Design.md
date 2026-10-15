@@ -64,7 +64,8 @@ redcap-replacement/
 │   │   ├── authz/                  # token lookup, per-arm levels, DAG visibility (ASM-AUTH-5)
 │   │   ├── validation/             # pipeline, grammars, content policy, expressions
 │   │   ├── audit/                  # event catalog, same-transaction writer
-│   │   └── db/                     # dialect switch, repositories, year-rollover checks
+│   │   ├── db/                     # dialect switch, repositories, year-rollover checks
+│   │   └── metrics/                # in-memory performance counters + snapshot (REQ-API-163), stdlib only
 │   ├── migrations/                 # NNN_name.up.sql (REQ-DB-003)
 │   ├── openapi/openapi.json
 │   ├── docs/                       # vendored swagger-ui-dist
