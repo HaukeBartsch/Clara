@@ -27,8 +27,19 @@ Phases (timed individually):
              once with rawOrLabel=label (choice labels), both streamed to
              disk as <project>.raw.csv / <project>.label.csv.
 
+Alongside those phases a sampler thread polls GET /api/v1/system/metrics
+(§4.25, REQ-API-163) every --metrics-interval seconds — one poll costs the
+server a runtime.ReadMemStats and counts as an admin request, so the cadence
+stays low; it shares this process with the phases and costs milliseconds per
+poll. Every snapshot is flattened into named measures (process.*, http[route].*
+…, db[VERB].*, db.pool.*, derived.*) and appended to <out>/metrics.jsonl, so a
+series survives an aborted run.
+
 The report names each phase's wall time, the CSV size on disk in megabytes and
-the throughput; it is printed and written to <out>/report.txt.
+the throughput, then lists every measure sampled over time with its start value,
+end value, mean and standard deviation — printed and written to
+<out>/report.txt, plus <out>/metrics_summary.csv (same numbers, one row per
+measure, for plotting).
 
 Everything runs sequentially on purpose: SQLite serializes its writers, so
 concurrent callers would measure lock waiting rather than API throughput.
@@ -47,13 +58,16 @@ Usage (see run_stress.sh for a launcher that starts a throwaway server):
 """
 
 import argparse
+import csv
 import datetime
 import http.client
 import json
 import os
 import random
+import statistics
 import string
 import sys
+import threading
 import time
 import urllib.parse
 from urllib.parse import urlparse
@@ -64,16 +78,17 @@ from urllib.parse import urlparse
 class API:
     """One keep-alive connection to the API, curl-style."""
 
-    def __init__(self, base_url, service_token):
+    def __init__(self, base_url, service_token, timeout=None):
         u = urlparse(base_url)
         self.host, self.port = u.hostname, u.port or (443 if u.scheme == "https" else 80)
         self.https = u.scheme == "https"
         self.service_token = service_token
+        self.timeout = timeout    # None = block forever, as a client would
         self.user_id = None
 
     def _connect(self):
-        return http.client.HTTPSConnection(self.host, self.port) if self.https \
-            else http.client.HTTPConnection(self.host, self.port)
+        connector = http.client.HTTPSConnection if self.https else http.client.HTTPConnection
+        return connector(self.host, self.port, timeout=self.timeout)
 
     def request(self, method, path, headers=None, body=None, want=(200,), stream=False):
         """Send one request; retry a dropped keep-alive connection once."""
@@ -105,10 +120,15 @@ class API:
         headers = {
             "X-Internal-Service-Token": self.service_token,
             "X-Internal-User-Id": str(self.user_id),
-            "Content-Type": "application/json",
         }
-        payload = self.request(method, path, headers, json.dumps(body or {}), want)
-        return json.loads(payload) if payload else None
+        # A read carries no body — and no Content-Type without one; a write
+        # always sends at least the empty object the §4 handlers parse.
+        payload = None
+        if method not in ("GET", "HEAD"):
+            headers["Content-Type"] = "application/json"
+            payload = json.dumps(body or {})
+        answer = self.request(method, path, headers, payload, want)
+        return json.loads(answer) if answer else None
 
     def login(self, email, password):
         """POST /api/v1/auth/login — exempt from the user header; the
@@ -391,6 +411,286 @@ def mb(n):
     return n / (1 << 20)
 
 
+# --- metrics over time -------------------------------------------------------
+
+METRICS_PATH = "/api/v1/system/metrics"
+MAX_POLL_FAILURES = 3        # consecutive failures after which sampling gives up
+
+# Sections of the report's metrics block, in print order: (title, prefixes). A
+# measure appears under the first title whose prefix it starts with, so fields
+# the endpoint gains later (§4.25's schema is add-only) report under "Other".
+METRIC_SECTIONS = [
+    ("Derived per-interval rates", ("derived.",)),
+    ("Server process", ("uptime_seconds", "process.")),
+    ("HTTP totals and routes", ("http.requests_total", "http[")),
+    ("Database pool and dials", ("db.",)),
+    ("Database statements per verb", ("db[",)),
+    ("Data API calls per content", ("data_api[",)),
+]
+
+
+def num(v):
+    """A snapshot value as a float; absent or non-numeric counts as 0 (sums)."""
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else 0.0
+
+
+def flatten_snapshot(snap):
+    """Every numeric leaf of one §4.25 snapshot as measure → value, with the
+    per-route / per-content / per-verb entries keyed by their label:
+    http[POST /api/].p95_ms, data_api[record].count, db[INSERT].rows_total.
+
+    Generic on purpose — a field the endpoint gains later is a measure here
+    without touching this script. Histogram bucket lists are skipped; their
+    content reaches the report through the series' own count, sum and
+    percentiles.
+    """
+    out = {}
+
+    def walk(prefix, node):
+        for key, value in node.items():
+            name = f"{prefix}.{key}" if prefix else str(key)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, (int, float)):
+                out[name] = float(value)
+            elif isinstance(value, dict):
+                walk(name, value)
+            # lists (routes, calls, statements, buckets) are keyed by label below
+
+    walk("", snap)
+    for route in (snap.get("http") or {}).get("routes") or []:
+        walk(f"http[{route.get('route', 'unmatched')}]", route)
+    for call in (snap.get("data_api") or {}).get("calls") or []:
+        walk(f"data_api[{call.get('content', 'other')}]", call)
+    for stmt in (snap.get("db") or {}).get("statements") or []:
+        walk(f"db[{stmt.get('verb', 'OTHER')}]", stmt)
+    return out
+
+
+def snapshot_aggregates(snap):
+    """Σ over the per-route and per-verb entries — the counters the derived rates
+    are taken from, mirroring routeTotals() in web/assets/js/monitoring.js."""
+    agg = {"requests": 0.0, "sum_ms": 0.0, "resp_bytes": 0.0,
+           "statements": 0.0, "rows": 0.0, "pool_waits": 0.0}
+    for route in (snap.get("http") or {}).get("routes") or []:
+        agg["requests"] += num(route.get("count"))
+        agg["sum_ms"] += num(route.get("sum_ms"))
+        agg["resp_bytes"] += num(route.get("resp_bytes_total"))
+    for stmt in (snap.get("db") or {}).get("statements") or []:
+        agg["statements"] += num(stmt.get("count"))
+        agg["rows"] += num(stmt.get("rows_total"))
+    agg["pool_waits"] = num(((snap.get("db") or {}).get("pool") or {}).get("wait_count"))
+    return agg
+
+
+def derive_rates(prev, cur):
+    """Per-interval rates between two accepted samples: cumulative counters over
+    the elapsed time. Δt rides this process's monotonic clock — the snapshot's own
+    generated_at has one-second resolution, too coarse next to a 5 s cadence.
+
+    Any counter that went backwards means the API restarted since the previous
+    sample: every derived measure reads as a gap for that interval rather than a
+    spike (the Monitoring page's rule), and the new sample is the next baseline.
+    """
+    dt = cur["t"] - prev["t"]
+    p, c = prev["agg"], cur["agg"]
+    if dt <= 0 or any(c[key] < p[key] for key in c):
+        return {}
+    out = {"derived.pool_waits_per_s": (c["pool_waits"] - p["pool_waits"]) / dt}
+    req = c["requests"] - p["requests"]
+    out["derived.requests_per_s"] = req / dt
+    if req > 0:  # a mean over no requests is undefined, not zero
+        out["derived.mean_latency_ms"] = (c["sum_ms"] - p["sum_ms"]) / req
+    resp = c["resp_bytes"] - p["resp_bytes"]
+    if resp > 0:
+        out["derived.resp_MiB_per_s"] = resp / (1 << 20) / dt
+    stmt = c["statements"] - p["statements"]
+    if stmt > 0:
+        out["derived.db_statements_per_s"] = stmt / dt
+    rows = c["rows"] - p["rows"]
+    if rows > 0:
+        out["derived.db_rows_per_s"] = rows / dt
+    return out
+
+
+class MetricsSampler(threading.Thread):
+    """Polls GET /api/v1/system/metrics on a fixed cadence while the phases run.
+
+    One snapshot says where the server stands right now; the point of sampling
+    across the whole run is the series — whether latency grows as the database
+    grows, whether the heap comes back down, how steady the pool stays. Each
+    answer is flattened into named measures and appended to a JSONL file, tagged
+    with the phase that was running, so an aborted run keeps its history.
+
+    The cost is one runtime.ReadMemStats (a short stop-the-world) per poll plus
+    one admin request, which is why the cadence stays low; the sampler never runs
+    a poll in parallel with itself and keeps its own connection, so it cannot
+    disturb the phases' streaming. A failed poll is counted and skipped — after
+    MAX_POLL_FAILURES in a row sampling stops with the reason recorded, because
+    the run's verdict comes from the data API and missing metric samples must not
+    abort a long stress run.
+    """
+
+    def __init__(self, base_url, service_token, user_id, interval, jsonl_path):
+        super().__init__(name="metrics-sampler", daemon=True)
+        # Own connection (the phases keep theirs) with a generous socket timeout:
+        # a wedged poll must not outlive stop(), and one slow read is never worth
+        # blocking the report on.
+        self.api = API(base_url, service_token, timeout=max(30.0, 6 * interval))
+        self.api.user_id = user_id               # set by login() before sampling starts
+        self.interval = interval
+        self.samples = []   # {"t", "phase", "agg": {…}, "values": {measure: float}}
+        self.failures = 0
+        self.last_error = None
+        self.gave_up = False
+        self._phase = "startup"
+        self._consecutive = 0
+        self._done = threading.Event()
+        self._out = open(jsonl_path, "w")        # truncated: one series per run
+
+    def set_phase(self, phase):
+        """Tags every sample taken from here on, so the series cuts per phase."""
+        self._phase = phase
+
+    def run(self):
+        try:
+            while True:
+                self.poll()
+                if self._done.wait(self.interval):  # interruptible sleep
+                    return
+        except Exception as e:  # a broken sampler never takes the run down
+            self.last_error = f"sampler thread stopped: {e}"
+
+    def poll(self, phase=None):
+        """One snapshot → one sample on the series. False on a failed poll."""
+        try:
+            snap = self.api.admin("GET", METRICS_PATH)
+            if not isinstance(snap, dict):
+                raise RuntimeError("empty metrics answer")
+        except (RuntimeError, ValueError) as e:  # HTTP failure / undecodable body
+            self.failures += 1
+            self._consecutive += 1
+            self.last_error = str(e).splitlines()[0][:160]
+            if self._consecutive >= MAX_POLL_FAILURES:
+                self.gave_up = True
+                self._done.set()
+            return False
+        self._consecutive = 0
+        sample = {"t": time.monotonic(), "phase": phase or self._phase,
+                  "agg": snapshot_aggregates(snap), "values": flatten_snapshot(snap)}
+        if self.samples:
+            sample["values"].update(derive_rates(self.samples[-1], sample))
+        self.samples.append(sample)
+        self._out.write(json.dumps(sample) + "\n")
+        self._out.flush()
+        return True
+
+    def stop(self):
+        """Ends sampling and takes the closing sample synchronously, so the
+        report's end values cover everything the phases did. Returns the series."""
+        self._done.set()
+        self.join(timeout=2 * self.interval + 30)
+        if self.is_alive():  # wedged connection: report what was collected
+            self.last_error = "sampler thread did not stop in time"
+        elif not self.gave_up:  # a broken endpoint needs no further proof
+            self.poll(phase="end")
+        self._out.close()
+        return self.samples
+
+
+def summarize(samples):
+    """measure → (n, start, end, mean, std) over every sample that carried it."""
+    series = {}
+    for s in samples:
+        for name, value in s["values"].items():
+            series.setdefault(name, []).append(value)
+    out = {}
+    for name, values in series.items():
+        out[name] = (len(values), values[0], values[-1], statistics.fmean(values),
+                     statistics.stdev(values) if len(values) > 1 else 0.0)
+    return out
+
+
+BYTE_UNITS = (("TiB", 1 << 40), ("GiB", 1 << 30), ("MiB", 1 << 20), ("KiB", 1 << 10), ("B", 1))
+
+
+def fmt_row(name, values):
+    """One measure's four numbers as text, all at the scale of the largest among
+    them so a row reads as one measurement — byte-valued measures pick their unit
+    the same way, so a std of zero never prints as "0 B" beside "96.0 MiB"."""
+    top = max(abs(v) for v in values)
+    if name.endswith(("_bytes", "_bytes_total")):
+        for unit, scale in BYTE_UNITS:
+            if top >= scale or unit == "B":
+                digits = 0 if unit == "B" else 1
+                return [f"{v / scale:.{digits}f} {unit}" for v in values]
+    if top == 0:
+        return ["0"] * len(values)
+    digits, sep = ((".0f", ",") if top >= 1000 else (".1f", "") if top >= 100
+                   else (".2f", "") if top >= 1 else (".4f", ""))
+    return [f"{v:{sep}{digits}}" for v in values]
+
+
+def table_block(title, names, summary):
+    """A start/end/mean/std table for one section; nothing when it has no measures."""
+    if not names:
+        return []
+    header = ["measure", "start", "end", "mean", "std"]
+    rows = [[name] + fmt_row(name, summary[name][1:]) for name in names]
+
+    def render(cells):
+        return "  " + "  ".join(c.ljust(widths[i]) if i == 0 else c.rjust(widths[i])
+                                for i, c in enumerate(cells))
+
+    widths = [max(len(r[i]) for r in rows + [header]) for i in range(5)]
+    return ["", f"  {title}", render(header)] + [render(row) for row in rows]
+
+
+def metrics_block(samples, interval, failures, last_error, stopped_early=False):
+    """The report's metrics-over-time section: every measure sampled over the run
+    with its start value, end value, mean and standard deviation."""
+    if interval <= 0:
+        return "\nmetrics over time:\n  sampling disabled (--metrics-interval 0)"
+    if not samples:
+        return ("\nmetrics over time:\n  no samples collected"
+                + (f" — {last_error}" if last_error else ""))
+    summary = summarize(samples)
+    span = samples[-1]["t"] - samples[0]["t"]
+    notes = [f"{len(samples)} samples of GET {METRICS_PATH} over "
+             f"{span:.0f}s" + (f" ({span / 60:.1f} min)" if span >= 120 else "")
+             + f" at {interval:g}s"]
+    if stopped_early:
+        notes.append("sampling stopped early, so start/end do not span the whole run")
+    if failures:
+        notes.append(f"{failures} failed poll{'' if failures == 1 else 's'}")
+    if last_error:
+        notes.append(f"last error: {last_error}")
+    lines = ["", "metrics over time:", "  " + "; ".join(notes) + ".",
+             "  start/end are the first and last sample, mean/std over all samples (sample",
+             "  std). Counters are cumulative since the server started — end − start is the",
+             "  run total and their std reflects the ramp, not jitter. Gauges read as",
+             "  observed; derived.* are per-interval rates between consecutive samples."]
+    covered = set()
+    for title, prefixes in METRIC_SECTIONS:
+        names = sorted(n for n in summary if n.startswith(prefixes))
+        covered.update(names)
+        lines += table_block(title, names, summary)
+    lines += table_block("Other measures", sorted(set(summary) - covered), summary)
+    return "\n".join(lines)
+
+
+def write_metrics_csv(path, samples):
+    """The same summary as the report, one row per measure with raw values, for
+    plotting outside this script."""
+    with open(path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["measure", "n", "start", "end", "mean", "std"])
+        for name, stats in sorted(summarize(samples).items()):
+            n, start, end, mean, std = stats
+            writer.writerow([name, n, round(start, 6), round(end, 6),
+                             round(mean, 6), round(std, 6)])
+
+
 # --- main --------------------------------------------------------------------
 
 def main():
@@ -411,24 +711,46 @@ def main():
     ap.add_argument("--max-records", type=int, default=60)
     ap.add_argument("--batch", type=int, default=25, help="rows per import call")
     ap.add_argument("--seed", type=int, default=20261001, help="0 = time-seeded")
+    ap.add_argument("--metrics-interval", type=float, default=5.0,
+                    help="seconds between GET /api/v1/system/metrics samples "
+                         "(0 disables sampling over time)")
     ap.add_argument("--out", default=os.environ.get("STRESS_OUT", "stress-out"),
-                    help="directory for the CSV exports and the report")
+                    help="directory for the CSV exports, the report and the metric series")
     cfg = ap.parse_args()
     if cfg.seed == 0:
         cfg.seed = int(time.time())
     rnd = random.Random(cfg.seed)
+    os.makedirs(cfg.out, exist_ok=True)
 
     api = API(cfg.base_url, cfg.service_token)
     api.login(cfg.email, cfg.password)
     print(f"logged in as user {api.user_id} at {cfg.base_url} "
           f"(seed {cfg.seed}, {cfg.projects} projects)", flush=True)
 
-    projects, totals, mix, setup_s = setup_projects(api, cfg, rnd)
-    specs = generate_rows(projects, cfg, rnd)
-    values, import_s = import_rows(api, specs, cfg, rnd)
-    per_project, raw_bytes, label_bytes, csv_rows, export_s = \
-        export_projects(api, projects, cfg.out)
+    # Sampling runs alongside every phase; None when switched off.
+    sampler = MetricsSampler(cfg.base_url, cfg.service_token, api.user_id,
+                             cfg.metrics_interval, os.path.join(cfg.out, "metrics.jsonl")) \
+        if cfg.metrics_interval > 0 else None
+    if sampler:
+        sampler.start()
+        print(f"sampling {METRICS_PATH} every {cfg.metrics_interval:g}s", flush=True)
+    set_phase = sampler.set_phase if sampler else (lambda phase: None)
 
+    try:
+        set_phase("setup")
+        projects, totals, mix, setup_s = setup_projects(api, cfg, rnd)
+        set_phase("import")
+        specs = generate_rows(projects, cfg, rnd)
+        values, import_s = import_rows(api, specs, cfg, rnd)
+        set_phase("export")
+        per_project, raw_bytes, label_bytes, csv_rows, export_s = \
+            export_projects(api, projects, cfg.out)
+    finally:  # the collected series is written out even when a phase failed
+        samples = sampler.stop() if sampler else []
+
+    failures = sampler.failures if sampler else 0
+    last_error = sampler.last_error if sampler else None
+    stopped_early = bool(sampler and sampler.gave_up)
     mix_line = ", ".join(f"{kind}: {n}" for kind, n in sorted(mix.items()))
     report = f"""CLARA API stress report (external client)
 base url:             {cfg.base_url}
@@ -449,10 +771,19 @@ CSV on disk (raw):    {mb(raw_bytes):.2f} MB in {len(projects)} files
 CSV on disk (label):  {mb(label_bytes):.2f} MB in {len(projects)} files \
 ({csv_rows} data rows each)
 csv directory:        {os.path.abspath(cfg.out)}
-"""
+""" + metrics_block(samples, cfg.metrics_interval, failures, last_error,
+                    stopped_early) + "\n"
+    if samples:
+        write_metrics_csv(os.path.join(cfg.out, "metrics_summary.csv"), samples)
+
     print("\n" + report, flush=True)
     with open(os.path.join(cfg.out, "report.txt"), "w") as f:
         f.write(report)
+        if samples:  # the series files exist only when something was sampled
+            f.write("\n")
+            for label, name in (("metric series", "metrics.jsonl"),
+                                ("metric summary", "metrics_summary.csv")):
+                f.write(f"{label:<22}{os.path.abspath(os.path.join(cfg.out, name))}\n")
         f.write("\nper-project exports (name, data rows, raw bytes, label bytes):\n")
         for name, rows, n_raw, n_label in per_project:
             f.write(f"{name},{rows},{n_raw},{n_label}\n")

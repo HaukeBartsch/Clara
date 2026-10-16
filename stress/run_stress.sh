@@ -9,6 +9,11 @@
 #   ./run_stress.sh                                   # full default scale
 #   ./run_stress.sh --projects 5 --max-events 10      # quick smoke run
 #
+# While the phases run, stress_api.py samples GET /api/v1/system/metrics every
+# 5 s (--metrics-interval, 0 switches it off) and reports every measure with its
+# start value, end value, mean and std — see the report's "metrics over time"
+# block.
+#
 # To stress an already running server instead, set BASE_URL (plus
 # SERVICE_TOKEN / ADMIN_EMAIL / ADMIN_PASSWORD) and pass --no-server:
 #
@@ -85,4 +90,4 @@ if [[ -n "$DB_FILE" && -f "$DB_FILE" ]]; then
   SIZE=$(du -m "$DB_FILE" | cut -f1)
   echo "database file: ${SIZE} MB ($DB_FILE)"
 fi
-echo "exports and report: $OUT_DIR"
+echo "exports, metric series (metrics.jsonl) and report: $OUT_DIR"
