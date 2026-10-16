@@ -574,6 +574,12 @@ The api should measure performance metrics like response times and memory amount
 
 Use d3.js to plot the metric values from api/v1/system/metrics over time on a new control panel page Monitoring. Show the current values at a 1 second interval and show a d3.js line graph for the last hour. Add to this page a table with the currently blocked IP addresses due to the rate limiter. Update this table as well every second.
 
+Add the metrics as part of the stress test. Collect during each phase the mean and standard deviation for the metrics and add them to the stress test report.
+
+## Date fields in the record view
+
+To make it easier to enter dates add a date selector (same as used on the REK start date field in Projects). Also add a "now" button that fills in the current date (button inline with the date field).
+
 
 ## Add an is_admin "system administrator" flag to user
 
