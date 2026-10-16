@@ -1,0 +1,36 @@
+# Semgrep exclusions — code that is not CLARA's to review.
+#
+# The shipped application (api/, web/app/, web/assets/js/) is scanned in full and
+# never listed here. Its findings are triaged per site in
+# docs/Static_Analysis_Triage.md, deliberately without inline `nosemgrep`
+# markers, so a real finding cannot hide behind a suppression comment.
+
+# Historic FIONA user-management application — the example layout AGENTS.md
+# ("Repository layout") points at when PHP needs to interface with the web
+# application. It really does hash passwords with MD5, disable TLS peer
+# verification and name request files after the submitted username: that is the
+# state CLARA replaces. Rewriting it would misrepresent the reference, so it is
+# out of scope rather than waived finding by finding.
+assets/
+
+# Vendored third-party libraries (Bootstrap, Tabulator, D3, Geist, Swagger UI),
+# copied locally instead of loaded from a CDN per REQ-TECH-021. Upstream code;
+# the fix for a finding in it is a newer upstream copy.
+web/assets/vendor/
+api/docs/swaggerui/
+
+# Development and CI tooling, never deployed (REQ-TECH-028): Playwright runs and
+# capture scripts, the load generator, test fixtures and helper scripts. They
+# speak plain HTTP to a localhost server on purpose, build regular expressions
+# out of their own arguments, and use the stdlib TLS/HTTP clients in ways the
+# audit rules flag without a weakness behind them.
+docs/
+e2e/
+stress/
+tests/
+tools/
+ci/
+
+# Minified bundles — machine output, including the copies under assets/.
+**/*.min.js
+**/*.min.css
