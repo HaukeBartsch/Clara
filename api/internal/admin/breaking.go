@@ -104,13 +104,28 @@ func (p storeValues) validationRegistry(ctx context.Context) (*validate.Registry
 	return validate.NewRegistry(entries)
 }
 
+// probeQueries are the complete statements behind anyRow, one per data-table
+// column that the valueProbe questions name. Written out per column because SQL
+// cannot bind an identifier as a parameter: the query text then comes only from
+// this map plus the placeholder list, never from a caller, and an unknown column
+// is an error rather than a fragment of SQL. The names themselves always travel
+// as bound values.
+var probeQueries = map[string]string{
+	`field_name`:           `SELECT 1 FROM data WHERE project_id = ? AND field_name IN (`,
+	`unique_event_name`:    `SELECT 1 FROM data WHERE project_id = ? AND unique_event_name IN (`,
+	`repeating_instrument`: `SELECT 1 FROM data WHERE project_id = ? AND repeating_instrument IN (`,
+}
+
 // anyRow reports whether the data table holds a row for any name in the list.
 // An empty list answers false without touching the database.
 func (p storeValues) anyRow(ctx context.Context, column string, names []string) (bool, error) {
 	if len(names) == 0 {
 		return false, nil
 	}
-	query := `SELECT 1 FROM data WHERE project_id = ? AND ` + column + ` IN (`
+	query, ok := probeQueries[column]
+	if !ok {
+		return false, fmt.Errorf("admin: no probe statement for data column %q", column)
+	}
 	args := []any{p.projectID}
 	for i, n := range names {
 		if i > 0 {

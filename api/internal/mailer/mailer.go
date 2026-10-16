@@ -84,6 +84,15 @@ func New(cfg *config.Config) *Mailer {
 // Enabled reports whether an SMTP relay is configured.
 func (m *Mailer) Enabled() bool { return m != nil && m.host != "" }
 
+// relayTLSConfig is the client configuration of one relay connection — implicit
+// TLS and a STARTTLS upgrade alike. The minimum version is stated rather than
+// inherited from the Go default, because this connection carries credentials:
+// TLS 1.0 and 1.1 have no place in it, and the floor is 1.2 rather than 1.3
+// because institutional relays of record still terminate 1.2 (REQ-CFG-028).
+func relayTLSConfig(host string) *tls.Config {
+	return &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}
+}
+
 // Send delivers one plain-text message. Authentication is attempted only
 // when SMTP_USERNAME is set; an anonymous relay is used otherwise. Header
 // values must not contain a line break — see the check below. The body needs no
@@ -112,7 +121,7 @@ func (m *Mailer) Send(to, subject, body string) error {
 	switch m.security {
 	case "tls":
 		conn, err = tls.DialWithDialer(&net.Dialer{Timeout: dialTimeout}, "tcp", addr,
-			&tls.Config{ServerName: m.host})
+			relayTLSConfig(m.host))
 	default: // starttls and none connect in the clear first
 		conn, err = net.DialTimeout("tcp", addr, dialTimeout)
 	}
@@ -129,7 +138,7 @@ func (m *Mailer) Send(to, subject, body string) error {
 	defer client.Quit()
 
 	if m.security == "starttls" {
-		if err = client.StartTLS(&tls.Config{ServerName: m.host}); err != nil {
+		if err = client.StartTLS(relayTLSConfig(m.host)); err != nil {
 			return fmt.Errorf("mailer: starttls: %w", err)
 		}
 	}
