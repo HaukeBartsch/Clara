@@ -147,7 +147,7 @@ func checkboxColumns(p recField) []recField {
 func (d *projectDict) valueFieldsByInstrument() map[int64]map[string]bool {
 	out := make(map[int64]map[string]bool, len(d.instruments))
 	for _, f := range d.expanded { // includes checkbox choice columns (REQ-DB-042)
-		if f.FieldType == "description" || f.FieldType == "header" || f.isCheckboxParent() {
+		if f.FieldType == "description" || f.FieldType == "header" || f.FieldType == "transfer" || f.isCheckboxParent() {
 			continue
 		}
 		set := out[f.InstrumentID]

@@ -211,7 +211,7 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 	// it; the checkbox row itself carries no value and is replaced by them
 	// (REQ-EXP-053).
 	for _, f := range d.expanded {
-		if f.FieldType == "description" || f.FieldType == "header" || f.isCheckboxParent() {
+		if f.FieldType == "description" || f.FieldType == "header" || f.FieldType == "transfer" || f.isCheckboxParent() {
 			continue // carry no values, never appear (§3.2)
 		}
 		// fields[] names a choice column directly or through its checkbox, which

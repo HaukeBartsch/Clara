@@ -943,12 +943,14 @@ Everything else in the document — rate limiting with Control-Panel thresholds,
 
 Add a new field type "transfer". Such a field is represented by a button to trigger its action. The button is displayed in normal data entry view, disabled in surveys. The "Choices, Calculations, OR Slider Labels" for a transfer field contains copy instructions that a) link a field on the current instrument [field] with a record in a target project (perform a create new record action) as [project][field]. Additional copy instructions transfer information from the current instrument [field] to [project][event][field] in the other project's new record as [project][event][field] (assumes field values to be copied to the target projects new record). If the target record already exists no new record is created but field values are still being copied over (update the values in the other projects record field). 
 
-Here an example coding for the transfer button (use '#' to indicate comments till end of line, newlines and spaces for copy operations belonging to the created field, alias "new_record" has no further function yet):
+Here an example coding for the transfer button (use '#' to indicate comments till end of line, newlines and spaces for copy operations belonging to the created field):
 
 ```
-create [field] [project][record_id] as new_record:     # create a new named record in [project] with record name [field]
-  copy [field]  [project][baseline][place_for_field1]  # copy the value of the current instruments field to the new records [event][place_for_field1]
-  copy [field2] [project][baseline][place_for_field2]  # copy the value of the current instruments field to the new records [event][place_for_field2]
-  ...
+# create a new record in [project] with record name [record_id] that gets the value of the current instruments [field]
+create [project][record_id] [field]
+# copy the value of the current instruments field to the new records [event][place_for_field1]
+copy [field]  [project][baseline][place_for_field1]
+# copy the value of the current instruments field to the new records [event][place_for_field2]
+copy [field2] [project][baseline][place_for_field2]
 ```
 

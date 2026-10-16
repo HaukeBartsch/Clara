@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 
 	"csms/api/internal/audit"
 	"csms/api/internal/authz"
+	"csms/api/internal/dataapi"
 	"csms/api/internal/db"
 	"csms/api/internal/validate"
 )
@@ -206,7 +208,8 @@ func (h *Handler) designForFields(ctx context.Context, projectID int64, fs []*db
 		// every stored checkbox (REQ-DB-042). A name carrying the separator can
 		// collide with a checkbox's choice column the same way.
 		if f.Calculation.String != "" || f.BranchingLogic.String != "" ||
-			f.FieldType == "checkbox" || strings.Contains(f.FieldName, db.CheckboxSubSep) {
+			f.FieldType == "checkbox" || f.FieldType == "transfer" ||
+			strings.Contains(f.FieldName, db.CheckboxSubSep) {
 			return h.loadDesign(ctx, projectID)
 		}
 	}
@@ -255,10 +258,11 @@ func (d *designCtx) isBox(name string) bool {
 	return ok && p.ID == f.ID
 }
 
-// valueCarrying excludes the description and header field types — they carry
-// no stored value and cannot be expression operands (§6.2).
+// valueCarrying excludes the description, header and transfer field types —
+// they carry no stored value and cannot be expression operands (§6.2,
+// REQ-VAL-046).
 func valueCarrying(fieldType string) bool {
-	return fieldType != "description" && fieldType != "header"
+	return fieldType != "description" && fieldType != "header" && fieldType != "transfer"
 }
 
 // designError is a rejected design-time write: an HTTP status (409 conflict
@@ -2831,7 +2835,7 @@ var (
 // fieldTypes is the §1 schema vocabulary of fields.field_type.
 var fieldTypes = map[string]bool{
 	"text": true, "notes": true, "dropdown": true, "radio": true, "checkbox": true, "yesno": true, "matrix": true,
-	"description": true, "header": true, "calculated": true,
+	"description": true, "header": true, "calculated": true, "transfer": true,
 }
 
 // checkboxSubs returns the value-column names a checkbox field expands into —
@@ -2928,7 +2932,14 @@ func (h *Handler) validateFieldDesign(ctx context.Context, f *db.Field, selfID i
 	if !fieldTypes[f.FieldType] {
 		return nil, validationf("unknown field_type %q", f.FieldType)
 	}
-	if f.Choices.String != "" {
+	if f.FieldType == "transfer" {
+		// A transfer field's choices attribute holds its copy instructions, not
+		// a code$label list — the choices grammar would reject every config
+		// (REQ-DB-050, REQ-VAL-046).
+		if derr := h.validateTransferDesign(ctx, f, d); derr != nil {
+			return nil, derr
+		}
+	} else if f.Choices.String != "" {
 		if derr := validateChoices(f.Choices.String, f.FieldType); derr != nil {
 			return nil, derr
 		}
@@ -3031,6 +3042,46 @@ func (h *Handler) validateFieldDesign(ctx context.Context, f *db.Field, selfID i
 		}
 	}
 	return refs, nil
+}
+
+// validateTransferDesign checks a transfer field's copy instructions at design
+// time (REQ-VAL-046, REQ-DB-050): the grammar itself — through the same parser
+// the executor runs — its source fields, which must be value-carrying members
+// of this very instrument, and its target references against the live store:
+// the project exists, the create names that project's record identifier field,
+// and events and fields resolve there. An unknown target project is named here
+// on purpose (REQ-DB-050): the designer must see what does not exist. At
+// execution time the same miss answers only the uniform 403 (REQ-API-165), and
+// every check runs again there — designs and memberships rot.
+func (h *Handler) validateTransferDesign(ctx context.Context, f *db.Field, d *designCtx) *designError {
+	if f.Choices.String == "" {
+		return validationf("a transfer field requires copy instructions in its choices attribute")
+	}
+	ops, err := validate.ParseTransferConfig(f.Choices.String)
+	if err != nil {
+		return validationf("transfer instructions are not valid: %s", err)
+	}
+	for _, op := range ops {
+		sf, ok := d.fields[op.SourceField]
+		if !ok || !valueCarrying(sf.FieldType) || sf.InstrumentID != f.InstrumentID {
+			return validationf("transfer source %q is not a value-carrying field of this instrument", op.SourceField)
+		}
+		if sf.FieldType == "checkbox" {
+			// A checkbox stores nothing under its own name — its values live
+			// under the choice columns (REQ-DB-042).
+			if _, _, isCol := db.SplitCheckboxSub(op.SourceField); !isCol {
+				return validationf("transfer source %q is a checkbox: name one of its choice columns instead", op.SourceField)
+			}
+		}
+	}
+	if err := h.Data.ResolveTransferTarget(ctx, f.Choices.String); err != nil {
+		var ce *dataapi.TransferConfigError
+		if errors.As(err, &ce) {
+			return validationf("%s", ce.Msg)
+		}
+		return &designError{status: http.StatusInternalServerError, msg: "internal"}
+	}
+	return nil
 }
 
 // validateChoices checks the code$label##code$label encoding: codes are
@@ -3243,18 +3294,21 @@ func (in *fieldInput) apply(f *db.Field) map[string]any {
 	return changes
 }
 
-// fixTypeAttrs sets the attributes a yesno or notes field cannot choose: a
-// yesno field is the radio pair 1 = Yes, 0 = No (REQ-DB-043), a notes field
-// free text without choices (REQ-DB-044), and neither keeps a validation type —
-// dropped like min/max are for the types they do not apply to (§9). It runs
-// before the direct-identifier preset reads the validation type, and reports
-// whether f is one of the two types.
+// fixTypeAttrs sets the attributes a yesno, notes or transfer field cannot
+// choose: a yesno field is the radio pair 1 = Yes, 0 = No (REQ-DB-043), a
+// notes field free text without choices (REQ-DB-044), and a transfer field
+// carries its copy instructions in choices (REQ-DB-050) and validates nothing;
+// none keeps a validation type — dropped like min/max are for the types they
+// do not apply to (§9). It runs before the direct-identifier preset reads the
+// validation type, and reports whether f is one of the three types.
 func fixTypeAttrs(f *db.Field) bool {
 	switch f.FieldType {
 	case "yesno":
 		f.Choices = sql.NullString{String: validate.YesNoChoices, Valid: true}
 	case "notes":
 		f.Choices = sql.NullString{}
+	case "transfer":
+		// choices survives — it holds the instruction text (REQ-DB-050).
 	default:
 		return false
 	}

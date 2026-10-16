@@ -292,6 +292,15 @@ $fieldOption = static function (array $field): string {
                 require __DIR__ . '/../partials/expression-editor.php';
                 ?>
             </div>
+            <div class="col-12" data-clara-for-types="transfer">
+                <!-- A transfer field's copy instructions (REQ-DB-050): the raw text is stored in
+                     `choices` verbatim — one `create` line naming the target record, then
+                     `copy` lines; `#` starts a comment. The API parses and validates it. -->
+                <label class="form-label mb-0 small" for="field-transfer"><?= View::e($view->t('design.field.transfer')) ?></label>
+                <textarea class="form-control form-control-sm font-monospace" id="field-transfer" name="transfer_config" rows="4"
+                          spellcheck="false"><?= View::e((string) ($selected['choices'] ?? '')) ?></textarea>
+                <div class="form-text"><?= View::e($view->t('design.field.transfer_help')) ?></div>
+            </div>
         </div>
 
         <div class="mt-3 d-flex gap-2">

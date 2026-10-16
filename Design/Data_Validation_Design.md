@@ -16,7 +16,7 @@ Every value passes the same ordered pipeline, regardless of entry path (data API
 |---|---|---|
 | 1 | entry carries record name + field name (REQ-VAL-007) | code `IMPORT_MISSING_KEY`, per-entry error |
 | 2 | field exists in this project's data dictionary (REQ-VAL-005) | `UNKNOWN_FIELD` |
-| 3 | field type accepts values — not `description`/`header` (REQ-VAL-006), not `calculated` (REQ-VAL-036) | `NON_VALUE_FIELD` / `CALCULATED_READONLY` |
+| 3 | field type accepts values — not `description`/`header`/`transfer` (REQ-VAL-006), not `calculated` (REQ-VAL-036) | `NON_VALUE_FIELD` / `CALCULATED_READONLY` |
 | 4 | value non-empty? no → "no value" (clear/no-op, REQ-VAL-024) — **except** the record identifier (REQ-VAL-026) | identifier: `EMPTY_IDENTIFIER` |
 | 5 | type validator per `validation_type` (§4) | `TYPE_INVALID` / `RANGE` / `CHOICE_INVALID` |
 | 6 | content policy for free-form text (§5) | strips markup (rarely errors: `CONTENT_INVALID` for non-UTF-8 / control chars) |
@@ -30,7 +30,7 @@ One failed value fails the whole record's import (all-or-nothing, REQ-VAL-008/RE
 |---|---|---|
 | `IMPORT_MISSING_KEY` | entry lacks record or field name | "import entry missing record name" |
 | `UNKNOWN_FIELD` | field not in project dictionary | "unknown field: foo" |
-| `NON_VALUE_FIELD` | description/header field | "field 'note' does not accept values" |
+| `NON_VALUE_FIELD` | description/header/transfer field | "field 'note' does not accept values" |
 | `CALCULATED_READONLY` | calculated field is system-managed | "field 'total' is calculated and read-only" |
 | `EMPTY_IDENTIFIER` | identifier empty on import | "record identifier must not be empty" |
 | `IDENTIFIER_CHANGE` | existing record's identifier changed | "record identifier of existing record cannot change" |
@@ -157,7 +157,7 @@ A `calculated` field carries an expression (stored in `fields.calculation`, REQ-
 
 An expression is rejected (design-time error, REQ-VAL-034, REQ-API-065/069) if:
 1. it is not well-formed (parse/precedence error); or
-2. any reference names a field that does not exist, is not a value-carrying field (description/header), or is not active at the referenced event (not present in the instrument-event mapping of that event, REQ-DB-012); or
+2. any reference names a field that does not exist, is not a value-carrying field (description/header/transfer — a `transfer` field never becomes an operand, REQ-VAL-034), or is not active at the referenced event (not present in the instrument-event mapping of that event, REQ-DB-012); or
 3. the reference graph would introduce a **cycle** — a calculated field may reference another calculated field only while the dependency graph stays acyclic (REQ-VAL-035). The API builds the directed graph (calculated field → referenced calculated fields) and rejects a cycle.
 
 A related design-time invariant: deleting a field (REQ-API-070) that is referenced by an existing calculated expression MUST be rejected while the reference is in use — the expression is updated first, keeping the invariant that every reference names an active field (REQ-VAL-034).
@@ -224,7 +224,7 @@ Tokens (whitespace ignored):
 A field's or instrument's (REQ-VAL-040) branching expression is rejected with a machine-readable reason (REQ-VAL-029; the designer displays the reason, REQ-UI-021) if:
 
 1. it is not well-formed (parse error, unbalanced parentheses, misplaced operator); or
-2. a reference names a field that does not exist, is not value-carrying (description/header), or is not active at the referenced event (REQ-DB-012) — or, written `[field(code)]`, names a field that is not a checkbox or a code the checkbox does not have (REQ-VAL-044). The instrument import (REQ-API-152) holds a reference to a field it creates to existence and value-carrying only: it maps no instrument, so the active-at-event part applies once the instrument is mapped; or
+2. a reference names a field that does not exist, is not value-carrying (description/header/transfer — REQ-VAL-034), or is not active at the referenced event (REQ-DB-012) — or, written `[field(code)]`, names a field that is not a checkbox or a code the checkbox does not have (REQ-VAL-044). The instrument import (REQ-API-152) holds a reference to a field it creates to existence and value-carrying only: it maps no instrument, so the active-at-event part applies once the instrument is mapped; or
 3. a function is misspelled or has the wrong number of arguments.
 
 No cycle rule applies: branching logic produces no value, so no dependency graph arises.
@@ -263,7 +263,7 @@ When creating or updating a field (REQ-API-068/069) or instrument (REQ-API-065/1
 | `field_name` | `^[a-z0-9_]+$` (REQ-VAL-011); unique within the project (REQ-VAL-012); longer than 26 characters accepted — the warning after 26 is UI-only (REQ-VAL-013); reserved (design decision — the flat export row would otherwise be ambiguous, REQ-API-028): `redcap_event_name`, `redcap_repeat_instrument`, `redcap_repeat_instance` MUST NOT be used |
 | `validation_type` | always empty for `yesno` and `notes` (REQ-DB-043/044 — a supplied one is dropped, like `validation_min`/`max` elsewhere); otherwise empty, a built-in structured type (`integer`, `floating point`, `date`, `datetime`), or an existing validation-type registry name whose pattern compiles (§4.2; REQ-VAL-010/042) |
 | `validation_min`/`max` | if present, a valid number per the field's type (integer → §4 integer grammar; floating point → decimal grammar) and min ≤ max; ignored for other types (REQ-VAL-020) |
-| `choices` | stored as `code$label##code$label` (schema §1); codes non-empty, unique, matching `^[A-Za-z0-9_-]+$` and compared case-sensitively — for a `checkbox` `^[a-z0-9_]+$`, so `<field>___<code>` is a valid field name (REQ-VAL-022, REQ-DB-042); labels non-empty. **Input forms:** a value that parses as the stored encoding is taken as such; any other value is read as REDCap's `code, label \| code, label` — split on `\|` between choices and on the first comma inside a choice, code and label trimmed — and stored in the stored encoding. The two cannot be confused: a REDCap list's first code is followed by a comma, and no code may contain `$`, `,` or a space. A `yesno` field always stores `1$Yes##0$No` whatever is supplied (REQ-DB-043); a `notes` field stores none (REQ-DB-044) |
+| `choices` | stored as `code$label##code$label` (schema §1); codes non-empty, unique, matching `^[A-Za-z0-9_-]+$` and compared case-sensitively — for a `checkbox` `^[a-z0-9_]+$`, so `<field>___<code>` is a valid field name (REQ-VAL-022, REQ-DB-042); labels non-empty. **Input forms:** a value that parses as the stored encoding is taken as such; any other value is read as REDCap's `code, label \| code, label` — split on `\|` between choices and on the first comma inside a choice, code and label trimmed — and stored in the stored encoding. The two cannot be confused: a REDCap list's first code is followed by a comma, and no code may contain `$`, `,` or a space. A `yesno` field always stores `1$Yes##0$No` whatever is supplied (REQ-DB-043); a `notes` field stores none (REQ-DB-044); a **`transfer`** field holds free-text copy instructions in it instead — the code/label rules above apply to choice fields only, its text is validated per §12 (REQ-DB-050) |
 | `field_annotation` | any text, stored as given (REQ-DB-046); `@READONLY` — matched as a whole word, in any letter case, wherever it stands in the text — makes the field read-only in the form and on the survey page; nothing else in the text has an effect |
 | `field_label`, `section_header` | any text, no length limit (DEV-DB-15) |
 | `validation_format` | (date/datetime) composed of the §4.1 tokens — `Y`, `m`, `d`, plus `H`, `i` for datetime — with the specified separators; empty → the §4.1 defaults |
@@ -292,3 +292,44 @@ Every rejection is a design-time error with a machine-readable reason (REQ-API-0
 | finite value-length cap configuration key (if set) | `System_Configuration_Design.md` |
 | `details` JSON shape of the calculated-field recomputation audit event (REQ-AUD-023) | `Audit_Logging_Design.md` |
 | advisory client-side validation attributes per field type (mirror of §4) | `User_Interface_Design.md` |
+
+## 12. Transfer Fields (REQ-VAL-046)
+
+A `transfer` field carries no value of its own (REQ-VAL-006); its `choices` attribute holds **copy instructions** (REQ-DB-050) — a line-oriented text naming one target project and mapping fields of the transfer field's own instrument into one record there. The button that runs them executes through `API_Endpoints_Design.md` §4.27 (REQ-API-165/166); this section is the normative grammar.
+
+### 12.1 Instruction grammar
+
+Operations are written one per line; the first token of a line is its keyword:
+
+```
+config    := op { op }                                              # 1–256 operations, the first a create
+create_op := "create" [project][identifier_field] source_field
+copy_op   := "copy" source_field [project][event][target_field]     # event-enabled target
+           |  "copy" source_field [project][target_field]           # event-less target
+```
+
+Example — one record per subject in a `followup` project, its name taken from this record's `subject_code`:
+
+```
+# create the follow-up record and fill it from this one
+create [followup][subject_id]  subject_code
+copy   age          [followup][baseline_arm_1][age]
+copy   sex          [followup][baseline_arm_1][sex]
+copy   notes        [followup][week_4_arm_1][notes]
+```
+
+Rules:
+
+- **Lexing.** Line-oriented: `#` starts an end-of-line comment (the rest of the line is ignored), blank lines are ignored, whitespace separates tokens. A token is a bare lower-case identifier (`[a-z0-9_]+`) or one or more adjacent bracket groups — `[proj][baseline]` is one token, `[proj] [baseline]` two; names inside brackets may not contain brackets and are trimmed of surrounding whitespace. Whether a name *resolves* is the design-time check (§12.2), not the lexicon's.
+- **Exactly one `create`, first** (REQ-VAL-046): the button transfers to exactly one target record, whose record name is the create operation's source value — which is what makes re-triggering an update of that record rather than a second record (REQ-API-165). A second `create` anywhere, or a `copy` before it, is rejected.
+- **One target project.** Every operation names the same target project as the create; instructions spanning two projects are rejected — one button fills one record in one project.
+- **Identifier equality.** The create's second bracket group must name the target project's **record identifier field** (GD-8 on the target).
+- **Event resolution.** A copy into an event-enabled target names its event as a full `unique_event_name` (always accepted) or a plain `event_name` when it names exactly one of the target's events; an ambiguous or unknown name is rejected. An event-less target takes no event token — `[project][field]`; naming one there is rejected too. An event-enabled target needs **at least one copy**: the identifier rows are written at each distinct copied-into event, so a create alone would place the record's values nowhere.
+- **Field names.** Every `source_field` must name an existing value-carrying field of the transfer field's **same instrument** (§12.2, REQ-VAL-046) — non-value types and a checkbox's own row are neither source nor target; checkbox choice columns `<field>___<code>` (REQ-DB-042) may be both.
+- **Caps.** The instruction text is bounded: 16384 characters, at most 256 operations per config (admin-entered stored text).
+
+### 12.2 Validation timing
+
+**Design time** (creating or updating the field, REQ-API-068/069): the grammar parses; every source reference names an existing value-carrying field of the same instrument; and every target reference resolves against the current database state — target project exists, event exists, target field exists, carries values and is active at that pair (REQ-VAL-046, REQ-DB-050). An unknown target project is **named** in the rejection: a deliberate bounded disclosure of project-name existence (REQ-DB-050), accepted so typo'd targets fail where the designer sees them — runtime authorization stays strict and never discloses (REQ-API-165, REQ-API-007).
+
+**Runtime**: every execution re-parses and re-resolves the whole config against the live design before writing anything (`API_Endpoints_Design.md` §4.27) — a target whose design moved under a saved config fails then (and its button goes absent per the availability probe, REQ-API-166), never silently writes to a stale position.

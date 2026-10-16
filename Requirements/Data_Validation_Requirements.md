@@ -18,7 +18,7 @@ Defines the validation requirements that apply to all data written into the syst
 | REQ-VAL-003 | Validation rules MUST be derived entirely from the field's data dictionary entry (REQ-DB-013): field type, choices, validation type + min/max, required flag; there MUST be no hard-coded, per-project, or per-caller rule sets. |
 | REQ-VAL-004 | The same field MUST be validated identically for every caller (API token, UI, administration surface); no rule MAY be relaxed based on the caller. |
 | REQ-VAL-005 | A value supplied for a field name that does not exist in the project's data dictionary MUST be rejected as an unknown-field validation error and MUST NOT be stored in the EAV table (DEV-VAL-1). |
-| REQ-VAL-006 | A value supplied for a description or header field MUST be rejected: these field types carry text only and accept no values (plan §4). |
+| REQ-VAL-006 | A value supplied for a `description`, `header` or `transfer` field MUST be rejected: these field types carry text only and accept no values (plan §4, REQ-VAL-046). |
 | REQ-VAL-007 | Each `data[]` import entry MUST provide a record name and a field name; an entry missing either MUST be reported as a per-entry validation error (REQ-API-031, REQ-API-034 result code `0`). |
 | REQ-VAL-008 | A validation failure MUST NOT store any value of the record (all-or-nothing, REQ-API-035) and MUST report per-field details (field name, violated rule, offending value) sufficient for the import error response (REQ-API-034). |
 | REQ-VAL-009 | Validation error responses MUST carry a stable machine-readable rule code plus a human-readable message; they MUST NOT leak internal implementation details (REQ-API-006, REQ-API-039). |
@@ -86,6 +86,12 @@ Defines the validation requirements that apply to all data written into the syst
 | REQ-VAL-036 | A calculated field's value is system-managed: an import of a value into a calculated field MUST be rejected (REQ-API-095). |
 | REQ-VAL-037 | The value is stored at each (record, event, instrument, instance) position where the field is active (REQ-DB-030). These values MUST be recomputed in the same transaction whenever the value of a referenced (event, field) changes or is deleted; a change of the expression MUST trigger recomputation for all records of the project (ASM-VAL-4). |
 | REQ-VAL-038 | Evaluation: a missing/empty referenced value, a non-numeric operand, or division by zero MUST yield an empty value for the calculation — except an unchecked checkbox box, which stores nothing and MUST read as `0` (absence is 0, REQ-DB-042); the triggering import itself MUST still succeed (its own value was valid); the evaluation failure MUST be application-logged (REQ-TECH-016). Every recomputation MUST be audit-logged with the triggering user, the record, the field, and old/new values (REQ-AUD-023). |
+
+### 4.7 Transfer fields (cross-project transfers)
+
+| ID | Requirement |
+|---|------|
+| REQ-VAL-046 | A new field type `transfer` MUST be supported (VISION "New field type transfer"). Its choices attribute (REQ-DB-050) holds copy instructions: a `create` operation binding one source field's value as the record name of a target-project record, followed by `copy` operations mapping source fields to `[project][event][field]` positions of that record; `#` starts an end-of-line comment. The grammar is normative in `Data_Validation_Design.md`. Creating or updating the field MUST reject unparseable instructions; every source reference MUST name an existing value-carrying field of the **same instrument**, and exactly one `create` operation MUST appear before any `copy` (one button transfers to one target record — re-triggering updates it, REQ-API-165). Target references are checked per REQ-DB-050. The field is a non-value type: storing a value for it is rejected (REQ-VAL-006) and it never becomes a calculation or branching operand (REQ-VAL-034). |
 
 ## 5. Record Identifier Rules (GD-8)
 

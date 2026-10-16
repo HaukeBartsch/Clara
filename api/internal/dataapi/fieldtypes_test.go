@@ -7,6 +7,7 @@ package dataapi
 import (
 	"context"
 	"database/sql"
+	"net/http"
 	"net/url"
 	"strings"
 	"testing"
@@ -83,6 +84,59 @@ func TestYesNoAndNotesImportAndExport(t *testing.T) {
 	}
 	if rows[0]["consent"] != "0" {
 		t.Errorf("de-identified consent = %q, want 0", rows[0]["consent"])
+	}
+}
+
+// A transfer field carries no value: the data API rejects an import for it,
+// keeps it out of record exports, and hands its instruction text to metadata
+// raw — codes and labels stay empty (REQ-VAL-046, REQ-DB-050).
+func TestTransferIsNonValueAndExportsRawConfig(t *testing.T) {
+	f := newFieldTypesFixture(t)
+	ctx := context.Background()
+	demo, err := f.s.GetInstrumentByName(ctx, f.pid, "demo")
+	if err != nil || demo == nil {
+		t.Fatalf("demo instrument: %v", err)
+	}
+	const cfg = "create [Elsewhere][record_id] record_id\ncopy age [Elsewhere][baseline_arm_1][age_copy]"
+	if _, err := f.s.AddField(ctx, &db.Field{ProjectID: f.pid, InstrumentID: demo.ID,
+		FieldName: "handoff", FieldType: "transfer", Position: 10,
+		FieldLabel: sql.NullString{String: "Handoff", Valid: true},
+		Choices:    sql.NullString{String: cfg, Valid: true}}); err != nil {
+		t.Fatalf("seed handoff: %v", err)
+	}
+
+	res := f.importRows(t, importForm("tok-edit", map[string]string{
+		"record_id": "8DISC010", "form_name": "demo", "event_name": "baseline_arm_1", "handoff": "x",
+	}))
+	if res[0].ImportRecordID != importInvalid || !strings.Contains(res[0].ImportFormName, "NON_VALUE_FIELD") {
+		t.Errorf("import handoff = %+v, want NON_VALUE_FIELD", res[0])
+	}
+
+	f.importRows(t, importForm("tok-edit", map[string]string{
+		"record_id": "8DISC010", "form_name": "demo", "event_name": "baseline_arm_1", "consent": "1",
+	}))
+	rows := f.exportJSON(t, "tok-admin", url.Values{"records": {"8DISC010"}, "events": {"baseline_arm_1"}})
+	if len(rows) == 0 {
+		t.Fatal("export returned no rows")
+	}
+	if _, ok := rows[0]["handoff"]; ok {
+		t.Errorf("transfer column in record export: %v", rows[0])
+	}
+
+	code, body := do(t, f.h, url.Values{"token": {"tok-admin"}, "content": {"metadata"}, "format": {"json"}})
+	mustStatus(t, code, http.StatusOK, body)
+	var row map[string]any
+	for _, r := range decodeJSON(t, body) {
+		if r["field_name"] == "handoff" {
+			row = r
+		}
+	}
+	if row == nil {
+		t.Fatal("no handoff metadata row")
+	}
+	if row["field_type"] != "transfer" || row["select_choices_or_calculations"] != cfg ||
+		row["choice_codes"] != "" || row["choice_labels"] != "" {
+		t.Errorf("handoff metadata = %v, want raw config and empty codes/labels", row)
 	}
 }
 

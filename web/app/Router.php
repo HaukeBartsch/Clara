@@ -199,6 +199,8 @@ final class Router
             'handler' => 'surveyLink', 'guard' => 'login', 'action' => 'survey_link'],
         ['method' => 'POST', 'pattern' => '/projects/{id}/records/{record}', 'controller' => Controllers\RecordController::class,
             'handler' => 'revokeLink', 'guard' => 'login', 'action' => 'revoke_link'],
+        ['method' => 'POST', 'pattern' => '/projects/{id}/records/{record}', 'controller' => Controllers\RecordController::class,
+            'handler' => 'transfer', 'guard' => 'login', 'action' => 'transfer'],
 
         // M6 — the export action (§6.4): the page, and with `?download=1` the file it streams
         // (REQ-TECH-011). A GET like every read; the API audits each download (REQ-API-076).

@@ -384,6 +384,51 @@ final class RecordController extends DataEntryController
         }, 'record.survey.revoked');
     }
 
+    /**
+     * POST …?action=transfer — run one transfer field's copy instructions (REQ-UI-065,
+     * REQ-API-165): the browser never calls the API directly (REQ-UI-002), and the Go
+     * executor re-checks everything — target access at every written pair, both dictionaries
+     * — whatever an earlier availability probe said. The flash names the record in the other
+     * project that was created or updated; failures carry the API's own user line (REQ-UI-050).
+     */
+    public function transfer(): Response
+    {
+        $projectId = $this->projectIdFromPath();
+        $record = $this->recordFromPath();
+        $event = $this->request->field('event');
+        $instrument = $this->request->field('instrument');
+        $field = $this->request->field('field');
+        $back = Response::redirect(self::recordUrl($projectId, $record, $event, $instrument));
+
+        // The source event may be empty only for an event-less project; the names must be real.
+        if (!self::isName($instrument) || !self::isName($field) || ($event !== '' && !self::isName($event))) {
+            $this->flashDanger($this->invalidRequest(
+                ...(!self::isName($instrument) ? ['instrument'] : []),
+                ...($event !== '' && !self::isName($event) ? ['event'] : []),
+                ...(!self::isName($field) ? ['field'] : [])
+            ));
+
+            return $back;
+        }
+
+        try {
+            $result = $this->api->post('/api/v1/projects/' . $projectId . '/records/' . rawurlencode($record) . '/transfers',
+                [], ['event' => $event, 'instrument' => $instrument, 'field' => $field]);
+        } catch (ApiException $e) {
+            $this->logger->info('transfer rejected', ['code' => $e->code(), 'status' => $e->status()]);
+            $this->flashDanger($this->apiFailureMessage($e));
+
+            return $back;
+        }
+
+        $this->flashSuccess($this->i18n->t('record.transfer.done', [
+            'project' => (string) ($result['target_project'] ?? ''),
+            'record' => (string) ($result['target_record'] ?? ''),
+        ]));
+
+        return $back;
+    }
+
     // --- rendering ----------------------------------------------------------------------
 
     /**
@@ -438,7 +483,8 @@ final class RecordController extends DataEntryController
         // descriptions carry no error slot, so their names do not count as inputs here.
         $inputs = $identifier === '' ? [] : [$identifier];
         foreach ($fields as $field) {
-            if (in_array((string) ($field['field_type'] ?? ''), ['header', 'description'], true)) {
+            // A transfer button (REQ-UI-065) is no input either — its name never keys a value.
+            if (in_array((string) ($field['field_type'] ?? ''), ['header', 'description', 'transfer'], true)) {
                 continue;
             }
             $inputs[] = (string) ($field['field_name'] ?? '');
@@ -536,6 +582,32 @@ final class RecordController extends DataEntryController
         $link = !$canLink ? null : ($exists ? $this->linkReport($projectId, $record, $iid, $uen)
             : ['state' => 'none', 'url' => '', 'collected_at' => '']);
 
+        // Transfer buttons (REQ-UI-065): one availability probe per render — the API answers
+        // per transfer field whether this member may run it right now (REQ-API-166). The view
+        // renders a button only where the probe says yes; anything else — no record yet, no
+        // rights on the target, an unreadable answer — leaves the map empty and the button
+        // absent rather than disabled (REQ-UI-003). The executing call re-checks everything.
+        $transferAccess = [];
+        if ($canEdit && $exists && $fields !== []) {
+            foreach ($fields as $field) {
+                if (($field['field_type'] ?? '') === 'transfer') {
+                    try {
+                        $probe = $this->api->get('/api/v1/projects/' . $projectId . '/records/'
+                            . rawurlencode($record) . '/transfers', ['instrument' => $instrumentName]);
+                        foreach (is_array($probe['transfers'] ?? null) ? $probe['transfers'] : [] as $status) {
+                            if (is_array($status) && !empty($status['enabled'])) {
+                                $transferAccess[(string) ($status['field_name'] ?? '')] = true;
+                            }
+                        }
+                    } catch (ApiException $e) {
+                        // Fail closed: a probe that cannot be read discloses nothing.
+                        $this->logger->info('transfer availability failed', ['code' => $e->code(), 'status' => $e->status()]);
+                    }
+                    break; // one call covers every transfer field of this instrument
+                }
+            }
+        }
+
         return $this->renderSection($detail, 'project/record', 'record.title', [
             'record' => $record,
             'exists' => $exists,
@@ -569,6 +641,8 @@ final class RecordController extends DataEntryController
             'isSurvey' => $isSurvey,
             'canLink' => $canLink,
             'link' => $link,
+            // Transfer fields whose button may render (REQ-UI-065); empty map = no buttons.
+            'transferAccess' => $transferAccess,
             'groups' => $permissions->projectAdmin && $exists ? self::listOf($this->api->get($base . '/data-access-groups')) : null,
             'patterns' => $this->patternsFor($fields),
             'formats' => self::DEFAULT_FORMATS,

@@ -498,7 +498,7 @@ func occupiedNames(name, fieldType, choices string) []string {
 // identifier: it must carry a value of its own that a person enters (GD-8).
 func identifierType(fieldType string) bool {
 	switch fieldType {
-	case "description", "header", "calculated", "checkbox":
+	case "description", "header", "calculated", "checkbox", "transfer":
 		return false
 	}
 	return true

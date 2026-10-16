@@ -49,6 +49,7 @@ No IdP tokens, LDAP passwords, or service-token values ever appear in payloads (
 | `calculated_recomputed` | every system-driven recomputation (REQ-AUD-023, REQ-VAL-038) | `{"record_id":"…","field":"total","old":"9","new":"11","trigger_field":"a","trigger_event":"e1_arm_1"}` |
 | `instrument_completed` | the user marks a (record, event, instrument) finished — `PUT …/completion` with `state=finished` (REQ-AUD-026, REQ-API-110) | `{"record_id":"8DISC042","event":"e1_arm_1","instrument":"intake"}` |
 | `instrument_uncompleted` | the user clears that assignment (`state=unfinished`) (REQ-AUD-026) | `{"record_id":"8DISC042","event":"e1_arm_1","instrument":"intake"}` |
+| `transfer_executed` | every executed cross-project transfer (`POST …/transfers`, REQ-API-165), written on the **source** project — even one that changed nothing downstream; never with values (REQ-AUD-034, REQ-AUD-007) | `{"field":"send_to_followup","target_project":"followup","target_record":"MOBA042","created":true,"copied":["age","sex"],"skipped_empty":["notes"]}` |
 
 Data-change shape (create / update / delete):
 
@@ -65,7 +66,7 @@ Data-change shape (create / update / delete):
 }
 ```
 
-Rules: `old` is `null` for `create`; for `delete`, `new` is `null` and the `old` values are the deleted values (REQ-AUD-009). One entry per (record, instrument, event) group of the operation — per (record, instrument, event, instance) for a repeating instrument (REQ-DB-048): a further instance's entry carries `"instance": n` beside `event`, as do its `calculated_recomputed` and `instrument_completed`/`instrument_uncompleted` entries; a first instance leaves the key out, so every entry written before repeating instruments existed reads as instance 1 (REQ-API-156). The acting user, token, and arm are in the fixed columns; `target_record` is set (§6.4).
+Rules: `old` is `null` for `create`; for `delete`, `new` is `null` and the `old` values are the deleted values (REQ-AUD-009). One entry per (record, instrument, event) group of the operation — per (record, instrument, event, instance) for a repeating instrument (REQ-DB-048): a further instance's entry carries `"instance": n` beside `event`, as do its `calculated_recomputed` and `instrument_completed`/`instrument_uncompleted` entries; a first instance leaves the key out, so every entry written before repeating instruments existed reads as instance 1 (REQ-API-156). The acting user, token, and arm are in the fixed columns; `target_record` is set (§6.4). A `record_created`/`record_updated` entry written into the **target** project of a cross-project transfer adds an optional `"transfer": {"source_project":"…","source_record":"…"}` reference naming its origin (REQ-AUD-034), and its recalculations ride as standard `calculated_recomputed`; every entry of one operation — both projects' — commits or rolls back in the operation's transaction (REQ-AUD-003).
 
 ### 3.3 Project structure events (REQ-AUD-010)
 
@@ -256,7 +257,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_type   ON audit_events (project_id, 
 CREATE INDEX IF NOT EXISTS idx_audit_events_record ON audit_events (project_id, target_record, created_at);
 ```
 
-`target_record` is set for record-scoped events — `record_created`, `record_updated`, `record_deleted`, `calculated_recomputed`, `survey_submitted`, `dag_record_assigned` — and `NULL` otherwise. The pre-existing `idx_audit_events_project (project_id, created_at)` and `idx_audit_events_user (user_id, created_at)` (`Database_Schema_Design.md` §7) cover the time-range, project, and user patterns; the two indexes above cover event type and record (REQ-AUD-020, DEV-AUD-2). `audit_record_views` keeps `idx_audit_views_project`.
+`target_record` is set for record-scoped events — `record_created`, `record_updated`, `record_deleted`, `calculated_recomputed`, `survey_submitted`, `dag_record_assigned`, `transfer_executed` — and `NULL` otherwise. The pre-existing `idx_audit_events_project (project_id, created_at)` and `idx_audit_events_user (user_id, created_at)` (`Database_Schema_Design.md` §7) cover the time-range, project, and user patterns; the two indexes above cover event type and record (REQ-AUD-020, DEV-AUD-2). `audit_record_views` keeps `idx_audit_views_project`.
 
 ## 7. Read Access
 

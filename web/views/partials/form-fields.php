@@ -156,6 +156,20 @@ $fieldAttrs = static function (array $field, ?string $staticValue = null) use ($
             <?php if (($field['field_note'] ?? '') !== ''): ?><span class="d-block form-text"><?= View::lines($field['field_note']) ?></span><?php endif; ?></p>
         <?php continue; ?>
     <?php endif; ?>
+    <?php if ($type === 'transfer'): ?>
+        <?php /* A transfer button (REQ-UI-065) carries no value. It renders only where the
+               availability probe said this member may run it right now — absent, never
+               disabled (REQ-UI-003) — and never on a survey page, where $transferAccess is
+               not set at all. The form it submits lives outside the values form (record.php);
+               the button joins it by id, so no transfer control nests in the save form. */ ?>
+        <?php if (!empty($transferAccess[$name])): ?>
+            <div class="mb-3 clara-field clara-transfer">
+                <div class="form-label mb-1"><?= View::lines($label !== '' ? $label : $name) ?></div>
+                <button class="btn btn-sm btn-primary" type="submit" form="clara-transfer-<?= View::e($name) ?>"><?= View::e($view->t('record.transfer.button')) ?></button>
+            </div>
+        <?php endif; ?>
+        <?php continue; ?>
+    <?php endif; ?>
 
     <?php $static = !$editable || $isIdentifier || $type === 'calculated' ? ($isIdentifier && $value === '' ? $record : $value) : null; ?>
     <div class="mb-3 clara-field<?= $error !== '' ? ' clara-field-invalid' : '' ?>"<?= $fieldAttrs($field, $static) ?>>

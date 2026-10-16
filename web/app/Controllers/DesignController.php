@@ -22,9 +22,11 @@ final class DesignController extends StructureController
 {
     /**
      * The field types of §7.2, in the order the type select lists them. `yesno` and `notes`
-     * (REQ-DB-043/044) have no choice editor: the API fixes their choices.
+     * (REQ-DB-043/044) have no choice editor: the API fixes their choices. `transfer`
+     * (REQ-DB-050) has a raw instructions editor instead — its `choices` is copy text, not
+     * the choice encoding.
      */
-    public const FIELD_TYPES = ['text', 'notes', 'dropdown', 'radio', 'checkbox', 'yesno', 'matrix', 'description', 'header', 'calculated'];
+    public const FIELD_TYPES = ['text', 'notes', 'dropdown', 'radio', 'checkbox', 'yesno', 'matrix', 'description', 'header', 'calculated', 'transfer'];
 
     /**
      * Types that carry choices (the `code$label##…` encoding, REQ-VAL-022). A checkbox stores
@@ -602,7 +604,9 @@ final class DesignController extends StructureController
             'section_header' => $this->request->field('section_header'),
             'choices' => in_array($type, self::CHOICE_TYPES, true)
                 ? self::encodeChoices($this->request->fieldList('choice_code'), $this->request->fieldList('choice_label'))
-                : '',
+                // A transfer field's `choices` holds its copy instructions verbatim (REQ-DB-050):
+                // raw text from the designer, not the choice encoding — the API parses it.
+                : ($type === 'transfer' ? $this->request->field('transfer_config') : ''),
             'field_note' => $this->request->field('field_note'),
             'validation_type' => $validationType,
             'validation_format' => trim($this->request->field('validation_format')),

@@ -128,6 +128,10 @@ func redcapRow(f db.Field, form string) []string {
 		fieldType = "descriptive"
 	case "calculated":
 		fieldType, choices = "calc", f.Calculation.String
+	case "transfer":
+		// Not a REDCap type: CLARA exports its own vocabulary raw so the file
+		// re-imports (REQ-DB-050); real REDCap would reject the row.
+		choices = f.Choices.String
 	}
 	yes := func(b bool) string {
 		if b {

@@ -1542,6 +1542,38 @@
         }
       }
     },
+    "/api/v1/projects/{id}/records/{record}/transfers": {
+      "get": {
+        "tags": ["Admin: Records"],
+        "operationId": "listTransferAvailability",
+        "summary": "Transfer availability probe for an instrument (REQ-API-166)",
+        "description": "Project membership + record visibility under the data-access-group rule (uniform 403). Answers per `transfer` field of the addressed instrument whether the acting user may run it right now: `enabled` means the stored instructions parse, their target references resolve against the current design, and the acting user holds the edit rights REQ-API-165 demands at every written (instrument, event) pair. Executes nothing; fails closed and discloses no target details beyond availability — the data-entry form renders each button or leaves it absent (REQ-UI-065). The `event` parameter is accepted for symmetry with the POST.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/RecordId" },
+          { "name": "event", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "instrument", "in": "query", "required": true, "schema": { "type": "string" } } ],
+        "responses": {
+          "200": { "description": "One entry per transfer field of the instrument.", "content": { "application/json": { "schema": { "type": "object", "required": ["transfers"], "properties": { "transfers": { "type": "array", "items": { "type": "object", "required": ["field_name", "enabled"], "properties": { "field_name": { "type": "string" }, "enabled": { "type": "boolean" } } } } } } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
+        }
+      },
+      "post": {
+        "tags": ["Admin: Records"],
+        "operationId": "executeTransfer",
+        "summary": "Execute one cross-project transfer (REQ-API-165)",
+        "description": "Project membership + record visibility on the source side. Executes the field's stored copy instructions in ONE transaction (ASM-API-6): resolve the target project by name, require data access ≥ `view_edit` at every written target (instrument, event) pair and target record visibility — a missing or forbidden target answers the uniform 403 that never discloses existence (REQ-API-007); create the target record when absent (its record name is the `create` operation's source value; a new record joins the actor's active data-access group on the target), then copy each configured value through the TARGET dictionary's validation exactly as an import would. An empty source value skips its copy and never clears a stored target value. Calculated fields of the target recompute in the same transaction (REQ-VAL-037). Idempotent: re-executing updates in place, unchanged values produce no audit churn. A failed transfer writes nothing. Audit: `transfer_executed` on the source project (no values), standard data-change entries on the target carrying the source reference (REQ-AUD-034).",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/RecordId" },
+          { "name": "event", "in": "query", "required": false, "schema": { "type": "string" }, "description": "The event of the transfer field's context; required when the source project has events." },
+          { "name": "instrument", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "field", "in": "query", "required": true, "schema": { "type": "string" }, "description": "The transfer field to execute." } ],
+        "responses": {
+          "200": { "description": "What the button did — never the values it carried.", "content": { "application/json": { "schema": { "type": "object", "required": ["target_project", "target_record", "created", "copied", "skipped_empty"], "properties": { "target_project": { "type": "string" }, "target_record": { "type": "string" }, "created": { "type": "boolean" }, "copied": { "type": "array", "items": { "type": "string" } }, "skipped_empty": { "type": "array", "items": { "type": "string" } } } } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
+        }
+      }
+    },
     "/api/v1/projects/{id}/export": {
       "get": {
         "tags": ["Admin: Records"],
@@ -2921,7 +2953,7 @@
           "id": { "type": "integer", "format": "int64" },
           "field_name": { "type": "string", "description": "Lower-case alphanumeric + underscore, unique within the project." },
           "field_label": { "type": "string" },
-          "field_type": { "type": "string", "description": "text, notes, dropdown, radio, checkbox, yesno, matrix, description, header or calculated (REQ-DB-013). A yesno field always stores the choices 1$Yes##0$No (REQ-DB-043); yesno and notes keep no validation type (REQ-DB-044)." },
+          "field_type": { "type": "string", "description": "text, notes, dropdown, radio, checkbox, yesno, matrix, description, header, calculated or transfer (REQ-DB-013). A yesno field always stores the choices 1$Yes##0$No (REQ-DB-043); yesno and notes keep no validation type (REQ-DB-044). A transfer field holds its copy instructions in `choices` instead of a choice list, carries no value of its own, and is never a calculation or branching operand (REQ-DB-050, REQ-VAL-046)." },
           "section_header": { "type": "string" },
           "choices": { "type": "string", "description": "Stored `code$label##code$label` encoding for choice fields; codes are letters, digits, - and _ (a checkbox: lower-case letters, digits and _). Writes also accept REDCap's `code, label | code, label` form (REQ-VAL-022)." },
           "field_note": { "type": "string" },

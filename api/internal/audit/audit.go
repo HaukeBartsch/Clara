@@ -44,6 +44,7 @@ const (
 	CalculatedRecomputed  = "calculated_recomputed"
 	InstrumentCompleted   = "instrument_completed"   // REQ-AUD-026, REQ-API-110
 	InstrumentUncompleted = "instrument_uncompleted" // REQ-AUD-026
+	TransferExecuted      = "transfer_executed"      // REQ-AUD-034, REQ-API-165: a cross-project transfer ran (source project)
 
 	// §3.3 project structure events
 	ProjectCreated      = "project_created"

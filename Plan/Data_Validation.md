@@ -29,11 +29,15 @@ This document outlines the validation rules for the clinical study management sy
 - A `notes` field (REQ-DB-044) takes multi-line free text: no validation type, the same content policy as a free-text `text` field.
 
 ### 5. Non-Value Fields
-- Description and header fields carry text only and are not validated for values.
+- Description, header and `transfer` fields carry text only and accept no values (REQ-VAL-006).
 
 ### 6. Branching Logic
 - REDCap's spellings work as written: `'value'`, `and` / `or`, `<>`, `[field(code)]` for a checkbox box; `[field]` and `[event][field]` both work, `[field]` meaning the first event.
 - As in REDCap, `[field] = ''` is true when the field is blank, and an unchecked checkbox box reads as `0`.
+
+### 7. Transfer Fields
+- A `transfer` field's choices attribute (REQ-DB-050) holds copy instructions: exactly one `create [proj][id_field] <src_field>` operation first — its source value names the target record — then `copy <src_field> [proj][event][tgt_field]` lines (`[proj][tgt_field]` where the target project has no events); `#` starts an end-of-line comment. The grammar is normative in `Data_Validation_Design.md` (REQ-VAL-046).
+- Creating or updating the field rejects unparseable instructions: every source reference must name an existing value-carrying field of the **same instrument**, exactly one `create` must precede any `copy`, and every target reference (project, event, field) must resolve against the current database state (REQ-VAL-046, REQ-DB-050). The field stays a non-value type — never a calculation or branching operand (REQ-VAL-034), values rejected (REQ-VAL-006).
 
 ## Field Names
 - Lower-case alphanumeric with underscores; a warning is shown after 26 characters.

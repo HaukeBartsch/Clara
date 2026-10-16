@@ -226,8 +226,14 @@ func (h *Handler) contentMetadata(ctx context.Context, w http.ResponseWriter, en
 		// REDCap carries the calculation expression in the same key as the
 		// choices; a calculated field has none.
 		selOrCalc := combined
-		if f.FieldType == "calculated" {
+		switch f.FieldType {
+		case "calculated":
 			selOrCalc = f.Calculation.String
+		case "transfer":
+			// The copy instructions are not a choice list: they travel raw,
+			// with no codes and labels (REQ-DB-050) — splitChoices would
+			// mangle them.
+			selOrCalc, codes, labels = f.Choices.String, "", ""
 		}
 		rows = append(rows, metaRow{
 			FieldName:                   f.FieldName,

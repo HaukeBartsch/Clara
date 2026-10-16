@@ -5,6 +5,7 @@ This document outlines the strategy for tracking user activity and data changes 
 ## Logged Events
 - Authentication: Login attempts (success/failure) and logouts; each login event names the authentication source and the user-selected source name (master spec "Authentication order", REQ-AUTH-067) — a parallel credential race under one name yields a single failure event with per-source outcomes in its details (REQ-AUD-008). Two-factor enrollment, self-service disable, administrator reset, and failed second-factor attempts (GD-21, REQ-AUD-028). Secrets and codes are never in the trail.
 - Data Changes: Creation, modification, and deletion of records.
+- Transfers: Every executed cross-project transfer records a `transfer_executed` entry in the **source** project — acting user, source record and field, target project and record, whether the record was created, and which fields were copied or skipped — carrying no values; the writes to the **target** project appear there as the standard data-change entries with a reference to the source project and record. All entries ride the operation's transaction, so a failed transfer records nothing that did not happen (REQ-AUD-034).
 - Record Views: All views of records, i.e. every record a user pulls through the API.
 - Project Structure: Changes to instruments, fields, or project settings.
 - Token Views: Every Show of a just-issued project token on the Members page, as its own entry beside the add or rotation — never the value (REQ-AUD-033).

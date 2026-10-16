@@ -892,6 +892,8 @@ return [
     'design.field.direct_identifier' => 'Direct identifier',
     'design.field.branching' => 'Branching logic',
     'design.field.calculation' => 'Calculation',
+    'design.field.transfer' => 'Copy instructions',
+    'design.field.transfer_help' => 'One create line first — [target project][record identifier field] source_field — then copy lines: source_field [target project][event][target field]. Text after # is a comment. The instructions are checked against both projects when you save.',
     'design.type.text' => 'Text',
     'design.type.notes' => 'Notes (multi-line text)',
     'design.type.dropdown' => 'Dropdown',
@@ -902,6 +904,7 @@ return [
     'design.type.description' => 'Description (no value)',
     'design.type.header' => 'Header (no value)',
     'design.type.calculated' => 'Calculated',
+    'design.type.transfer' => 'Transfer (button, no value)',
     'design.validation.none' => '— none —',
     'design.choice.code' => 'Code',
     'design.choice.label' => 'Label',
@@ -1103,6 +1106,10 @@ return [
     'record.delete.done.event' => 'The values at {event} were deleted from record {record}.',
     'record.delete.done.record' => 'Record {record} was deleted.',
     'record.delete.nothing' => 'This form has no values to delete.',
+    // Transfer button (§8.3, REQ-UI-065): the confirm names what it does to the other project.
+    'record.transfer.button' => 'Transfer',
+    'record.transfer.confirm' => 'Copy {record} from form {instrument} into the target project? The target record is created if it does not exist yet; named values are updated in place, and empty source values are left alone.',
+    'record.transfer.done' => 'The values were copied to record {record} in project {project}.',
 
     // --- M6: export (§6.4) ---
     'export.title' => 'Export',

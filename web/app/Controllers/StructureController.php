@@ -364,7 +364,7 @@ abstract class StructureController extends ProjectPageController
             }
             foreach ($events as $unique) {
                 foreach ($fieldsOf($name) as $field) {
-                    if (in_array($field['field_type'] ?? '', ['description', 'header'], true)) {
+                    if (in_array($field['field_type'] ?? '', ['description', 'header', 'transfer'], true)) {
                         continue; // no value, nothing to reference (REQ-VAL NON_VALUE_FIELD)
                     }
                     $references[] = [

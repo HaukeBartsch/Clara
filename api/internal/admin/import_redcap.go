@@ -333,6 +333,13 @@ func (rd *importReader) convertRow(file string, row int, name string, cols map[s
 		rd.warn(file, row, name, "converted", "REDCap's truefalse field becomes a radio pair 1 = True, 0 = False")
 	case "descriptive":
 		f.FieldType = "description"
+	case "transfer":
+		// Not a REDCap type: this is CLARA's own dictionary vocabulary coming
+		// back home — a transfer field's instruction text travels raw in the
+		// choices column (REQ-DB-050). Real REDCap would reject such a row.
+		f.FieldType = "transfer"
+		f.Choices = nullText(choices)
+		choices = "" // consumed here, not an attribute to drop
 	case "calc":
 		f.FieldType = "calculated"
 		out.calcSource = choices

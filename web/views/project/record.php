@@ -22,7 +22,7 @@
  * Reads: $record, $exists, $recordUrl, $statusUrl, $arms, $armNum, $event, $instrument,
  * $items, $identifier, $prefill, $draft, $errors, $states, $state, $repeats, $instance,
  * $instanceList, $nextInstance, $analysis, $canEdit, $deleteScopes, $isSurvey, $canLink,
- * $link, $groups, $patterns, $formats, $clientContext.
+ * $link, $transferAccess, $groups, $patterns, $formats, $clientContext.
  */
 
 use Clara\DataEntry;
@@ -283,4 +283,17 @@ $stateBadge = [
             <?php endforeach; ?>
         </div>
     </section>
+<?php endif; ?>
+
+<?php if (!empty($transferAccess)): ?>
+    <!-- Transfer buttons (REQ-UI-065) sit in the field layout beside their labels; the forms
+         they submit ride here, outside the values form — a form may not nest — and the button
+         joins its form through the HTML `form` attribute. Each carries the §3.5 confirmation;
+         execution re-checks target access server-side whatever this page decided (REQ-API-165). -->
+    <?php foreach (array_keys($transferAccess) as $transferField): ?>
+        <form id="clara-transfer-<?= View::e((string) $transferField) ?>" method="post" action="<?= View::e($act('transfer')) ?>" class="d-none"
+              data-clara-confirm="<?= View::e($view->t('record.transfer.confirm', ['record' => $record, 'instrument' => $instrumentName])) ?>">
+            <?= $view->csrfField() ?><?= $hidden(['event' => $uen, 'instrument' => $instrumentName, 'field' => (string) $transferField]) ?>
+        </form>
+    <?php endforeach; ?>
 <?php endif; ?>

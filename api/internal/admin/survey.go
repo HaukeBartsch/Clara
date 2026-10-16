@@ -308,8 +308,8 @@ func (h *Handler) surveyValueFields(ctx context.Context, projectID, instrumentID
 	}
 	names := make([]string, 0, len(fields))
 	for _, f := range fields {
-		if f.ID == identifierID || f.FieldType == "description" || f.FieldType == "header" {
-			continue
+		if f.ID == identifierID || f.FieldType == "description" || f.FieldType == "header" || f.FieldType == "transfer" {
+			continue // a transfer button never answers a survey (REQ-UI-065)
 		}
 		if f.FieldType == "checkbox" {
 			// A checkbox answers through its choice columns (REQ-DB-042).

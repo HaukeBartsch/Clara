@@ -159,7 +159,7 @@ Requires data access ≥ `read_only`. JSON response: one object per field, matri
 ]
 ```
 
-`record_identifier` is `"Y"` on the record-identifier field (position 1 of instrument position 1, GD-8) and empty elsewhere. `direct_identifier` is this system's key (`"Y"`/`""`, REQ-DB-013, REQ-EXP-020 — an additional key beyond the REDCap shape, tolerated by naive parsers per REQ-API-018). `choice_codes`/`choice_labels` are comma-joined from the stored `code$label##code$label` encoding. `field_annotation` is REDCap's own metadata key — the field's annotation as stored, `@READONLY` and any other text (REQ-DB-046). `forms[]` restricts the response to those instruments when supplied — the mechanism §3.10 uses so a survey link sees its own instrument's definitions and no other (REQ-API-083).
+`record_identifier` is `"Y"` on the record-identifier field (position 1 of instrument position 1, GD-8) and empty elsewhere. `direct_identifier` is this system's key (`"Y"`/`""`, REQ-DB-013, REQ-EXP-020 — an additional key beyond the REDCap shape, tolerated by naive parsers per REQ-API-018). `choice_codes`/`choice_labels` are comma-joined from the stored `code$label##code$label` encoding; a `transfer` field exports its instruction text verbatim in `select_choices_or_calculations` with empty `choice_codes`/`choice_labels` — no code/label parsing applies to it (REQ-DB-050). `field_annotation` is REDCap's own metadata key — the field's annotation as stored, `@READONLY` and any other text (REQ-DB-046). `forms[]` restricts the response to those instruments when supplied — the mechanism §3.10 uses so a survey link sees its own instrument's definitions and no other (REQ-API-083).
 
 ### 3.5 `event`, `formEventMapping`, `exportFieldNames`, `generateNextRecordName`
 
@@ -375,7 +375,7 @@ Every error is a JSON object with a consistent shape:
 | Status | `error` | When |
 |---|------|------|
 | 400 | `invalid_request` | malformed JSON body; a missing or invalid attribute (e.g. non-survey instrument for a link, §4.17); a GD-8 identifier-invariant violation (§4.10, §4.11) |
-| 400 | `validation_error` | design-time rejection of a data-dictionary entry — ill-formed expression, unknown/inactive reference, cycle, malformed name (`Data_Validation_Design.md` §6.2, §7.2, §9); the reason is in `message` (REQ-VAL-029) |
+| 400 | `validation_error` | design-time rejection of a data-dictionary entry — ill-formed expression, unknown/inactive reference, cycle, malformed name (`Data_Validation_Design.md` §6.2, §7.2, §9) — or an unexecutable transfer instruction / rejected transferred value at execution (§4.27); the reason is in `message` (REQ-VAL-029) |
 | 401 | `service_token_invalid` | missing/invalid `X-Internal-Service-Token` (audit `admin_rejected`) |
 | 401 | `session_revoked` | `X-Internal-Session-Epoch` no longer matches the acting user's session epoch — the account's sessions were ended since this one signed in (REQ-API-147; audit `admin_rejected`). PHP ends the session. |
 | 401 | `account_not_found` | login with an email that has no user row (REQ-AUTH-006; audit `login_failure`) |
@@ -1263,6 +1263,31 @@ Unlike §4.25's never-user-data snapshot, **this payload carries source IP addre
 
 The Monitoring page polls this endpoint once per second next to `/system/metrics`; both calls ride the administration chain and count against the limiter like any other request — with a low `rate_limit_rpm` an open Monitoring page can spend the budget of PHP's source address and show itself blocked. That is honest behaviour, not a defect: the blockout exists precisely to refuse over-frequent callers.
 
+### 4.27 Cross-project transfer (REQ-API-165, REQ-API-166)
+
+**`POST /api/v1/projects/{id}/records/{record}/transfers`** — executes one `transfer` field (REQ-VAL-046) of the addressed source record. Query parameters: `event`, `instrument` (the field's context — whose stored values are read) and `field` (the transfer field name); `instrument` and `field` are required, else 400 `invalid_request`. The routes mount on the administration API because one call must authorize the **acting account** against a second project — a data-API token resolves to exactly one project, and two token-scoped calls could not share one transaction (DEV-API-30); the PHP layer proxies the data-entry button here with the member's identity (`User_Interface_Design.md` §8.2), the browser never calls them directly (REQ-UI-002).
+
+Authorization runs on both sides: **source** — project membership + record visibility under DAG rules, a record outside the caller's scope answers the uniform 403 (REQ-AUTH-045); **target** — data access ≥ `view_edit` at every written target (instrument, event) pair (the identifier rows are value writes like any other) and visibility of an existing target record under DAG rules; a missing or forbidden target — unknown project, no membership, a missing pair right, a foreign-group record — answers the same uniform 403 and never discloses whether the target exists (REQ-API-165, REQ-API-007).
+
+Behavior — **one transaction across both projects** (ASM-API-6): record creation, value copies, target-side calculated recomputation and both projects' audit entries commit or roll back together; a failed transfer writes nothing. The stored instructions (grammar normative in `Data_Validation_Design.md` §12) are re-parsed and re-resolved against the live design at execution time — every reference is checked again, because designs and memberships move. The button copies the record's **saved first-instance values** at the button's event, not a browser draft. The `create` operation names the target record by its source value (trimmed, non-empty, ≤ 255 characters, no control characters — else 400 `validation_error`); if no target record of that name exists it is created (REQ-API-031's identifier rules apply to the target project) and joins the actor's active DAG group on the target, or none (REQ-API-093); an existing record keeps its group. Each `copy` value passes the **target dictionary's validation exactly as an import would** (REQ-VAL-004; date/datetime values canonicalize with `APP_TIMEZONE` — no browser zone rides a transfer); **an empty source value skips its copy operation and never clears a stored target value** — a transfer copies, it does not own the target row (the deliberate difference from import's empty-clears, REQ-VAL-024). The target project's calculated fields recompute in the same transaction (REQ-VAL-037). Re-executing transfers to the same record updates in place: unchanged values produce no target-side data-change entries — a no-op click costs no audit churn; the source project's `transfer_executed` entry is written either way. Further instances of repeating instruments are out of scope in v1: copies address first-instance slots.
+
+200 — what the button did, never the values it carried (REQ-API-165):
+
+```json
+{ "target_project": "followup", "target_record": "MOBA042", "created": true,
+  "copied": ["age", "sex"], "skipped_empty": ["notes"] }
+```
+
+Errors: uniform 403 `forbidden` for every source- or target-side denial (REQ-API-007 — executing never probes which projects exist or what records they hold); 400 `validation_error` with the detail the designer needs when the stored instructions cannot execute against the current design or the target dictionary rejects a value; 401 session errors as elsewhere in §4. Audit: one `transfer_executed` entry on the **source** project; the target's writes appear there as standard `record_created`/`record_updated` (or none on a no-op) carrying a `"transfer"` origin reference, recomputations as `calculated_recomputed`; all entries ride the operation's transaction (REQ-AUD-034, REQ-AUD-003, `Audit_Logging_Design.md` §3.2).
+
+**`GET /api/v1/projects/{id}/records/{record}/transfers?instrument=…`** — the availability probe (REQ-API-166): for every `transfer` field of the addressed instrument, whether this acting user may run it here now — the stored instructions parse, their target references resolve against the current design, and the user holds the edit rights REQ-API-165 demands at every written pair. It exists so the data-entry form renders each button or leaves it absent in one call (REQ-UI-065). `event` is accepted for symmetry with the POST and ignored — availability belongs to the target design and the actor, not the event context; the executing call validates it. The probe **fails closed**: any failure reads as `"enabled": false`, no reason is returned, nothing is written, and no target detail beyond availability is disclosed. The source-side gate is identical to the POST (membership + record visibility, uniform 403).
+
+200:
+
+```json
+{ "transfers": [ { "field_name": "send_to_followup", "enabled": true } ] }
+```
+
 ## 5. Permission summary
 
 The normative endpoint → permission mapping is in `API_Endpoints_Requirement.md` §4.22; it is reproduced here as an overview:
@@ -1289,6 +1314,7 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirement.m
 | arms, events, instruments, fields, mapping — reads (GET) | data access ≥ `read_only` |
 | `GET …/record-status`, `GET …/records/{record}/history` | data access ≥ `read_only` (+ record visibility) |
 | `PUT …/records/{record}/events/{event}/instruments/{iid}/completion` | data access ≥ `view_edit` on the record's arm (+ record visibility) |
+| `GET/POST …/records/{record}/transfers` (§4.27, REQ-API-165/166) | source: member + record visibility; target: data access ≥ `view_edit` on every written (instrument, event) pair (+ target-record DAG visibility) — both sides checked, uniform 403 |
 | `POST …/fields/{fid}/test` | `project_admin` + record visibility |
 | `GET /api/v1/validationTypes` | any authenticated user |
 | `GET …/export` | export level per (instrument, event) pair — unpermitted pairs contribute no columns; 403 only when no permitted pair is in scope |

@@ -225,6 +225,11 @@ final class SurveyController extends Controller
                 continue;
             }
             $type = (string) ($row['field_type'] ?? 'text');
+            // A transfer button is absent on surveys (REQ-UI-065): skipping the field keeps
+            // both the button and its copy instructions off a public page.
+            if ($type === 'transfer') {
+                continue;
+            }
             $combined = (string) ($row['select_choices_or_calculations'] ?? '');
             $fields[] = [
                 'field_name' => (string) ($row['field_name'] ?? ''),

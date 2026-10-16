@@ -117,7 +117,7 @@ const YesNoChoices = "1$Yes##0$No"
 // relevant columns from its own field type into this.
 type Field struct {
 	Name           string
-	Type           string // text | notes | dropdown | radio | checkbox | yesno | matrix | description | header | calculated
+	Type           string // text | notes | dropdown | radio | checkbox | yesno | matrix | description | header | calculated | transfer
 	ValidationType string // "" | integer | floating point | email | MRN | date | datetime
 	ValidationMin  string
 	ValidationMax  string
@@ -182,7 +182,7 @@ func ValidateValue(f Field, value string, reg *Registry) *Violation {
 	if value == "" {
 		return nil
 	}
-	if f.Type == "description" || f.Type == "header" {
+	if f.Type == "description" || f.Type == "header" || f.Type == "transfer" {
 		return &Violation{CodeNonValueField, fmt.Sprintf("field %q does not accept values", f.Name)}
 	}
 	if f.Type == "calculated" {

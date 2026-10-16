@@ -33,6 +33,16 @@ type dataChangeDetails struct {
 	// repeat keeps its shape.
 	Instance int           `json:"instance,omitempty"`
 	Fields   []fieldChange `json:"fields"`
+	// Origin names the (project, record) a change was transferred from when a
+	// cross-project transfer wrote it (REQ-AUD-034); nil for every other write.
+	Origin *transferOrigin `json:"transfer,omitempty"`
+}
+
+// transferOrigin is the source reference a transferred change carries on the
+// target project's trail (REQ-AUD-034).
+type transferOrigin struct {
+	Project  string `json:"source_project"`
+	RecordID string `json:"source_record"`
 }
 
 // calculatedChange is one stored result a recomputation changed: the field,
