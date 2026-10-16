@@ -102,6 +102,10 @@ final class ConfigCheck
             'memory_limit' => self::bytes((string) ini_get('memory_limit')),
             'https' => $https !== '' && $https !== 'off',
             'host' => strtolower((string) ($server['HTTP_HOST'] ?? '')),
+            // Both halves of the caller-address question (§5.10, REQ-API-125): what this host saw on
+            // the wire, and what the proxy said the caller was.
+            'remote_addr' => trim((string) ($server['REMOTE_ADDR'] ?? '')),
+            'real_ip_header' => trim((string) ($server['HTTP_X_REAL_IP'] ?? '')),
             'env_file' => self::envFile(CLARA_REPO_ROOT . '/.env'),
             'session_dir' => [
                 'mode' => is_dir($config->sessionDir) ? (fileperms($config->sessionDir) & 0777) : null,
@@ -231,6 +235,23 @@ final class ConfigCheck
             $env['host'] !== '' && $env['host'] !== $urlHost => self::result('web.public_url', self::WARN, 'other_host',
                 ['url' => $config->webPublicUrl, 'host' => (string) $env['host']], '§6'),
             default => self::result('web.public_url', self::OK, 'ok', ['url' => $config->webPublicUrl], '§6'),
+        };
+
+        // The address the API limits by and audits (REQ-API-125): REMOTE_ADDR, unless the peer sits
+        // inside TRUSTED_PROXY_CIDRS and forwarded another one. Neither half is the caller's choice
+        // — which is exactly why it is worth a line here: a chain that arrives as one address for
+        // every browser quietly disables limiting, and a chain that believes the browser lets
+        // anyone pick the identity to be limited by (finding F9).
+        $peer = filter_var($env['remote_addr'] ?? '', FILTER_VALIDATE_IP);
+        $forwarded = filter_var($env['real_ip_header'] ?? '', FILTER_VALIDATE_IP);
+        $checks[] = match (true) {
+            $peer === false => self::result('web.client_ip', $harden, 'no_peer', [], '§11'),
+            $forwarded === false => self::result('web.client_ip', self::INFO, 'no_header',
+                ['ranges' => $config->trustedProxies->describe()], '§11'),
+            $forwarded === $peer => self::result('web.client_ip', self::OK, 'same', [], '§11'),
+            $config->trustedProxies->contains((string) $peer) => self::result('web.client_ip', self::OK, 'forwarded', [], '§11'),
+            default => self::result('web.client_ip', $harden, 'ignored',
+                ['ranges' => $config->trustedProxies->describe()], '§11'),
         };
 
         $file = $env['env_file'];

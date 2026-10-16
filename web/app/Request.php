@@ -17,6 +17,10 @@ final class Request
      *                                          filled in by withPathParams()
      * @param string                $ref        the per-request correlation reference (REQ-UI-050)
      * @param array<string, mixed>  $files      uploaded files as PHP received them ($_FILES)
+     * @param string                $remoteAddr the direct TCP peer as PHP received it (REMOTE_ADDR),
+     *                                          which is what clientIp() starts from
+     * @param TrustedProxies|null   $trusted    peers allowed to name another caller in X-Real-IP
+     *                                          (TRUSTED_PROXY_CIDRS); null trusts nobody
      */
     public function __construct(
         private readonly string $method,
@@ -26,10 +30,12 @@ final class Request
         private readonly array $post,
         private readonly array $pathParams = [],
         private readonly string $ref = '',
-        private readonly array $files = []
+        private readonly array $files = [],
+        private readonly string $remoteAddr = '',
+        private readonly ?TrustedProxies $trusted = null
     ) {}
 
-    public static function fromGlobals(): self
+    public static function fromGlobals(?TrustedProxies $trusted = null): self
     {
         $uri = $_SERVER['REQUEST_URI'] ?? '/';
         $path = parse_url((string) $uri, PHP_URL_PATH);
@@ -50,7 +56,9 @@ final class Request
             is_array($_POST) ? $_POST : [],
             [],
             bin2hex(random_bytes(4)),
-            is_array($_FILES) ? $_FILES : []
+            is_array($_FILES) ? $_FILES : [],
+            (string) ($_SERVER['REMOTE_ADDR'] ?? ''),
+            $trusted
         );
     }
 
@@ -94,7 +102,18 @@ final class Request
     /** This request with the router's matched placeholders attached (immutably). */
     public function withPathParams(array $pathParams): self
     {
-        return new self($this->method, $this->path, $this->headers, $this->query, $this->post, $pathParams, $this->ref, $this->files);
+        return new self(
+            $this->method,
+            $this->path,
+            $this->headers,
+            $this->query,
+            $this->post,
+            $pathParams,
+            $this->ref,
+            $this->files,
+            $this->remoteAddr,
+            $this->trusted
+        );
     }
 
     public function header(string $name): ?string
@@ -292,23 +311,41 @@ final class Request
     }
 
     /**
-     * The caller's address as the proxy reported it. nginx sets X-Real-IP from
-     * $remote_addr and overwrites anything the client sent
-     * (Technology_Stack_Design.md §5); PHP forwards that value unchanged on its
-     * own API calls so the API's limiter sees a distinct address per caller
-     * (REQ-API-125). A malformed header is ignored rather than forwarded — it
-     * must never become a header-injection vector against the internal API.
+     * The caller's address, derived by the same rule the API applies to its own direct peer
+     * (REQ-API-125, `dataapi.SourceIP`): REMOTE_ADDR is the answer, and a proxy inside
+     * TRUSTED_PROXY_CIDRS may replace it with the X-Real-IP it received from that caller — no one
+     * else. The header used to win whenever it was present, which let a browser hand itself a new
+     * address on every request: past the rate limiter the API keys on this value, and into the
+     * `password_reset_requested` audit entries that carry an IP (finding F9). nginx overwriting
+     * HTTP_X_REAL_IP with its own $remote_addr (Technology_Stack_Design.md §5, INSTALL.md §11) is
+     * the second line of defence, not the rule — a deployment whose nginx forgets it now limits and
+     * audits by the connection address instead of believing the browser.
+     *
+     * The result goes out as X-Real-IP on every server-side API call, so it is always an address:
+     * a header that names none is dropped rather than forwarded (a value carrying a newline would
+     * be a header-injection vector against the internal API), and a REMOTE_ADDR PHP could not read
+     * — a unix-socket pool without fastcgi_params — becomes 0.0.0.0, one shared bucket for callers
+     * the platform cannot tell apart.
      */
     public function clientIp(): string
     {
-        $real = $this->header('x-real-ip');
-        if ($real !== null && preg_match('/^[0-9A-Fa-f:.]+$/', $real) === 1) {
-            return $real;
+        $remote = self::address($this->remoteAddr);
+
+        if ($remote === '' || $this->trusted === null || !$this->trusted->contains($remote)) {
+            return $remote !== '' ? $remote : '0.0.0.0';
         }
 
-        $remote = $_SERVER['REMOTE_ADDR'] ?? '';
+        // From a declared proxy the header is authoritative; a proxy that sends none still names
+        // itself as far as this host can see.
+        $real = self::address($this->header('x-real-ip'));
 
-        return is_string($remote) && preg_match('/^[0-9A-Fa-f:.]+$/', $remote) === 1 ? $remote : '0.0.0.0';
+        return $real !== '' ? $real : $remote;
+    }
+
+    /** One value as an IP address, or '' when it names none (both families, no zone identifier). */
+    private static function address(mixed $value): string
+    {
+        return is_string($value) ? (string) filter_var($value, FILTER_VALIDATE_IP) : '';
     }
 
     /**

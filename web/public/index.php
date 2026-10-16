@@ -39,7 +39,7 @@ error_reporting(E_ALL);
 
 // The request first: its correlation reference goes into every log line of this
 // request and into the generic failure the user may see (REQ-UI-050).
-$request = Request::fromGlobals();
+$request = Request::fromGlobals($config->trustedProxies);
 $logger = Logger::fromConfig($config, $request->ref());
 
 // --- vendored static assets -------------------------------------------------

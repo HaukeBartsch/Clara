@@ -136,6 +136,18 @@ function test_config(array $overrides = []): Config
 }
 
 /**
+ * One TRUSTED_PROXY_CIDRS value as the web layer parses it (Request::clientIp, REQ-API-125).
+ * A test asking about a peer's trust is never also asking about configuration errors, so the
+ * collected messages are dropped here — config_validation cases read them from Config directly.
+ */
+function trusted_proxies(string $raw): Clara\TrustedProxies
+{
+    $errors = [];
+
+    return Clara\TrustedProxies::parse($raw, $errors);
+}
+
+/**
  * An authenticated session holding the identity keys of Authentication §3, fresh by every
  * lifecycle clock of §3.1 (just signed in, just seen, just rotated, epoch 0).
  */

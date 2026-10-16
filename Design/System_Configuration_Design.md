@@ -102,11 +102,13 @@ Per server `N` (1…3):
 | `SESSION_ROTATE_INTERVAL` | web | seconds: `0` or ≥ 120 | `900` (15 min) | — | moves a signed-in session to a new id this often; the replaced id follows its successor for 60 s, after which it counts as a replay (REQ-AUTH-072/073); `0` = off, which also disables replay detection; the minimum is twice the grace window |
 | `SESSION_COOKIE_SECURE` | web | `0`\|`1` | dev: `0`, prod: `1` | — | `Secure` flag; `0` is refused under `APP_ENV=production` (REQ-CFG-007, REQ-TECH-019, REQ-AUTH-075) |
 
-### 3.9 Rate limiting (api)
+### 3.9 Rate limiting (api, web)
 
 | Variable | Component | Type | Default | Required | Description |
 |---|---|---|---|---|---|
-| `TRUSTED_PROXY_CIDRS` | api | comma-separated CIDR list | `127.0.0.0/8,::1` | — | address ranges whose `X-Real-IP` header the rate limiter trusts (REQ-API-125); loopback covers the same-host nginx + PHP-FPM deployment (`Technology_Stack_Design.md` §5) |
+| `TRUSTED_PROXY_CIDRS` | api, web | comma-separated CIDR list | `127.0.0.0/8,::1` | — | address ranges whose `X-Real-IP` header may name the caller (REQ-API-125); loopback covers the same-host nginx + PHP-FPM deployment (`Technology_Stack_Design.md` §5) |
+
+Both components read this one list and apply the same rule to their own direct peer: the API keys its limiter on a forwarded address only when the TCP peer sits inside the list (`dataapi.SourceIP`), and the web layer decides what it forwards by the same test (`Request::clientIp`, `Clara\TrustedProxies`). A header arriving from anywhere else is ignored in both, so a browser cannot choose the address it is limited by or written into an audit entry however nginx handles `fastcgi_param HTTP_X_REAL_IP` (finding F9). An unset value keeps the default; a malformed entry refuses startup like any other variable (§4.1).
 
 The rate-limit **thresholds are not environment variables**: `rate_limit_enabled` (default off), `rate_limit_rpm` (default 600 requests per minute per source IP) and `rate_limit_block_minutes` (default 10 minutes an over-budget source IP stays blocked, REQ-API-113) are system settings stored in the database and edited in the administration interface, effective without a restart (REQ-CFG-020, REQ-API-112, REQ-DB-037, `API_Endpoints_Design.md` §4.22). The former keys `RATE_LIMIT_ENABLED`/`RATE_LIMIT_RPM` are removed (DEV-CFG-3).
 
@@ -155,6 +157,7 @@ The rate-limit **thresholds are not environment variables**: `rate_limit_enabled
 | `SESSION_DIR` is a directory path and not equal to `DB_DATABASE` | required (REQ-CFG-017) | required |
 | `SESSION_IDLE_TIMEOUT` is `0` or an integer ≥ 60; `SESSION_ROTATE_INTERVAL` is `0` or an integer ≥ 120 | required (REQ-CFG-017) | required |
 | `SESSION_COOKIE_SECURE=1` | — (`0` allowed) | required — `0` refuses startup (REQ-AUTH-075) |
+| every entry of `TRUSTED_PROXY_CIDRS` is a CIDR range or a bare address (an unset value keeps the default, §3.9) | required | required (REQ-API-125) |
 | `AUTH_INACTIVITY_LIMIT_DAYS` is an integer ≥ 0 (default 180; 0 = rule off) | required | required (REQ-CFG-024) |
 | `APP_TIMEZONE` is a resolvable IANA timezone name (default `UTC`) | required | required (REQ-CFG-026) |
 | `AUTH_REQUIRE_2FA` ∈ {`0`,`1`} (default `0`); `TFA_EMAIL_CODE_TTL` integer > 0; `SMTP_SECURITY` ∈ {`starttls`,`tls`,`none`} | required | required (GD-21, REQ-CFG-027/028/029) |
@@ -231,7 +234,8 @@ SESSION_IDLE_TIMEOUT=1800
 SESSION_ROTATE_INTERVAL=900
 SESSION_COOKIE_SECURE=0
 
-# rate limiting (api) — thresholds live in system_settings, edited in the admin interface
+# rate limiting (api, web) — thresholds live in system_settings, edited in the admin interface;
+# both components take a forwarded X-Real-IP only from these addresses
 TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1
 
 # account policy and time (api)

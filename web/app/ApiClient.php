@@ -223,8 +223,9 @@ final class ApiClient
         $headers = [
             'Accept: ' . $accept,
             'X-Internal-Service-Token: ' . $this->config->internalServiceToken,
-            // Overwritten by nginx for externally-originated requests; forwarded
-            // verbatim from the browser-facing request here (REQ-API-125).
+            // The address Request::clientIp() derived for this call — the connection address, or a
+            // listed proxy's X-Real-IP — so the API limits and audits the caller rather than this
+            // host (REQ-API-125). Never the browser's own header unexamined (finding F9).
             'X-Real-IP: ' . $this->request->clientIp(),
         ];
 

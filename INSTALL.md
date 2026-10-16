@@ -258,7 +258,10 @@ SESSION_IDLE_TIMEOUT=1800
 SESSION_ROTATE_INTERVAL=900
 SESSION_COOKIE_SECURE=1
 
-# --- rate limiting: nginx runs on this host
+# --- rate limiting: whose forwarded X-Real-IP may name the caller (both components read this)
+# one host, as this guide installs it: nginx and PHP reach the API over loopback
+# split hosts: list nginx (PHP's peer) and the PHP host (the API's peer), or the address
+#             of every caller behind an unlisted proxy collapses into one rate-limit bucket
 TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1
 
 # --- account policy, time zone, appearance, two-factor
@@ -680,7 +683,9 @@ server {
     location = /index.php {
         include       fastcgi_params;
         fastcgi_param SCRIPT_FILENAME $document_root/index.php;
-        # PHP forwards this address to the API; overwrite whatever the client sent
+        # PHP's caller address is REMOTE_ADDR, which fastcgi_params above already sets from
+        # $remote_addr; this header matters only where PHP's own peer is a listed proxy. Either
+        # way it is overwritten, never appended to whatever the client sent.
         fastcgi_param HTTP_X_REAL_IP $remote_addr;
         fastcgi_param HTTP_X_INTERNAL_SERVICE_TOKEN "";
         fastcgi_param HTTP_X_INTERNAL_USER_ID "";
@@ -710,7 +715,7 @@ What the configuration enforces ([Technology_Stack_Design.md](Design/Technology_
 | `/api/v1/*` (administration) is never routable | `location /api/` → 404 |
 | `/docs`, `/openapi.json`, `/healthz` never reach the API | not proxied; PHP answers 404 |
 | `X-Internal-Service-Token`, `X-Internal-User-Id` and `X-Internal-Session-Epoch` are stripped from every external request | `proxy_set_header … ""` / `fastcgi_param … ""` |
-| `X-Real-IP` is always nginx's own `$remote_addr`, for both the API and PHP | `proxy_set_header` / `fastcgi_param HTTP_X_REAL_IP` |
+| `X-Real-IP` is always nginx's own `$remote_addr`, for both the API and PHP — and neither believes it from an unlisted peer | `proxy_set_header` / `fastcgi_param HTTP_X_REAL_IP`; `dataapi.SourceIP`, `Request::clientIp` |
 | Exports stream instead of buffering | `proxy_buffering off`; PHP sends `X-Accel-Buffering: no` |
 
 The stock `/etc/nginx/nginx.conf` still contains a default `server` on port 80. It does not interfere, and you can remove it.

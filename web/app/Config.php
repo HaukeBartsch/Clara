@@ -109,7 +109,21 @@ final class Config
      */
     public array $localNames = [];
 
-    private function __construct() {}
+    /**
+     * The peers whose forwarded `X-Real-IP` may name the caller (TRUSTED_PROXY_CIDRS) — the same
+     * ranges the API trusts its own direct peer by, so one variable decides the question for both
+     * components (REQ-API-125, System_Configuration_Design.md §3.9). The web layer needs it because
+     * it forwards the address itself: believing the header from anyone would let a browser choose
+     * the address the API's limiter keys on (finding F9).
+     */
+    public TrustedProxies $trustedProxies;
+
+    private function __construct()
+    {
+        // A safe value before fromValues fills it: no peer may name another caller, so a
+        // configuration that never reached this line measures everyone by their connection address.
+        $this->trustedProxies = TrustedProxies::none();
+    }
 
     /**
      * Reads the environment (process first, then .env) and validates it.
@@ -250,6 +264,14 @@ final class Config
         if ($c->sessionCookieSecure) {
             $c->sessionCookieName = '__Host-' . $c->sessionCookieName;
         }
+
+        // --- caller address (§3.9, REQ-API-125) ---
+        // Read from the API's variable, with the API's default and its tolerance of empty entries,
+        // so a single .env says which proxy may name a caller for both components. An unset or empty
+        // value keeps the documented default rather than trusting nobody by accident; a malformed
+        // entry refuses startup (REQ-CFG-005).
+        $proxies = $get('TRUSTED_PROXY_CIDRS');
+        $c->trustedProxies = TrustedProxies::parse($proxies === '' ? TrustedProxies::DEFAULT_RAW : $proxies, $errors);
 
         // --- appearance (REQ-CFG-031, REQ-TECH-027) ---
         $c->uiTheme = strtolower($get('UI_THEME', 'bootstrap'));
@@ -481,6 +503,7 @@ final class Config
             'APP_ENV', 'API_ADDR', 'INTERNAL_SERVICE_TOKEN', 'WEB_PUBLIC_URL', 'LOG_LEVEL_WEB',
             'SESSION_DIR', 'SESSION_COOKIE_NAME', 'SESSION_LIFETIME', 'SESSION_IDLE_TIMEOUT',
             'SESSION_ROTATE_INTERVAL', 'SESSION_COOKIE_SECURE', 'UI_THEME', 'LOCAL_LOGIN_NAMES',
+            'TRUSTED_PROXY_CIDRS',
         ];
         for ($n = 1; $n <= self::SOURCE_INDEX_MAX; $n++) {
             $keys[] = "OAUTH2_{$n}_ISSUER";

@@ -35,6 +35,10 @@ function check_healthy_env(array $overrides = []): array
         'memory_limit' => 256 * 1048576,
         'https' => true,
         'host' => 'clara.example.org',
+        // INSTALL.md §11: nginx passes its own $remote_addr twice over — as REMOTE_ADDR
+        // (fastcgi_params) and as the X-Real-IP PHP forwards to the API.
+        'remote_addr' => '203.0.113.7',
+        'real_ip_header' => '203.0.113.7',
         'env_file' => ['exists' => true, 'mode' => 0640, 'writable' => false, 'placeholders' => []],
         'session_dir' => ['mode' => 0700, 'in_public' => false, 'in_web_root' => false],
         'code_writable' => [],
@@ -178,6 +182,31 @@ describe('ConfigCheck rating (INSTALL.md)', function (): void {
 
         assert_same([ConfigCheck::FAIL => 0, ConfigCheck::WARN => 0], ConfigCheck::summary($groups));
         assert_same(['php', 'web', 'api', 'db'], array_column($groups, 'key'));
+    });
+
+    it('rates the caller address by who could have chosen it (REQ-API-125)', function (): void {
+        // The reference chain: nginx reports its own $remote_addr as both halves, so the address is
+        // the connection's and no one else's.
+        assert_same('ok', check_statuses(check_evaluate())['web.client_ip']);
+
+        // A proxy in front of nginx forwards the browser address it saw, and is listed for it.
+        $forwarded = check_statuses(check_evaluate(
+            check_production_config(['TRUSTED_PROXY_CIDRS' => '10.0.0.0/8']),
+            ['remote_addr' => '10.0.0.5', 'real_ip_header' => '203.0.113.7']
+        ));
+        assert_same('ok', $forwarded['web.client_ip'], 'listed proxy: the forwarded address is used');
+
+        // The same peer unlisted: its forwarded address is discarded, which leaves every caller
+        // behind it sharing one rate-limit bucket — a misconfiguration worth naming.
+        $ignored = check_statuses(check_evaluate(null, ['remote_addr' => '10.0.0.5', 'real_ip_header' => '203.0.113.7']));
+        assert_same('warn', $ignored['web.client_ip']);
+
+        // Nothing forwarded: right under fastcgi_params, wrong behind another proxy — so the page
+        // states it without calling it a problem.
+        assert_same('info', check_statuses(check_evaluate(null, ['real_ip_header' => '']))['web.client_ip']);
+
+        // A PHP-FPM unix socket that never learned who called (no fastcgi_params at all).
+        assert_same('warn', check_statuses(check_evaluate(null, ['remote_addr' => '']))['web.client_ip']);
     });
 
     it('rates the PHP runtime: version, extensions, the LDAP prerequisites and limits', function (): void {
@@ -336,6 +365,14 @@ describe('ConfigCheck rating (INSTALL.md)', function (): void {
         ];
         // An API that cannot answer: evaluate with no facts.
         $variants[] = ConfigCheck::evaluate(check_production_config(), check_healthy_env(), null, 'internal', 2026);
+        // The caller-address chain in each state it can arrive in (REQ-API-125).
+        foreach ([[], ['remote_addr' => ''], ['real_ip_header' => ''], ['remote_addr' => '10.0.0.5']] as $env) {
+            $variants[] = check_evaluate(null, $env);
+        }
+        $variants[] = check_evaluate(
+            check_production_config(['TRUSTED_PROXY_CIDRS' => '10.0.0.0/8']),
+            ['remote_addr' => '10.0.0.5', 'real_ip_header' => '203.0.113.7']
+        );
         foreach ($variants as $groups) {
             foreach ($groups as $group) {
                 assert_true(isset($en['admin.check.group.' . $group['key']]));

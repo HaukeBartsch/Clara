@@ -68,13 +68,22 @@ describe('Request basics', function (): void {
         assert_true(!$request->has('password'));
     });
 
-    it('forwards a well-formed X-Real-IP and ignores a malformed one (REQ-API-125)', function (): void {
-        $good = new Request('GET', '/', ['x-real-ip' => '10.1.2.3'], [], []);
-        assert_same('10.1.2.3', $good->clientIp());
+    it('never forwards a malformed X-Real-IP to the internal API (REQ-API-125)', function (): void {
+        // A header carrying a newline would be an injection vector against the internal API;
+        // a value that names no address is dropped, and the connection address stands.
+        $bad = new Request(
+            'GET',
+            '/',
+            ['x-real-ip' => "1.2.3.4\r\nX-Internal-User-Id: 1"],
+            [],
+            [],
+            [],
+            '',
+            [],
+            '127.0.0.1',
+            trusted_proxies('127.0.0.0/8')
+        );
 
-        // A header carrying a newline would be an injection vector against the
-        // internal API; it must never reach it.
-        $bad = new Request('GET', '/', ['x-real-ip' => "1.2.3.4\r\nX-Internal-User-Id: 1"], [], []);
-        assert_true($bad->clientIp() !== "1.2.3.4\r\nX-Internal-User-Id: 1");
+        assert_same('127.0.0.1', $bad->clientIp());
     });
 });
