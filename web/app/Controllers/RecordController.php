@@ -192,6 +192,7 @@ final class RecordController extends DataEntryController
 
         $values = $this->request->fieldMap('value');
         $was = $this->request->fieldMap('was');
+        $fields = [];
         try {
             $identifier = $this->identifierName($projectId);
             // A field annotated @READONLY never reaches the import from this form, whatever the
@@ -206,9 +207,11 @@ final class RecordController extends DataEntryController
 
             return $back;
         }
+        // The date controls of §8.2 post the browser's value form; a field the member did not
+        // change goes back as stored, collection offset included (REQ-UI-065).
         $row = self::identifierKey($identifier, $record) + ['form_name' => $instrument, 'event_name' => $event]
             + ($instance > 0 ? ['redcap_repeat_instrument' => $instrument, 'redcap_repeat_instance' => (string) $instance] : [])
-            + DataEntry::submission($values, $was, $identifier);
+            + DataEntry::submission(DataEntry::nativeDateValues($values, $was, $fields), $was, $identifier);
         $params = ['content' => 'record', 'action' => 'import', 'data' => [$row]];
         $tz = $this->request->field('tz');
         if (DataEntry::validTimezone($tz)) {

@@ -19,7 +19,8 @@
 // 3. Required fields (REQ-VAL-028): a submit with visible required fields empty is held
 //    once with the list — a checkbox is empty while none of its boxes is checked; the second
 //    click saves anyway — partial records are first-class (GD-14, ASM-VAL-3).
-// 4. Small things: clearing a radio, and the browser timezone for date values (GD-16).
+// 4. Small things: clearing a radio, the browser timezone for date values (GD-16), and the
+//    "now" shortcut beside a date/date-time field (REQ-UI-065).
 
 import { compileBranching } from "./branching.js"
 import { t } from "../app.js"
@@ -218,6 +219,41 @@ export function wireRadioReset(form) {
       const scope = button.closest("tr, [role=radiogroup]")
       for (const radio of scope.querySelectorAll("input[type=radio]")) radio.checked = false
       form.dispatchEvent(new Event("change", { bubbles: true }))
+    })
+  }
+}
+
+// --- 5. date controls ---
+
+const two = (n) => String(n).padStart(2, "0")
+
+/** The current date-time in a field's own format tokens — `Y-m-d`, `Y-m-d H:i` (REQ-UI-065). */
+const nowIn = (format) => {
+  const now = new Date()
+  const parts = { Y: String(now.getFullYear()), m: two(now.getMonth() + 1), d: two(now.getDate()), H: two(now.getHours()), i: two(now.getMinutes()) }
+  return format.replace(/[YmdHi]/g, (token) => parts[token])
+}
+
+/**
+ * The "now" button beside a date/date-time input (REQ-UI-065): it fills the control with the
+ * current date — and the time, for a `datetime-local` — in the format the field validates
+ * against, which a text field with a non-default format needs as much as the native control.
+ * The button ships hidden (a form without this module offers nothing it cannot do) and is
+ * revealed here; writing through the input's own events keeps branching and the advisory hints
+ * (§8.4) reading the new value as they read a typed one.
+ */
+export function wireDateNow(form) {
+  for (const button of form.querySelectorAll("[data-clara-now]")) {
+    button.classList.remove("d-none")
+    button.addEventListener("click", () => {
+      const input = button.closest(".clara-date")?.querySelector("input")
+      if (!input) return
+      // A native control takes its value form from its type; a text field with another format is
+      // filled in that format, the one its hint validates against (on the wrapper, §8.4).
+      const formats = { date: "Y-m-d", "datetime-local": "Y-m-d H:i" }
+      input.value = nowIn(formats[input.type] ?? button.closest("[data-clara-field]")?.dataset.claraFormat ?? "Y-m-d")
+      input.dispatchEvent(new Event("input", { bubbles: true }))
+      input.dispatchEvent(new Event("change", { bubbles: true }))
     })
   }
 }

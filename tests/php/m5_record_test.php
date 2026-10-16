@@ -223,6 +223,71 @@ describe('M5 data-entry rules (DataEntry)', function (): void {
     });
 });
 
+describe('date and date-time entry controls (§8.2, REQ-UI-065)', function (): void {
+    it('gives the native control to the two default formats only', function (): void {
+        assert_same('date', DataEntry::nativeDateControl(m5_field(1, 'visit', 'text', ['validation_type' => 'date']), 'Y-m-d'));
+        assert_same('datetime-local', DataEntry::nativeDateControl(m5_field(2, 'drawn', 'text', ['validation_type' => 'datetime']), 'Y-m-d H:i'));
+        // A pattern the browser control cannot express keeps the text input and its placeholder.
+        assert_same('', DataEntry::nativeDateControl(m5_field(3, 'visit', 'text', ['validation_type' => 'date']), 'm-d-Y'));
+        assert_same('', DataEntry::nativeDateControl(m5_field(4, 'drawn', 'text', ['validation_type' => 'datetime']), 'Y-m-d H:i:s'));
+        // And a field that holds no date keeps the input its type asks for — including one with
+        // neither a validation type nor a format, where both sides of the comparison are empty.
+        assert_same('', DataEntry::nativeDateControl(m5_field(5, 'age', 'text', ['validation_type' => 'integer']), 'Y-m-d'));
+        assert_same('', DataEntry::nativeDateControl(m5_field(6, 'name', 'text'), ''));
+    });
+
+    it('shows the stored value without the collection offset the control has no place for', function (): void {
+        assert_same('2026-03-01', DataEntry::nativeDateValue('date', '2026-03-01+01:00'));
+        assert_same('2026-03-01', DataEntry::nativeDateValue('date', '2026-03-01'));
+        assert_same('', DataEntry::nativeDateValue('date', ''));
+        assert_same('2026-03-01T09:30', DataEntry::nativeDateValue('datetime-local', '2026-03-01 09:30+01:00'));
+        // A value in no shape the control holds: null, so the field falls back to its text input
+        // rather than rendering an empty box over a value the record has.
+        assert_same(null, DataEntry::nativeDateValue('date', '01/03/2026'));
+        assert_same(null, DataEntry::nativeDateValue('datetime-local', '2026-03-01 09:30:15+01:00'));
+    });
+
+    it('posts the storage grammar and returns an untouched value exactly as stored (REQ-VAL-041)', function (): void {
+        $fields = [
+            m5_field(1, 'visit', 'text', ['validation_type' => 'date']),
+            m5_field(2, 'drawn', 'text', ['validation_type' => 'datetime']),
+            m5_field(3, 'sex', 'radio', ['choices' => '1$Male##2$Female']),
+        ];
+        $posted = DataEntry::nativeDateValues(
+            // visit: the control still shows the day it opened with. drawn: a new minute.
+            ['visit' => '2026-03-01', 'drawn' => '2026-03-01T10:15', 'sex' => '2'],
+            ['visit' => '2026-03-01+01:00', 'drawn' => '2026-03-01 09:30+01:00', 'sex' => '1'],
+            $fields
+        );
+        // GD-14 re-submits an untouched field (REQ-UI-031): sent as stored, so its collection
+        // offset survives the save of a different field on the same form.
+        assert_same('2026-03-01+01:00', $posted['visit']);
+        // A changed one goes on as wall time in the browser zone, which the API stamps (GD-16).
+        assert_same('2026-03-01 10:15', $posted['drawn']);
+        assert_same('2', $posted['sex']);
+    });
+
+    it('takes a first value bare and leaves other fields, formats and clears untouched', function (): void {
+        $fields = [
+            m5_field(1, 'visit', 'text', ['validation_type' => 'date']),
+            m5_field(2, 'dob', 'text', ['validation_type' => 'date', 'validation_format' => 'm-d-Y']),
+            m5_field(3, 'text', 'text'),
+        ];
+        $posted = DataEntry::nativeDateValues(
+            ['visit' => '2026-03-01', 'dob' => '03-2026T01', 'text' => 'note 2026-03-01T10:15'],
+            // visit has no stored value yet; dob and text keep whatever the user typed.
+            [],
+            $fields
+        );
+        assert_same('2026-03-01', $posted['visit']);
+        assert_same('03-2026T01', $posted['dob'], 'a field with another format is a text input');
+        assert_same('note 2026-03-01T10:15', $posted['text']);
+        // A cleared control posts nothing new: the empty value stays the clear it is (REQ-VAL-024).
+        $cleared = DataEntry::nativeDateValues(['visit' => ''], ['visit' => '2026-03-01+01:00'], [m5_field(1, 'visit', 'text', ['validation_type' => 'date'])]);
+        assert_same('', $cleared['visit']);
+    });
+});
+
 describe('Record Status Dashboard (§6.3, REQ-UI-019)', function (): void {
     it('renders the arm grid structure, the legend and the region container', function (): void {
         sign_in();

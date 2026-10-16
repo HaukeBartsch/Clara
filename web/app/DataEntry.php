@@ -7,6 +7,7 @@
 //   * the form's render items — single fields, matrix groups, section headings (§8.2);
 //   * the submission policy (GD-14, REQ-UI-031): exactly the fields that carry a value plus
 //     the fields whose stored value the user removed;
+//   * the native date controls of the form (§8.2, REQ-UI-065) and the values they post;
 //   * the per-field detail of a rejected import (§3.7.2, §8.6 step 4).
 
 declare(strict_types=1);
@@ -23,6 +24,13 @@ final class DataEntry
 
     /** The three completion states of record-status and the dropdown (§6.3, §8.5). */
     public const STATES = ['no_data', 'some_data', 'finished'];
+
+    /**
+     * The validation types entered through a native date control, with the only format each one
+     * can carry (REQ-UI-065): the browser's control shows `YYYY-MM-DD` and `YYYY-MM-DD HH:MM`
+     * and accepts no other, so a field with another `validation_format` keeps its text input.
+     */
+    public const NATIVE_DATE_FORMATS = ['date' => 'Y-m-d', 'datetime' => 'Y-m-d H:i'];
 
     /** One history page (the API caps `limit` at 200, §1) and the walk's ceiling. */
     public const HISTORY_PAGE = 200;
@@ -299,6 +307,87 @@ final class DataEntry
         }
 
         return $rows;
+    }
+
+    /**
+     * The native control a field's value is entered with (§8.2, REQ-UI-065): `date` or
+     * `datetime-local` for the two built-in date types in their default format, and '' for
+     * everything else — a field whose `validation_format` is another pattern keeps the text
+     * input, because the browser control cannot express it (and would refuse its values).
+     */
+    public static function nativeDateControl(array $field, string $format): string
+    {
+        $vt = (string) ($field['validation_type'] ?? '');
+        if (!array_key_exists($vt, self::NATIVE_DATE_FORMATS) || self::NATIVE_DATE_FORMATS[$vt] !== $format) {
+            return '';
+        }
+
+        return $vt === 'date' ? 'date' : 'datetime-local';
+    }
+
+    /**
+     * The stored value as the native control shows it (REQ-UI-065): the canonical form of
+     * §4.1 of `Data_Validation_Design.md` without its collection offset — which the control has
+     * nowhere to put — and with `T` between day and time where the grammar has a space. Null
+     * for a value the control cannot hold (a stored value in no recognizable shape): the field
+     * falls back to its text input rather than showing an empty box over a value it has.
+     */
+    public static function nativeDateValue(string $control, string $value): ?string
+    {
+        if ($value === '') {
+            return '';
+        }
+        $pattern = $control === 'date'
+            ? '/^(\d{4}-\d{2}-\d{2})(?:[+-]\d{2}:\d{2})?$/'
+            : '/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})(?:[+-]\d{2}:\d{2})?$/';
+        if (preg_match($pattern, $value, $at) !== 1) {
+            return null;
+        }
+
+        return $control === 'date' ? $at[1] : $at[1] . 'T' . $at[2];
+    }
+
+    /**
+     * What the native date controls posted (REQ-UI-065) in the form the import takes: the
+     * `datetime-local` value's `T` becomes the storage grammar's space, and a field whose
+     * control still shows the value it was opened with goes back **exactly as stored** — offset
+     * included. The second rule is what keeps GD-14 honest (REQ-UI-031): an untouched field is
+     * submitted too, and a bare `2026-03-01` would take the browser's current offset rather than
+     * the one the value was collected at (GD-16, REQ-VAL-041), rewriting it on every save.
+     *
+     * @param array<string, string>     $values posted values
+     * @param array<string, string>     $was    posted prefill (§8.3)
+     * @param list<array<string, mixed>> $fields the instrument's field definitions
+     */
+    public static function nativeDateValues(array $values, array $was, array $fields): array
+    {
+        foreach ($fields as $field) {
+            $name = (string) ($field['field_name'] ?? '');
+            if (!array_key_exists($name, $values)) {
+                continue;
+            }
+            $vt = (string) ($field['validation_type'] ?? '');
+            if (($native = self::NATIVE_DATE_FORMATS[$vt] ?? '') === '') {
+                continue;
+            }
+            $value = $values[$name];
+            if ($vt === 'datetime') {
+                $value = preg_replace('/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/', '$1 $2', $value) ?? $value;
+            }
+            // The control still shows the stored value: send that one, offset and all.
+            $stored = (string) ($was[$name] ?? '');
+            $width = $vt === 'date' ? 10 : 16;
+            $canonical = $vt === 'date'
+                ? '/^\d{4}-\d{2}-\d{2}[+-]\d{2}:\d{2}$/'
+                : '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}[+-]\d{2}:\d{2}$/';
+            if ($value !== '' && preg_match($canonical, $stored) === 1
+                && substr($stored, 0, $width) === ($vt === 'date' ? $value : str_replace('T', ' ', $value))) {
+                $value = $stored;
+            }
+            $values[$name] = $value;
+        }
+
+        return $values;
     }
 
     /**

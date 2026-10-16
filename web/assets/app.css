@@ -372,6 +372,13 @@ h1 .clara-mode-badge {
   color: var(--bs-danger-text-emphasis);
 }
 
+/* The native date control's picker icon is drawn dark (REQ-UI-065); under a dark theme it would
+   sit invisible in its own field, so flip it with the theme. */
+[data-bs-theme=dark] input[type=date]::-webkit-calendar-picker-indicator,
+[data-bs-theme=dark] input[type=datetime-local]::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+}
+
 .clara-field-missing .form-control,
 .clara-field-missing .form-select {
   border-color: var(--bs-warning);

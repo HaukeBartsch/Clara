@@ -1023,6 +1023,7 @@ return [
     'record.instrument_hidden' => 'This instrument is not shown for this record: its branching logic is false.',
     'record.survey_badge' => 'survey',
     'record.reset' => 'Clear',
+    'record.now' => 'Now',
     'record.readonly' => 'read-only',
     'record.yes' => 'Yes',
     'record.no' => 'No',

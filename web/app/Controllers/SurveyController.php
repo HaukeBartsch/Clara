@@ -79,10 +79,13 @@ final class SurveyController extends Controller
             // browser posted (REQ-DB-046): the link's own definitions say which.
             $metadata = $this->api->dataApi()->call($token, ['content' => 'metadata']);
             $fields = self::fieldsFromMetadata($metadata);
+            $was = DataEntry::withoutReadonly($was, $fields);
+            // The date controls of §8.2 post the browser's value form; a field the respondent did
+            // not change goes back as stored (REQ-UI-065).
+            $values = DataEntry::nativeDateValues(DataEntry::withoutReadonly($values, $fields), $was, $fields);
             // The record identifier is the link's to name, never the respondent's (GD-8).
             $params = ['content' => 'record', 'action' => 'import',
-                'data' => [DataEntry::submission(DataEntry::withoutReadonly($values, $fields),
-                    DataEntry::withoutReadonly($was, $fields), self::identifierFromMetadata($metadata))]];
+                'data' => [DataEntry::submission($values, $was, self::identifierFromMetadata($metadata))]];
             if (DataEntry::validTimezone($tz)) {
                 $params['tz'] = $tz;
             }

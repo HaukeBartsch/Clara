@@ -241,10 +241,30 @@ $fieldAttrs = static function (array $field, ?string $staticValue = null) use ($
                     $vt = (string) ($field['validation_type'] ?? '');
                     $format = in_array($vt, ['date', 'datetime'], true) ? (string) (($field['validation_format'] ?? '') ?: $formats[$vt]) : '';
                     $mode = ['integer' => 'numeric', 'floating point' => 'decimal'][$vt] ?? 'text';
+                    // A date/date-time field the browser control can hold is entered by picking it
+                    // rather than typing it (REQ-UI-065): the control carries no offset, so the
+                    // stored value shows without its one (§4.1 of Data_Validation_Design.md) and
+                    // goes back as stored if left alone — nativeDateValues() in DataEntry.php. A
+                    // field with another format, or a stored value in no recognizable shape,
+                    // keeps the text input below rather than an empty box over a value it has.
+                    $isDate = in_array($vt, ['date', 'datetime'], true);
+                    $control = DataEntry::nativeDateControl($field, $format);
+                    $entered = $control === '' ? null : DataEntry::nativeDateValue($control, $value);
+                    if ($entered === null) {
+                        $control = '';
+                    }
                     ?>
-                    <input class="form-control form-control-sm<?= $error !== '' ? ' is-invalid' : '' ?>" type="text" id="<?= View::e($id) ?>"
-                           name="value[<?= View::e($name) ?>]" value="<?= View::e($value) ?>" inputmode="<?= $mode ?>"
-                           <?= $format !== '' ? 'placeholder="' . View::e($format) . '"' : '' ?> autocomplete="off">
+                    <?php if ($isDate): ?>
+                        <div class="input-group input-group-sm clara-date">
+                    <?php endif; ?>
+                    <input class="form-control form-control-sm<?= $error !== '' ? ' is-invalid' : '' ?>" type="<?= $control !== '' ? $control : 'text' ?>" id="<?= View::e($id) ?>"
+                           name="value[<?= View::e($name) ?>]" value="<?= View::e($control !== '' ? (string) $entered : $value) ?>"<?= $control === '' ? ' inputmode="' . $mode . '"' : '' ?>
+                           <?= $format !== '' && $control === '' ? 'placeholder="' . View::e($format) . '"' : '' ?> autocomplete="off">
+                    <?php if ($isDate): ?>
+                        <?php // The "now" shortcut: form.js fills the current date — and time, here — in this field's own format, and reveals the button with it. ?>
+                        <button class="btn btn-outline-secondary d-none" type="button" data-clara-now><?= View::e($view->t('record.now')) ?></button>
+                    </div>
+                    <?php endif; ?>
                 <?php endif; ?>
 
                 <?php if ($editable && !$isIdentifier && DataEntry::isEnterable($field)): ?>

@@ -8,7 +8,7 @@
 //    data region (REQ-UI-044), paged with the API cursor.
 // 2. The event picker submitting on change.
 
-import { fillTimezone, readContext, wireBranching, wireHints, wireRadioReset, wireRequired } from "./form.js"
+import { fillTimezone, readContext, wireBranching, wireDateNow, wireHints, wireRadioReset, wireRequired } from "./form.js"
 import { el, fetchJson, ready, t } from "../app.js"
 
 // --- 1. per-field history ---
@@ -122,5 +122,6 @@ ready(() => {
   wireHints(form)
   wireRequired(form)
   wireRadioReset(form)
+  wireDateNow(form)
   wireHistory(form)
 })

@@ -4,7 +4,7 @@
 // module for that page (REQ-UI-045); labels come from the data-i18n block (REQ-UI-008), and
 // the page talks to no API from the browser (REQ-API-084).
 
-import { readContext, wireBranching, wireHints, wireRadioReset, fillTimezone } from "./form.js"
+import { readContext, wireBranching, wireDateNow, wireHints, wireRadioReset, fillTimezone } from "./form.js"
 import { ready } from "../app.js"
 
 ready(() => {
@@ -14,6 +14,7 @@ ready(() => {
   wireBranching(form, readContext())
   wireHints(form)
   wireRadioReset(form)
+  wireDateNow(form)
   // The collection zone of the respondent's dates (GD-16), as in the record form.
   fillTimezone(form)
 })
