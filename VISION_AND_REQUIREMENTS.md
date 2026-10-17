@@ -962,3 +962,6 @@ copy [field]  [project][baseline][place_for_field1]
 copy [field2] [project][baseline][place_for_field2]
 ```
 
+## next things
+
+Translate the tutorials as well. Ok, to have only nb and nn in the .md files. Select the corresponding entry based on the users choice.
