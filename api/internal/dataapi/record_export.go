@@ -164,6 +164,72 @@ func (h *Handler) contentRecordExport(w http.ResponseWriter, r *http.Request, en
 	})
 }
 
+// filterMayRead reports whether every field reference of a compiled filterLogic
+// expression names a value this export delivers verbatim. A value the caller may
+// not export, or one that leaves only transformed — a stripped identifier, a
+// hashed personal field, a shifted date — must not be observable through which
+// records the filter keeps: row presence is one bit per guess, and the audit row
+// says nothing more than "export" (master-spec finding F6, REQ-EXP-054). The
+// bound is the sensitivity question and never the forms[]/fields[] one: a field
+// the caller may export but did not request stays filterable, as in REDCap
+// (REQ-API-025). A reference to something that carries no values at all — a
+// description, header or transfer field, a checkbox's own row — discloses
+// nothing and keeps reading blank, as it always has (§3.2).
+func filterMayRead(d *projectDict, pairExport func(eventID int64, armNum int, instrumentID int64) int, prog *validate.LogicProgram, floor int) bool {
+	// A single-segment reference reads the project's first event (GD-15) — the
+	// same fallback Eval applies, so the gate asks about the value it reads.
+	firstEvent := ""
+	if len(d.events) > 0 {
+		firstEvent = d.events[0].UniqueEventName
+	}
+	for _, r := range prog.Refs() {
+		f, known := d.byName[r.Field]
+		if !known {
+			return false // a name this dictionary does not carry
+		}
+		if f.FieldName == d.identifier {
+			// Pair-less: the record identifier follows the floor (GD-8), so it
+			// reads exactly where the file carries raw identifiers.
+			if floor < expFull {
+				return false
+			}
+			continue
+		}
+		switch f.FieldType {
+		case "description", "header", "transfer":
+			continue // carry no values, so nothing to disclose
+		}
+		if f.isCheckboxParent() {
+			continue // its values live under the choice columns (REQ-DB-042)
+		}
+		event := r.Event
+		if event == "" {
+			event = firstEvent
+		}
+		if d.hasEvents && !d.mapsPair(f.InstrumentID, event) {
+			return false // no pair at that event: the value ships nowhere
+		}
+		rank := expNone
+		if pairExport != nil {
+			rank = pairExport(d.eventIDOf(event), d.eventArm[event], f.InstrumentID)
+		}
+		cat := categorize(f, d.identifier)
+		switch {
+		case rank <= expNone:
+			return false // the pair contributes nothing to this file (§4.3)
+		case rank < expFull && cat == catDirectID:
+			return false // removed below export_full (REQ-EXP-020/021)
+		case rank == expDeIdentified && cat == catPersonal:
+			return false // hashed in the file; its stored value would leak (REQ-EXP-022)
+		case rank == expDeIdentified && cat == catFreeText && !f.ExportApproved:
+			return false // removed at de-identified strength (§4.2 step 3, REQ-EXP-023)
+		case rank == expDeIdentified && isDateBearing(f.Field):
+			return false // shifted in the file; its stored date would leak (REQ-EXP-033)
+		}
+	}
+	return true
+}
+
 // streamExport renders one export against an already-loaded dictionary.
 func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projectDict, s ExportSpec) {
 	ctx := r.Context()
@@ -234,14 +300,7 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 	// mapped reports whether the instrument is mapped to the event: only a
 	// mapped pair exists, so only a mapped pair contributes (the mapping_updated
 	// rule the dashboard follows too).
-	mapped := func(instrID int64, event string) bool {
-		for _, n := range d.instrEvents[instrID] {
-			if n == event {
-				return true
-			}
-		}
-		return false
-	}
+	mapped := d.mapsPair
 
 	// The candidate pairs are every candidate event × every instrument the
 	// filters left a value column on, over the mapped combinations only. An
@@ -470,11 +529,18 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 	// any output starts (REQ-API-025; grammar of Data_Validation_Design.md §7).
 	// Compiled once here — the per-record check runs the parsed program
 	// instead of re-tokenizing and re-parsing for every record (security
-	// finding F5).
+	// finding F5). A reference to a value this response cannot carry verbatim
+	// answers the same 400 as a malformed one: one body, so the refusal adds no
+	// field enumeration to what the dictionary already lets the caller read
+	// (finding F6, REQ-EXP-054).
 	evaluate := func(_ recordValues) bool { return true }
 	if s.FilterLogic != "" {
 		prog, err := validate.CompileLogic(s.FilterLogic)
 		if err != nil {
+			s.fail(w, http.StatusBadRequest, "Invalid request")
+			return
+		}
+		if !filterMayRead(d, s.PairExport, prog, floor) {
 			s.fail(w, http.StatusBadRequest, "Invalid request")
 			return
 		}

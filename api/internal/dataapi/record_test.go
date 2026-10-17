@@ -691,6 +691,100 @@ func TestRecordExportFilterLogic(t *testing.T) {
 	}
 }
 
+// TestRecordExportFilterSensitivityGate is master-spec finding F6: a filter may
+// read only what the response delivers verbatim, so which records a filter keeps
+// cannot disclose a value the caller may not export. A reference outside that set
+// answers with the malformed expression's body — one answer for every reason, so
+// the refusal adds no field enumeration (REQ-EXP-060).
+func TestRecordExportFilterSensitivityGate(t *testing.T) {
+	f := newRecordFixture(t)
+
+	// The comparison body: a malformed expression under the same parameters.
+	_, uniformBody := f.call(t, url.Values{
+		"token": {"tok-de"}, "content": {"record"}, "returnFormat": {"json"}, "filterLogic": {"[age"}})
+
+	refused := func(token, expr string) {
+		t.Helper()
+		code, body := f.call(t, url.Values{
+			"token": {token}, "content": {"record"}, "returnFormat": {"json"}, "filterLogic": {expr}})
+		mustStatus(t, code, 400, body)
+		if body != uniformBody {
+			t.Errorf("%s as %s: body = %s, want the malformed-expression body %s", expr, token, body, uniformBody)
+		}
+	}
+
+	// Below export_full nothing reaches a filter that the file withholds or
+	// transforms: the unapproved free text (age, contact_email — D-3), the
+	// personal field it hashes, the date it shifts, and the record identifier,
+	// which follows the floor (GD-8). An unknown name answers the same way.
+	for _, expr := range []string{
+		`[age]="42"`,
+		`[contact_email]="participant@example.org"`,
+		`[secret]="top secret"`,
+		`[visit_date]="2026-03-01+01:00"`,
+		`[record_id]="8DISC001"`,
+		`is_blank([followup_arm_1][age])`,
+		`[followup_arm_1][secret]="top secret"`,
+		`[no_such_field]="x"`,
+	} {
+		refused("tok-de", expr)
+	}
+
+	// A structured value passes through a de-identified export as stored, so it
+	// stays filterable: the gate bounds what a filter may read, not what a
+	// caller may export (REQ-API-025).
+	if rows := f.exportJSON(t, "tok-de", url.Values{"filterLogic": {`[status]="2"`}}); len(rows) == 0 {
+		t.Error("a delivered value must stay filterable at export_de_identified")
+	}
+
+	// At export_full a filter reads the whole record, as it always did — the
+	// recorded FIONA pattern of filtering on a field it exports too.
+	for _, expr := range []string{`[age]="42"`, `[secret]="top secret"`, `[record_id]="8DISC001"`} {
+		if rows := f.exportJSON(t, "tok-admin", url.Values{"filterLogic": {expr}}); len(rows) == 0 {
+			t.Errorf("%s at export_full: rows = 0, want the matching record", expr)
+		}
+	}
+
+	// The bound is per (instrument, event) pair, not per field: demo is
+	// export_none at followup and export_full at baseline, so [age] reads at one
+	// event and not the other — and its bare form, which reads the project's
+	// first event (GD-15), stays available.
+	ctx := context.Background()
+	var demoID, followupID int64
+	if err := f.s.DB.QueryRow(`SELECT id FROM instruments WHERE project_id = ? AND name = 'demo'`,
+		f.pid).Scan(&demoID); err != nil {
+		t.Fatalf("demo instrument: %v", err)
+	}
+	if err := f.s.DB.QueryRow(`SELECT id FROM events WHERE project_id = ? AND unique_event_name = 'followup_arm_1'`,
+		f.pid).Scan(&followupID); err != nil {
+		t.Fatalf("followup event: %v", err)
+	}
+	roleID, err := f.s.CreateRole(ctx, &db.Role{ProjectID: f.pid, RoleName: "baseline-only"},
+		[]db.RoleArm{{ArmNum: 1, DataAccessLevel: "read_only", ExportLevel: "export_full"}},
+		[]db.RoleGrant{{EventID: followupID, InstrumentID: demoID,
+			DataAccessLevel: "read_only", ExportLevel: "export_none"}})
+	if err != nil {
+		t.Fatalf("CreateRole: %v", err)
+	}
+	userID, err := f.s.CreateUser(ctx, &db.User{Email: "gate@example.org",
+		DisplayName: "Gate", Enabled: true, AuthSource: "local"})
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if _, err := f.s.AddAssignment(ctx, &db.Assignment{UserID: userID, ProjectID: f.pid,
+		Token: "tok-gate", RoleID: sql.NullInt64{Int64: roleID, Valid: true}}); err != nil {
+		t.Fatalf("AddAssignment: %v", err)
+	}
+
+	refused("tok-gate", `[followup_arm_1][age]="43"`)
+	if rows := f.exportJSON(t, "tok-gate", url.Values{"filterLogic": {`[baseline_arm_1][age]="42"`}}); len(rows) == 0 {
+		t.Error("the permitted event's value must stay filterable")
+	}
+	if rows := f.exportJSON(t, "tok-gate", url.Values{"filterLogic": {`[age]="42"`}}); len(rows) == 0 {
+		t.Error("a bare [field] reads the first event (GD-15), which is permitted here")
+	}
+}
+
 func TestRecordExportAudit(t *testing.T) {
 	f := newRecordFixture(t)
 	f.exportJSON(t, "tok-admin", url.Values{"records": {"8DISC001"}})

@@ -102,6 +102,18 @@ func (d *projectDict) repeats(event, instrument string) bool {
 	return d.repeating[event][instrument]
 }
 
+// mapsPair reports whether the instrument is mapped to the event — the pair
+// whose levels govern its values there. An unmapped combination holds no pair
+// at all (the mapping_updated rule the export and the dashboard follow).
+func (d *projectDict) mapsPair(instrumentID int64, event string) bool {
+	for _, n := range d.instrEvents[instrumentID] {
+		if n == event {
+			return true
+		}
+	}
+	return false
+}
+
 // hasRepeating reports whether any pair of the project repeats.
 func (d *projectDict) hasRepeating() bool {
 	return len(d.repeating) > 0

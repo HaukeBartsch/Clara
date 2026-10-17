@@ -282,3 +282,43 @@ func TestCompileLogic(t *testing.T) {
 		t.Error("non-matching record accepted")
 	}
 }
+
+// TestLogicProgramRefs covers the reference list a caller checks an expression
+// against — the export's filter gate, master-spec finding F6: every reference the
+// program reads, inside function arguments too, in first-seen order and
+// deduplicated, with a checkbox box under its value-column name in either
+// spelling (REQ-DB-042, REQ-VAL-044) and a single-segment reference keeping its
+// empty Event for the caller to resolve as Eval does (GD-15).
+func TestLogicProgramRefs(t *testing.T) {
+	cases := []struct {
+		expr string
+		want []Ref
+	}{
+		{`[age]`, []Ref{{Field: "age"}}},
+		{`[baseline_arm_1][age] > "18" && [age] < "65"`, []Ref{
+			{Event: "baseline_arm_1", Field: "age"},
+			{Field: "age"}, // a different reference: no event to resolve it at
+		}},
+		{`is_blank([name]) || text_contains([notes], "x") && [status] = "2"`, []Ref{
+			{Field: "name"}, {Field: "notes"}, {Field: "status"},
+		}},
+		// Both box spellings arrive as the value column, and once each.
+		{`[demo(code)] = "1" && [demo___code] != "0"`, []Ref{{Field: "demo___code"}}},
+	}
+	for _, c := range cases {
+		prog, err := CompileLogic(c.expr)
+		if err != nil {
+			t.Fatalf("compile %q: %v", c.expr, err)
+		}
+		got := prog.Refs()
+		if len(got) != len(c.want) {
+			t.Errorf("%q refs = %v, want %v", c.expr, got, c.want)
+			continue
+		}
+		for i := range c.want {
+			if got[i] != c.want[i] {
+				t.Errorf("%q ref %d = %+v, want %+v", c.expr, i, got[i], c.want[i])
+			}
+		}
+	}
+}

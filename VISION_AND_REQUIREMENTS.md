@@ -661,6 +661,7 @@ Fixed findings carry a **Status** line with the date and how the fix landed; the
 - **What:** Identifier and free-text columns are dropped below `export_full`. The filter, however, evaluates against all stored values.
 - **Impact:** A `export_de_identified` user can probe with `[name] = 'Jane Doe'` or `[dob] = '1980-01-01'` and learn which record belongs to whom. This defeats GD-2's de-identification promise.
 - **Fix:** Reject filters that reference fields outside the column set permitted at the applied export level.
+- **Status:** Fixed 2026-10-17. The export compiles `filterLogic` once per request and then refuses any reference to a value the response does not deliver **verbatim**, before it reads a record: a pair at `export_none` or unmapped at the referenced event, a direct identifier below `export_full`, unapproved free text at `export_de_identified`, and — beyond this finding's original wording, because it is the same oracle — a personal field the file hashes and a date it shifts. Two cases stay readable: a field that carries no values at all (`description`, `header`, `transfer`, a checkbox's own row), which discloses nothing, and any value the caller may export but did not request — the bound is the level, never the `fields[]`/`forms[]` selection, so REDCap callers and the recorded Fiona calls keep working. The record identifier belongs to no pair and reads where its column appears (GD-8). A refusal answers 400 with the body an unparseable expression answers — one answer for every reason, so the refusal enumerates nothing (REQ-API-039) — and writes nothing to either audit table (REQ-AUD-004); both export surfaces behave alike. Carried by new requirement **REQ-EXP-054**, with REQ-API-025 and REQ-EXP-004 amended; `API_Endpoints_Design.md` §3.2/§3.6.3, `Data_Export_Anonymization_Design.md` §4.4/§6/D-8, both Plan documents and the two `openapi.json` descriptions updated to match — including the per-pair sentence of `Data_Export_Anonymization_Design.md` §6 that has demanded this since 2026-10-04 without any code or REQ ID behind it. Regression tests `TestRecordExportFilterSensitivityGate` (every refusal reason, the uniform body against the malformed expression's, permitted filtering at de-identified and full strength, and `[age]` readable at one event and refused at another) and `TestLogicProgramRefs`. What remains is not a leak: a caller may still ask through a filter about any value it may export as stored.
 
 ### F7 — Plaintext data-API tokens at rest (Medium, Req-change)
 
@@ -916,7 +917,7 @@ For the presentation use medium strong font for headings (currently Avenir Next 
 
 Security findings with no fix (detail in my previous message)
 
-F6 filterLogic probing on de-identified exports · F7 plaintext tokens at rest (+ REQ-API-102 re-fetch, a Req-change) · F8 shared listener / APP_ENV defaults to development / no token-length rule / no reference nginx config · F13 account enumeration · F14 open redirect — only partially mitigated (/\evil.example still passes safeNext()) · F15 unswept limiter maps, email-only lockout key · F18 recovery-code & TOTP-step races + unencrypted secrets (email codes are now atomic) · F19 token in query string · F20 fail-open role-less member · plus the two acknowledged leftovers: OIDC email_verified (F10) and SESSION_DIR=/tmp/csms-sessions (F17).
+F7 plaintext tokens at rest (+ REQ-API-102 re-fetch, a Req-change) · F8 shared listener / APP_ENV defaults to development / no token-length rule / no reference nginx config · F13 account enumeration · F14 open redirect — only partially mitigated (/\evil.example still passes safeNext()) · F15 unswept limiter maps, email-only lockout key · F18 recovery-code & TOTP-step races + unencrypted secrets (email codes are now atomic) · F19 token in query string · F20 fail-open role-less member · plus the two acknowledged leftovers: OIDC email_verified (F10) and SESSION_DIR=/tmp/csms-sessions (F17).
 
 "Corrections for interface" — 2 items left
 
@@ -942,7 +943,7 @@ Explicitly parked ("Later")
 
 WebLLM admin interface via MCP — still marked Later, untouched. (The JWT question was answered/not adopted, argon2id landed, export features were done 2026-10-11.)
 
-Everything else in the document — rate limiting with Control-Panel thresholds, named parallel auth-source racing, per-field record history, timezones, TOTP+email 2FA, per-event survey links, the role permission matrix, the project page flow, relevance classification — is implemented and traceable to REQ IDs. The security table above plus the six concrete items are the real backlog; F6–F9 would be where I'd start.
+Everything else in the document — rate limiting with Control-Panel thresholds, named parallel auth-source racing, per-field record history, timezones, TOTP+email 2FA, per-event survey links, the role permission matrix, the project page flow, relevance classification — is implemented and traceable to REQ IDs. The security table above plus the six concrete items are the real backlog; of it, F6 and F9 have since been closed (2026-10-17, 2026-10-16), leaving F7 and F8 as the largest open ones.
 
 
 

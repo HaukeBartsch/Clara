@@ -786,6 +786,44 @@ func CompileLogic(expr string) (*LogicProgram, error) {
 // Eval reports whether the compiled expression holds for one record's values.
 func (c *LogicProgram) Eval(ev LogicEval) bool { return c.root.eval(ev) == 1 }
 
+// Refs returns the field references the compiled expression reads, in
+// first-seen order and deduplicated — how a caller bounds an expression to the
+// values it may read at all (the export's filter gate, master-spec finding F6).
+// A single-segment reference keeps its empty Event and means what Eval means by
+// it (GD-15); a checkbox box arrives under its value-column name
+// `base___<code>`, the spelling tokenize gives every reference here in either
+// source spelling (REQ-DB-042, REQ-VAL-044).
+func (c *LogicProgram) Refs() []Ref {
+	var out []Ref
+	var walk func(logicNode)
+	add := func(o logicOperand) {
+		if o.kind == opRef {
+			out = append(out, o.ref)
+		}
+	}
+	walk = func(n logicNode) {
+		switch n := n.(type) {
+		case logicOr:
+			walk(n.l)
+			walk(n.r)
+		case logicAnd:
+			walk(n.l)
+			walk(n.r)
+		case logicTruthy:
+			add(n.a)
+		case logicCmp:
+			add(n.l)
+			add(n.r)
+		case logicFunc:
+			for _, a := range n.args {
+				add(a)
+			}
+		}
+	}
+	walk(c.root)
+	return dedupeRefs(out)
+}
+
 // logicNode evaluates to 1 or 0 (the §7.3 logical values).
 type logicNode interface{ eval(ev LogicEval) float64 }
 

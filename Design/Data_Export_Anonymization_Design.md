@@ -117,6 +117,7 @@ The cross-arm "lowest level wins" rule of the per-arm model is gone with the gra
 
 - **Stored values are unchanged** by an export — the pipeline transforms the output only. The in-place exception is the end-provision `anonymize` action (§7.4).
 - **Branching logic never affects exports** (GD-13: display-only; `API_Endpoints_Design.md` §3.6.3: `filterLogic` \"never changes the sensitivity level\").
+- **The levels reach the filter, not just the columns.** A transformation is only a boundary if reading stays inside it: what a `filterLogic` expression may reference is exactly the set of values this response carries untransformed (§6, REQ-EXP-054). "Never changes the sensitivity level" therefore reads both ways — the filter takes the level as it finds it, and the level limits what the filter can ask about.
 - **Audit carries no values** (REQ-AUD-014): the `export` event and the record-view row record only the applied level, the filters, and the records/instruments accessed — never the exported or transformed values. `ANON_SALT` is a redacted secret and never appears in logs or audit details (REQ-CFG-021/022, `System_Configuration_Design.md` §4.4).
 
 ## 5. Anonymization Algorithms (normative)
@@ -146,7 +147,8 @@ Fixed by `Database_Schema_Design.md` §8 (normative) and `System_Configuration_D
 
 - `records[]`/`fields[]`/`forms[]`/`events[]` combine (intersection; REQ-API-024, `API_Endpoints_Design.md` §3.6.1); with no filters, all records visible to the holder are returned.
 - `filterLogic` filters which **records** are returned; it never changes the sensitivity level (`API_Endpoints_Design.md` §3.6.3; grammar per `Data_Validation_Design.md` §7, REQ-API-025).
-- A `fields[]` entry naming a column that **its pair's** level removes (§4.2, steps 1/3) is silently absent from the output — the level governs the transformation, the filter governs the selection (REQ-API-092); a filter never escalates sensitivity, and a filter expression naming a column of a pair the caller may not export MUST be rejected rather than evaluated against the stored value (the per-pair form of master-spec finding F6).
+- A `fields[]` entry naming a column that **its pair's** level removes (§4.2, steps 1/3) is silently absent from the output — the level governs the transformation, the filter governs the selection (REQ-API-092); a filter never escalates sensitivity.
+- **A `filterLogic` expression reads only what the response delivers verbatim** (REQ-EXP-054, master-spec finding F6). The expression is compiled once per request (`API_Endpoints_Design.md` §3.6.3) and every reference it holds is then resolved to a pair — its own event, or the project's first event for `[field]` (GD-15) — and checked against that pair's level **before any record is read**: the value must reach the file untransformed. So a reference fails when the pair is `export_none` or unmapped at that event (the per-pair form first written here), when §4.2 removes the column (a direct identifier below `export_full`, unapproved free text at `export_de_identified`), and when §4.2 transforms it — a hashed personal field (step 2) or a date shifted for the record (step 4). The reason is that the filter runs over stored values while the columns do not: which records survive answers one bit per guess about a withheld value, and does so quietly, since the call audits as an ordinary export. A reference to something carrying no values at all (`description`, `header`, `transfer`, a checkbox's own row) stays acceptable — it discloses nothing — and the record identifier, belonging to no pair, reads only where its column appears (GD-8, §4.3). The bound comes from the level, never from `fields[]`/`forms[]`: filtering on a value the caller may export but did not request stays available, as in REDCap. A refusal answers 400 with the body an unparseable expression answers — one answer for every reason, so no unreadable field becomes enumerable (REQ-API-039) — and writes nothing to either audit table (REQ-AUD-004).
 - The data-access-group rule scopes the records (REQ-API-092, REQ-AUTH-045): a holder with an active group receives only that group's records; a holder without a group receives all records of the project.
 
 ## 7. End-of-Project Provision (BR-009)
@@ -212,14 +214,15 @@ No new variables — the canonical inventory is `System_Configuration_Design.md`
 | D-5 | the field hash is the full 64-character SHA-256 hex over salt, project, field, value — deterministic, untruncated, salted (§5.1) |
 | D-6 | the master spec's per-choice columns are realized by the matrix expansion of REQ-DB-014; no 1/0 coding unless the row choices are defined as 1/0 (§3.2) |
 | D-7 | the end provision is an explicit one-shot `is_admin` action, not a scheduled job (§7) |
+| D-8 | a `filterLogic` reference outside what the response delivers verbatim is **refused at the reference** (§6, REQ-EXP-054) rather than evaluated over the permitted values only: reading a hidden value as blank would fail open for a predicate like `is_blank([hidden])` and silently restate a cohort definition, which in an EDC is worse than a 400. The refusal carries the unparseable expression's body, so it adds no field enumeration |
 
 ### 10.2 Requirement traceability
 
 | Requirement / decision | Fixed here |
 |---|------|
-| `Requirements/Data_Export_Anonymization_Requirements.md` (REQ-EXP-001…052) | §2–§9 |
+| `Requirements/Data_Export_Anonymization_Requirements.md` (REQ-EXP-001…054) | §2–§9 |
 | REQ-API-013/016/017 (encodings, ignored parameters) | §3.1, §3.4 |
-| REQ-API-024/025 (filters, `filterLogic`) | §6 |
+| REQ-API-024/025 (filters, `filterLogic`, what a filter may read) | §6 |
 | REQ-API-026/075/076 (sensitivity per level, both surfaces) | §4 |
 | REQ-API-027/028 (raw/label, row shape) | §3.1, §3.2 |
 | REQ-API-029 (CSV streaming, delimiter, formula injection) | §3.3 |
