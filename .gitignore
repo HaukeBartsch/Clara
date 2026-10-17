@@ -30,3 +30,7 @@ e2e/test-results/
 # presentation generator (docs/intro-to-Clara/tools) — documentation tooling only
 docs/intro-to-Clara/tools/node_modules/
 e2e/playwright-report/
+
+# Clara assistant model artifacts (REQ-AI-003, ASM-AI-2) — multi-GB downloads placed by
+# tools/fetch_assistant_model.sh at install time; the repository carries no weights.
+web/assets/models/

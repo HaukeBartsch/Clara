@@ -29,6 +29,8 @@ final class Navigation
             ['key' => 'translations', 'labelKey' => 'admin.section.translations', 'built' => true],
             ['key' => 'settings', 'labelKey' => 'admin.section.settings', 'built' => true],
             ['key' => 'monitoring', 'labelKey' => 'admin.section.monitoring', 'built' => true],
+            // The Clara assistant (REQ-AI-001, DEV-AI-1): between Monitoring and Configuration Check.
+            ['key' => 'assistant', 'labelKey' => 'admin.section.assistant', 'built' => true],
             ['key' => 'check', 'labelKey' => 'admin.section.check', 'built' => true],
             ['key' => 'api', 'labelKey' => 'admin.section.api', 'built' => true],
         ];

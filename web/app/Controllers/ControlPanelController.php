@@ -90,6 +90,7 @@ final class ControlPanelController extends Controller
             'translations' => $this->translationsPage(),
             'settings' => $this->settingsPage(''),
             'monitoring' => $this->monitoringPage(),
+            'assistant' => $this->assistantPage(),
             'check' => $this->configCheckPage(),
             'api' => $this->apiDocsPage(),
             default => $this->page('admin/none', [
@@ -770,6 +771,49 @@ final class ControlPanelController extends Controller
         }
 
         return $out;
+    }
+
+    // --- Clara assistant (§5.12, REQ-AI-001) ----------------------------------------------
+
+    /**
+     * The Assistant section: the chat surface for the in-browser model (AI_Assistant_Design.md §6).
+     * The server renders the frame — status card, mode switch, empty chat pane — and hands the
+     * page its two script extras; `assistant.js` probes WebGPU, loads the locally hosted model
+     * artifacts when they are installed, and drives the conversation over `POST /mcp`. Whether
+     * the model artifacts exist is a file check, never a guess: absent artifacts render as the
+     * translated "not installed" state rather than a broken engine (REQ-AI-012).
+     */
+    private function assistantPage(): Response
+    {
+        return $this->section('assistant', 'admin/assistant', 'admin.assistant.title', [
+            'writeMode' => Session::assistantWriteMode(),
+            'modelInstalled' => is_file(CLARA_WEB_ROOT . '/assets/models/app-config.json'),
+        ], [
+            'scripts' => ['/assets/vendor/d3/d3.v7.min.js', '/assets/js/assistant.js'],
+            'jsKeys' => [
+                'admin.assistant.status.model_loading', 'admin.assistant.status.model_ready',
+                'admin.assistant.status.thinking', 'admin.assistant.status.tool_running',
+                'admin.assistant.status.tool_done', 'admin.assistant.status.tool_failed',
+                'admin.assistant.status.declined', 'admin.assistant.who.user', 'admin.assistant.who.assistant',
+                'admin.assistant.confirm.body',
+                'admin.assistant.error.no_webgpu', 'admin.assistant.error.model_missing',
+                'admin.assistant.error.engine', 'admin.assistant.error.mcp', 'admin.assistant.error.too_many_rounds',
+            ],
+        ]);
+    }
+
+    /**
+     * POST /admin?action=assistant_mode — the session's read-write switch (REQ-AI-006). It holds
+     * no more authority than a checkbox: the MCP dispatcher refuses every write tool while the
+     * flag is off, and the flag resets with the session.
+     */
+    public function setAssistantMode(): Response
+    {
+        $on = $this->request->field('mode') === 'write';
+        Session::setAssistantWriteMode($on);
+        $this->flashSuccess($this->i18n->t($on ? 'admin.assistant.mode.on' : 'admin.assistant.mode.off'));
+
+        return $this->toSection('assistant');
     }
 
     // --- API documentation (§5.9, REQ-UI-057) ----------------------------------------

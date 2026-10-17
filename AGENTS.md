@@ -6,7 +6,7 @@ Rules for LLM-assisted development on CLARA — "Clinical Logbook for Automated 
 
 - [VISION_AND_REQUIREMENTS.md](VISION_AND_REQUIREMENTS.md) is the origin document — vision, requirements, and binding decisions. All other documentation derives from it; when documents conflict, it wins.
 - Software development documents live in `Requirements/*.md`, `Plan/*.md`, and `Design/*.md`. Each functional area has one document per folder, named after the area (e.g. `Requirements/Data_Validation_Requirements.md` → `Plan/Data_Validation.md` → `Design/Data_Validation_Design.md`).
-- Functional areas: API_Endpoints, Audit_Logging, Authentication_Authorization, Data_Export_Anonymization, Data_Validation, Database_Schema, Project_Charter, System_Configuration, Technology_Stack, User_Interface.
+- Functional areas: AI_Assistant, API_Endpoints, Audit_Logging, Authentication_Authorization, Data_Export_Anonymization, Data_Validation, Database_Schema, Project_Charter, System_Configuration, Technology_Stack, User_Interface.
 - Requirements carry stable IDs (`REQ-<AREA>-nnn`, assumptions `ASM-…`). Reference existing IDs when writing or changing behavior; introduce new ones in the Requirements document first, then reflect them in Plan and Design.
 - Design documents are normative for their area (e.g. `Design/Technology_Stack_Design.md` fixes toolchain selection). A deviation from a design document is a requirements-level change, not an implementation detail.
 

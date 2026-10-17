@@ -703,3 +703,40 @@ h1 .clara-mode-badge {
 .tab-pane, .active {
   background-color: var(--bs-primary-bg-subtle);
 }
+/* --- Clara assistant (§5.12, AI_Assistant area) --- */
+
+/* Chat bubbles: the model's answers sit on the subtle surface, the administrator's on the
+   primary tint — the same two-tone language the alerts use, theme-following by construction. */
+.clara-as-msg {
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--bs-border-radius);
+  margin-bottom: 0.5rem;
+}
+
+.clara-as-msg-assistant {
+  background-color: var(--bs-tertiary-bg);
+}
+
+.clara-as-msg-user {
+  background-color: var(--bs-primary-bg-subtle);
+}
+
+/* The tool execution line and the charts it may attach (REQ-AI-011). */
+.clara-as-tool {
+  margin: 0.25rem 0 0.25rem 1rem;
+}
+
+.clara-as-chart-bar {
+  fill: var(--bs-primary-bg-subtle);
+  stroke: var(--bs-primary-text-emphasis);
+  stroke-width: 1px;
+}
+
+.clara-as-chart-label {
+  font-size: 10px;
+  fill: var(--bs-body-color);
+}
+
+.clara-as-table {
+  max-width: 100%;
+}

@@ -249,6 +249,17 @@ final class Router
             'handler' => 'updateProject', 'guard' => 'admin', 'action' => 'update_project'],
         ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
             'handler' => 'saveTranslations', 'guard' => 'admin', 'action' => 'save_translations'],
+        // The Clara assistant's read-write switch (REQ-AI-006): a session flag only — every MCP
+        // tool call is separately gated server-side against it.
+        ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
+            'handler' => 'setAssistantMode', 'guard' => 'admin', 'action' => 'assistant_mode'],
+
+        // The assistant's MCP endpoint (REQ-AI-004): same-origin JSON-RPC over POST, admin
+        // session + CSRF like every mutation. The Accept split sends the request to `data()`
+        // exactly as it sends a page's data region there — this route's only region is the
+        // protocol itself; a POST without `Accept: application/json` reaches index() as 406.
+        ['method' => 'POST', 'pattern' => '/mcp', 'controller' => Controllers\AssistantController::class,
+            'handler' => 'index', 'guard' => 'admin', 'region' => 'mcp'],
 
         // Project-scoped administration on the project page (§5.3/§5.4/§5.5, REQ-UI-047):
         // Members and Roles are is_admin; Groups are readable by members with data access

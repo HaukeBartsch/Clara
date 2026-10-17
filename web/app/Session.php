@@ -713,6 +713,22 @@ final class Session
         unset($_SESSION['proj_token_' . $projectId]);
     }
 
+    /**
+     * Whether the Clara assistant may run write tools in this session (REQ-AI-006): read-only
+     * is the default — the flag simply is not there until the administrator switches it on —
+     * and `establish()`/`reset()` clear it with everything else, so every new sign-in starts
+     * read-only again.
+     */
+    public static function assistantWriteMode(): bool
+    {
+        return ($_SESSION['assistant_write'] ?? false) === true;
+    }
+
+    public static function setAssistantWriteMode(bool $on): void
+    {
+        $_SESSION['assistant_write'] = $on;
+    }
+
     /** @return array{token: string, email: string, user_id: int, visible: bool}|null */
     public static function takeReveal(): ?array
     {
