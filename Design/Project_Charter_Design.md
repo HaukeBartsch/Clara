@@ -21,7 +21,7 @@ The system is exactly these four components and no others. There is no scheduler
 | Go API (single process, static binary) | All data access, validation, authorization, and audit writes; both API surfaces (REDCap data API + administration API); serves the OpenAPI document | Go 1.26 | `Technology_Stack_Design.md` §3–§5 |
 | PHP web application | Page rendering, session ownership, the OAuth2/LDAP/local login flow; the **sole client** of the administration API | PHP 8.3 or 8.4 (either line), no DB driver | `Technology_Stack_Design.md` §4–§5 |
 | Database | Single store: structure, EAV record data, and the two audit tables; SQLite (development) / MariaDB (production) | — | `Database_Schema_Design.md` |
-| Reverse proxy | TLS termination; publicly routes `POST/GET /api/` and the PHP routes, and only those; strips the internal headers | nginx + PHP-FPM | `Technology_Stack_Design.md` §5 |
+| Reverse proxy | TLS termination; publicly routes `POST/GET /api/` and the PHP routes, and only those; strips the internal headers | nginx + PHP-FPM (reference), Apache httpd 2.4 + PHP-FPM (approved alternative) | `Technology_Stack_Design.md` §5 |
 
 ### 2.2 Boundaries and interfaces (normative)
 
@@ -126,5 +126,5 @@ Single-area open items (endpoint encoding, audit `details` shapes, configuration
 | Item | Owner |
 |---|------|
 | the per-project end-provision decision (delete vs. anonymize at the REK end date) — BR-009; spans export, storage, UI, and API | operations / project owner (rules fixed in `Data_Export_Anonymization_Design.md` §7) |
-| exact nginx configuration file for the deployment target (reverse-proxy component, §2.1) | operations (rules fixed in `Technology_Stack_Design.md` §5) |
+| exact reverse-proxy configuration file for the deployment target (reverse-proxy component, §2.1) | operations — the rule set ships as `deploy/nginx/clara.conf` and `deploy/apache2/clara.conf`; per-host `server_name` and certificate remain theirs (rules fixed in `Technology_Stack_Design.md` §5) |
 | additive scope candidate not in phase 1: a most-recent-first record-history read (`API_Endpoints_Design.md` §4.16) — the 3-state completion of the master spec's "Instrument level completion info" is now in the baseline (REQ-API-074/110, REQ-DB-036), with surveys reporting `finished` automatically | owner + requirements (tracked in `User_Interface_Design.md` §11) |

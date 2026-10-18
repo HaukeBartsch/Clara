@@ -20,7 +20,7 @@ The deployment rules come from [Design/Technology_Stack_Design.md](Design/Techno
 8. [MariaDB](#8-mariadb)
 9. [The API service and database privileges](#9-the-api-service-and-database-privileges)
 10. [PHP-FPM](#10-php-fpm)
-11. [nginx and TLS](#11-nginx-and-tls)
+11. [Reverse proxy and TLS](#11-reverse-proxy-and-tls)
 12. [Firewall](#12-firewall)
 13. [First login and verification](#13-first-login-and-verification)
 14. [Optional: sign-in sources, email, two-factor](#14-optional-sign-in-sources-email-two-factor)
@@ -69,7 +69,7 @@ The deployment rules come from [Design/Technology_Stack_Design.md](Design/Techno
 | `/var/lib/clara/sessions/` | PHP session files | `clara:clara`, `0700` |
 | `/etc/systemd/system/clara-api.service` | API service | `root`, `0644` |
 | `/etc/php-fpm.d/clara.conf` | PHP-FPM pool | `root`, `0644` |
-| `/etc/nginx/conf.d/clara.conf` | reverse proxy | `root`, `0644` |
+| `/etc/nginx/conf.d/clara.conf` — or `/etc/httpd/conf.d/clara.conf` for the Apache alternative (§11.3) | reverse proxy | `root`, `0644` |
 | `/etc/my.cnf.d/clara.cnf` | MariaDB settings | `root`, `0644` |
 | `/usr/local/sbin/clara-db-grants` | switches database privileges for upgrades | `root`, `0750` |
 | `/usr/local/sbin/clara-backup` | database + configuration backup | `root`, `0750` |
@@ -568,7 +568,14 @@ Notes:
 
 ---
 
-## 11. nginx and TLS
+## 11. Reverse proxy and TLS
+
+One reverse proxy stands in front of CLARA: it terminates TLS and owns the routing rules of
+[`Technology_Stack_Design.md`](Design/Technology_Stack_Design.md) §5. nginx is the reference server
+(§11.2), and Apache httpd 2.4 is an approved alternative (§11.3). Both configurations ship with the
+repository — `deploy/nginx/clara.conf` and `deploy/apache2/clara.conf` — and hold to the same rules, so
+a deployment answers identically either way, including every check in §13.1. Use one of them per host;
+never chain the application between both.
 
 ### 11.1 Certificate
 
@@ -589,7 +596,8 @@ chmod 0600 /etc/pki/tls/private/clara.key
 
 ### 11.2 Site configuration
 
-Create `/etc/nginx/conf.d/clara.conf`, replacing `clara.example.org` with the real name:
+The configuration below ships as [`deploy/nginx/clara.conf`](deploy/nginx/clara.conf). Copy it to
+`/etc/nginx/conf.d/clara.conf`, replacing `clara.example.org` with the real name:
 
 ```nginx
 # /etc/nginx/conf.d/clara.conf — CLARA reverse proxy (Technology_Stack_Design.md §5)
@@ -720,6 +728,40 @@ What the configuration enforces ([Technology_Stack_Design.md](Design/Technology_
 
 The stock `/etc/nginx/nginx.conf` still contains a default `server` on port 80. It does not interfere, and you can remove it.
 
+### 11.3 Apache httpd instead of nginx
+
+Apache httpd 2.4 implements the same routing rules and is an approved alternative to nginx. Nothing else
+in this guide changes: the certificate paths (§11.1), the PHP-FPM socket (§10), the SELinux labels and
+booleans (§7) and the firewall (§12) are identical, because httpd runs in the same `httpd_t` domain that
+§7 already provisions for nginx.
+
+```bash
+# RHEL: a drop-in in conf.d/. Debian/Ubuntu: copy to /etc/apache2/sites-available/ and a2ensite instead.
+install -m 0644 deploy/apache2/clara.conf /etc/httpd/conf.d/clara.conf
+apachectl -t && apachectl graceful
+```
+
+Three host-level differences from the nginx setup, each noted in the file's header:
+
+| | nginx (§11.2) | Apache httpd (§11.3) |
+|---|---|---|
+| Modules | `http_ssl_module` | `mod_rewrite`, `mod_headers`, `mod_alias`, `mod_authz_core`, `mod_dir`, `mod_ssl`, `mod_proxy`, `mod_proxy_http`, `mod_proxy_fcgi` (unix-socket support needs httpd ≥ 2.4.7) |
+| The distribution's own default host | a harmless `server` on port 80 | RHEL's `conf.d/ssl.conf` ships a **second `*:443` vhost** serving the welcome page — remove that vhost and keep its `Listen 443`, or a request with no SNI, or any other name, can answer something that is not CLARA. `ServerTokens Prod` belongs in the main configuration |
+| Output compression | not enabled here | keep `mod_deflate` away from this vhost — a streamed export must not buffer (the file sets `no-gzip` for `/api/`) |
+
+The rule-for-rule mapping is short enough to keep in mind: `client_max_body_size` ↔ `LimitRequestBody`,
+`proxy_set_header X-Internal-* ""` ↔ `RequestHeader unset X-Internal-*`, `alias /assets/` ↔
+`Alias /assets/`, `location = /api/ { proxy_pass … }` ↔ a `RewriteRule [P]` matching exactly `/api/` — and
+deliberately no `ProxyPass` prefix, because mod_proxy answers before mod_rewrite could refuse
+`/api/v1/*` — `fastcgi_pass unix:…` ↔ `SetHandler proxy:unix:…|fcgi://localhost` on `index.php` alone,
+and `try_files $uri /index.php` ↔ a `RewriteCond !-f`/`!-d` pair that must live inside `<Directory>`: at
+vhost level mod_rewrite runs before the URL is mapped to a file, where `-f` always matches and every real
+asset would be routed to PHP.
+
+Check either server with §13.1. `e2e/tests/deployment.spec.ts` automates those checks plus a parity check
+of the two files against this guide (`Plan/Web_Implementation.md` §8); point it at a deployed front door
+with `CLARA_DEPLOY_URL` and name the server with `CLARA_PROXY_KIND=nginx|apache`.
+
 ---
 
 ## 12. Firewall
@@ -738,7 +780,8 @@ firewall-cmd --list-services
 
 ### 13.1 Smoke checks
 
-Run these from another machine (drop `-k` once a trusted certificate is installed):
+Run these from another machine (drop `-k` once a trusted certificate is installed). They hold for either
+reverse proxy — nginx (§11.2) or Apache (§11.3) — and `e2e/tests/deployment.spec.ts` automates them:
 
 ```bash
 H=https://clara.example.org

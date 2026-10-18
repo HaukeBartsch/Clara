@@ -15,6 +15,7 @@ Rules for LLM-assisted development on CLARA — "Clinical Logbook for Automated 
 - `api/` — Go API (module `csms/api`). Current packages under `api/internal/`: `config`, `db`, `migrations`, `dataapi`, `validate`.
 - `Design/Technology_Stack_Design.md` §4 defines the normative target layout (`cmd/server`, `httpapi`, `redcap`, `admin`, `authz`, `validation`, `audit`, …). Where the current tree differs, follow the design document and place new code accordingly.
 - `web/` — PHP web application (planned; not yet present in the repository). All data access from PHP goes exclusively through the API.
+- `deploy/` — reverse-proxy reference configurations for production (`nginx/clara.conf`, `apache2/clara.conf`). They implement the normative routing rules of `Design/Technology_Stack_Design.md` §5; treat them as production code: a change to one lands in both, INSTALL.md §11 documents the same rules, and `e2e/tests/deployment.spec.ts` checks that all three still agree.
 - `assets/` — example data dictionaries and the historic FIONA user-management application (`table_based_authentication_plus_user_management/`); `AC.php` there is the authentication control script every FIONA page used to establish a session. When no requirement says otherwise, follow that example layout for interfacing PHP with the web application: pull JSON from the backend, populate rendering targets on the client.
 
 ## Stack facts (normative — do not re-decide)
@@ -23,7 +24,7 @@ Pinned versions and the production dependency allowlist are fixed in `Design/Tec
 
 - Go API built as a single static binary (`CGO_ENABLED=0`, pure-Go SQLite driver); standard library preferred over libraries.
 - SQLite for development and tests, MariaDB 11.x in production; SQL targets features common to both, with documented exceptions.
-- PHP 8.3 or 8.4 rendering layer (either is acceptable — keep code inside the feature set common to both); Composer dependencies only from the critical-function allowlist (`Design/Technology_Stack_Design.md` §3, REQ-TECH-026 — authentication, session handling, i18n), otherwise the standard distribution; nginx + PHP-FPM in production.
+- PHP 8.3 or 8.4 rendering layer (either is acceptable — keep code inside the feature set common to both); Composer dependencies only from the critical-function allowlist (`Design/Technology_Stack_Design.md` §3, REQ-TECH-026 — authentication, session handling, i18n), otherwise the standard distribution; nginx + PHP-FPM in production, with Apache httpd 2.4 as an approved alternative implementing the same routing rules (`deploy/` carries both reference files).
 - Frontend is vanilla ES2020 JavaScript with Bootstrap 5.3 — vendored locally, never loaded from a CDN at runtime (the application must work without internet access). Download library assets once into local directories.
 - No webpack or similar technology that requires a build step for the website frontend.
 - Configuration comes from environment variables; `.env.example` documents the full set.

@@ -26,7 +26,7 @@ The second factor (GD-21) guards the two CLARA-verified rows above — local and
 public internet
    │  TLS termination
    ▼
-reverse proxy (nginx)
+reverse proxy (nginx / Apache)
    ├─ PHP routes            ──► PHP-FPM ──► Go API  (/api/v1/*, loopback)
    ├─ POST /api/            ─────────────► Go API  (data API, REDCap protocol)
    └─ /api/v1/*, /docs      ── NOT routable externally (REQ-TECH-018, REQ-AUTH-014)
