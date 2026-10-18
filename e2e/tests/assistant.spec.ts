@@ -44,6 +44,39 @@ test.describe("clara assistant (AI_Assistant)", () => {
     // Read-only is the default state the page shows (REQ-AI-006).
     await expect(page.getByText("Read-only", { exact: true })).toBeVisible()
     await expect(page.locator("[data-clara-as-form]")).toBeVisible()
+    // The field states its own key contract, so it has to be on the page with it (assistant.js).
+    await expect(page.locator("#clara-as-input-hint")).toBeVisible()
+  })
+
+  test("Enter sends the message; Shift+Enter writes a line break instead", async ({ page }) => {
+    // The engine needs WebGPU, which these browsers do not have, so the field is enabled by hand:
+    // what is under test is this page's keyboard contract — which key starts a turn — and not the
+    // model. The turn itself fails at the engine, so only the bubble and the field are inspected.
+    await signInAsAdmin(page)
+    await page.goto("/admin?section=assistant")
+
+    const input = page.locator("[data-clara-as-input]")
+    await expect(input).toBeVisible()
+    await input.evaluate((node) => {
+      (node as HTMLTextAreaElement).disabled = false
+    })
+
+    await input.click()
+    await input.pressSequentially("first line")
+    await input.press("Shift+Enter")
+    await input.pressSequentially("second line")
+
+    // Shift+Enter is a newline in the field and nothing else — no message leaves it.
+    await expect(input).toHaveValue("first line\nsecond line")
+    await expect(page.locator(".clara-as-msg-user")).toHaveCount(0)
+
+    // Enter sends: the whole text becomes one user bubble, and the field clears for the next turn.
+    // textContent, not innerText — the rendered paragraph collapses the line break to a space,
+    // while what matters here is that the newline travelled into the message intact.
+    await input.press("Enter")
+    await expect(page.locator(".clara-as-msg-user")).toHaveCount(1)
+    expect(await page.locator(".clara-as-msg-user p").textContent()).toBe("first line\nsecond line")
+    await expect(input).toHaveValue("")
   })
 
   test("the MCP endpoint speaks the protocol on this origin only", async ({ page }) => {

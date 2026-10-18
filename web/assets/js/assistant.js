@@ -356,9 +356,21 @@ async function runTurn() {
 
 // --- startup ------------------------------------------------------------------------------------
 
+/**
+ * An absolute URL for one path of a model record. The engine resolves `model` through
+ * `new URL(modelUrl)` with no base, so a root-relative path — what the generated app-config.json
+ * holds, so that one install serves any host name — throws `TypeError: Invalid URL` inside
+ * CreateMLCEngine before it fetches anything. Resolving against this page's origin keeps the
+ * config host-agnostic and the request same-origin (REQ-AI-003).
+ */
+const absolute = (path) => (typeof path === "string" && path !== "" ? new URL(path, window.location.origin).href : path)
+
 async function loadEngine(config) {
   setStatus("admin.assistant.status.model_loading")
-  const appConfig = { model_list: config.model_list || [] }
+  // A record without `model_lib` keeps it absent, so the engine's own MissingModelWasmError fires.
+  const appConfig = {
+    model_list: (config.model_list || []).map((record) => ({ ...record, model: absolute(record.model), model_lib: absolute(record.model_lib) })),
+  }
   if (typeof config.frontend_version_check === "boolean") {
     appConfig.frontendVersionCheck = config.frontend_version_check
   }
@@ -412,9 +424,28 @@ ready(() => {
         })
     })
     .catch((error) => {
-      // A refused MCP route means the session; anything else is the engine or transport.
-      setStatus(String(error && error.message) === "forbidden" ? "admin.assistant.error.mcp" : "admin.assistant.error.engine")
+      // A refused MCP route means the session; anything else is the engine or transport. Its
+      // message is what an administrator can act on — "Failed to fetch" over a shard that is not on
+      // disk, "Invalid URL" over a malformed config entry — so it reaches the status line instead
+      // of only the console (REQ-AI-012).
+      if (String(error && error.message) === "forbidden") {
+        setStatus("admin.assistant.error.mcp")
+        return
+      }
+      setStatus("admin.assistant.error.engine_detail", { detail: String((error && error.message) || error) })
     })
+
+  // Enter sends, Shift+Enter writes a literal line break. A textarea never submits its form on its
+  // own, so the send has to come from here; requestSubmit() reuses the submit handler below as the
+  // one place a turn starts. `isComposing` keeps an input method's commit press — the one that
+  // lands an accented character or a CJK candidate — out of the send path.
+  input.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.shiftKey || event.isComposing) {
+      return
+    }
+    event.preventDefault()
+    form.requestSubmit()
+  })
 
   form.addEventListener("submit", (event) => {
     event.preventDefault()

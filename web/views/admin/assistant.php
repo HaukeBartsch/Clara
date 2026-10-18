@@ -50,7 +50,8 @@ $modelInstalled = !empty($modelInstalled);
 <form data-clara-as-form class="d-flex gap-2">
     <textarea class="form-control" rows="2" data-clara-as-input
               placeholder="<?= View::e($view->t('admin.assistant.placeholder')) ?>"
-              aria-label="<?= View::e($view->t('admin.assistant.placeholder')) ?>"></textarea>
+              aria-label="<?= View::e($view->t('admin.assistant.placeholder')) ?>"
+              aria-describedby="clara-as-input-hint"></textarea>
     <button class="btn btn-primary align-self-end" type="submit" data-clara-as-send>
         <?= View::e($view->t('admin.assistant.send')) ?>
     </button>
@@ -58,6 +59,9 @@ $modelInstalled = !empty($modelInstalled);
         <?= View::e($view->t('admin.assistant.clear')) ?>
     </button>
 </form>
+<!-- Enter and Shift+Enter are handled in assistant.js; the rule is stated next to the field it
+     describes, since a textarea that sends on Enter needs to say so before the first message. -->
+<div class="form-text" id="clara-as-input-hint"><?= View::e($view->t('admin.assistant.hint')) ?></div>
 
 <!-- The write confirmation (REQ-AI-007): the exact tool arguments are shown before anything is
      sent; dismissing it performs nothing and answers the model that the change was declined. -->

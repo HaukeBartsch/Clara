@@ -372,6 +372,7 @@ return [
     'admin.assistant.mode.on' => 'The assistant may now make changes; every one still asks for your confirmation first, and the API checks permissions as always.',
     'admin.assistant.mode.off' => 'The assistant is back to read-only: change tools are refused server-side.',
     'admin.assistant.placeholder' => 'Ask about a project, its data, or describe a change…',
+    'admin.assistant.hint' => 'Enter sends the message; Shift+Enter starts a new line.',
     'admin.assistant.send' => 'Send',
     'admin.assistant.clear' => 'Clear chat',
     'admin.assistant.confirm.title' => 'Confirm this change',
@@ -390,6 +391,7 @@ return [
     'admin.assistant.error.no_webgpu' => 'This browser has no WebGPU support, so the model cannot run here. Open the assistant in a recent Chrome, Edge or Brave.',
     'admin.assistant.error.model_missing' => 'The model artifacts are not installed on this server (see the notice above).',
     'admin.assistant.error.engine' => 'The model could not answer. Try again; if it keeps failing, reload this page.',
+    'admin.assistant.error.engine_detail' => 'The model could not load: {detail}. If the model artifacts on this server are incomplete, run tools/fetch_assistant_model.sh again on a machine with internet access.',
     'admin.assistant.error.mcp' => 'The tool endpoint refused this session — sign in again as an administrator.',
     'admin.assistant.error.too_many_rounds' => 'Stopped after too many tool steps without an answer — try narrowing the question.',
     // The API documentation section (§5.9): the OpenAPI document of both API surfaces.

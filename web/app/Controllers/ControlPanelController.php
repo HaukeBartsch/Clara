@@ -787,7 +787,7 @@ final class ControlPanelController extends Controller
     {
         return $this->section('assistant', 'admin/assistant', 'admin.assistant.title', [
             'writeMode' => Session::assistantWriteMode(),
-            'modelInstalled' => is_file(CLARA_WEB_ROOT . '/assets/models/app-config.json'),
+            'modelInstalled' => $this->modelArtifactsInstalled(),
         ], [
             'scripts' => ['/assets/vendor/d3/d3.v7.min.js', '/assets/js/assistant.js'],
             'jsKeys' => [
@@ -797,9 +797,53 @@ final class ControlPanelController extends Controller
                 'admin.assistant.status.declined', 'admin.assistant.who.user', 'admin.assistant.who.assistant',
                 'admin.assistant.confirm.body',
                 'admin.assistant.error.no_webgpu', 'admin.assistant.error.model_missing',
-                'admin.assistant.error.engine', 'admin.assistant.error.mcp', 'admin.assistant.error.too_many_rounds',
+                'admin.assistant.error.engine', 'admin.assistant.error.engine_detail',
+                'admin.assistant.error.mcp', 'admin.assistant.error.too_many_rounds',
             ],
         ]);
+    }
+
+    /**
+     * Whether this installation holds a complete set of model artifacts (REQ-AI-012). Config and
+     * manifest without the weight shards they name — what an interrupted fetch leaves behind — are
+     * not installed: the section renders its translated "not installed" notice rather than a form
+     * whose engine can only fail. Local files only, never a network probe; a record that points off
+     * this origin cannot be checked here, so it is left to the engine.
+     */
+    private function modelArtifactsInstalled(): bool
+    {
+        $config = json_decode((string) @file_get_contents(CLARA_WEB_ROOT . '/assets/models/app-config.json'), true);
+        $record = is_array($config) ? ($config['model_list'][0] ?? null) : null;
+        $modelPath = is_array($record) ? ($record['model'] ?? null) : null;
+        if (!is_string($modelPath)) {
+            return false;
+        }
+        if (preg_match('#^[a-z]+://#', $modelPath) === 1) {
+            return true;
+        }
+
+        // The record holds a site-relative path; the bundle appends resolve/main/ to it, which is
+        // where the manifest and the shards it names live.
+        $dir = CLARA_WEB_ROOT . '/' . ltrim($modelPath, '/') . '/resolve/main';
+        $manifest = json_decode((string) @file_get_contents($dir . '/ndarray-cache.json'), true);
+        $records = is_array($manifest) ? ($manifest['records'] ?? null) : null;
+        if (!is_array($records) || $records === []) {
+            return false;
+        }
+
+        foreach ($records as $entry) {
+            $shard = is_array($entry) ? ($entry['dataPath'] ?? null) : null;
+            if (is_string($shard) && !is_file($dir . '/' . $shard)) {
+                return false;
+            }
+        }
+
+        $lib = is_array($record) ? ($record['model_lib'] ?? null) : null;
+        if (is_string($lib) && preg_match('#^[a-z]+://#', $lib) !== 1) {
+            return is_file(CLARA_WEB_ROOT . '/' . ltrim($lib, '/'));
+        }
+
+        return true;
     }
 
     /**

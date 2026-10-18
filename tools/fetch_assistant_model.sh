@@ -36,24 +36,72 @@ curl -fL --proto '=https' -o mlc-chat-config.json \
 curl -fL --proto '=https' -o ndarray-cache.json \
   "https://huggingface.co/mlc-ai/${MODEL_ID}/resolve/main/ndarray-cache.json"
 
-# Every weight shard the cache manifest names (safetensors shards, one per entry).
+# Every weight shard the manifest names. The manifest is an object with a "records" list whose
+# entries carry a relative "dataPath" and their size in "nbytes" — the raw-shard layout the
+# vendored web-llm bundle reads (`new URL(record.dataPath, modelUrl)`), and the one
+# huggingface.co/mlc-ai serves today. An earlier revision of this script read the older array
+# shape (`[{…, "Data": [{"path": …}]}]`); against the current manifest that matched nothing, so
+# the loop below ran zero times and a model with no weights at all installed "successfully". An
+# unexpected shape is therefore an error now, never an empty shard list.
+SHARDS="$(mktemp)"
+trap 'rm -f "${SHARDS}"' EXIT
 php -r '
 $manifest = json_decode(file_get_contents("ndarray-cache.json"), true);
-if (!is_array($manifest)) { fwrite(STDERR, "unreadable ndarray-cache.json\n"); exit(1); }
-foreach ($manifest as $entry) {
-    foreach ($entry["Data"] ?? [] as $object) {
-        if (!empty($object["path"])) { echo $object["path"], "\n"; }
-    }
-}' | sort -u | while read -r shard; do
+$records = is_array($manifest) ? ($manifest["records"] ?? null) : null;
+if (!is_array($records) || $records === []) {
+    fwrite(STDERR, "ndarray-cache.json holds no \"records\" list — unexpected manifest shape\n");
+    exit(1);
+}
+$paths = [];
+foreach ($records as $record) {
+    if (!empty($record["dataPath"])) { $paths[] = (string) $record["dataPath"]; }
+}
+if ($paths === []) { fwrite(STDERR, "no manifest record carries a \"dataPath\"\n"); exit(1); }
+echo implode("\n", array_unique($paths)), "\n";
+' > "${SHARDS}"
+
+echo "== ${MODEL_ID}: $(wc -l < "${SHARDS}") weight shards"
+while read -r shard; do
   echo "-- ${shard}"
   curl -fL --proto '=https' -o "${shard}" "https://huggingface.co/mlc-ai/${MODEL_ID}/resolve/main/${shard}"
-done
+done < "${SHARDS}"
 
 echo "== compiled WebGPU library"
 curl -fL --proto '=https' -o "${WASM}" "${LIB_BASE}/${WEBLLM_VERSION}/${WASM}"
 
+# Check the install before declaring it one: every shard the manifest names must exist with the
+# size it promises. Written out here — rather than trusting the loop above to have run — because
+# a fetch that pulled nothing used to reach the same "== done" line as a complete one, and the
+# application cannot tell the two apart (it only sees files under this directory).
+php -r '
+$manifest = json_decode(file_get_contents("ndarray-cache.json"), true);
+$missing = [];
+$short = [];
+$total = 0;
+foreach ($manifest["records"] as $record) {
+    $path = $record["dataPath"] ?? null;
+    if ($path === null) { continue; }
+    clearstatcache(true, $path);
+    if (!is_file($path)) { $missing[] = $path; continue; }
+    $size = filesize($path);
+    $total += $size;
+    if (isset($record["nbytes"]) && $size !== (int) $record["nbytes"]) {
+        $short[] = sprintf("%s: %d of %d bytes", $path, $size, (int) $record["nbytes"]);
+    }
+}
+if ($missing !== [] || $short !== []) {
+    fwrite(STDERR, sprintf("incomplete install: %d shard(s) missing, %d with the wrong size\n", count($missing), count($short)));
+    foreach (array_slice(array_merge($missing, $short), 0, 10) as $line) { fwrite(STDERR, "  " . $line . "\n"); }
+    exit(1);
+}
+printf("== %d shards present, %.2f GB\n", count($manifest["records"]), $total / 1024 / 1024 / 1024);
+'
+
 # The engine's config override (design §7): one record whose URLs all live under this origin —
-# `model` keeps the HF-style base and the bundle appends resolve/main/ itself.
+# `model` keeps the HF-style base and the bundle appends resolve/main/ itself. Both paths stay
+# relative to this application's root so one install serves any host name; assistant.js turns
+# them into absolute URLs before handing the record to CreateMLCEngine, which needs absolute
+# ones (its cleanModelUrl() calls `new URL()` without a base).
 cat > "${REPO_ROOT}/web/assets/models/app-config.json" <<JSON
 {
   "model_id": "${MODEL_ID}",
