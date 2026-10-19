@@ -8,7 +8,51 @@ declare(strict_types=1);
 use Clara\Config;
 use Clara\ConfigError;
 use Clara\Response;
+use Clara\StreamSink;
 use Clara\View;
+
+/** A StreamSink that keeps what it was given, so a file-backed body can be inspected. */
+final class AssetRecordingSink implements StreamSink
+{
+    public int $status = 0;
+    /** @var array<string, string> */
+    public array $headers = [];
+    /** @var list<string> */
+    public array $chunks = [];
+
+    public function begin(int $status, array $headers): void
+    {
+        $this->status = $status;
+        $this->headers = $headers;
+    }
+
+    public function write(string $chunk): void
+    {
+        $this->chunks[] = $chunk;
+    }
+
+    public function body(): string
+    {
+        return implode('', $this->chunks);
+    }
+}
+
+/**
+ * A temporary file of `$bytes` bytes, which the caller unlinks. Written out in small pieces so that
+ * building the fixture is not itself what the memory assertion below measures.
+ */
+function asset_temp_file(int $bytes): string
+{
+    $path = (string) tempnam(sys_get_temp_dir(), 'clara-asset-');
+    $piece = str_repeat('a', 65536);
+    $handle = fopen($path, 'wb');
+    for ($left = $bytes; $left > 0; $left -= strlen($piece)) {
+        fwrite($handle, substr($piece, 0, (int) min(strlen($piece), $left)));
+    }
+    fclose($handle);
+
+    return $path;
+}
 
 describe('escaping (REQ-UI-004, REQ-TECH-020)', function (): void {
     it('escapes markup, quotes and ampersands', function (): void {
@@ -89,6 +133,63 @@ describe('the /assets handler', function (): void {
             assert_same('no-cache', $response->headers()['Cache-Control']);
         }
         assert_same(200, Response::asset($file, false, '"other"')->status());
+    });
+
+    it('announces the length it sends and asks the proxy not to buffer it', function (): void {
+        $file = clara_resolve_asset('/assets/app.js');
+        $response = Response::asset($file);
+
+        assert_same((string) filesize($file), $response->headers()['Content-Length']);
+        assert_same('no', $response->headers()['X-Accel-Buffering']);
+        // The bytes come off disk as the response goes out, so there is no body to read beforehand.
+        assert_true($response->isStream());
+        assert_same('', $response->body());
+    });
+
+    it('sends a large asset in pieces, byte for byte', function (): void {
+        // Several times the piece Response reads at a time. The two weight shards that made this a
+        // real failure are 311 MB each; their size is what matters, not their contents.
+        $path = asset_temp_file(16 * 1024 * 1024);
+        try {
+            $sink = new AssetRecordingSink();
+            Response::asset($path)->sendTo($sink);
+
+            assert_same(200, $sink->status);
+            assert_same('16777216', $sink->headers['Content-Length']);
+            assert_true(count($sink->chunks) > 1, 'handed on piece by piece, not collected');
+            assert_same(md5_file($path), md5($sink->body()), 'every byte of it, in order');
+        } finally {
+            unlink($path);
+        }
+    });
+
+    it('sends a large asset without holding it in memory', function (): void {
+        // The sink here keeps nothing: what is under test is that producing the body costs nothing
+        // proportional to the file, which is exactly what collecting it did. A 16 MiB body read as
+        // it goes out moves this process by a couple of pieces, not by the file.
+        $path = asset_temp_file(16 * 1024 * 1024);
+        $bytes = 0;
+        $sink = new class ($bytes) implements StreamSink {
+            public function __construct(private int &$written) {}
+
+            public function begin(int $status, array $headers): void {}
+
+            public function write(string $chunk): void
+            {
+                $this->written += strlen($chunk);
+            }
+        };
+
+        try {
+            $peakBefore = memory_get_peak_usage(true);
+            Response::asset($path)->sendTo($sink);
+            $growth = memory_get_peak_usage(true) - $peakBefore;
+
+            assert_same(16 * 1024 * 1024, $bytes);
+            assert_true($growth < 4 * 1024 * 1024, "peak memory grew by {$growth} bytes over a 16 MiB body");
+        } finally {
+            unlink($path);
+        }
     });
 });
 

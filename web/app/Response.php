@@ -37,6 +37,18 @@ final class Response
      */
     private $producer = null;
 
+    /**
+     * The open file an asset()'s body is read from, or null. Held as a handle rather than a path so
+     * the size announced in Content-Length and the bytes handed on below come from one and the same
+     * opened file. Closed by sendTo() once the body has gone out.
+     *
+     * @var resource|null
+     */
+    private $file = null;
+
+    /** How much of a file-backed body goes out at a time (sendTo). */
+    private const CHUNK_BYTES = 1048576;
+
     private function __construct(
         private readonly int $status,
         private readonly string $body
@@ -123,10 +135,10 @@ final class Response
         return $response;
     }
 
-    /** True for a streamed response, whose body() is empty until it is sent. */
+    /** True for a streamed response, whose body() is empty until it is sent — a producer's or a file's. */
     public function isStream(): bool
     {
-        return $this->producer !== null;
+        return $this->producer !== null || $this->file !== null;
     }
 
     /**
@@ -166,13 +178,28 @@ final class Response
      * type comes from a fixed map so nothing unexpected is ever served inline.
      * `$vendored` marks a third-party file below assets/vendor/ (clara_asset_is_vendored);
      * `$ifNoneMatch` is the request's If-None-Match header, answered with a 304.
+     *
+     * The body is read from disk in pieces as it goes out, never collected whole: the assistant's
+     * weight artifacts are hundreds of megabytes each (`web/assets/models/…/params_shard_0.bin` is
+     * 311 MB), and a file that big cannot be held in memory — under any finite `memory_limit` the
+     * read dies part-way and, because nothing has been written yet, PHP sends its error page as the
+     * body of an HTTP 200. Production aliases `/assets/` to the files themselves (INSTALL.md §11),
+     * so this handler carries them only where PHP is the last one serving a request — `php -S` in
+     * development, or a front door that does not alias the tree.
      */
     public static function asset(string $absolutePath, bool $vendored = false, ?string $ifNoneMatch = null): self
     {
-        $body = @file_get_contents($absolutePath);
-        if ($body === false) {
+        // Opened here rather than at send() time: a file that cannot be opened has to answer the
+        // 404 below, while headers can still be chosen. Opening also fixes the size and the
+        // modification time against the same inode the body is read from, so Content-Length cannot
+        // describe a different file than the one being sent.
+        $handle = @fopen($absolutePath, 'rb');
+        if ($handle === false) {
             return self::notFound();
         }
+
+        $stat = fstat($handle);
+        $size = (int) $stat['size'];
 
         // Neither tree is versioned by hash (no build step). Third-party files under
         // vendor/ change only on a library upgrade, so a short freshness window is fine.
@@ -180,12 +207,27 @@ final class Response
         // page is never cached (no-store): a day-old app script under a current page
         // runs against markup it does not know — controls it never enables stay dead.
         // So those are revalidated on every use; the ETag keeps an unchanged file a 304.
-        $etag = '"' . substr(hash('sha256', $body), 0, 32) . '"';
+        //
+        // The tag is derived from what the file is, not from its contents: hashing every byte to
+        // answer a conditional request would read a whole artifact into this process, which is the
+        // thing this method must no longer do. Size and mtime change together with any deployment
+        // and any re-fetch of an artifact, and the string keeps the strong, quoted, 32-hex-digit
+        // shape it always had.
+        $etag = '"' . substr(hash('sha256', $size . '-' . $stat['mtime']), 0, 32) . '"';
         if (self::etagMatches($ifNoneMatch, $etag)) {
+            fclose($handle);
             $response = new self(304, '');
         } else {
-            $response = new self(200, $body);
+            $response = new self(200, '');
+            $response->file = $handle;
             $response->headers['Content-Type'] = self::contentType($absolutePath);
+            // Announced so that a body cut short — a failed read, a proxy that gives up part-way —
+            // is a length the client can disprove, and so a broken artifact arrives as a failed load
+            // instead of as valid bytes that are simply too few.
+            $response->headers['Content-Length'] = (string) $size;
+            // Ask nginx not to buffer a large body on its way to the browser, as the export
+            // producers do (Technology_Stack_Design.md §5).
+            $response->headers['X-Accel-Buffering'] = 'no';
         }
         $response->headers['Cache-Control'] = $vendored ? 'public, max-age=86400' : 'no-cache';
         $response->headers['ETag'] = $etag;
@@ -242,7 +284,7 @@ final class Response
     /** Emits status, headers and body. Called once, by the front controller. */
     public function send(): void
     {
-        if ($this->producer !== null) {
+        if ($this->producer !== null || $this->file !== null) {
             $this->sendTo(new PhpOutputSink());
 
             return;
@@ -261,9 +303,35 @@ final class Response
     /**
      * Sends this response into a sink — a streamed one by running its producer, an ordinary
      * one as status, headers and body. The test harness passes a recording sink.
+     *
+     * A file-backed body (asset()) is copied through the sink in chunks and the handle closed:
+     * sending it consumes it, so a response object goes out once, which is how the front
+     * controller uses every response.
      */
     public function sendTo(StreamSink $sink): void
     {
+        if ($this->file !== null) {
+            $sink->begin($this->status, $this->headers);
+
+            // Piece by piece, so the file's size never becomes this process's memory. A failed read
+            // stops the body and leaves the announced Content-Length unmet: the client then reports
+            // a load that failed rather than accepting bytes that are simply too few.
+            while (!feof($this->file)) {
+                $chunk = fread($this->file, self::CHUNK_BYTES);
+                if ($chunk === false) {
+                    break;
+                }
+                if ($chunk !== '') {
+                    $sink->write($chunk);
+                }
+            }
+
+            fclose($this->file);
+            $this->file = null;
+
+            return;
+        }
+
         if ($this->producer === null) {
             $sink->begin($this->status, $this->headers);
             $sink->write($this->body);
