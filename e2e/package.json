@@ -2,7 +2,8 @@
   "name": "clara-e2e",
   "version": "0.0.0",
   "private": true,
-  "description": "Playwright browser tests for the CLARA web layer (REQ-TECH-028). Development and CI tooling only — nothing here is served.",
+  "type": "module",
+  "description": "Playwright browser tests for the CLARA web layer (REQ-TECH-028). Development and CI tooling only — nothing here is served. ESM throughout — deployment.spec.ts resolves its own path with import.meta, which Node refuses in a CommonJS file.",
   "scripts": {
     "test": "playwright test"
   },
