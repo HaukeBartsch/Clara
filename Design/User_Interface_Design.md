@@ -184,6 +184,7 @@ These rules apply on every page of §2.1 and are the single implementation of th
 - Server-side escaping for **all** content: choice values, field labels, record names, user names, audit payloads, translated strings — every interpolation into HTML.
 - **Exception** (the only one): stored free-text values render as HTML — they are allowlist HTML because the store sanitized them (`Data_Validation_Design.md` §5.2). They appear in: data-entry form values, per-field history (REQ-UI-026), record view, audit details.
 - The `Content-Security-Policy` header is sent on **every** response (REQ-TECH-020) and is the backstop, not a substitute, for escaping.
+- Its one script-source relaxation is `'wasm-unsafe-eval'`: compiling WebAssembly is judged against `script-src` even when the bytes were fetched from this origin, so the assistant's model library (`AI_Assistant_Design.md` §5) needs it. It grants WebAssembly compilation and nothing else — no `'unsafe-inline'` anywhere, and never the bare `'unsafe-eval'` that would let script `eval` strings (`Response::CSP`, checked by `tests/php/rendering_test.php`).
 
 ### 3.3 State-changing requests (REQ-UI-005, REQ-AUTH-037)
 

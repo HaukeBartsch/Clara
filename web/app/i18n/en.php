@@ -392,6 +392,7 @@ return [
     'admin.assistant.error.model_missing' => 'The model artifacts are not installed on this server (see the notice above).',
     'admin.assistant.error.engine' => 'The model could not answer. Try again; if it keeps failing, reload this page.',
     'admin.assistant.error.engine_detail' => 'The model could not load: {detail}. If the model artifacts on this server are incomplete, run tools/fetch_assistant_model.sh again on a machine with internet access.',
+    'admin.assistant.error.wasm_blocked' => 'The browser refused to compile the model\'s WebAssembly library: this page\'s Content-Security-Policy does not allow \'wasm-unsafe-eval\' in script-src, so nothing was fetched and no artifact is at fault. The application sends that header itself (web/app/Response.php) — check that a proxy or an extra server header is not replacing it.',
     'admin.assistant.error.mcp' => 'The tool endpoint refused this session — sign in again as an administrator.',
     'admin.assistant.error.too_many_rounds' => 'Stopped after too many tool steps without an answer — try narrowing the question.',
     // The API documentation section (§5.9): the OpenAPI document of both API surfaces.

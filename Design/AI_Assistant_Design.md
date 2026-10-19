@@ -89,6 +89,13 @@ Results are plain JSON numbers/strings; tool text summaries round to four signif
   * Rendering: assistant/user bubbles as `textContent`; `structuredContent.display` of `"table"` →
     `table-sm`, `"bar_chart"`/`"histogram"` → d3 chart in an inline SVG (REQ-AI-011). No innerHTML
     with model or server data (REQ-UI-004).
+* **Policy needed to compile the model**: `Response::CSP` carries `'wasm-unsafe-eval'` in `script-src`.
+  Fetching `model_lib` and the shards is `connect-src 'self'`, but *compiling* WebAssembly is judged
+  against `script-src`, so a bare `'self'` policy fails inside the engine with "Refused to create a
+  WebAssembly object" while every artifact on disk is fine — the model then never loads. The client
+  tells the two apart: a refusal names the header (`admin.assistant.error.wasm_blocked`), any other
+  engine failure names its message and the fetch script. See `User_Interface_Design.md` §3.2 for why
+  this is the policy's only relaxation.
 
 ## 6. Section page and mode toggle
 

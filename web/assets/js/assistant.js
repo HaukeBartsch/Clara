@@ -432,7 +432,17 @@ ready(() => {
         setStatus("admin.assistant.error.mcp")
         return
       }
-      setStatus("admin.assistant.error.engine_detail", { detail: String((error && error.message) || error) })
+      const detail = String((error && error.message) || error)
+      // A refusal to compile WebAssembly is the page's own Content-Security-Policy, or a proxy
+      // that replaced it — not an artifact problem, so re-running the fetch script would be the
+      // wrong advice. Both browsers put "Refused" and "WebAssembly" in one message (Chrome:
+      // "Refused to create a WebAssembly object …", Firefox: "… Refused to compile or
+      // instantiate WebAssembly module …").
+      if (/refused/i.test(detail) && /webassembly/i.test(detail)) {
+        setStatus("admin.assistant.error.wasm_blocked")
+        return
+      }
+      setStatus("admin.assistant.error.engine_detail", { detail })
     })
 
   // Enter sends, Shift+Enter writes a literal line break. A textarea never submits its form on its

@@ -107,7 +107,15 @@ describe('response headers (REQ-TECH-020)', function (): void {
 
     it('allows no inline script or style execution anywhere in the policy', function (): void {
         assert_not_contains('unsafe-inline', Response::CSP);
-        assert_not_contains('unsafe-eval', Response::CSP);
+        // The quoted form is what a JS-eval grant looks like; the assistant's WebAssembly
+        // allowance is the distinct token 'wasm-unsafe-eval', whose own quotes sit elsewhere.
+        assert_not_contains("'unsafe-eval'", Response::CSP);
+    });
+
+    it('lets the assistant compile its WebAssembly model library', function (): void {
+        // Without this source the browser refuses WebAssembly.instantiate and the installed
+        // model never loads — see Response.php and AI_Assistant_Design.md §5.
+        assert_contains("'wasm-unsafe-eval'", Response::CSP);
     });
 
     it('never caches a page behind a session', function (): void {

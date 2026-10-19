@@ -123,6 +123,19 @@ test.describe("clara assistant (AI_Assistant)", () => {
     await expect(page.getByText("Read-only", { exact: true })).toBeVisible()
   })
 
+  test("the assistant page permits compiling WebAssembly", async ({ page }) => {
+    // The engine compiles the model library it fetched from this origin, and CSP judges that
+    // against script-src: with a bare 'self' every artifact is fine on disk and the model still
+    // never loads (AI_Assistant_Design.md §5). Asserted here because a stripped source stays
+    // invisible until someone waits on a multi-gigabyte install to notice it.
+    await signInAsAdmin(page)
+    const response = await page.goto("/admin?section=assistant")
+    const csp = response?.headers()["content-security-policy"] ?? ""
+
+    expect(csp).toContain("script-src 'self' 'wasm-unsafe-eval'")
+    expect(csp).not.toContain("'unsafe-eval'")
+  })
+
   test("an anonymous caller never reaches the endpoint", async ({ request }) => {
     const response = await request.post("/mcp", {
       headers: { Accept: "application/json", "Content-Type": "application/json" },

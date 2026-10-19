@@ -9,6 +9,13 @@
 // `style=` attributes (styling goes through app.css or Bootstrap classes), and
 // scripts load only as same-origin files. The <script type="application/json"
 // data-i18n> block of §9 is data rather than script, so it needs no exemption.
+//
+// script-src carries one relaxation: 'wasm-unsafe-eval'. Compiling a WebAssembly
+// module is a script-source decision in CSP terms even when the bytes came from
+// a same-origin fetch, so without it the assistant's compiled model library is
+// refused and the model never loads (AI_Assistant_Design.md §5, REQ-AI-003). It
+// permits WebAssembly compilation and nothing else: JavaScript `eval` stays
+// banned — that would need the bare 'unsafe-eval' token, which must not appear.
 
 declare(strict_types=1);
 
@@ -16,7 +23,7 @@ namespace Clara;
 
 final class Response
 {
-    public const CSP = "default-src 'self'; script-src 'self'; style-src 'self'; "
+    public const CSP = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; "
         . "img-src 'self' data:; font-src 'self'; connect-src 'self'; "
         . "form-action 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'";
 
