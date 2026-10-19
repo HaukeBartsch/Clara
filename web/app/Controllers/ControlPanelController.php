@@ -806,9 +806,10 @@ final class ControlPanelController extends Controller
     /**
      * Whether this installation holds a complete set of model artifacts (REQ-AI-012). Config and
      * manifest without the weight shards they name — what an interrupted fetch leaves behind — are
-     * not installed: the section renders its translated "not installed" notice rather than a form
-     * whose engine can only fail. Local files only, never a network probe; a record that points off
-     * this origin cannot be checked here, so it is left to the engine.
+     * not installed, nor is an install missing any tokenizer file the chat config names: the
+     * section renders its translated "not installed" notice rather than a form whose engine can
+     * only fail. Local files only, never a network probe; a record that points off this origin
+     * cannot be checked here, so it is left to the engine.
      */
     private function modelArtifactsInstalled(): bool
     {
@@ -834,6 +835,20 @@ final class ControlPanelController extends Controller
         foreach ($records as $entry) {
             $shard = is_array($entry) ? ($entry['dataPath'] ?? null) : null;
             if (is_string($shard) && !is_file($dir . '/' . $shard)) {
+                return false;
+            }
+        }
+
+        // The tokenizer files the engine fetches next to the shards, named by the chat config it
+        // loads before them. Without one of these the page offers a model that cannot load, and
+        // the only sign of it was the browser's 404 on /resolve/main/tokenizer.json.
+        $chat = json_decode((string) @file_get_contents($dir . '/mlc-chat-config.json'), true);
+        $tokenizerFiles = is_array($chat) ? ($chat['tokenizer_files'] ?? null) : null;
+        if (!is_array($tokenizerFiles) || $tokenizerFiles === []) {
+            return false;
+        }
+        foreach ($tokenizerFiles as $file) {
+            if (!is_string($file) || !is_file($dir . '/' . $file)) {
                 return false;
             }
         }
