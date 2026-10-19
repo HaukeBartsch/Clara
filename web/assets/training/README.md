@@ -16,8 +16,10 @@ web/assets/training/
 
 - Plans are listed in directory-name order, so a number prefix sets the order.
 - Pictures may be PNG, JPEG, GIF or WebP. File names start with a letter or digit and use only letters, digits, `.`, `-` and `_`. A plan without pictures shows its text only.
-- A user sees `plan.<language>.md` for their UI language when it exists, and `plan.md` otherwise.
+- A user sees `plan.<language>.md` for their UI language when it exists, and `plan.md` otherwise. The five example plans ship in English plus Norwegian (`plan.nb.md`, `plan.nn.md`).
 - A plan can be linked to directly: `/training#03-collect-data`.
+
+A translation follows its `plan.md` structure step for step — the same blocks in the same order, one numbered step per picture — and changes only the words. Name the buttons and fields as the translated application names them (`tools/i18n/<language>.json`), so the text points at what the user sees.
 
 ## The text
 
