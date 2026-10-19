@@ -21,6 +21,13 @@ import (
 	"time"
 )
 
+// minInternalServiceTokenBytes is the shortest secret the service boundary accepts
+// outside development. The token lets its holder act as any user (X-Internal-User-Id
+// on the admin API), so a length floor is enforced rather than assumed — INSTALL.md §6
+// instructs `openssl rand -hex 32`, which is 64 characters, and nothing checked it
+// (master-spec finding F8). PHP refuses the same values, per REQ-CFG-004.
+const minInternalServiceTokenBytes = 32
+
 // OAuth2Provider is one configured provider (System_Configuration_Design.md §3.4).
 type OAuth2Provider struct {
 	N            int
@@ -238,6 +245,10 @@ func Load() (*Config, error) {
 	}
 	if production && cfg.InternalServiceToken == "dev-internal-token" {
 		fail("INTERNAL_SERVICE_TOKEN: the development default is accepted only when APP_ENV=development")
+	}
+	if production && len(cfg.InternalServiceToken) < minInternalServiceTokenBytes {
+		fail("INTERNAL_SERVICE_TOKEN: %d bytes is under the %d-byte minimum — openssl rand -hex 32 issues one",
+			len(cfg.InternalServiceToken), minInternalServiceTokenBytes)
 	}
 	cfg.AdminBootstrapEmail = get("ADMIN_BOOTSTRAP_EMAIL")
 	cfg.AdminBootstrapPassword = get("ADMIN_BOOTSTRAP_PASSWORD")

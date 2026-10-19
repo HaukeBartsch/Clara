@@ -35,6 +35,9 @@ final class Config
     /** How many indexed OAuth2 providers / LDAP servers the variable set allows (`OAUTH2_1…3`). */
     private const SOURCE_INDEX_MAX = 3;
 
+    /** Same floor the Go API refuses to start below — REQ-CFG-004 keeps both sides identical (finding F8). */
+    private const MIN_INTERNAL_SERVICE_TOKEN_BYTES = 32;
+
     public string $appEnv = 'development';
 
     public bool $isDevelopment = true;
@@ -195,6 +198,15 @@ final class Config
         $c->internalServiceToken = $get('INTERNAL_SERVICE_TOKEN');
         if ($c->internalServiceToken === '') {
             $errors[] = 'INTERNAL_SERVICE_TOKEN is required and must not be empty (REQ-CFG-013)';
+        } elseif (!$c->isDevelopment && strlen($c->internalServiceToken) < self::MIN_INTERNAL_SERVICE_TOKEN_BYTES) {
+            // This secret acts as any user, so a short one is guessable; the Go API
+            // refuses to start below the same length and this layer reports it the way it
+            // reports every other variable (master-spec finding F8). Development keeps its
+            // short fixed token, as it keeps `dev-internal-token`.
+            $errors[] = sprintf(
+                'INTERNAL_SERVICE_TOKEN must be at least %d bytes — openssl rand -hex 32 issues one (REQ-CFG-013)',
+                self::MIN_INTERNAL_SERVICE_TOKEN_BYTES
+            );
         }
 
         // --- public URL (REQ-CFG-018) ---

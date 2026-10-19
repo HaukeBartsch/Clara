@@ -131,6 +131,33 @@ describe('configuration validation (REQ-CFG-005)', function (): void {
         assert_contains('INTERNAL_SERVICE_TOKEN', $error->getMessage());
     });
 
+    it('refuses a service secret shorter than the Go API accepts (finding F8)', function (): void {
+        // Other variables may be missing here; what this asserts is that the length
+        // complaint appears exactly at the boundary and in production only, so that a
+        // short secret fails in whichever component reads it first.
+        $complaint = static function (array $values): string {
+            try {
+                Config::fromValues($values + ['WEB_PUBLIC_URL' => 'https://csms.example.org']);
+            } catch (ConfigError $e) {
+                return $e->getMessage();
+            }
+
+            return '';
+        };
+
+        assert_contains('at least 32 bytes', $complaint([
+            'APP_ENV' => 'production',
+            'INTERNAL_SERVICE_TOKEN' => str_repeat('t', 31),
+        ]));
+        assert_not_contains('at least 32 bytes', $complaint([
+            'APP_ENV' => 'production',
+            'INTERNAL_SERVICE_TOKEN' => str_repeat('t', 64), // what INSTALL.md §6 issues
+        ]));
+        assert_not_contains('at least 32 bytes', $complaint([
+            'INTERNAL_SERVICE_TOKEN' => 'test-service-token', // development keeps its short token
+        ]));
+    });
+
     it('names every problem in one pass rather than one per request', function (): void {
         $error = assert_throws(ConfigError::class, static function (): void {
             Config::fromValues([

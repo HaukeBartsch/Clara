@@ -170,6 +170,45 @@ func TestTFAChallengeFlowEnrollAndLogin(t *testing.T) {
 
 // TestTFADisableRequiresCode covers REQ-AUTH-056: turning the factor off
 // needs a valid current or recovery code.
+// TestSecondFactorAcceptsEachCodeOncePerRead is finding F18's regression at the
+// decision point: two requests that read the record before either of them wrote
+// must not both be let through. One shared stale snapshot IS that interleaving —
+// goroutines would reproduce it only when they feel like it, and with the bug
+// present they would pass far more often than they failed.
+func TestSecondFactorAcceptsEachCodeOncePerRead(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	u := mustLocalUser(t, e, "user@example.org", "hunter2")
+	secret, recovery := enrollTOTPComplete(t, e, u)
+
+	snapshot, err := e.Store.GetTFA(ctx, u.ID)
+	if err != nil || snapshot == nil {
+		t.Fatalf("GetTFA: %v", err)
+	}
+
+	// A recovery code presented twice from one read of the record.
+	if factor := e.Handler.verifySecondFactor(ctx, snapshot, recovery[0]); factor != "recovery" {
+		t.Fatalf("first redemption = %q, want recovery", factor)
+	}
+	if factor := e.Handler.verifySecondFactor(ctx, snapshot, recovery[0]); factor != "" {
+		t.Fatalf("second redemption of the same code = %q, want rejected", factor)
+	}
+
+	// A TOTP step presented twice from one read: the watermark the first acceptance
+	// moved is not in this snapshot, which is exactly what a racing request holds.
+	code := nextStepCode(t, secret)
+	racing, err := e.Store.GetTFA(ctx, u.ID)
+	if err != nil || racing == nil {
+		t.Fatalf("GetTFA: %v", err)
+	}
+	if factor := e.Handler.verifySecondFactor(ctx, racing, code); factor != "totp" {
+		t.Fatalf("first presentation of a current step = %q, want totp", factor)
+	}
+	if factor := e.Handler.verifySecondFactor(ctx, racing, code); factor != "" {
+		t.Fatalf("replay from the same read = %q, want rejected", factor)
+	}
+}
+
 func TestTFADisableRequiresCode(t *testing.T) {
 	e := newEnv(t)
 	u := mustLocalUser(t, e, "user@example.org", "hunter2")

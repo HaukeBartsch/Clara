@@ -85,7 +85,7 @@ func TestLoadProductionDefaults(t *testing.T) {
 	clearAuthEnv(t)
 	t.Setenv("APP_ENV", "production")
 	t.Setenv("WEB_PUBLIC_URL", "https://csms.example.org")
-	t.Setenv("INTERNAL_SERVICE_TOKEN", "prod-svc")
+	t.Setenv("INTERNAL_SERVICE_TOKEN", "prod-svc-secret-0123456789abcdefghij")
 	t.Setenv("ANON_SALT", "prod-salt")
 	t.Setenv("DB_HOST", "db.internal")
 	t.Setenv("DB_USERNAME", "csms")
@@ -127,8 +127,38 @@ func TestLoadProductionRejectsDevDefaults(t *testing.T) {
 	}
 }
 
-func TestLoadNamesEveryInvalidVariable(t *testing.T) {
+// TestLoadProductionRequiresALongEnoughServiceToken covers finding F8: the token
+// acts as any user, and INSTALL.md §6 already asks for a 64-character one, so a
+// short value has to be a startup failure rather than a secret nobody can guess
+// only by luck.
+func TestLoadProductionRequiresALongEnoughServiceToken(t *testing.T) {
 	clearAuthEnv(t)
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("WEB_PUBLIC_URL", "https://csms.example.org")
+	t.Setenv("DB_CONNECTION", "sqlite") // avoid requiring DB creds
+	t.Setenv("ANON_SALT", "prod-salt")
+	t.Setenv("ADMIN_BOOTSTRAP_EMAIL", "admin@example.org")
+	t.Setenv("ADMIN_BOOTSTRAP_PASSWORD", "secret")
+
+	t.Setenv("INTERNAL_SERVICE_TOKEN", strings.Repeat("t", 31))
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "INTERNAL_SERVICE_TOKEN") {
+		t.Fatalf("Load() with a 31-byte token = %v, want it refused and named", err)
+	}
+
+	t.Setenv("INTERNAL_SERVICE_TOKEN", strings.Repeat("t", 32))
+	if _, err := Load(); err != nil {
+		t.Fatalf("Load() with a 32-byte token returned error: %v", err)
+	}
+
+	// Development keeps its short fixed token, which the whole test suite uses.
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("INTERNAL_SERVICE_TOKEN", "test-service-token")
+	if _, err := Load(); err != nil {
+		t.Fatalf("Load() in development with a short token returned error: %v", err)
+	}
+}
+
+func TestLoadNamesEveryInvalidVariable(t *testing.T) {	clearAuthEnv(t)
 	t.Setenv("APP_ENV", "production")
 	t.Setenv("DB_CONNECTION", "sqlite")
 	// No WEB_PUBLIC_URL, no auth path at all.

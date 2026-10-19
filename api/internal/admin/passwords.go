@@ -236,7 +236,8 @@ func (h *Handler) passwordResetRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	address := strings.ToLower(body.Email)
+	// The limiter key, not the address: emailKey caps its length (finding F15).
+	address := emailKey(body.Email)
 
 	if !h.resetSends.allow(address, time.Now()) {
 		APIError(w, http.StatusTooManyRequests, "rate_limited",
@@ -452,8 +453,9 @@ func (h *Handler) changeMyPassword(w http.ResponseWriter, r *http.Request) {
 // 15-minute window (REQ-API-119). In-memory like the Sequence E store — the
 // general IP limiter covers restarts of this host's share.
 type addressLimiter struct {
-	mu sync.Mutex
-	at map[string][]time.Time
+	mu    sync.Mutex
+	at    map[string][]time.Time
+	swept time.Time
 }
 
 const (
@@ -467,6 +469,7 @@ func newAddressLimiter() *addressLimiter { return &addressLimiter{at: map[string
 func (l *addressLimiter) allow(address string, now time.Time) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.sweepLocked(now)
 	kept := l.at[address][:0]
 	for _, t := range l.at[address] {
 		if now.Sub(t) < resetWindow {
@@ -479,4 +482,27 @@ func (l *addressLimiter) allow(address string, now time.Time) bool {
 	}
 	l.at[address] = append(kept, now)
 	return true
+}
+
+// sweepLocked forgets addresses whose whole window has passed, so that invented
+// ones cannot grow the map without bound (master-spec finding F15). Once a minute,
+// from inside whichever call notices — the same shape as dataapi.RateLimiter and
+// authLockout. The caller holds l.mu.
+func (l *addressLimiter) sweepLocked(now time.Time) {
+	if !now.After(l.swept.Add(time.Minute)) {
+		return
+	}
+	l.swept = now
+	for key, hits := range l.at {
+		alive := false
+		for _, t := range hits {
+			if now.Sub(t) < resetWindow {
+				alive = true
+				break
+			}
+		}
+		if !alive {
+			delete(l.at, key)
+		}
+	}
 }

@@ -365,9 +365,11 @@ func (h *Handler) secondFactor(w http.ResponseWriter, r *http.Request, body *log
 
 // verifySecondFactor checks a submitted code against the account's record and
 // returns the verifying factor: "totp", "email" or "recovery"; "" rejects.
-// Replay prevention: an accepted TOTP step must be strictly newer than the
-// stored watermark; email codes are consumed atomically; recovery codes are
-// single-use (REQ-AUTH-054/057/059).
+// Replay prevention is one rule applied to all three factors: accepting a code
+// is a conditional write, and the request whose write landed is the request that
+// passes (REQ-AUTH-054/057/059). The record passed in narrows the work and skips
+// obvious replays; it never decides on its own, because every caller holds a
+// snapshot another request may already have invalidated.
 func (h *Handler) verifySecondFactor(ctx context.Context, tfa *db.UserTFA, code string) string {
 	now := time.Now()
 	switch tfa.Method {
@@ -375,7 +377,12 @@ func (h *Handler) verifySecondFactor(ctx context.Context, tfa *db.UserTFA, code 
 		if tfa.TotpSecret.Valid {
 			step, ok := totp.Verify(tfa.TotpSecret.String, code, now)
 			if ok && (!tfa.TotpLastStep.Valid || step > tfa.TotpLastStep.Int64) {
-				if err := h.Store.SetTFALastStep(ctx, tfa.UserID, step); err == nil {
+				// The comparison against the snapshot above is a fast path that
+				// skips a write for an obvious replay; the conditional UPDATE is
+				// the decision, so a request that raced here falls through and
+				// counts as a failed factor rather than passing on stale state.
+				granted, err := h.Store.AdvanceTFALastStep(ctx, tfa.UserID, step)
+				if err == nil && granted {
 					return "totp"
 				}
 			}
@@ -395,30 +402,52 @@ func (h *Handler) verifySecondFactor(ctx context.Context, tfa *db.UserTFA, code 
 	return ""
 }
 
+// consumeRecoveryCodeAttempts bounds the compare-and-swap retries in
+// consumeRecoveryCode. Losing one means another request spent a code on this
+// account in the same instant, which is rare enough that three reads settle it;
+// anything still unwritten after that is reported as no valid code.
+const consumeRecoveryCodeAttempts = 3
+
 // consumeRecoveryCode marks a matching unused recovery code as spent. Codes
 // are unique by construction, so at most one entry can match; the scan runs
 // to completion regardless, keeping timing independent of position.
+//
+// The write is a compare-and-swap against the JSON this attempt read: another
+// request that changed the set first matches no row, and the attempt re-reads and
+// looks again (master-spec finding F18). Two parallel requests holding the same
+// code therefore end with exactly one accepted, and a retry re-checks membership
+// rather than assuming the code survived — the write that beat this one may have
+// been the redemption of that very code.
 func (h *Handler) consumeRecoveryCode(ctx context.Context, tfa *db.UserTFA, code string) bool {
-	list := parseRecoveryCodes(tfa.RecoveryCodes)
-	if len(list) == 0 {
-		return false
-	}
 	want := totp.HashCode(code)
-	idx := -1
-	for i := range list {
-		if list[i].H == want && !list[i].Used {
-			idx = i
+	expected := tfa.RecoveryCodes
+	for attempt := 0; attempt < consumeRecoveryCodeAttempts; attempt++ {
+		list := parseRecoveryCodes(expected)
+		idx := -1
+		for i := range list {
+			if list[i].H == want && !list[i].Used {
+				idx = i
+			}
 		}
+		if idx < 0 {
+			return false // no match, or the only match was already spent
+		}
+		list[idx].Used = true
+		raw, err := json.Marshal(list)
+		if err != nil {
+			return false
+		}
+		wrote, err := h.Store.SetTFARecoveryCodesIfUnchanged(ctx, tfa.UserID, string(raw), expected)
+		if err != nil || wrote {
+			return wrote
+		}
+		fresh, err := h.Store.GetTFA(ctx, tfa.UserID)
+		if err != nil || fresh == nil {
+			return false
+		}
+		expected = fresh.RecoveryCodes
 	}
-	if idx < 0 {
-		return false // no match, or the only match was already spent
-	}
-	list[idx].Used = true
-	raw, err := json.Marshal(list)
-	if err != nil {
-		return false
-	}
-	return h.Store.SetTFARecoveryCodes(ctx, tfa.UserID, string(raw)) == nil
+	return false
 }
 
 // --- emailed codes ---
@@ -455,8 +484,9 @@ func (h *Handler) tooManySends(w http.ResponseWriter) {
 // the cap defends mailbox spam and cost, not a security boundary that must
 // survive restarts (the login_failure audit covers attempts).
 type sendLimiter struct {
-	mu sync.Mutex
-	at map[int64][]time.Time
+	mu    sync.Mutex
+	at    map[int64][]time.Time
+	swept time.Time
 }
 
 const (
@@ -470,6 +500,7 @@ func newSendLimiter() *sendLimiter { return &sendLimiter{at: map[int64][]time.Ti
 func (l *sendLimiter) allow(userID int64, now time.Time) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.sweepLocked(now)
 	kept := l.at[userID][:0]
 	for _, t := range l.at[userID] {
 		if now.Sub(t) < sendWindow {
@@ -482,6 +513,29 @@ func (l *sendLimiter) allow(userID int64, now time.Time) bool {
 	}
 	l.at[userID] = append(kept, now)
 	return true
+}
+
+// sweepLocked forgets accounts whose whole window has passed. Its keys are account
+// ids rather than caller-supplied strings, so this map cannot be driven from
+// outside; sweeping it is what keeps the entries of deleted users from living for
+// the life of the process (master-spec finding F15). The caller holds l.mu.
+func (l *sendLimiter) sweepLocked(now time.Time) {
+	if !now.After(l.swept.Add(time.Minute)) {
+		return
+	}
+	l.swept = now
+	for key, hits := range l.at {
+		alive := false
+		for _, t := range hits {
+			if now.Sub(t) < sendWindow {
+				alive = true
+				break
+			}
+		}
+		if !alive {
+			delete(l.at, key)
+		}
+	}
 }
 
 // --- recovery code storage helpers ---

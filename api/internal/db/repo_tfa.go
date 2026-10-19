@@ -123,12 +123,42 @@ func (s *Store) SetTFALastStep(ctx context.Context, userID int64, step int64) er
 	return err
 }
 
-// SetTFARecoveryCodes persists the updated recovery-code hashes, e.g. after
-// one was consumed.
-func (s *Store) SetTFARecoveryCodes(ctx context.Context, userID int64, recoveryJSON string) error {
-	_, err := s.DB.ExecContext(ctx,
-		`UPDATE user_two_factor SET recovery_codes = ? WHERE user_id = ?`, recoveryJSON, userID)
-	return err
+// AdvanceTFALastStep moves the TOTP replay watermark forward and reports
+// whether this call is the one that moved it. The UPDATE fires only while the
+// stored step is still older than the submitted one, so two requests carrying
+// the same code cannot both be accepted: the loser matches no row and reads as
+// a replay (master-spec finding F18). The IS NULL arm is a fresh enrollment,
+// which has no watermark yet. A plain read-then-write cannot decide this — the
+// value read for the comparison is already stale by the time it is written.
+func (s *Store) AdvanceTFALastStep(ctx context.Context, userID int64, step int64) (bool, error) {
+	res, err := s.DB.ExecContext(ctx,
+		`UPDATE user_two_factor SET totp_last_step = ?
+		  WHERE user_id = ? AND (totp_last_step IS NULL OR totp_last_step < ?)`,
+		step, userID, step)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// SetTFARecoveryCodesIfUnchanged replaces the recovery-code JSON only while the
+// row still holds the value the caller read, and reports whether it wrote
+// (master-spec finding F18). Zero rows means another writer changed the set
+// first: the caller re-reads rather than overwriting that work, so a code is
+// spent exactly once however many requests race. The comparison is against the
+// verbatim string that was read, never a re-marshalled copy of it — Go's JSON
+// output is only stable relative to itself, and a formatting difference must not
+// look like a lost race.
+func (s *Store) SetTFARecoveryCodesIfUnchanged(ctx context.Context, userID int64, next, expected string) (bool, error) {
+	res, err := s.DB.ExecContext(ctx,
+		`UPDATE user_two_factor SET recovery_codes = ? WHERE user_id = ? AND recovery_codes = ?`,
+		next, userID, expected)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 
 // ResetTFA removes the record entirely — self-service disable and admin reset

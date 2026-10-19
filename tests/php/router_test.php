@@ -228,6 +228,49 @@ describe('login — the local credential path (Sequences F + C)', function (): v
         assert_same('/', $response->headers()['Location']);
     });
 
+    it('refuses the backslash and control-character forms of a scheme-relative next= (F14)', function (): void {
+        $_SESSION = ['csrf_token' => str_repeat('c', 64)];
+        api_route('/auth/verify-password', ['status' => 'ok']);
+        api_route('/auth/login', ['id' => 7, 'email' => 'a@example.org', 'display_name' => 'A', 'is_admin' => false]);
+
+        // Each of these resolves off site in a browser: `/\host` folds into `//host`, and tab and
+        // NUL are stripped from a URL before it is resolved, leaving `//host` behind. The check
+        // that only compared two prefixes accepted all four (master-spec finding F14).
+        $targets = ['/\\evil.example.org/phishing', '/\\/evil.example.org', "/\t//evil.example.org", "/\0//evil.example.org"];
+        foreach ($targets as $target) {
+            // One fresh submission per target: the login underneath each one succeeds, so a session
+            // and an API queue carried between iterations would test the second request rather than
+            // the target it names.
+            $_SESSION = ['csrf_token' => str_repeat('c', 64)];
+            api_route('/auth/verify-password', ['status' => 'ok']);
+            api_route('/auth/login', ['id' => 7, 'email' => 'a@example.org', 'display_name' => 'A', 'is_admin' => false]);
+
+            $response = router_for(http_request(
+                'POST', '/login', browser_headers(),
+                ['csrf_token' => str_repeat('c', 64), 'email' => 'a@example.org', 'password' => 'pw'],
+                ['action' => 'credentials', 'next' => $target]
+            ))->dispatch();
+
+            assert_same('/', $response->headers()['Location'], 'must not hand out a redirect to ' . json_encode($target));
+        }
+    });
+
+    it('accepts only a single-slash path as a redirect target (REQ-TECH-024)', function (): void {
+        // The predicate behind both redirectBack() and the login landing page, so that a mutation
+        // returning to `next` holds the same rule as login does. A target carrying its own query is
+        // a path on this site — `/login?next=//evil` lands on this application's login page, where
+        // the inner value meets this same rule again.
+        foreach (['/', '/projects/4', '/admin?section=users', '/account/two-factor', '/login?next=//evil.example.org'] as $path) {
+            assert_same(true, Response::isSameSitePath($path), 'a same-site path must be honoured: ' . json_encode($path));
+        }
+
+        $refused = ['', ' ', '//evil.example.org', '/\\evil.example.org', '/\\/x', '///evil.example.org',
+            'https://evil.example.org', "/\n//evil.example.org", "/x\x7f"];
+        foreach ($refused as $path) {
+            assert_same(false, Response::isSameSitePath($path), 'must refuse ' . json_encode($path));
+        }
+    });
+
     it('shows one translated line for a wrong password and no session', function (): void {
         $_SESSION = ['csrf_token' => str_repeat('c', 64)];
         api_route('/auth/verify-password', ['error' => 'bad_password', 'message' => 'invalid email or password', 'status' => 401], 401);

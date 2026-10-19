@@ -127,7 +127,7 @@ function test_config(array $overrides = []): Config
     return Config::fromValues(array_merge([
         'APP_ENV' => 'development',
         'API_ADDR' => '127.0.0.1:8080',
-        'INTERNAL_SERVICE_TOKEN' => 'test-service-token',
+        'INTERNAL_SERVICE_TOKEN' => 'test-service-token-0123456789abcdefghij',
         'WEB_PUBLIC_URL' => 'http://localhost:8000',
         'LOG_LEVEL_WEB' => 'error',
         'SESSION_DIR' => $dir,

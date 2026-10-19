@@ -38,8 +38,8 @@ abstract class Controller
     /**
      * Where a mutation returns to. Only a same-site absolute path is honoured —
      // never an arbitrary URL from the request (REQ-TECH-024 covers redirect
-     // targets) — and `//host` is rejected because browsers read it as
-     // scheme-relative.
+     // targets); Response::isSameSitePath holds the rule, including the `/\host`
+     // form a browser folds into a scheme-relative one.
      */
     protected function redirectBack(string $fallback = '/'): Response
     {
@@ -47,11 +47,8 @@ abstract class Controller
         if ($next === '') {
             $next = $this->request->query('next');
         }
-        if ($next !== '' && str_starts_with($next, '/') && !str_starts_with($next, '//')) {
-            return Response::redirect($next);
-        }
 
-        return Response::redirect($fallback);
+        return Response::redirect(Response::isSameSitePath($next) ? $next : $fallback);
     }
 
     /** Queues a success line for the next render (§3.4's confirmation style). */

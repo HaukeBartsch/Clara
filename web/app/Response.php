@@ -122,6 +122,28 @@ final class Response
         return $this->producer !== null;
     }
 
+    /**
+     * Whether a request-supplied target is a path on this site, as opposed to an
+     * address somewhere else (REQ-TECH-024).
+     *
+     * Two prefixes alone are not enough. Browsers fold a backslash into the slash
+     * that follows it before resolving a URL, so `/\host` arrives as `//host` and
+     * reads as scheme-relative just as `//host` does; tab and newline are stripped
+     * from a URL the same way, so either one in front of `//host` also resolves off
+     * site. A target therefore has to start with a single slash and carry no
+     * backslash and no control character — everything else is refused, including an
+     * empty string and a full URL (master-spec finding F14).
+     */
+    public static function isSameSitePath(string $path): bool
+    {
+        if ($path === '' || $path[0] !== '/' || str_starts_with($path, '//') || str_contains($path, '\\')) {
+            return false;
+        }
+
+        // A preg_match failure reads as a refusal, never as permission.
+        return preg_match('/[\x00-\x1F\x7F]/', $path) === 0;
+    }
+
     public static function redirect(string $to, int $status = 302): self
     {
         $response = new self($status, '');

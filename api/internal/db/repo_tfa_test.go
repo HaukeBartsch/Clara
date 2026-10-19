@@ -134,12 +134,79 @@ func TestLastStepAndRecoveryCodes(t *testing.T) {
 	if !tfa.TotpLastStep.Valid || tfa.TotpLastStep.Int64 != 12345 {
 		t.Errorf("last step = %+v, want 12345", tfa.TotpLastStep)
 	}
-	if err := s.SetTFARecoveryCodes(ctx, id, `[{"h":"a","used":true}]`); err != nil {
-		t.Fatal(err)
+	if ok, err := s.SetTFARecoveryCodesIfUnchanged(ctx, id, `[{"h":"a","used":true}]`, tfa.RecoveryCodes); err != nil || !ok {
+		t.Fatalf("compare-and-swap over the set just read = %v, %v; want written", ok, err)
 	}
 	tfa, _ = s.GetTFA(ctx, id)
 	if tfa.RecoveryCodes != `[{"h":"a","used":true}]` {
 		t.Errorf("recovery codes = %q", tfa.RecoveryCodes)
+	}
+}
+
+// TestAdvanceTFALastStepGrantsOneWriter is the store half of finding F18: the
+// watermark write is what accepts a TOTP step, so exactly one request per step can
+// be the one that moved it.
+func TestAdvanceTFALastStepGrantsOneWriter(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	id := tfaUser(t, s)
+
+	if err := s.SetTFAPendingSecret(ctx, id, "S"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ActivateTFA(ctx, id, "totp", `[]`); err != nil {
+		t.Fatal(err)
+	}
+	// A fresh enrollment carries no watermark (NULL), which the first accepted
+	// step has to be able to write.
+	if ok, err := s.AdvanceTFALastStep(ctx, id, 100); err != nil || !ok {
+		t.Fatalf("first advance = %v, %v; want granted", ok, err)
+	}
+	for _, step := range []int64{100, 99} {
+		if ok, err := s.AdvanceTFALastStep(ctx, id, step); err != nil || ok {
+			t.Fatalf("advance to %d after 100 = %v, %v; want refused", step, ok, err)
+		}
+	}
+	if ok, err := s.AdvanceTFALastStep(ctx, id, 101); err != nil || !ok {
+		t.Fatalf("advance to a newer step = %v, %v; want granted", ok, err)
+	}
+	tfa, _ := s.GetTFA(ctx, id)
+	if tfa.TotpLastStep.Int64 != 101 {
+		t.Errorf("last step = %d, want 101", tfa.TotpLastStep.Int64)
+	}
+}
+
+// TestRecoveryCodesCompareAndSwapLosesTheSecondWriter covers the other half of F18:
+// a write over recovery codes lands only while the row still holds what the caller
+// read, so racing writers cannot both spend one code and neither can discard the
+// other's change.
+func TestRecoveryCodesCompareAndSwapLosesTheSecondWriter(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	id := tfaUser(t, s)
+
+	seed := `[{"h":"a","used":false},{"h":"b","used":false}]`
+	if err := s.ActivateTFA(ctx, id, "totp", seed); err != nil {
+		t.Fatal(err)
+	}
+	read, err := s.GetTFA(ctx, id)
+	if err != nil || read.RecoveryCodes != seed {
+		t.Fatalf("GetTFA = %q, %v; want the seeded set", read.RecoveryCodes, err)
+	}
+
+	spentA := `[{"h":"a","used":true},{"h":"b","used":false}]`
+	if ok, err := s.SetTFARecoveryCodesIfUnchanged(ctx, id, spentA, seed); err != nil || !ok {
+		t.Fatalf("first writer = %v, %v; want written", ok, err)
+	}
+	// A second request holding the same read finds nothing to write over — it must
+	// not be able to restore "a" to unused.
+	stale := `[{"h":"a","used":false},{"h":"b","used":true}]`
+	if ok, err := s.SetTFARecoveryCodesIfUnchanged(ctx, id, stale, seed); err != nil || ok {
+		t.Fatalf("second writer over a stale read = %v, %v; want refused", ok, err)
+	}
+	tfa, _ := s.GetTFA(ctx, id)
+	if tfa.RecoveryCodes != spentA {
+		t.Errorf("recovery codes = %q, want the first writer's %q", tfa.RecoveryCodes, spentA)
 	}
 }
 

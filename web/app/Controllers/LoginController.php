@@ -457,10 +457,7 @@ final class LoginController extends Controller
     private function safeNext(): string
     {
         $next = $this->request->query('next');
-        if ($next !== '' && str_starts_with($next, '/') && !str_starts_with($next, '//')) {
-            return $next;
-        }
 
-        return '/';
+        return Response::isSameSitePath($next) ? $next : '/';
     }
 }
