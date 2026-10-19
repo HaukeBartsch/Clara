@@ -149,7 +149,7 @@ Defines the authentication (**named authentication sources** resolving to OAuth2
 | REQ-AUTH-035 | Brute-force protection: after 5 failed logins for the same email within 10 minutes, further attempts for that email MUST be rejected for 15 minutes (per host, in memory or session store); failures are audit-logged. |
 | REQ-AUTH-036 | User passwords MUST NOT be stored in plaintext and MUST NOT appear in logs or audit details. The **only** persisted credential is the one-way argon2id hash of a local (table-based) account's password (`users.password_hash`, GD-18, REQ-AUTH-050); the OAuth2 and LDAP paths remain passwordless (the LDAP password goes to the directory and is never persisted). |
 | REQ-AUTH-037 | CSRF protection: all state-changing browser requests MUST carry a per-session CSRF token; the API's admin surface is additionally protected by the service-token boundary (GD-1). |
-| REQ-AUTH-049 | The reverse proxy and web server MUST NOT log query strings of `/api/` requests (the bearer token may ride in them per REQ-API-009); token values in access logs MUST be redacted (REQ-API-005). |
+| REQ-AUTH-049 | The reverse proxy and web server MUST NOT write credential values to access logs — query strings are omitted or redacted wherever a token can ride in one. Since DEV-API-30 the data API reads its token from the request body only, so `/api/` query strings carry nothing worth redacting; what remains is the invite and reset link (`/set-password?token=…`), whose single-use token arrives as a GET because an email click can be nothing else, and which MUST NOT reach a log either (REQ-API-005). |
 
 ## 5. Assumptions
 

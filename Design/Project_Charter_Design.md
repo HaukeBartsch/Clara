@@ -21,13 +21,13 @@ The system is exactly these four components and no others. There is no scheduler
 | Go API (single process, static binary) | All data access, validation, authorization, and audit writes; both API surfaces (REDCap data API + administration API); serves the OpenAPI document | Go 1.26 | `Technology_Stack_Design.md` §3–§5 |
 | PHP web application | Page rendering, session ownership, the OAuth2/LDAP/local login flow; the **sole client** of the administration API | PHP 8.3 or 8.4 (either line), no DB driver | `Technology_Stack_Design.md` §4–§5 |
 | Database | Single store: structure, EAV record data, and the two audit tables; SQLite (development) / MariaDB (production) | — | `Database_Schema_Design.md` |
-| Reverse proxy | TLS termination; publicly routes `POST/GET /api/` and the PHP routes, and only those; strips the internal headers | nginx + PHP-FPM (reference), Apache httpd 2.4 + PHP-FPM (approved alternative) | `Technology_Stack_Design.md` §5 |
+| Reverse proxy | TLS termination; publicly routes `POST /api/` and the PHP routes, and only those; strips the internal headers | nginx + PHP-FPM (reference), Apache httpd 2.4 + PHP-FPM (approved alternative) | `Technology_Stack_Design.md` §5 |
 
 ### 2.2 Boundaries and interfaces (normative)
 
 - **Browser ↔ PHP:** the browser talks only to the PHP web application, authenticated by the PHP-native session cookie. It never calls `/api/v1/*` and never holds a project token (GD-1, `Authentication_Authorization_Design.md` §3). The browser's vanilla ES2020 client MAY bind data regions by pulling JSON from PHP endpoints that proxy the API (REQ-TECH-025, REQ-UI-032); it never writes and never reaches the API directly.
 - **PHP ↔ Go API:** server-side, presenting the shared service secret plus the authenticated user id in `X-Internal-Service-Token` / `X-Internal-User-Id` (GD-1, `API_Endpoints_Design.md` §4.1, `Authentication_Authorization_Design.md` §6). The proxy strips both headers from every externally-originated request.
-- **External caller ↔ Go API:** the REDCap data API (`POST/GET /api/`), the token passed as a body parameter, not a header (GD-5, `API_Endpoints_Design.md` §3.1).
+- **External caller ↔ Go API:** the REDCap data API (`POST /api/`), the token passed as a body parameter, not a header and not in the query string (GD-5, REQ-API-010, DEV-API-30, `API_Endpoints_Design.md` §3.1).
 - **Single writer:** the Go API is the only component that opens a database connection. PHP MUST NOT open one (REQ-TECH-006, BR-006); no other code path writes to the store (success criterion 6).
 - **Exposure:** the administration API and the documentation endpoints are NOT publicly routable; only the REDCap data API and the PHP pages are (REQ-TECH-018, `Authentication_Authorization_Design.md` §1.2).
 

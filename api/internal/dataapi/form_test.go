@@ -72,9 +72,10 @@ func TestIndexedBatchOverTheStdlibCapParses(t *testing.T) {
 	}
 }
 
-// The query string is capped too, and a GET export listing thousands of
-// records hits it the same way (the old code used r.URL.Query(), which drops
-// the error and returns nothing).
+// The query string is capped too, and a call listing thousands of records in it
+// hits the cap the same way (the old code used r.URL.Query(), which drops the
+// error and returns nothing). Sent on a POST because GET went with the
+// query-string token (DEV-API-30); the query path itself is still read.
 func TestQueryBeyondTheStdlibCapParses(t *testing.T) {
 	var q strings.Builder
 	for i := 0; i < 12_000; i++ {
@@ -83,7 +84,7 @@ func TestQueryBeyondTheStdlibCapParses(t *testing.T) {
 		}
 		fmt.Fprintf(&q, "records[%d]=r%d", i, i)
 	}
-	r := httptest.NewRequest(http.MethodGet, "http://test/api/?token=t&content=record&"+q.String(), nil)
+	r := httptest.NewRequest(http.MethodPost, "http://test/api/?content=record&"+q.String(), nil)
 	p, err := ParseParams(r)
 	if err != nil {
 		t.Fatalf("ParseParams: %v", err)

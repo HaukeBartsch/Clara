@@ -46,6 +46,10 @@ var (
 	errFormTooLarge        = errors.New("form body exceeds maxFormBytes")
 	errTooManyParams       = errors.New("request carries more parameters than maxFormParams")
 	errUnsupportedEncoding = errors.New("request encoding is not supported")
+	// errTokenInQuery marks the credential in the query string, where nothing
+	// reads it: a URL is what proxies and access logs keep, so the token travels
+	// in the body only (master-spec finding F19, REQ-API-010, DEV-API-30).
+	errTokenInQuery = errors.New("token presented in the query string")
 )
 
 // formValues parses the POST body as urlencoded, tolerating a missing or
@@ -175,6 +179,10 @@ func paramsErrorMessage(err error) string {
 		return fmt.Sprintf("Request body too large: the limit is %d bytes", maxFormBytes)
 	case errors.Is(err, errUnsupportedEncoding):
 		return "Unsupported Content-Type: send application/x-www-form-urlencoded"
+	case errors.Is(err, errTokenInQuery):
+		// Names the fix and never repeats the value — this text goes to the caller
+		// that just exposed it, and into whatever it logs.
+		return "Invalid request: send token in the request body, not the query string (REQ-API-010)"
 	default:
 		return "Invalid content"
 	}

@@ -830,13 +830,23 @@ func TestNewMuxRouting(t *testing.T) {
 	})
 
 	t.Run("/api/* reaches the data API", func(t *testing.T) {
-		rec := serve(t, mux, httptest.NewRequest(http.MethodGet,
-			"/api/?content=project&format=json&token=nope", nil))
+		req := httptest.NewRequest(http.MethodPost, "/api/",
+			strings.NewReader("token=nope&content=project&format=json"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := serve(t, mux, req)
 		if rec.Code != http.StatusUnauthorized {
 			t.Fatalf("status = %d, want 401 (body %q)", rec.Code, rec.Body.String())
 		}
 		if !strings.Contains(rec.Body.String(), "Invalid token") {
 			t.Errorf("body %q, want the data API's uniform \"Invalid token\" (REQ-API-011)", rec.Body.String())
+		}
+
+		// GET answers 405 rather than reaching authentication: with the token in
+		// the body it is a request that cannot carry its credential
+		// (REQ-API-009, DEV-API-30).
+		rec = serve(t, mux, httptest.NewRequest(http.MethodGet, "/api/?content=project", nil))
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("GET status = %d, want 405 (body %q)", rec.Code, rec.Body.String())
 		}
 	})
 }

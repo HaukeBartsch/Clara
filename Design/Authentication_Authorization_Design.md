@@ -36,7 +36,7 @@ Go API ──► SQLite / MariaDB
 - `/api/v1/*` is reachable only from the trusted internal path (REQ-AUTH-014, REQ-API-040); the proxy strips `X-Internal-Service-Token`, `X-Internal-User-Id` and `X-Internal-Session-Epoch` from every externally-originated request (rules fixed in `Technology_Stack_Design.md` §5).
 - Inter-component traffic is loopback or TLS (REQ-AUTH-034).
 - The browser never calls `/api/v1/*` directly (GD-1, REQ-AUTH-010, REQ-UI-002).
-- The proxy MUST NOT log the query string of `/api/` requests, or must redact `token=…` (the bearer rides in the query/body per REQ-API-010; REQ-AUTH-049).
+- No credential rides a URL this deployment logs: the data API reads its token from the body only (REQ-API-010, DEV-API-30) and both reference proxies refuse a non-`POST` on `/api/`, so those query strings hold nothing to redact. What remains is the invite/reset link `/set-password?token=…`, whose query string the web server MUST NOT log (REQ-AUTH-049).
 
 ## 2. Authentication Sequences
 
@@ -353,7 +353,7 @@ Rules:
 - **Two-factor material** (GD-21, REQ-AUTH-056/057/058): TOTP secrets are 160-bit `crypto/rand` values (base32 for the QR/`otpauth://` URI); RFC 6238 verification uses standard-library `crypto/hmac` + `crypto/sha1` — no new dependency. Email codes and recovery codes come from `crypto/rand`. Pending email codes and recovery codes are persisted **as one-way hashes only** (`user_two_factor`, REQ-DB-038); the TOTP secret is stored as issued, never returned by any endpoint after its single enrollment display, and never written to logs or audit details. Email delivery uses standard-library `net/smtp` from the API against the configured relay; message bodies (the code) are never logged.
 - **CSRF** (REQ-AUTH-037, REQ-UI-005): every state-changing browser request carries the per-session `csrf_token` (form field or `X-CSRF-Token` header); the administration API is additionally protected by the service-token boundary (GD-1).
 - **Trusted path** (REQ-AUTH-034): PHP→API traffic on loopback or TLS.
-- **Log hygiene** (REQ-AUTH-049, REQ-API-005): the proxy does not log `/api/` query strings (or redacts `token=…`); neither component logs the service token, IdP secrets, or record values.
+- **Log hygiene** (REQ-AUTH-049, REQ-API-005): no credential reaches a log line — the data API takes its token in the request body (REQ-API-010, DEV-API-30), and the invite/reset link's query string stays out of the web server's logs; neither component logs the service token, IdP secrets, or record values.
 
 ## 8. Resolved Deferred Items
 

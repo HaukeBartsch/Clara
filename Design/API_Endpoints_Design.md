@@ -39,11 +39,11 @@ Neither is routed to a browser. Administrators read the document in the Control 
 
 ### 3.1 Transport and Common Parameters (REQ-API-009…017)
 
-One endpoint: `POST /api/` with an `application/x-www-form-urlencoded` body; `GET /api/` with the same parameters in the query string MUST also work (REQ-API-009).
+One endpoint: `POST /api/` with an `application/x-www-form-urlencoded` body. `GET /api/` answers **405** — the token is read from the body alone (REQ-API-010), so a GET could not authenticate, and leaving it open would keep alive the one request shape that puts a credential in a URL where every proxy logs it (REQ-API-009, DEV-API-30, master-spec finding F19).
 
 | Parameter | Accepted | Default | Notes |
 |---|---|---|---|
-| `token` | UUID string | — (required) | body or query; MUST NOT be read from an `Authorization` header (REQ-API-010, REQ-AUTH-031) |
+| `token` | UUID string | — (required) | **body only** — never the query string, never an `Authorization` header; a `token` that arrives in the query string answers 400 naming the body, without echoing the value (REQ-API-010, REQ-AUTH-031, DEV-API-30) |
 | `content` | `project` / `metadata` / `event` / `formEventMapping` / `exportFieldNames` / `generateNextRecordName` / `record` | — (required) | with `content=record`, a call carrying `data` is an import, one without it an export; deletion needs `action=delete` (REQ-API-012) |
 | `action` | `export` / `import` / `delete` (with `content=record` only) | — | optional: `export`/`import` are accepted and never override the `data` rule; `delete` is the only action that dispatches; any other value → REDCap-style error (REQ-API-012, DEV-API-24) |
 | `format` / `returnFormat` | `json` / `csv` | `csv` (REDCap default) | a present `returnFormat` takes precedence for the response encoding (REQ-API-013) |
@@ -64,7 +64,7 @@ Unknown parameters are accepted and ignored, never rejected — existing callers
 
 **Request bounds (REQ-API-144).** A request is bounded by body size (32 MiB, REQ-TECH-011) and by a parameter count of 250,000. The second bound is needed because the first does not imply it: an indexed call carries one parameter per cell, so a 50-row × 200-field import is 10,004 parameters — over the 10,000 `net/url` applies to one urlencoded string from Go 1.27 (`net/url.defaultMaxParams`), and far under its byte cap. The body is therefore parsed with `url.ParseQuery`'s acceptance rules (`&` separators, `+` as space, `%XX` escapes) without that count cap, and the result published as `r.PostForm`, so a handler reading the field afterwards sees these values rather than re-parsing a body that is already consumed. Either bound answers 400 with the limit named, before the token lookup; a batch over the parameter bound belongs in the JSON `data` encoding (REQ-API-031), which carries the same rows in one parameter.
 
-Only urlencoded bodies are read (REQ-API-009): a `multipart/form-data` body is refused as 400 rather than arriving as empty parameters, while a missing or unexpected Content-Type keeps being read as urlencoded for the PHP callers that omit it. Both rules exist so that no request-shape problem can surface as `Invalid token` — an empty parameter set carries an empty token, and that reads as an authentication failure for a credential that was never the problem (REQ-API-011).
+Only urlencoded bodies are read (REQ-API-009): a `multipart/form-data` body is refused as 400 rather than arriving as empty parameters, while a missing or unexpected Content-Type keeps being read as urlencoded for the PHP callers that omit it. Both rules exist so that no request-shape problem can surface as `Invalid token` — an empty parameter set carries an empty token, and that reads as an authentication failure for a credential that was never the problem (REQ-API-011). Refusing a query-string `token` belongs to the same rule: the credential was never read, so the answer is a 400 naming the body, not a 401 about a token nobody checked (REQ-API-010, DEV-API-30).
 
 ### 3.2 Error Format (REQ-API-039, REQ-API-011)
 

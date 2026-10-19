@@ -158,7 +158,8 @@ func TestLoadProductionRequiresALongEnoughServiceToken(t *testing.T) {
 	}
 }
 
-func TestLoadNamesEveryInvalidVariable(t *testing.T) {	clearAuthEnv(t)
+func TestLoadNamesEveryInvalidVariable(t *testing.T) {
+	clearAuthEnv(t)
 	t.Setenv("APP_ENV", "production")
 	t.Setenv("DB_CONNECTION", "sqlite")
 	// No WEB_PUBLIC_URL, no auth path at all.

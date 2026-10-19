@@ -1,6 +1,6 @@
 // Package dataapi implements the REDCap-compatible data API: the single
-// POST /api/ endpoint (and GET /api/) speaking the form-encoded
-// token/content protocol of API_Endpoints_Design.md §3 — the read-only
+// POST /api/ endpoint speaking the form-encoded token/content protocol of
+// API_Endpoints_Design.md §3 — the read-only
 // contents (project, event, metadata, formEventMapping, exportFieldNames,
 // generateNextRecordName), the record actions export/import/delete
 // (§3.6–§3.8), and the uniform error and rate-limit contracts they share.
@@ -48,18 +48,27 @@ type Params struct {
 	HasData bool
 }
 
-// ParseParams extracts the protocol parameters from a GET query string or
-// a POST form body. Body values take precedence over the query string —
-// the token travels in the body (REQ-API-009, REQ-API-010).
+// ParseParams extracts the protocol parameters from a POST form body. Other
+// parameters may also arrive in the query string, which some callers append —
+// the token never does (REQ-API-009, REQ-API-010).
 //
 // A returned error is always a request-shape failure (form.go): an oversized
-// body, a request over maxFormParams, an unsupported encoding. Callers answer
-// it as the uniform 400 with paramsErrorMessage, before any token lookup, so
-// that none of them can read back as an invalid-token 401.
+// body, a request over maxFormParams, an unsupported encoding, or a token riding
+// in the query string. Callers answer it as the uniform 400 with
+// paramsErrorMessage, before any token lookup, so that none of them can read
+// back as an invalid-token 401.
 func ParseParams(r *http.Request) (Params, error) {
 	query, err := queryValues(r)
 	if err != nil {
 		return Params{}, err
+	}
+	// A credential in a URL is a credential in an access log, so this shape is
+	// refused outright rather than ignoring a value that would then fail as an
+	// invalid token (master-spec finding F19, REQ-API-010, DEV-API-30). Checked
+	// before the body: the request cannot succeed either way, and this is its
+	// reason — and one that tells the caller how to fix it.
+	if len(query["token"]) > 0 {
+		return Params{}, errTokenInQuery
 	}
 	body := map[string][]string{}
 	if r.Method == http.MethodPost || r.Method == http.MethodPut {
@@ -75,6 +84,15 @@ func ParseParams(r *http.Request) (Params, error) {
 			return vs[0]
 		}
 		if vs := query[key]; len(vs) > 0 {
+			return vs[0]
+		}
+		return ""
+	}
+	// bodyOnly is single without the query-string fallback. It exists for one
+	// parameter on purpose: the asymmetry is the fix, and a future edit that
+	// folds `token` back into single() would reopen finding F19 silently.
+	bodyOnly := func(key string) string {
+		if vs := body[key]; len(vs) > 0 {
 			return vs[0]
 		}
 		return ""
@@ -98,7 +116,7 @@ func ParseParams(r *http.Request) (Params, error) {
 	}
 
 	return Params{
-		Token:               single("token"),
+		Token:               bodyOnly("token"),
 		Content:             single("content"),
 		Action:              single("action"),
 		Format:              single("format"),

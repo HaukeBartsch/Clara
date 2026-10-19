@@ -1,6 +1,7 @@
 package dataapi
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -26,33 +27,45 @@ func parseFrom(t *testing.T, method string, form url.Values) Params {
 	return p
 }
 
-func TestParseParamsGet(t *testing.T) {
-	p := parseFrom(t, http.MethodGet, url.Values{
-		"token": {"t"}, "content": {"project"}, "format": {"json"},
-	})
-	if p.Token != "t" || p.Content != "project" || p.Format != "json" {
-		t.Fatalf("got %+v", p)
+// A token in the query string is refused outright, not ignored: a request whose
+// credential arrived in a URL must not authenticate, and its caller has to be
+// told to move it rather than answered `Invalid token` for a value nobody read
+// (REQ-API-010, DEV-API-30, master-spec finding F19).
+func TestQueryTokenIsRefused(t *testing.T) {
+	const secret = "tok-from-a-url"
+	r := httptest.NewRequest(http.MethodPost, "http://test/api/?token="+secret+"&content=project", nil)
+	if _, err := ParseParams(r); !errors.Is(err, errTokenInQuery) {
+		t.Fatalf("ParseParams error = %v, want errTokenInQuery", err)
+	}
+
+	// The refusal is a request-shape answer naming the fix, and it repeats no
+	// credential: this text reaches the caller that just exposed it.
+	msg := paramsErrorMessage(errTokenInQuery)
+	if !strings.Contains(msg, "request body") {
+		t.Errorf("message %q does not name the body as the fix", msg)
+	}
+	if strings.Contains(msg, secret) {
+		t.Errorf("message %q echoes the token value", msg)
 	}
 }
 
-// Body values take precedence over the query string (REQ-API-009, REQ-API-010):
-// the token travels in the body.
-func TestParseParamsBodyPrecedence(t *testing.T) {
-	// The query string carries one value, the body another; the body wins.
-	p, err := ParseParams(func() *http.Request {
-		r := httptest.NewRequest(http.MethodPost, "http://test/api/?token=query-tok&content=project",
-			strings.NewReader("token=body-tok"))
-		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		return r
-	}())
+// The body carries the credential. Parameters the body omits keep falling back to
+// the query string, which DEV-API-30 leaves alone on purpose: the finding is about
+// the secret, not about every parameter a caller might append to a URL.
+func TestTokenComesFromTheBodyAlone(t *testing.T) {
+	r := httptest.NewRequest(http.MethodPost, "http://test/api/?content=project",
+		strings.NewReader("token=body-tok"))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	p, err := ParseParams(r)
 	if err != nil {
 		t.Fatalf("ParseParams: %v", err)
 	}
 	if p.Token != "body-tok" {
-		t.Errorf("token = %q, want body-tok (body wins over query)", p.Token)
+		t.Errorf("token = %q, want body-tok", p.Token)
 	}
 	if p.Content != "project" {
-		t.Errorf("content = %q, want project (from query, absent in body)", p.Content)
+		t.Errorf("content = %q, want project (query fallback stays for parameters other than token)", p.Content)
 	}
 }
 

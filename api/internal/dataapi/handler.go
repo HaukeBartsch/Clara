@@ -52,9 +52,14 @@ func (h *Handler) linkLock(linkID int64) *sync.Mutex {
 // ServeHTTP dispatches one data-API call (API_Endpoints_Design.md §3).
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
-	case http.MethodGet, http.MethodPost:
+	case http.MethodPost:
 	default:
-		writeError(w, "json", http.StatusMethodNotAllowed, "Method not allowed")
+		// GET left with the query-string token (REQ-API-010, DEV-API-30): a request
+		// that cannot carry its credential is not worth answering, and the only place
+		// it could carry it is what every proxy access log keeps. The text names the
+		// method and the body so a caller that used to navigate here knows what to change.
+		writeError(w, "json", http.StatusMethodNotAllowed,
+			"Method not allowed: POST /api/ with the parameters, token included, in the request body")
 		return
 	}
 
