@@ -705,6 +705,15 @@ h1 .clara-mode-badge {
 }
 /* --- Clara assistant (§5.12, AI_Assistant area) --- */
 
+/* The chat pane scrolls inside a bounded box. This sits here rather than in a style="" attribute:
+   CSP is style-src 'self' on every response (REQ-TECH-020), so an inline attribute is refused and
+   the pane renders unbounded — Plan/Web_Implementation.md §3, "all styling through app.css". */
+.clara-as-log {
+  min-height: 18rem;
+  max-height: 42rem;
+  overflow-y: auto;
+}
+
 /* Chat bubbles: the model's answers sit on the subtle surface, the administrator's on the
    primary tint — the same two-tone language the alerts use, theme-following by construction. */
 .clara-as-msg {

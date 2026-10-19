@@ -44,7 +44,7 @@ $modelInstalled = !empty($modelInstalled);
 
 <!-- The chat log: bubbles are created by assistant.js with createElement/textContent only
      (REQ-UI-004). aria-live announces streamed answers to assistive technology. -->
-<div class="border rounded p-2 mb-2 clara-as-log" data-clara-as-log aria-live="polite" style="min-height: 18rem; max-height: 42rem; overflow-y: auto;">
+<div class="border rounded p-2 mb-2 clara-as-log" data-clara-as-log aria-live="polite">
 </div>
 
 <form data-clara-as-form class="d-flex gap-2">
