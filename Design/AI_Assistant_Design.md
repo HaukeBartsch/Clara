@@ -89,6 +89,13 @@ Results are plain JSON numbers/strings; tool text summaries round to four signif
   * Rendering: assistant/user bubbles as `textContent`; `structuredContent.display` of `"table"` →
     `table-sm`, `"bar_chart"`/`"histogram"` → d3 chart in an inline SVG (REQ-AI-011). No innerHTML
     with model or server data (REQ-UI-004).
+  * Failure reporting: a failed turn reaches three channels, because the generic sentence alone left
+    nothing to act on. `console.error` keeps the Error itself (engine subclasses carry their diagnosis
+    in the name, e.g. `UnsupportedModelIdError`); the status line carries one translated clause
+    naming it (`admin.assistant.error.turn_detail`); and the chat gets a collapsed details block with
+    where the loop stood — stage, round, tool — beside what is loaded: model id, engine, tool count,
+    WebGPU adapter, user agent. It holds counts and identifiers only, never conversation text: record
+    values are data the model reports on, not something to paste into a bug report (REQ-AI-002).
 * **Policy needed to compile the model**: `Response::CSP` carries `'wasm-unsafe-eval'` in `script-src`.
   Fetching `model_lib` and the shards is `connect-src 'self'`, but *compiling* WebAssembly is judged
   against `script-src`, so a bare `'self'` policy fails inside the engine with "Refused to create a

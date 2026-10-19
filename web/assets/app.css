@@ -749,3 +749,12 @@ h1 .clara-mode-badge {
 .clara-as-table {
   max-width: 100%;
 }
+
+/* The failure report: a stack has long unbreakable tokens, and the chat pane scrolls in one
+   direction only — wrapping here keeps it inside the pane instead of widening it. */
+.clara-as-diagnostics pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 16rem;
+  overflow-y: auto;
+}

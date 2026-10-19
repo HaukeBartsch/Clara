@@ -79,6 +79,42 @@ test.describe("clara assistant (AI_Assistant)", () => {
     await expect(input).toHaveValue("")
   })
 
+  test("a turn that fails says what failed, not only that something did", async ({ page }) => {
+    // No engine in these browsers, so every send dies at the first stream — the state the report
+    // exists for, reached without a GPU. What is asserted is this page's own context (the step, the
+    // round, whether an engine was there at all), since the engine's message differs per browser;
+    // REQ-AI-012 asks for an actionable state, and the bare "could not answer" sentence gave an
+    // administrator nothing to act on and nothing to paste anywhere.
+    await signInAsAdmin(page)
+    // The config answers 404 so startup stops at "no model installed": a browser here that does
+    // have WebGPU would otherwise start fetching gigabytes of weights in the background, fail at
+    // some point during this test, and report *that* failure into the same chat log.
+    await page.route("**/assets/models/app-config.json", (route) => route.fulfill({ status: 404 }))
+    await page.goto("/admin?section=assistant")
+
+    const input = page.locator("[data-clara-as-input]")
+    await input.evaluate((node) => {
+      (node as HTMLTextAreaElement).disabled = false
+    })
+    await input.fill("hello")
+    await input.press("Enter")
+
+    const status = page.locator("[data-clara-as-status]")
+    await expect(status).toContainText("The model could not answer:")
+    // The translated sentence resolved from the injected block, so the key is on the page's list.
+    await expect(status).not.toContainText("admin.assistant.error")
+
+    const details = page.locator("[data-clara-as-diagnostics]")
+    await expect(details).toHaveCount(1)
+    await details.locator("summary").click()
+    await expect(details).toContainText("Technical details")
+    await expect(details).toContainText("stage=stream")
+    await expect(details).toContainText("round=1/")
+    await expect(details).toContainText("engine=absent")
+    // Counts, never content: the report must not become a place record values collect.
+    await expect(details).toContainText("messages=2")
+  })
+
   test("the MCP endpoint speaks the protocol on this origin only", async ({ page }) => {
     await signInAsAdmin(page)
     await page.goto("/admin?section=assistant")

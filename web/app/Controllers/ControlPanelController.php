@@ -792,13 +792,15 @@ final class ControlPanelController extends Controller
             'scripts' => ['/assets/vendor/d3/d3.v7.min.js', '/assets/js/assistant.js'],
             'jsKeys' => [
                 'admin.assistant.status.model_loading', 'admin.assistant.status.model_ready',
-                'admin.assistant.status.thinking', 'admin.assistant.status.tool_running',
+                'admin.assistant.status.thinking', 'admin.assistant.status.empty_answer',
+                'admin.assistant.status.tool_running',
                 'admin.assistant.status.tool_done', 'admin.assistant.status.tool_failed',
                 'admin.assistant.status.declined', 'admin.assistant.who.user', 'admin.assistant.who.assistant',
                 'admin.assistant.confirm.body',
                 'admin.assistant.error.no_webgpu', 'admin.assistant.error.model_missing',
-                'admin.assistant.error.engine', 'admin.assistant.error.engine_detail',
+                'admin.assistant.error.turn_detail', 'admin.assistant.error.engine_detail',
                 'admin.assistant.error.mcp', 'admin.assistant.error.too_many_rounds',
+                'admin.assistant.diagnostics.title',
             ],
         ]);
     }

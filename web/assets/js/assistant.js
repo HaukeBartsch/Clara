@@ -12,6 +12,8 @@ import { CreateMLCEngine } from "../vendor/webllm/web-llm.mjs"
 
 const MODEL_CONFIG_URL = "/assets/models/app-config.json"
 const MAX_TOOL_ROUNDS = 8 // per user message, so a confused model cannot loop forever
+const DETAIL_LIMIT = 320 // of an engine message the status line can carry before it stops helping
+const STACK_LIMIT = 1500 // of a stack the chat keeps; console.error always holds all of it
 
 const SYSTEM_PROMPT = [
   "You are Clara, the administration assistant of CLARA, a clinical study data capture system.",
@@ -28,6 +30,11 @@ let engine = null // WebLLM engine once loaded; null until then (input stays dis
 let toolDefs = [] // MCP definitions from tools/list
 let messages = [{ role: "system", content: SYSTEM_PROMPT }]
 let busy = false
+let modelId = null // the configured id, so a report names the artifact it failed against
+let stage = "startup" // last step that ran: a failure says where it stopped, not only that it did
+let roundNumber = 0
+let toolName = ""
+let adapter = "not queried yet" // WebGPU adapter identity, read once at page start (see ready())
 
 // --- DOM handles and status -------------------------------------------------------------------
 
@@ -39,6 +46,102 @@ function setStatus(key, params) {
   if (node) {
     node.textContent = t(key, params)
   }
+}
+
+// --- failure reporting (REQ-AI-012) ---------------------------------------------------------------
+
+/**
+ * `Name: message` for anything thrown. The engine's own failures are subclasses with meaningful
+ * names (`UnsupportedModelIdError`, `IntegrityError`) and the name is most of the diagnosis, so it
+ * goes in front rather than being dropped; a fetch failure is a plain Error whose message says all.
+ */
+function describe(error) {
+  if (error === null || error === undefined) {
+    return String(error)
+  }
+  const message = error.message ? String(error.message) : String(error)
+
+  return error.name && error.name !== "Error" ? error.name + ": " + message : message
+}
+
+const clipped = (text, limit) => (text.length > limit ? text.slice(0, limit) + " [...]" : text)
+
+/**
+ * Which GPU the model runs on: an out-of-memory and a driver bug are only tellable apart from here.
+ * Read at page start rather than when something breaks — after a failed turn the device may be gone
+ * — and never awaited, since WebLLM asks for its own adapter while loading and a second query has
+ * no business sitting in front of the ready state.
+ */
+async function readAdapter() {
+  if (!navigator.gpu) {
+    return "no navigator.gpu"
+  }
+  try {
+    const offered = await navigator.gpu.requestAdapter()
+    if (!offered) {
+      return "no adapter offered"
+    }
+    // `.info` is the current API, `requestAdapterInfo()` what older browsers have; the vendored
+    // engine reads the two the same way round.
+    const info = offered.info || (await offered.requestAdapterInfo?.())
+    const parts = info ? [info.vendor, info.architecture, info.device, info.description] : []
+
+    return parts.filter(Boolean).join(" ") || "adapter without info"
+  } catch (error) {
+    return "query failed: " + describe(error)
+  }
+}
+
+/**
+ * What a failure needs to be diagnosed from the screen itself: where the loop stood, what is
+ * loaded, and the error. Conversation text is deliberately absent — record values are data the
+ * model reports on, not something to paste into a bug report (REQ-AI-002) — so the history counts
+ * instead of appearing. The `key=` names are log keys, like the protocol strings fed back to the
+ * model, not UI copy.
+ */
+function diagnosticLines(context, error) {
+  return [
+    "stage=" + context.stage + (context.tool !== "" ? " tool=" + context.tool : ""),
+    "round=" + context.round + "/" + MAX_TOOL_ROUNDS,
+    "model=" + (modelId === null ? "(none)" : modelId),
+    "engine=" + (engine ? "loaded" : "absent"),
+    "tools=" + toolDefs.length,
+    "messages=" + messages.length,
+    "webgpu=" + adapter,
+    "user_agent=" + navigator.userAgent,
+    "",
+    describe(error),
+    error && error.stack ? clipped(String(error.stack), STACK_LIMIT) : "(no stack)",
+  ]
+}
+
+/**
+ * The context a report is written from. A turn reports the loop it was in; a page that never came
+ * up reports the page, because the two lifecycles fail independently and a startup failure arriving
+ * after an abandoned send would otherwise be labelled with that send's step.
+ */
+const turnContext = () => ({ stage, round: roundNumber, tool: toolName })
+const startupContext = { stage: "startup", round: 0, tool: "" }
+
+/** The collapsed report under a failure; the console keeps the Error object with its fields. */
+function diagnosticsBlock(context, error) {
+  const block = el("details", { class: "clara-as-diagnostics small my-1", "data-clara-as-diagnostics": "" })
+  block.append(el("summary", {}, t("admin.assistant.diagnostics.title")))
+  block.append(el("pre", { class: "text-body-secondary small bg-body-tertiary border rounded p-2 mb-0" }, diagnosticLines(context, error).join("\n")))
+  log().appendChild(block)
+  log().scrollTop = log().scrollHeight
+}
+
+/**
+ * One failure, said three ways: the console gets the Error itself, the status line one translated
+ * clause naming it, and the chat the whole context collapsed out of the way. Each channel is for a
+ * different reader — the administrator at the screen, whoever debugs it afterwards.
+ */
+function reportFailure(error) {
+  const context = turnContext()
+  console.error("[clara-as] " + context.stage + " failed", error)
+  setStatus("admin.assistant.error.turn_detail", { detail: clipped(describe(error), DETAIL_LIMIT) })
+  diagnosticsBlock(context, error)
 }
 
 /** A chat bubble; returns the paragraph that receives text. */
@@ -269,7 +372,9 @@ function mergeToolCall(accumulator, delta) {
 async function streamOnce(onToken) {
   const chunks = await engine.chat.completions.create({
     messages,
-    tools: engineTools(),
+    // Omitted rather than sent empty: `tools: []` is still a tool request to the engine, and a
+    // model it refuses there then fails on questions that need no tools at all.
+    ...(toolDefs.length > 0 ? { tools: engineTools() } : {}),
     stream: true,
   })
 
@@ -299,13 +404,21 @@ async function streamOnce(onToken) {
 async function runTurn() {
   const body = bubble("assistant", "")
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    roundNumber = round + 1
+    toolName = ""
     setStatus("admin.assistant.status.thinking")
+    stage = "stream"
     const answer = await streamOnce((text) => {
       body.textContent = text
       log().scrollTop = log().scrollHeight
     })
 
     if (answer.toolCalls.length === 0) {
+      if (answer.text === "") {
+        // A model that stops without saying anything is a result, not a crash — but it left the
+        // status line on "Thinking…" over an empty bubble, which read as a hung page.
+        setStatus("admin.assistant.status.empty_answer", { reason: answer.finishReason || "none" })
+      }
       return // final answer streamed in place
     }
 
@@ -326,6 +439,8 @@ async function runTurn() {
       }
 
       const line = toolLine(call.function.name)
+      stage = "tool"
+      toolName = call.function.name
       if (isWriteTool(call.function.name)) {
         const accepted = await confirmWrite(call.function.name, args)
         if (!accepted) {
@@ -345,12 +460,16 @@ async function runTurn() {
         line.done(!result.isError, result.isError ? text : "")
         messages.push({ role: "tool", tool_call_id: call.id, content: text })
       } catch (error) {
+        // The model is told in protocol terms; the console is where the transport detail survives.
+        console.warn("[clara-as] tool " + call.function.name + " failed", error)
         line.done(false, t("admin.assistant.status.tool_failed"))
         messages.push({ role: "tool", tool_call_id: call.id, content: "transport_error: " + String(error.message || error) })
       }
     }
   }
 
+  stage = "round_limit"
+  console.warn("[clara-as] stopped after " + MAX_TOOL_ROUNDS + " tool rounds without an answer")
   body.textContent = t("admin.assistant.error.too_many_rounds")
 }
 
@@ -367,6 +486,7 @@ const absolute = (path) => (typeof path === "string" && path !== "" ? new URL(pa
 
 async function loadEngine(config) {
   setStatus("admin.assistant.status.model_loading")
+  modelId = config.model_id
   // A record without `model_lib` keeps it absent, so the engine's own MissingModelWasmError fires.
   const appConfig = {
     model_list: (config.model_list || []).map((record) => ({ ...record, model: absolute(record.model), model_lib: absolute(record.model_lib) })),
@@ -398,6 +518,12 @@ ready(() => {
   }
   setEnabled(false)
 
+  // The adapter identity is read here, once, before anything can fail: fire-and-forget so it never
+  // delays the model, and early because a device that dies mid-turn still has to be identifiable.
+  readAdapter().then((info) => {
+    adapter = info
+  })
+
   // Bootstrap order: the MCP tools first (they exist whether or not a model is installed),
   // then the engine. Either failure leaves a translated, actionable state (REQ-AI-012).
   initialize()
@@ -428,11 +554,12 @@ ready(() => {
       // message is what an administrator can act on — "Failed to fetch" over a shard that is not on
       // disk, "Invalid URL" over a malformed config entry — so it reaches the status line instead
       // of only the console (REQ-AI-012).
+      console.error("[clara-as] startup failed", error)
       if (String(error && error.message) === "forbidden") {
         setStatus("admin.assistant.error.mcp")
         return
       }
-      const detail = String((error && error.message) || error)
+      const detail = describe(error)
       // A refusal to compile WebAssembly is the page's own Content-Security-Policy, or a proxy
       // that replaced it — not an artifact problem, so re-running the fetch script would be the
       // wrong advice. Both browsers put "Refused" and "WebAssembly" in one message (Chrome:
@@ -443,6 +570,7 @@ ready(() => {
         return
       }
       setStatus("admin.assistant.error.engine_detail", { detail })
+      diagnosticsBlock(startupContext, error)
     })
 
   // Enter sends, Shift+Enter writes a literal line break. A textarea never submits its form on its
@@ -470,7 +598,7 @@ ready(() => {
     busy = true
     sendButton.disabled = true
     runTurn()
-      .catch(() => setStatus("admin.assistant.error.engine"))
+      .catch(reportFailure)
       .finally(() => {
         busy = false
         sendButton.disabled = false
