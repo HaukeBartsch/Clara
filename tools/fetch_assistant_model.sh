@@ -89,6 +89,15 @@ echo "== fetching ${MODEL_ID} into ${DEST}"
 fetch mlc-chat-config.json "https://huggingface.co/mlc-ai/${MODEL_ID}/resolve/main/mlc-chat-config.json"
 fetch ndarray-cache.json "https://huggingface.co/mlc-ai/${MODEL_ID}/resolve/main/ndarray-cache.json"
 
+# The manifest the engine loads weights from. Nothing in a file this script parses names it — the
+# bundle asks for it by its own constant: web-llm v0.2.86 requests
+# `<model>/resolve/main/tensor-cache.json` on every load (`fetchTensorCache()`, before any shard),
+# and a 404 there fails the whole load, which is how an install holding every shard left the
+# Assistant unable to start. huggingface.co/mlc-ai publishes one for every MODEL_ID above, today
+# byte-identical to that model's ndarray-cache.json; this bundle no longer requests
+# ndarray-cache.json at all, but it stays fetched as the list this script enumerates below.
+fetch tensor-cache.json "https://huggingface.co/mlc-ai/${MODEL_ID}/resolve/main/tensor-cache.json"
+
 # Everything the engine asks for under this model's URL, one line per file: its name and the byte
 # count promised for it (empty where nothing promises one), separated by a tab. The lines are every
 # weight shard the manifest names, plus every tokenizer file the chat config names. The raw-shard
@@ -140,12 +149,14 @@ echo "== compiled WebGPU library"
 fetch "${WASM}" "${LIB_BASE}/${WEBLLM_VERSION}/${WASM}"
 
 # Check the install before declaring it one: every shard the manifest names must exist with the
-# size it promises, and every tokenizer file the chat config names plus the compiled library must
-# exist at all. Written out here — rather than trusting the loop above to have run — because a
-# fetch that pulled nothing used to reach the same "== done" line as a complete one, and the
-# application cannot tell the two apart (it only sees files under this directory). The tokenizer
-# files were not checked for at all until an install missing all four reported success; the first
-# anyone heard of it was the browser, on a 404 for /resolve/main/tokenizer.json.
+# size it promises, and every tokenizer file the chat config names plus the engine's own
+# tensor-cache.json plus the compiled library must exist at all. Written out here — rather than
+# trusting the loop above to have run — because a fetch that pulled nothing used to reach the same
+# "== done" line as a complete one, and the application cannot tell the two apart (it only sees
+# files under this directory). The tokenizer files were not checked for at all until an install
+# missing all four reported success; the first anyone heard of it was the browser, on a 404 for
+# /resolve/main/tokenizer.json. tensor-cache.json joins the list for the same reason: no manifest
+# here names it, so only this check notices when it is not there.
 WASM="${WASM}" php -r '
 $manifest = json_decode(file_get_contents("ndarray-cache.json"), true);
 $chat = json_decode(file_get_contents("mlc-chat-config.json"), true);
@@ -164,7 +175,9 @@ foreach ($manifest["records"] as $record) {
     }
 }
 $tokenizer = array_map("strval", $chat["tokenizer_files"] ?? []);
-foreach (array_merge($tokenizer, [(string) getenv("WASM")]) as $path) {
+// tensor-cache.json is named by the engine, not by a manifest read above, so it is checked by
+// name: it is the one artifact whose absence nothing else here could report.
+foreach (array_merge($tokenizer, ["tensor-cache.json", (string) getenv("WASM")]) as $path) {
     clearstatcache(true, $path);
     if (!is_file($path) || filesize($path) === 0) { $missing[] = $path; }
 }
@@ -174,7 +187,7 @@ if ($missing !== [] || $short !== []) {
     fwrite(STDERR, "run this script again to fetch what is missing (--force fetches everything again)\n");
     exit(1);
 }
-printf("== %d shards, %d tokenizer files and the compiled library present, %.2f GB of weights\n", count($manifest["records"]), count($tokenizer), $total / 1024 / 1024 / 1024);
+printf("== %d shards, %d tokenizer files, tensor-cache.json and the compiled library present, %.2f GB of weights\n", count($manifest["records"]), count($tokenizer), $total / 1024 / 1024 / 1024);
 '
 
 # The engine's config override (design §7): one record whose URLs all live under this origin —

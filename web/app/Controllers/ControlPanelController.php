@@ -806,10 +806,10 @@ final class ControlPanelController extends Controller
     /**
      * Whether this installation holds a complete set of model artifacts (REQ-AI-012). Config and
      * manifest without the weight shards they name — what an interrupted fetch leaves behind — are
-     * not installed, nor is an install missing any tokenizer file the chat config names: the
-     * section renders its translated "not installed" notice rather than a form whose engine can
-     * only fail. Local files only, never a network probe; a record that points off this origin
-     * cannot be checked here, so it is left to the engine.
+     * not installed, nor is an install missing any tokenizer file the chat config names or the
+     * engine's tensor-cache manifest: the section renders its translated "not installed" notice
+     * rather than a form whose engine can only fail. Local files only, never a network probe; a
+     * record that points off this origin cannot be checked here, so it is left to the engine.
      */
     private function modelArtifactsInstalled(): bool
     {
@@ -851,6 +851,16 @@ final class ControlPanelController extends Controller
             if (!is_string($file) || !is_file($dir . '/' . $file)) {
                 return false;
             }
+        }
+
+        // The tensor-cache manifest, which the engine loads its weights through. Its name comes from
+        // a constant in the bundle — web-llm v0.2.86 asks for `<model>/resolve/main/tensor-cache.json`
+        // unconditionally, before any shard — so no file in this directory names it and nothing else
+        // here would notice its absence; the browser's 404 on it was the only report. It sits beside
+        // the shards, and `app-config.json` never sets `model_manifest`, the one record field that
+        // could point the engine at a differently named manifest elsewhere.
+        if (!is_file($dir . '/tensor-cache.json')) {
+            return false;
         }
 
         $lib = is_array($record) ? ($record['model_lib'] ?? null) : null;

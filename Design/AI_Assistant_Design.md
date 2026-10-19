@@ -114,11 +114,12 @@ Results are plain JSON numbers/strings; tool text summaries round to four signif
   `Technology_Stack_Design.md` §3). Served like every vendor asset.
 * `web/assets/models/` — git-ignored; `tools/fetch_assistant_model.sh` downloads a tool-capable
   compiled model (default a Qwen3-class q4 artifact) plus its `mlc-chat-config.json`,
-  `ndarray-cache.json`, the tokenizer files that config lists, the weight shards the manifest lists
-  and the compiled WebGPU library, then writes `app-config.json` whose URLs all point into this
-  directory (REQ-AI-003). The script keeps any file already present with the size it promises, so a
-  run interrupted halfway is finished by running it again; `--force` fetches everything anew. Absent
-  or incomplete artifacts are a supported state (§5).
+  `ndarray-cache.json`, the tokenizer files that config lists, the weight shards the manifest lists,
+  the `tensor-cache.json` manifest the engine loads those shards through (named by the bundle, not
+  by any file in the directory) and the compiled WebGPU library, then writes `app-config.json` whose
+  URLs all point into this directory (REQ-AI-003). The script keeps any file already present with
+  the size it promises, so a run interrupted halfway is finished by running it again; `--force`
+  fetches everything anew. Absent or incomplete artifacts are a supported state (§5).
 
 ## 8. Tests
 
