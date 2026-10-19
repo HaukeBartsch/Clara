@@ -564,6 +564,11 @@ For admin users add a webllm based interface that can access the api (read only 
 - answer questions about data stored in different projects - like distribution of "sex at birth" variables by project
 For info graphics use ggplot2 or matplotlib.
 
+Add some examples using a "/help" command that lists successful prompts.
+
+Add a command that lists the current metric values as "/metrics".
+
+
 ## Better documentation
 
 For Requirements/, Plan/, and Design/ documents provide a classification of relevance for all codes into: "security", "performance", "workflow", "scalability", "resilience". Keep that information as a grouped summary table (Requirements/*.md, relevance, code list) as part of docs/index.md.
