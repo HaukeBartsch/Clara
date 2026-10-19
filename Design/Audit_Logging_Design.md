@@ -150,9 +150,21 @@ Rules: omitted filters are empty arrays; `sensitivity` is the ladder name of the
 
 Rejected transitions and rejected commits (409: disallowed transition, open staging set left behind, unacknowledged breaking change — REQ-API-105/106) write no entry (REQ-AUD-004). Staged structure edits themselves are **not** logged as `field_created`/`field_updated` and friends (§3.3 fires on the live design only); the commit's `staging_committed` entry is the audit record for the batch, and per-object detail lives in the snapshot it applied. A structure change applied **in analysis mode** under `acknowledge_breaking` logs its ordinary structure event (`field_deleted`, `mapping_updated`, … — §3.3) with `"breaking_acknowledged": true` added to `details`, so the warning the admin saw is recoverable from the trail (REQ-API-111, REQ-AUD-025).
 
+### 3.9 Record read events (REQ-AUD-035)
+
+| Code | When | `details` payload |
+|---|---|---|
+| `record_read` | every render of the record view that shows a stored record — `GET /projects/{id}/records/{record}` (`User_Interface_Design.md` §8), recorded through `POST …/records/{record}/read` (REQ-API-167) — one entry per page view, `source=ui`, `target_record` set | `{"event":"e1_arm_1","instrument":"intake","instance":2}` — `instance` only above 1, exactly as in §3.2. Every entry names the pair it displayed: a render that resolved no event/instrument discloses no values and so writes nothing at all (REQ-AUD-004) |
+
+Rules. The PHP layer records the read **before** it renders: the entry is written, its success decides whether the form is sent, and a failed write leaves the browser with `User_Interface_Design.md` §3.4's error instead of the record — the same order `token_viewed` keeps for a token value (REQ-AUD-033). One page view is one entry: the prefill walk over `GET …/history?order=newest` (REQ-API-137) and the per-field history overlay the user may open afterwards write nothing, because that endpoint stays read-only with respect to the trail (REQ-API-079, REQ-AUD-002). So opening one form costs one row however deep its walk went, and volume follows page views rather than records.
+
+Nothing is written for a render that discloses no stored values (REQ-AUD-004): the new-record form — PHP does not call the endpoint where the record does not exist yet — a read the actor is not entitled to (data access below `read_only`, or a record invisible under the data access group rule, REQ-AUTH-045), and a page that failed before any value arrived. The entry names no field, no value and no query string beyond the displayed triple (REQ-AUD-007, REQ-AUD-014); it is not a view row and gains no `token`, its actor being the acting account (`source=ui`, REQ-AUD-018).
+
+Record data pulled through the data API keeps writing `audit_record_views` (§4) and gains no `record_read` entry (REQ-AUD-013): survey-link prefills and the assistant's pulls are data-API reads, so each is in the trail once, on the table its key fits. Reading a record is therefore covered on both surfaces — **Events** for a browser open, **Record views** for an API pull (`User_Interface_Design.md` §5.6) — which is the split DEV-AUD-6 chose over a nullable token key on the view log.
+
 ## 4. Record View Entries — `audit_record_views`
 
-One row per invocation of the data API export (`content=record` without `data`, REQ-API-012) — regardless of initiator (external caller or the PHP layer, REQ-AUD-013, ASM-API-3). Rejected invocations (invalid token, `export_none`, no visibility) write no row (REQ-AUD-004).
+One row per invocation of the data API export (`content=record` without `data`, REQ-API-012) — regardless of initiator (external caller or the PHP layer, REQ-AUD-013, ASM-API-3). Rejected invocations (invalid token, `export_none`, no visibility) write no row (REQ-AUD-004). A record opened in the web interface is **not** such an invocation: it presents no token, so it writes no row here and appears as a `record_read` event instead (§3.9, REQ-AUD-035, DEV-AUD-6).
 
 | Column | Content |
 |---|------|
@@ -275,7 +287,7 @@ All three endpoints are read-only; no endpoint exists that writes, updates, or d
 |---|------|
 | `details` JSON shapes per audit event type (`Database_Schema_Design.md` §12) | complete catalog with payload schemas, §3 |
 | ASM-AUD-1 (retention) | no expiry; indefinite retention on yearly objects; dropping years is an operational action (§6.3) |
-| ASM-AUD-2 (UI-mediated reads) | a record-view row is written when the PHP layer initiates the data API export (`content=record` without `data`, REQ-API-012); record status and structure reads are not record views (§4) |
+| ASM-AUD-2 (UI-mediated reads) | a record-view row is written when the PHP layer initiates the data API export (`content=record` without `data`, REQ-API-012); a record opened in the web interface presents no token, so it is a `record_read` event instead (§3.9, REQ-AUD-035, DEV-AUD-6); record status and structure reads return no record values and are in neither trail (§4) |
 | ASM-AUD-3 (event codes and payload schemas) | §3 is the normative catalog |
 | record-scoped read index (REQ-AUD-020, DEV-AUD-2) | `target_record` column + `idx_audit_events_record` (§6.4) |
 
@@ -284,3 +296,4 @@ All three endpoints are read-only; no endpoint exists that writes, updates, or d
 | Item | Owner |
 |---|------|
 | ~~`limit`/`cursor` encoding for `/api/v1/audit` and record history~~ | **RESOLVED** — the pagination convention of `API_Endpoints_Design.md` §1 (opaque `cursor` encoding the last-seen `(created_at, id)`, `limit` default 50 / max 200, `next_cursor` `null` when exhausted) binds for both endpoints (§7) |
+| Should the Control Panel's **Events** log hide `record_read` unless it is selected? One entry per page view (§3.9) makes record reads the most numerous event type on a busy study, so the default listing of REQ-UI-016 would mostly show them | **OPEN** — web layer, once volume is observed at the reference scale (REQ-DB-025). Nothing is excluded today: every event type appears unless the `event_type` filter says otherwise, which keeps the filter bar the whole truth of the page (`User_Interface_Design.md` §3.6) |

@@ -85,6 +85,7 @@ func New(store *db.Store, cfg *config.Config, aw *audit.Writer, reg *metrics.Reg
 	h.registerQueries(mux)
 	h.registerCompletion(mux)
 	h.registerTransfer(mux)
+	h.registerRecordRead(mux)
 	h.registerI18n(mux)
 	h.registerSettings(mux)
 	h.registerSystemCheck(mux)

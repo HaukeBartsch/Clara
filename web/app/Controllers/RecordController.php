@@ -464,6 +464,21 @@ final class RecordController extends DataEntryController
         // Values of a further instance are keyed `<event>|<field>#<n>` (DataEntry::currentValues).
         $suffix = $instance > 1 ? '#' . $instance : '';
 
+        // Opening a stored record is recorded before its values are shown (REQ-AUD-035,
+        // REQ-API-167): one `record_read` entry naming the record and this displayed pair, no
+        // value. An ApiException here ends the page at §3.4 instead — a read that could not be
+        // recorded is never displayed, the order the token reveal keeps (REQ-AUD-033). Nothing is
+        // recorded where the render holds nothing to disclose: a record that does not exist yet
+        // (the new-participant form) or one with no instrument to show it on (REQ-AUD-004). The
+        // pull through the data API stays in audit_record_views (REQ-AUD-013).
+        if ($exists && $instrument !== null) {
+            $this->api->post($base . '/records/' . rawurlencode($record) . '/read', [], array_filter([
+                'event' => $uen,
+                'instrument' => (string) $instrument['name'],
+                'instance' => $instance > 1 ? (string) $instance : '',
+            ], static fn (string $value): bool => $value !== ''));
+        }
+
         $fields = [];
         $identifier = '';
         if ($instrument !== null) {

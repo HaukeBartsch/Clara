@@ -1631,6 +1631,29 @@
         }
       }
     },
+    "/api/v1/projects/{id}/records/{record}/read": {
+      "post": {
+        "tags": ["Admin: Records"],
+        "operationId": "recordRead",
+        "summary": "Record that a record was opened in the web interface (REQ-API-167)",
+        "description": "Requires the record history read's own access: data access ≥ `read_only` on the record's arm + project visibility + record visibility. The PHP layer calls this while rendering the record view and shows the form only once it succeeded, so a read that cannot be recorded is never displayed (REQ-AUD-035, the order REQ-AUD-033 keeps). One `record_read` audit entry per call — `source=ui`, no token, `target_record` set — carrying `{\"event\": \"…\", \"instrument\": \"…\", \"instance\": n}` (`instance` only above 1) and never a value (REQ-AUD-014). `event`, `instrument` and `instance` name what is about to be displayed; they are recorded, not resolved against the design, and checked only for shape. The body is empty or `{}`; any attribute is 400. An unknown project or record is 404 with nothing written — which is why the new-record form calls nothing (REQ-AUD-004). Record pulls through the data API keep writing `audit_record_views`, keyed by their token (REQ-AUD-013, DEV-AUD-6).",
+        "parameters": [
+          { "$ref": "#/components/parameters/ProjectId" },
+          { "$ref": "#/components/parameters/RecordId" },
+          { "name": "event", "in": "query", "required": false, "schema": { "type": "string", "maxLength": 255 }, "description": "The `unique_event_name` displayed." },
+          { "name": "instrument", "in": "query", "required": false, "schema": { "type": "string", "maxLength": 255 }, "description": "The instrument displayed." },
+          { "name": "instance", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1 }, "description": "The repeat instance displayed; named only above 1 (§3.2)." }
+        ],
+        "requestBody": { "required": false, "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false } } } },
+        "responses": {
+          "200": { "description": "The read is recorded.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OkResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
     "/api/v1/projects/{id}/records/{record}/history": {
       "get": {
         "tags": ["Admin: Records"],

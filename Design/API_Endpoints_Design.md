@@ -1291,6 +1291,14 @@ Errors: uniform 403 `forbidden` for every source- or target-side denial (REQ-API
 { "transfers": [ { "field_name": "send_to_followup", "enabled": true } ] }
 ```
 
+### 4.28 Record read (REQ-API-167)
+
+**`POST /api/v1/projects/{id}/records/{record}/read`** — records that the acting account opened the record in the web interface, as one `record_read` entry (`Audit_Logging_Design.md` §3.9, REQ-AUD-035). PHP calls it while rendering `GET /projects/{id}/records/{record}` and sends the form only once this call succeeded — the browser never does (REQ-UI-002). Query parameters `event`, `instrument`, `instance` name what is about to be displayed; they are recorded, not resolved against the design, and checked only for shape (≤ 255 characters without control characters; `instance` a positive integer, else 400 `invalid_request`), so a stale selection still records the read instead of losing it. Body empty or `{}` — any attribute is 400 `invalid_request`. → 200 `{ "ok": true }`.
+
+The gate is the record history read's own (§4.16): data access ≥ `read_only` on the record's arm (GD-2) + project visibility (REQ-API-007) + record visibility under the data access group rule (REQ-AUTH-045). Every denial answers the uniform error of §4.2 and writes nothing; an unknown project or record is 404 with nothing written. PHP therefore renders its error state where this call fails for any reason — **no entry means no values displayed**, the order `token_viewed` keeps for a token value (REQ-API-162, REQ-AUD-033). A record that does not exist yet discloses nothing, so PHP does not call this endpoint for the new-record form (REQ-AUD-004).
+
+The endpoint writes one entry per call and returns no data: it discloses nothing a caller of §4.16 did not already hold, and it is the sole write path for REQ-AUD-035. It belongs on the administration surface because its actor is the acting account — `source=ui`, no token (REQ-AUD-018) — while record pulls keep keying `audit_record_views` by their token (§4.15, REQ-AUD-013, DEV-AUD-6).
+
 ## 5. Permission summary
 
 The normative endpoint → permission mapping is in `API_Endpoints_Requirement.md` §4.22; it is reproduced here as an overview:
@@ -1316,6 +1324,7 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirement.m
 | arms, events, instruments, fields, mapping — mutations (POST/PUT/DELETE) | `project_admin` |
 | arms, events, instruments, fields, mapping — reads (GET) | data access ≥ `read_only` |
 | `GET …/record-status`, `GET …/records/{record}/history` | data access ≥ `read_only` (+ record visibility) |
+| `POST …/records/{record}/read` (§4.28, REQ-API-167) | data access ≥ `read_only` (+ record visibility) — writes one `record_read` entry, returns nothing (REQ-AUD-035) |
 | `PUT …/records/{record}/events/{event}/instruments/{iid}/completion` | data access ≥ `view_edit` on the record's arm (+ record visibility) |
 | `GET/POST …/records/{record}/transfers` (§4.27, REQ-API-165/166) | source: member + record visibility; target: data access ≥ `view_edit` on every written (instrument, event) pair (+ target-record DAG visibility) — both sides checked, uniform 403 |
 | `POST …/fields/{fid}/test` | `project_admin` + record visibility |

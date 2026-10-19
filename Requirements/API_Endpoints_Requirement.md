@@ -255,6 +255,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 | REQ-API-080 | The history MUST be filterable by instrument, event, and field, and MUST be paginated (limit/cursor); it MUST cover all changes of the record since creation, transparent across the yearly rollover (REQ-AUD-006). |
 | REQ-API-081 | The data entry form (instrument display of a record) MUST present, per field, this history — who entered or changed the value, when, and the old → new values — fetched from REQ-API-079 (User_Interface plan, data entry form). |
 | REQ-API-137 | `GET /api/v1/projects/{id}/records/{record}/history` MUST accept an `order` query parameter with the values `chrono` (default) and `newest`. `newest` returns the same entries in reverse chronological order (most recent change first) and the cursor pages backwards accordingly; the filters of REQ-API-080 keep applying within each page. A value other than the two MUST be rejected with 400 `invalid_request`. Authorization, entry shape and coverage are identical for both orders — the parameter changes only the read direction, never what is disclosed (DEV-API-23). |
+| REQ-API-167 | `POST /api/v1/projects/{id}/records/{record}/read` MUST record that the acting account opened the record in the web interface as one `record_read` audit entry (REQ-AUD-035) and answer `{"ok": true}`. Query parameters `event`, `instrument` and `instance` name what the page is about to display; they are recorded, not resolved against the design — checked only for shape (≤ 255 characters without control characters; `instance` a positive integer), so a stale selection still records the read rather than losing it. The gate is the record history read's own: data access ≥ `read_only` on the record's arm (GD-2) + project visibility (REQ-API-007) + record visibility (REQ-AUTH-045); every denial writes nothing, and an unknown project or record is 404 with nothing written. A body carrying any attribute is 400 `invalid_request`. The endpoint returns no data of any kind and MUST NOT be called by the browser — PHP calls it while rendering the record view, before the values are displayed (REQ-UI-002, REQ-AUD-033's order). |
 
 ### 4.16 Survey links (GD-9)
 
@@ -333,6 +334,7 @@ Defines the API surface requirements: the REDCap-compatible data API for externa
 | arms, events, instruments, fields, mapping — reads (GET) | data access ≥ `read_only` |
 | `GET .../record-status` | data access ≥ `read_only` |
 | `GET .../records/{record}/history` | data access ≥ `read_only` |
+| `POST .../records/{record}/read` (§4.15, REQ-API-167) | data access ≥ `read_only` (+ record visibility) — writes one `record_read` entry, returns nothing (REQ-AUD-035) |
 | `GET .../export` | export level per (instrument, event) pair — an unpermitted pair contributes no columns; 403 only when nothing in scope is permitted (REQ-AUTH-069) |
 | survey links (issue/revoke, §4.16) | data access ≥ `view_edit` **on the pair** (+ record visibility) |
 | transfers (§4.23) | acting user: edit on the source pair + `view_edit` on every target pair, both surfaces checked (REQ-API-165/166) |

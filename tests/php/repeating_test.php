@@ -200,6 +200,28 @@ describe('repeating instruments on the dashboard and the record view (REQ-UI-055
         assert_not_contains('clara-instance-nav', $body);
     });
 
+    it('names the instance in the audited read, and never numbers a form that does not repeat (REQ-AUD-035)', function (): void {
+        sign_in();
+        rep_record_queue();
+
+        m5_get('/projects/3/records/8DISC001', ['event' => 'baseline_arm_1', 'instrument' => 'visits', 'instance' => '2']);
+
+        $reads = array_values(array_filter($GLOBALS['api_calls'],
+            static fn (array $c): bool => str_contains($c['url'], '/records/8DISC001/read')));
+        assert_same(1, count($reads));
+        assert_contains('instrument=visits', $reads[0]['url']);
+        assert_contains('instance=2', $reads[0]['url']);
+
+        resetApi();
+        rep_record_queue();
+        m5_get('/projects/3/records/8DISC001', ['event' => 'baseline_arm_1', 'instrument' => 'intake', 'instance' => '3']);
+
+        $plain = array_values(array_filter($GLOBALS['api_calls'],
+            static fn (array $c): bool => str_contains($c['url'], '/records/8DISC001/read')));
+        assert_same(1, count($plain));
+        assert_not_contains('instance=', $plain[0]['url'], 'the page rendered its first instance (§3.2)');
+    });
+
     it('saves an instance with REDCap\'s repeat columns and finishes that instance', function (): void {
         sign_in(['csrf_token' => M5_CSRF]);
         rep_record_queue();

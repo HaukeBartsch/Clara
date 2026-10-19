@@ -110,6 +110,11 @@ const (
 	StagingStarted     = "staging_started"
 	StagingCommitted   = "staging_committed"
 	StagingDiscarded   = "staging_discarded"
+
+	// §3.9 record read events — a browser open of a record, never a value
+	// (REQ-AUD-035). A pull through the data API is an audit_record_views row
+	// instead, which its token keys (§4, REQ-AUD-013, DEV-AUD-6).
+	RecordRead = "record_read"
 )
 
 // Source values for the fixed column (REQ-AUD-017).

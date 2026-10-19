@@ -3,7 +3,8 @@
 // audits.js prices the same filters with estimate=1; above 1 GiB a modal names the estimated
 // size and only starts the download on confirm (REQ-AUD-032). The estimate is advisory — any
 // failure of it starts the export without a warning rather than blocking it. Without this
-// module the button still downloads; only the warning is lost. No UI string lives here —
+// module the button still downloads; only the warning is lost. The module also couples the two
+// log filters (§5.6, REQ-UI-066): switching Log clears Event, which belongs to the events log. No UI string lives here —
 // every label comes from the injected data-i18n block (REQ-UI-008).
 
 import { el, fetchJson, ready, t } from "../app.js"
@@ -62,6 +63,18 @@ ready(() => {
   if (form === null) {
     return
   }
+
+  // The Event filter belongs to the events log alone — the API refuses it with any other log
+  // (REQ-API-077) — so switching the Log select clears it: a choice left over from the other log
+  // can never answer with an empty table beside its error line (REQ-UI-066).
+  const log = form.querySelector("#audit-type")
+  const eventType = form.querySelector("#audit-event")
+  if (log !== null && eventType !== null) {
+    log.addEventListener("change", () => {
+      eventType.value = ""
+    })
+  }
+
   form.addEventListener("submit", (event) => {
     const submitter = event.submitter
     if (submitter === null || submitter.name !== "download" || proceed) {

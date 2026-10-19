@@ -534,6 +534,60 @@ describe('record view (§8, REQ-UI-025…027)', function (): void {
         assert_contains('limit=200', $history[0]['url']);
     });
 
+    it('records the open before it reads the values, naming the triple and no value (REQ-AUD-035, REQ-API-167)', function (): void {
+        sign_in();
+        m5_queue();
+
+        m5_get('/projects/3/records/8DISC001', ['event' => 'baseline_arm_1', 'instrument' => 'intake']);
+
+        $reads = array_values(array_filter($GLOBALS['api_calls'],
+            static fn (array $c): bool => str_contains($c['url'], '/records/8DISC001/read')));
+        assert_same(1, count($reads), 'one entry per page view');
+        assert_same('POST', $reads[0]['method']);
+        assert_contains('event=baseline_arm_1', $reads[0]['url']);
+        assert_contains('instrument=intake', $reads[0]['url']);
+        assert_not_contains('instance=', $reads[0]['url'], 'the first instance names itself nowhere (§3.2)');
+        assert_not_contains('age', $reads[0]['url'], 'a field name is not part of the read');
+
+        // Recorded before the values are walked: a read that cannot be recorded never shows them.
+        $first = [];
+        foreach ($GLOBALS['api_calls'] as $i => $call) {
+            foreach (['read', 'history'] as $kind) {
+                if (str_contains($call['url'], '/' . $kind) && !isset($first[$kind])) {
+                    $first[$kind] = (int) $i;
+                }
+            }
+        }
+        assert_true($first['read'] < $first['history'], 'the audited read precedes the value walk (§8.3)');
+    });
+
+    it('records nothing for the new-participant form, which discloses no values (REQ-AUD-004)', function (): void {
+        sign_in();
+        m5_queue(status: []);
+
+        $body = m5_get('/projects/3/records/8DISC042', ['event' => 'baseline_arm_1', 'instrument' => 'intake'])->body();
+
+        assert_not_contains('clara-analysis-closed', $body);
+        assert_same(0, m5_count('POST', '/read'), 'an empty record is not a read of stored values');
+    });
+
+    it('records nothing when the design leaves no instrument to show the record on (REQ-AUD-035)', function (): void {
+        sign_in();
+        queue_shell();
+        api_route('/api/v1/projects/3/mode', ['mode' => 'development', 'staging_open' => false]);
+        api_route('/api/v1/projects/3/record-status', [
+            ['record_id' => '8DISC001', 'events' => []],
+        ]);
+        api_route('/api/v1/projects/3/instrument-event-mapping', []);
+        api_route('/api/v1/projects/3/instruments', []);
+        api_route('/api/v1/projects/3/users/7/token', ['token' => 'tok-1']);
+        api_route('/api/v1/projects/3', m5_detail());
+
+        m5_get('/projects/3/records/8DISC001');
+
+        assert_same(0, m5_count('POST', '/read'), 'no pair rendered, so nothing was disclosed');
+    });
+
     it('shows a read_only member the values and no submit control (REQ-UI-003)', function (): void {
         sign_in();
         m5_queue('read_only');

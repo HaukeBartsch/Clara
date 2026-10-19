@@ -66,7 +66,7 @@ final class ControlPanelController extends Controller
         'instrument_reordered', 'instrument_uncompleted', 'instrument_updated', 'invite_accepted', 'login_failure',
         'login_success', 'logout', 'mapping_updated', 'membership_changed', 'password_changed',
         'password_reset_completed', 'password_reset_requested', 'project_created', 'project_ended',
-        'project_mode_changed', 'project_updated', 'record_created', 'record_deleted', 'record_updated',
+        'project_mode_changed', 'project_updated', 'record_created', 'record_deleted', 'record_read', 'record_updated',
         'role_created', 'role_updated', 'session_replay_detected', 'settings_updated', 'staging_committed',
         'staging_discarded', 'staging_started', 'survey_link_issued', 'survey_link_revoked', 'survey_submitted',
         'tfa_disabled', 'tfa_enrolled', 'tfa_reset', 'token_issued', 'token_revoked', 'token_rotated',
