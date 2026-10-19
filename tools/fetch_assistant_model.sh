@@ -4,9 +4,9 @@
 # hosts serve them from their own origin and never fetch anything at runtime. Run this once at
 # installation time on a machine with internet access; the application itself stays offline.
 #
-#   tools/fetch_assistant_model.sh                  # default: Qwen3-8B-q4f32_1-MLC (~5 GB)
+#   tools/fetch_assistant_model.sh                  # default: Hermes-3-Llama-3.1-8B-q4f32_1-MLC (~6 GB)
 #   tools/fetch_assistant_model.sh --force          # re-download everything, overwriting
-#   MODEL_ID=Qwen3-1.7B-q4f32_1-MLC tools/fetch_assistant_model.sh
+#   MODEL_ID=Hermes-3-Llama-3.2-3B-q4f16_1-MLC tools/fetch_assistant_model.sh
 #
 # A file that is already there with the size the manifest promises is kept rather than fetched
 # again, so re-running after an interrupted run finishes the install instead of starting it over;
@@ -21,8 +21,8 @@ usage() {
   cat <<'USAGE'
 usage: tools/fetch_assistant_model.sh [--force]
 
-Fetches the model artifacts named by MODEL_ID (default Qwen3-8B-q4f32_1-MLC) into
-web/assets/models/<MODEL_ID>/. Anything already present with the size it promises is kept,
+Fetches the model artifacts named by MODEL_ID (default Hermes-3-Llama-3.1-8B-q4f32_1-MLC)
+into web/assets/models/<MODEL_ID>/. Anything already present with the size it promises is kept,
 so an interrupted run can simply be repeated.
 
   -h, --help   show this help
@@ -40,18 +40,27 @@ for arg in "$@"; do
 done
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MODEL_ID="${MODEL_ID:-Qwen3-8B-q4f32_1-MLC}"
+MODEL_ID="${MODEL_ID:-Hermes-3-Llama-3.1-8B-q4f32_1-MLC}"
 WEBLLM_VERSION="v0_2_86/base"   # matches web/assets/vendor/webllm — change together
 DEST="${REPO_ROOT}/web/assets/models/${MODEL_ID}/resolve/main"
 LIB_BASE="https://raw.githubusercontent.com/mlc-ai/binary-mlc-llm-libs/main/web-llm-models"
 
-# The compiled-library file name is per model (the bundle's record names it); known models:
+# WASM, VRAM, LOW_RESOURCE and CTX all come from the model's record in the vendored bundle
+# (`prebuiltAppConfig`), the only source of truth for what this bundle can load. The list holds
+# every model the bundle admits to function calling — `functionCallingModelIds` — and nothing else,
+# because that is a hard gate in the engine: `ChatCompletionRequest.tools` on any other model id
+# throws `UnsupportedModelIdError` before inference, and the assistant sends tools on every turn.
+# A Qwen3 install therefore loads its weights, shows "Model ready", and then fails each question;
+# that is what this list exists to prevent rather than to accommodate.
 case "${MODEL_ID}" in
-  Qwen3-8B-q4f32_1-MLC)   WASM="Qwen3-8B-q4f32_1_cs1k-webgpu.wasm"; VRAM=6852 ;;
-  Qwen3-8B-q4f16_1-MLC)   WASM="Qwen3-8B-q4f16_1_cs1k-webgpu.wasm"; VRAM=5095 ;;
-  Qwen3-4B-q4f32_1-MLC)   WASM="Qwen3-4B-q4f32_1-webgpu.wasm";     VRAM=3680 ;;
-  Qwen3-1.7B-q4f32_1-MLC) WASM="Qwen3-1.7B-q4f32_1-webgpu.wasm";   VRAM=1958 ;;
-  *) echo "unknown MODEL_ID ${MODEL_ID}: add its compiled-library file name to this case (it comes from the web-llm bundle's model record)" >&2; exit 2 ;;
+  Hermes-3-Llama-3.1-8B-q4f32_1-MLC) WASM="Llama-3_1-8B-Instruct-q4f32_1_cs1k-webgpu.wasm"; VRAM=5779; LOW_RESOURCE=false; CTX=4096 ;;
+  Hermes-3-Llama-3.1-8B-q4f16_1-MLC) WASM="Llama-3_1-8B-Instruct-q4f16_1_cs1k-webgpu.wasm"; VRAM=4876; LOW_RESOURCE=false; CTX=4096 ;;
+  Hermes-3-Llama-3.2-3B-q4f32_1-MLC) WASM="Llama-3.2-3B-Instruct-q4f32_1_cs1k-webgpu.wasm"; VRAM=2951; LOW_RESOURCE=true;  CTX=4096 ;;
+  Hermes-3-Llama-3.2-3B-q4f16_1-MLC) WASM="Llama-3.2-3B-Instruct-q4f16_1_cs1k-webgpu.wasm"; VRAM=2263; LOW_RESOURCE=true;  CTX=4096 ;;
+  *)
+    echo "unknown MODEL_ID ${MODEL_ID}: add its compiled-library file name to this case (it comes from the web-llm bundle's model record)" >&2
+    echo "only these ids can be used at all: Hermes-3-Llama-3.1-8B-q4f3[2_1|16_1]-MLC, Hermes-3-Llama-3.2-3B-q4f[32_1|16_1]-MLC — the bundle refuses ChatCompletionRequest.tools for every other model (AI_Assistant_Design.md §7)" >&2
+    exit 2 ;;
 esac
 
 # One download, skipped when the file is already there. `expected` is the byte count promised by
@@ -195,6 +204,12 @@ printf("== %d shards, %d tokenizer files, tensor-cache.json and the compiled lib
 # relative to this application's root so one install serves any host name; assistant.js turns
 # them into absolute URLs before handing the record to CreateMLCEngine, which needs absolute
 # ones (its cleanModelUrl() calls `new URL()` without a base).
+#
+# `overrides.context_window_size` is not cosmetic: Hermes-3's own mlc-chat-config.json declares
+# 131072 tokens, and the KV cache is allocated for whatever the loaded config says, so an install
+# without the override asks the GPU for tens of gigabytes before generating a token. The bundle's
+# prebuilt record overrides every Hermes-3 model to 4096 for exactly that reason; this mirrors it
+# rather than inventing a number.
 cat > "${REPO_ROOT}/web/assets/models/app-config.json" <<JSON
 {
   "model_id": "${MODEL_ID}",
@@ -205,7 +220,8 @@ cat > "${REPO_ROOT}/web/assets/models/app-config.json" <<JSON
       "model_id": "${MODEL_ID}",
       "model_lib": "/assets/models/${MODEL_ID}/resolve/main/${WASM}",
       "vram_required_MB": ${VRAM},
-      "low_resource_required": false
+      "low_resource_required": ${LOW_RESOURCE},
+      "overrides": { "context_window_size": ${CTX} }
     }
   ]
 }

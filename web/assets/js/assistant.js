@@ -369,12 +369,35 @@ function mergeToolCall(accumulator, delta) {
   }
 }
 
-async function streamOnce(onToken) {
+/**
+ * The conversation as the engine receives it. Hermes function calling cannot carry a `system`
+ * message: the engine prepends its own tool-usage prompt and throws `CustomSystemPromptError` when
+ * the request holds one, so Clara's instructions are folded into the first user turn instead. The
+ * stored history keeps its `system` entry — that is what makes Clear chat and the transcript read
+ * correctly — and only this copy handed to the engine is rewritten.
+ */
+function engineMessages() {
+  const sent = messages.filter((message) => message.role !== "system")
+  const preamble = messages.find((message) => message.role === "system")
+  const first = sent.findIndex((message) => message.role === "user")
+  if (preamble && first >= 0) {
+    sent[first] = { role: "user", content: preamble.content + "\n\n" + sent[first].content }
+  }
+
+  return sent
+}
+
+/**
+ * One streamed generation. `withTools` is not a convenience flag: while a request carries tools this
+ * bundle constrains the reply to a JSON array of calls and hands back no prose at all — its final
+ * chunk holds `tool_calls` and `content: null`, and anything that is not a JSON array throws
+ * `ToolCallOutputParseError`. An answer in words therefore has to be asked for in a request without
+ * tools. Tools are also left out when there are none, since `tools: []` is still a tool request.
+ */
+async function streamOnce(onToken, withTools) {
   const chunks = await engine.chat.completions.create({
-    messages,
-    // Omitted rather than sent empty: `tools: []` is still a tool request to the engine, and a
-    // model it refuses there then fails on questions that need no tools at all.
-    ...(toolDefs.length > 0 ? { tools: engineTools() } : {}),
+    messages: engineMessages(),
+    ...(withTools && toolDefs.length > 0 ? { tools: engineTools() } : {}),
     stream: true,
   })
 
@@ -403,24 +426,50 @@ async function streamOnce(onToken) {
 
 async function runTurn() {
   const body = bubble("assistant", "")
+  const paint = (text) => {
+    body.textContent = text
+    log().scrollTop = log().scrollHeight
+  }
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     roundNumber = round + 1
     toolName = ""
     setStatus("admin.assistant.status.thinking")
     stage = "stream"
-    const answer = await streamOnce((text) => {
-      body.textContent = text
-      log().scrollTop = log().scrollHeight
-    })
+    // A round that may call tools is not painted: its text is the JSON array of calls, and the
+    // execution lines it produces are what an administrator wants to watch stream past.
+    const answer = await streamOnce(toolDefs.length > 0 ? () => {} : paint, true)
 
     if (answer.toolCalls.length === 0) {
-      if (answer.text === "") {
+      // "Nothing more to call." With tools in the request that empty array is all the engine can
+      // return — no words — so the reply in prose comes from a second request without tools. When
+      // no tools were offered at all, this round's text already is the answer.
+      let closing = answer
+      if (toolDefs.length > 0) {
+        stage = "answer"
+        setStatus("admin.assistant.status.thinking")
+        closing = await streamOnce(paint, false)
+      }
+
+      if (closing.text === "") {
         // A model that stops without saying anything is a result, not a crash — but it left the
         // status line on "Thinking…" over an empty bubble, which read as a hung page.
-        setStatus("admin.assistant.status.empty_answer", { reason: answer.finishReason || "none" })
+        setStatus("admin.assistant.status.empty_answer", { reason: closing.finishReason || "none" })
+        return
       }
-      return // final answer streamed in place
+      // The answer belongs to the history: without it the model never saw what it had just said,
+      // and every follow-up question started from a conversation missing all of its own replies.
+      messages.push({ role: "assistant", content: closing.text })
+      return
     }
+
+    // A Hermes tool call is parsed out of a JSON array, and that array carries no id: every call
+    // arrives with `id: ""`. The tool results below name the call they answer, so ids are minted
+    // once here instead of at each place the pair is used.
+    answer.toolCalls.forEach((call, index) => {
+      if (call.id === "") {
+        call.id = "call_" + roundNumber + "_" + (index + 1)
+      }
+    })
 
     messages.push({
       role: "assistant",

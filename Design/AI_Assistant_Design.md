@@ -83,9 +83,20 @@ Results are plain JSON numbers/strings; tool text summaries round to four signif
   preload the configured model, then fetch `tools/list` and keep them as engine tools.
   * Schema adapter: MCP `{name, description, inputSchema}` → engine function schema
     `{name, description, parameters: inputSchema}`.
+  * No `system` message reaches the engine: Hermes function calling adds its own tool-usage prompt
+    and throws `CustomSystemPromptError` on a request that carries one, so Clara's instructions are
+    folded into the first user turn (`engineMessages()`) while the stored history keeps its `system`
+    entry. Tool calls the engine parses out of a JSON array have no id, and each tool result names
+    the call it answers, so the client mints one per call.
   * Loop: user message → streamed tokens appended to the chat (REQ-AI-012) → tool calls executed →
     results fed back → final text. A `write` tool pauses for the confirmation dialog showing the
     formatted arguments before `callTool` (REQ-AI-007); cancel feeds a "declined" result back to the model.
+  * The final text is asked for **without** `tools`. While a request carries them, this bundle
+    constrains every reply to a JSON array of calls — an empty array means "no call needed" and is
+    not followed by prose, and a reply that is not such an array throws
+    `ToolCallOutputParseError` — so a tools-enabled request can never phrase the answer. The closing
+    turn's text is pushed into the history like any other message, which is also what lets a follow-up
+    question see the reply it follows up.
   * Rendering: assistant/user bubbles as `textContent`; `structuredContent.display` of `"table"` →
     `table-sm`, `"bar_chart"`/`"histogram"` → d3 chart in an inline SVG (REQ-AI-011). No innerHTML
     with model or server data (REQ-UI-004).
@@ -120,13 +131,26 @@ Results are plain JSON numbers/strings; tool text summaries round to four signif
 * `web/assets/vendor/webllm/` — the pinned `@mlc-ai/web-llm` ESM bundle + licence (admitted row,
   `Technology_Stack_Design.md` §3). Served like every vendor asset.
 * `web/assets/models/` — git-ignored; `tools/fetch_assistant_model.sh` downloads a tool-capable
-  compiled model (default a Qwen3-class q4 artifact) plus its `mlc-chat-config.json`,
+  compiled model (default `Hermes-3-Llama-3.1-8B-q4f32_1-MLC`) plus its `mlc-chat-config.json`,
   `ndarray-cache.json`, the tokenizer files that config lists, the weight shards the manifest lists,
   the `tensor-cache.json` manifest the engine loads those shards through (named by the bundle, not
   by any file in the directory) and the compiled WebGPU library, then writes `app-config.json` whose
   URLs all point into this directory (REQ-AI-003). The script keeps any file already present with
   the size it promises, so a run interrupted halfway is finished by running it again; `--force`
   fetches everything anew. Absent or incomplete artifacts are a supported state (§5).
+* **Which models can be used at all.** The bundle gates `ChatCompletionRequest.tools` on model ids it
+  hard-codes (`functionCallingModelIds`): the compiled Hermes-2-Pro and Hermes-3 models, and nothing
+  else — any other id throws `UnsupportedModelIdError` before inference starts. The assistant sends
+  its tools on every turn, so a model outside that list loads, reports "Model ready" and then fails
+  every question; that is why the fetch script's case list holds only those ids (default
+  `Hermes-3-Llama-3.1-8B-q4f32_1-MLC` at ~5.8 GB, or `Hermes-3-Llama-3.2-3B-q4f16_1-MLC` at ~2.3 GB
+  for a small GPU). Widening it means grammar-constrained output (`response_format` of type
+  `structural_tag`, which the bundle accepts for any model) driven from this client rather than from
+  the dependency — a deliberate redesign, not an implementation detail.
+* **The context-window override.** Every Hermes-3 prebuilt record in the bundle overrides
+  `context_window_size` to 4096; the model's own `mlc-chat-config.json` declares 131072, and the KV
+  cache is allocated from whatever the loaded config says. `app-config.json` therefore carries the
+  same override — without it the engine asks the GPU for tens of gigabytes before its first token.
 
 ## 8. Tests
 

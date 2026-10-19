@@ -115,6 +115,97 @@ test.describe("clara assistant (AI_Assistant)", () => {
     await expect(details).toContainText("messages=2")
   })
 
+  test("the tool loop speaks the shape the Hermes engine answers in", async ({ page }) => {
+    // The engine is replaced, not skipped: web-llm's Hermes path has three rules this client exists
+    // to satisfy — a request carrying `system` throws CustomSystemPromptError, a request carrying
+    // `tools` answers only with a JSON array of calls (never prose), and those calls carry no id.
+    // None of that is observable without a GPU, which CI browsers do not have, so the vendored
+    // module is swapped for one that replies exactly as the engine does and records what it received.
+    await page.addInitScript(() => {
+      ;(window as unknown as Record<string, unknown>).__engineCalls = []
+    })
+    await page.route("**/vendor/webllm/web-llm.mjs", (route) =>
+      route.fulfill({
+        contentType: "text/javascript",
+        body: `
+          const calls = []
+          window.__engineCalls = calls
+          const delta = (part, reason) => ({ choices: [{ delta: part, finish_reason: reason || null, index: 0 }] })
+          export async function CreateMLCEngine(modelId, options) {
+            if (options && options.initProgressCallback) { options.initProgressCallback({ progress: 1 }) }
+            return {
+              chat: {
+                completions: {
+                  create(request) {
+                    calls.push(JSON.parse(JSON.stringify({ messages: request.messages, tools: request.tools })))
+                    const askedForTools = request.tools !== undefined
+                    // call 1 asks for data, call 2 says "no further calls", call 3 answers in words.
+                    let chunks
+                    if (calls.length === 1) {
+                      chunks = [
+                        delta({ role: "assistant", tool_calls: [{ index: 0, function: { name: "list_projects", arguments: "{}" } }] }),
+                        delta({}, "tool_calls"),
+                      ]
+                    } else if (calls.length === 2 && askedForTools) {
+                      chunks = [delta({}, "stop")]
+                    } else {
+                      chunks = [delta({ content: "One project, 42 records." }), delta({}, "stop")]
+                    }
+                    return (async function* () { for (const chunk of chunks) { yield chunk } })()
+                  },
+                },
+              },
+            }
+          }
+        `,
+      }),
+    )
+    await signInAsAdmin(page)
+    // WebGPU is missing in CI browsers, so the probe is answered too: what is under test is the
+    // conversation loop, and the probe would otherwise stop before the engine is ever created.
+    await page.addInitScript(() => {
+      Object.defineProperty(window.navigator, "gpu", { value: {}, configurable: true })
+    })
+    await page.goto("/admin?section=assistant")
+
+    const input = page.locator("[data-clara-as-input]")
+    await expect(input).toBeEnabled({ timeout: 15000 })
+    await input.fill("how many projects are there?")
+    await input.press("Enter")
+
+    // The tool call the engine reported ran for real, through this application's own endpoint.
+    await expect(page.locator(".clara-as-tool").first()).toContainText("list_projects")
+    await expect(page.locator(".clara-as-tool").first()).toContainText("done")
+    await expect(page.locator(".clara-as-msg-assistant p").last()).toHaveText("One project, 42 records.")
+
+    const calls = (await page.evaluate(() => (window as unknown as Record<string, unknown>).__engineCalls)) as Array<{
+      messages: Array<{ role: string; content: string | null }>
+      tools: unknown
+    }>
+    expect(calls.length).toBeGreaterThanOrEqual(3)
+    // 1. No request ever carries a system message; its text leads the first user turn instead.
+    for (const call of calls) {
+      expect(call.messages.map((message) => message.role)).not.toContain("system")
+    }
+    expect(calls[0].messages[0].role).toBe("user")
+    expect(calls[0].messages[0].content ?? "").toContain("You are Clara")
+    // 2. The prose answer comes from a request without tools; the call rounds carry them.
+    expect(calls[0].tools).toBeTruthy()
+    expect(calls[calls.length - 1].tools).toBeUndefined()
+    // 3. The engine's id-less call is named, and its tool result answers that name.
+    const toolRound = calls[2].messages.find((message) => message.role === "tool")
+    expect(toolRound).toBeTruthy()
+
+    // And the answer stays in the conversation: a follow-up sees the reply it follows up.
+    await input.fill("and its records?")
+    await input.press("Enter")
+    const followUp = (await page.evaluate(() => (window as unknown as Record<string, unknown>).__engineCalls)) as Array<{
+      messages: Array<{ role: string; content: string | null }>
+    }>
+    const seen = JSON.stringify(followUp[followUp.length - 1].messages)
+    expect(seen).toContain("One project, 42 records.")
+  })
+
   test("the MCP endpoint speaks the protocol on this origin only", async ({ page }) => {
     await signInAsAdmin(page)
     await page.goto("/admin?section=assistant")
