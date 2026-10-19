@@ -568,6 +568,7 @@ Add some examples using a "/help" command that lists successful prompts.
 
 Add a command that lists the current metric values as "/metrics".
 
+Show the current context length and the maximum length setup for the current model.
 
 ## Better documentation
 
@@ -969,6 +970,8 @@ copy [field]  [project][baseline][place_for_field1]
 copy [field2] [project][baseline][place_for_field2]
 ```
 
-## next things
+## Next things
 
 Translate the tutorials as well. Ok, to have only nb and nn in the .md files. Select the corresponding entry based on the users choice.
+
+Explain: Why is the record view in audits empty even if I have opened a record in the record viewer before?
