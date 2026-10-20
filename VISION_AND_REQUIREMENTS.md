@@ -970,6 +970,31 @@ copy [field]  [project][baseline][place_for_field1]
 copy [field2] [project][baseline][place_for_field2]
 ```
 
+Instead of "create" call this function "create_record".
+
+Add a new function "create_project" to create a project as a copy from another template project
+
+```
+# create a new target project with name [field] from the current instruments
+create_project [field] <template project>
+```
+
+If such a project exists already 'create_project' is a no-op. If the project does not exist all instruments and events from <template project> are used to setup the new project. The current user (pressing the button) is added to the target project with admin priviledges.
+
+If optionally the [field for project token] is specified (3rd argument to create_project) a project token is created in the target project (using the current users permissions). The value of that project token is copied to a field in the current project (need to exist) [field for project token].
+
+If optionally the [field for project id] is specified (4th argument to create_project) also the projects id is added to the current instruments [fielf for project id] field.
+
+```
+# create a new project with name [field] from the current instrument
+# Use <template project> as a template for the new project (copy instruments and events, instrument/event mappings).
+# Create a project token for the current user in the new project and copy the token to the local [field for project token].
+# Copy the project id (target project) into the local [field for project id].
+create_project [field] <template project> [field for project token] [field for project id]
+```
+
+
+
 ## Next things
 
 Translate the tutorials as well. Ok, to have only nb and nn in the .md files. Select the corresponding entry based on the users choice.
