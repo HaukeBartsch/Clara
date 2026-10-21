@@ -204,7 +204,7 @@ These are the ones most likely to be got wrong, gathered from the code-level fac
 | M5's history-based prefill on long histories | slow form open, p95 breach | `order=newest` (`REQ-API-137`) already removes the whole-history walk — still measure with seeded data; if it hurts even backwards, that is another API addition, never caching in PHP |
 | Section modules drift into per-widget scripts and per-widget fetches, and pages accumulate module `src` tags with no bundler to fold them | p95 breach on exactly the heavy pages (§7 rule 13), and a client that is hard to attribute | one module per view/logical section, one data region fetched per page render (`REQ-UI-044/045`); count API calls and `src` tags per page in M4/M5 review — the fix is a coarser region, never a build step (`REQ-TECH-001`) |
 | Translation catalog treated as an afterthought | raw keys or English-only UI at hand-off against `REQ-UI-008` | author the English catalog incrementally per page from M1; `nb`/`nn` in M6 with the §5.7 missing-key view as the worklist |
-| Free-text allowlist rendering treated as licence for `innerHTML` | XSS through stored values (`REQ-UI-004`) | one render helper pair — `e()` and `html_allowed()` — and a review rule that `innerHTML` appears only in the latter |
+| Free-text allowlist rendering treated as licence for `innerHTML` | XSS through stored values (`REQ-UI-004`) | one render helper pair — `View::e()` and `View::htmlAllowed()` (named as in the code, `web/app/View.php`) — and a review rule that `innerHTML` appears only in the latter; first-party code currently uses no `innerHTML` at all, so the pair stays checkable by grep |
 
 ## 10. Suggested first session of work
 

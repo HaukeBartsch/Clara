@@ -196,6 +196,19 @@ func Load() (*Config, error) {
 	}
 	production := cfg.AppEnv == "production"
 	cfg.APIAddr = getOr(get, "API_ADDR", "127.0.0.1:8080")
+	// The administration surface takes its actor from two headers the PHP layer sets — a shared
+	// service token proving the caller is this application, and an id naming the account to act
+	// as (Authentication_Authorization_Design.md §2.3). That makes one secret the entire
+	// credential: whoever reaches this port holding it may act as any account, root included.
+	// The default bind keeps that answerable only from the host itself. Rebinding is something an
+	// operator may genuinely want (the API on its own host), but in production it has to be asked
+	// for by name rather than arrive as a side effect of editing one line of .env.
+	if production && !isLoopbackAddr(cfg.APIAddr) && get("API_ALLOW_REMOTE") != "1" {
+		fail("API_ADDR: %q binds outside the host, and production refuses that without API_ALLOW_REMOTE=1 — "+
+			"the internal service token is all that stands between this port and acting as any account; "+
+			"bind to 127.0.0.1, or set API_ALLOW_REMOTE=1 only behind mTLS or a host you control end to end",
+			cfg.APIAddr)
+	}
 	cfg.WebPublicURL = strings.TrimRight(get("WEB_PUBLIC_URL"), "/")
 	if production && cfg.WebPublicURL == "" {
 		fail("WEB_PUBLIC_URL: missing (required in production — redirect URIs must be absolute)")
@@ -440,6 +453,27 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("configuration invalid:\n  %s", strings.Join(errs, "\n  "))
 	}
 	return cfg, nil
+}
+
+// isLoopbackAddr reports whether a listen address can only be reached on the host itself. An
+// empty host (":8080") binds every interface, so it reads like a local default while answering
+// on the network — hence the explicit false. Names are resolved by parse, not lookup: "localhost"
+// is taken at its word and anything else that is not an IP is treated as remote-capable, which is
+// the safe direction for a check whose failure mode is impersonation.
+func isLoopbackAddr(addr string) bool {
+	i := strings.LastIndex(addr, ":")
+	if i < 0 {
+		return false // no port: net/http could not bind it anyway
+	}
+	host := strings.Trim(addr[:i], "[]")
+	if host == "" {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // Production reports whether APP_ENV is production.

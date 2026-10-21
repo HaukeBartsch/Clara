@@ -45,11 +45,6 @@ final class View
     }
 
     /**
-     * The only allowlist-HTML escape hatch: stored free-text values, sanitized on
-     * write by the API's content policy. Never call it with anything else — a
-     * review rule keeps it that way (Plan/Web_Implementation.md §9).
-     */
-    /**
      * Escaped text that keeps its line breaks — a label, section header or field note written
      * over several lines (§8.2): escaped first, then each newline becomes `<br>`.
      */
@@ -58,6 +53,17 @@ final class View
         return nl2br(self::e($value), false);
     }
 
+    /**
+     * Free-form text as allowlist HTML (REQ-VAL-031) — a pass-through, because the
+     * value arrives already sanitized: the Go API applies the §5.2 HTML allowlist at
+     * storage on every entry path (validate.ApplyContentPolicy, REQ-VAL-030), so the
+     * stored string is inert and re-sanitizing here would only duplicate a decision
+     * the design makes once. Callers must pass a stored record value and nothing
+     * else — never a label, name or request parameter, all of which are escaped
+     * server-side with View::e() instead (REQ-TECH-020). It is the only escape hatch
+     * of its kind in the layer, and a review rule keeps it that way — one call site,
+     * checked at review rather than here (Plan/Web_Implementation.md §9).
+     */
     public static function htmlAllowed(?string $sanitized): string
     {
         return (string) $sanitized;

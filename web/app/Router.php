@@ -94,10 +94,16 @@ final class Router
         ['method' => 'POST', 'pattern' => '/projects/{id}/overview', 'controller' => Controllers\ProjectController::class,
             'handler' => 'setMode', 'guard' => 'admin', 'action' => 'set_mode'],
 
-        // M4 — Setup (§6.2) and the Instrument Designer (§7), both project_admin pages; the
-        // controllers refuse anyone else (the guard here only needs a session — project_admin is a
-        // per-project permission the API discloses, REQ-API-126). Each page's data region is the
-        // expression editor's reference list (§7.3), fetched only when the picker opens.
+        // M4 — Setup (§6.2) and the Instrument Designer (§7), both project_admin pages. The guard
+        // here only needs a session, because project_admin is a per-project permission the API
+        // discloses (REQ-API-126): each page read calls requireDesigner() so a member who may not
+        // use it gets the §3.4 refusal instead of dead controls, and every structure *write* is
+        // refused by the API — the authority for these routes, not a second opinion in PHP. A
+        // project_admin check on the write path would need its own GET …/projects/{id} per
+        // request (the POST handlers hold no detail), which the tested call sequences do not
+        // budget for; adding it is a design change with a REQ id, not an implementation detail.
+        // Each page's data region is the expression editor's reference list (§7.3), fetched only
+        // when the picker opens.
         ['method' => 'GET', 'pattern' => '/projects/{id}/setup', 'controller' => Controllers\SetupController::class,
             'handler' => 'index', 'guard' => 'login', 'region' => 'references'],
         ['method' => 'POST', 'pattern' => '/projects/{id}/setup', 'controller' => Controllers\SetupController::class,

@@ -54,6 +54,7 @@ This document outlines the configuration management for the clinical study manag
 
 ## Key Settings
 - APP_ENV: Toggles between development (SQLite default) and production (MariaDB).
+- API_ADDR / API_ALLOW_REMOTE: the API's internal listen address, loopback by default. Production refuses a bind other hosts can reach unless `API_ALLOW_REMOTE=1` names that exception, because the shared service token plus the actor header is the entire credential for any account — the network layer is what limits who may present it (REQ-CFG-033).
 - DB_*: Database connection details.
 - OAUTH_ / LDAP_*:* Authentication server details.
 - Authentication-source names (master spec "Authentication order"): `OAUTH2_N_NAMES`, `LDAP_SERVER_N_NAMES`, `LOCAL_LOGIN_NAMES` — comma-separated display names the user selects on the login page; many-to-many with sources, unset everywhere = one implicit default set (REQ-CFG-032, DEV-AUTH-14).

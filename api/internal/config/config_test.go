@@ -1,16 +1,25 @@
 package config
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
 
-// clearAuthEnv unsets the auth-related variables so each test starts from a
-// clean slate (t.Setenv restores them afterwards).
+// clearAuthEnv unsets the auth-related variables so each test starts from a clean
+// slate, and restores them when the test ends.
+//
+// A real unset, not t.Setenv(k, ""): Load reads with os.LookupEnv, so an empty
+// value counts as *present* and shadows a .env file rather than falling through to
+// it (REQ-CFG-002). Adding a variable to this list in its old form therefore read
+// the default instead of the file in every test that writes one — visible only in
+// TestLoadReadsDotEnv, while looking like harmless hygiene everywhere else. Go has
+// no t.Usetenv, so the restore is done by hand.
 func clearAuthEnv(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{
-		"APP_ENV", "WEB_PUBLIC_URL", "DB_CONNECTION", "DB_HOST", "DB_USERNAME",
+		"APP_ENV", "WEB_PUBLIC_URL", "API_ADDR", "API_ALLOW_REMOTE",
+		"DB_CONNECTION", "DB_HOST", "DB_USERNAME",
 		"DB_PASSWORD", "INTERNAL_SERVICE_TOKEN", "ADMIN_BOOTSTRAP_EMAIL",
 		"ADMIN_BOOTSTRAP_PASSWORD", "OAUTH2_1_ISSUER", "OAUTH2_1_CLIENT_ID",
 		"OAUTH2_1_CLIENT_SECRET", "OAUTH2_1_NAMES", "LDAP_SERVER_1_URL",
@@ -21,7 +30,26 @@ func clearAuthEnv(t *testing.T) {
 		"SMTP_HOST", "SMTP_PORT", "SMTP_SECURITY", "SMTP_USERNAME",
 		"SMTP_PASSWORD", "OTP_MAIL_FROM", "UI_THEME",
 	} {
-		t.Setenv(k, "")
+		unsetEnv(t, k)
+	}
+}
+
+// unsetEnv removes k from the process environment for the duration of the test and
+// puts back exactly what was there before — including "it was not there", which is
+// the case a .env file needs in order to be read at all.
+func unsetEnv(t *testing.T, k string) {
+	t.Helper()
+	if prior, existed := os.LookupEnv(k); existed {
+		t.Cleanup(func() {
+			if err := os.Setenv(k, prior); err != nil {
+				t.Fatalf("restore %s: %v", k, err)
+			}
+		})
+	} else {
+		t.Cleanup(func() { _ = os.Unsetenv(k) })
+	}
+	if err := os.Unsetenv(k); err != nil {
+		t.Fatalf("unset %s: %v", k, err)
 	}
 }
 
@@ -155,6 +183,67 @@ func TestLoadProductionRequiresALongEnoughServiceToken(t *testing.T) {
 	t.Setenv("INTERNAL_SERVICE_TOKEN", "test-service-token")
 	if _, err := Load(); err != nil {
 		t.Fatalf("Load() in development with a short token returned error: %v", err)
+	}
+}
+
+// TestProductionBindGuard covers the API_ADDR guard in Load: the administration
+// surface decides *who* acts from a shared service token plus an actor header
+// (Authentication_Authorization_Design.md §2.3), so the token alone is the credential
+// for every account, root included, and the listen address is what keeps that off the
+// network. A production bind outside the host therefore needs API_ALLOW_REMOTE by
+// name; the loopback forms it already has to use must keep working, and development
+// must stay free to bind broadly (the e2e specs reach the API across a container edge).
+func TestProductionBindGuard(t *testing.T) {
+	clearAuthEnv(t)
+	t.Setenv("APP_ENV", "production")
+	t.Setenv("WEB_PUBLIC_URL", "https://csms.example.org")
+	t.Setenv("DB_CONNECTION", "sqlite") // avoid requiring DB creds
+	t.Setenv("ANON_SALT", "prod-salt")
+	t.Setenv("INTERNAL_SERVICE_TOKEN", strings.Repeat("t", 32))
+	t.Setenv("ADMIN_BOOTSTRAP_EMAIL", "admin@example.org")
+	t.Setenv("ADMIN_BOOTSTRAP_PASSWORD", "secret")
+
+	cases := []struct {
+		addr    string
+		allow   string
+		wantRef bool
+		why     string
+	}{
+		{"127.0.0.1:8080", "", false, "the documented default"},
+		{"localhost:8080", "", false, "loopback by name"},
+		{"[::1]:8080", "", false, "IPv6 loopback"},
+		{":8080", "", true, "an empty host is every interface, not a local default"},
+		{"0.0.0.0:8080", "", true, "all IPv4 interfaces"},
+		{"10.0.0.5:8080", "", true, "a routable address"},
+		{"10.0.0.5:8080", "0", true, "API_ALLOW_REMOTE is set to something other than 1"},
+		{"10.0.0.5:8080", "1", false, "the opt-in was asked for by name"},
+	}
+	for _, c := range cases {
+		t.Setenv("API_ADDR", c.addr)
+		if c.allow == "" {
+			unsetEnv(t, "API_ALLOW_REMOTE")
+		} else {
+			t.Setenv("API_ALLOW_REMOTE", c.allow)
+		}
+		_, err := Load()
+		refused := err != nil && strings.Contains(err.Error(), "API_ADDR")
+		if refused != c.wantRef {
+			t.Errorf("API_ADDR=%q API_ALLOW_REMOTE=%q: refused=%v, want %v (%s); err=%v",
+				c.addr, c.allow, refused, c.wantRef, c.why, err)
+		}
+		// A run the guard accepts has to be a *valid* config, or "no API_ADDR
+		// complaint" would also be reported for an unrelated startup failure.
+		if !c.wantRef && err != nil {
+			t.Errorf("API_ADDR=%q: Load() returned error: %v", c.addr, err)
+		}
+	}
+
+	// Development keeps the pre-existing behaviour: bind wherever it likes.
+	t.Setenv("APP_ENV", "development")
+	t.Setenv("API_ADDR", "0.0.0.0:8080")
+	unsetEnv(t, "API_ALLOW_REMOTE")
+	if _, err := Load(); err != nil {
+		t.Errorf("development with a broad bind returned error: %v", err)
 	}
 }
 

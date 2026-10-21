@@ -25,6 +25,7 @@ Defines the complete configuration variable inventory, the defaults, and the sta
 |---|---|---|---|---|---|
 | `APP_ENV` | both | `development`\|`production` | `development` | — | environment switch; selects the defaults marked `dev`/`prod` (REQ-CFG-007) |
 | `API_ADDR` | api | host:port | `127.0.0.1:8080` | — | listen address (internal only, §5 of `Technology_Stack_Design.md`) |
+| `API_ALLOW_REMOTE` | api | `0`\|`1` | `0` | — | names the exception required before `API_ADDR` may bind an address other hosts can reach: production refuses a non-loopback bind without it (§4.1, REQ-CFG-033), because `INTERNAL_SERVICE_TOKEN` plus the actor header is the whole credential for every account (§3.3). A loopback bind never needs it; `development` ignores it |
 | `WEB_PUBLIC_URL` | web (api: docs links) | absolute URL | — | prod | public base URL; used for the OAuth2 redirect URI, survey link URLs, and documentation links (REQ-CFG-018) |
 | `LOG_LEVEL_API` | api | `debug`\|`info`\|`warn`\|`error` | dev: `debug`, prod: `info` | — | (REQ-CFG-019) |
 | `LOG_LEVEL_WEB` | web | `debug`\|`info`\|`warn`\|`error` | dev: `debug`, prod: `info` | — | (REQ-CFG-019) |
@@ -146,6 +147,7 @@ The rate-limit **thresholds are not environment variables**: `rate_limit_enabled
 | Condition | `development` | `production` |
 |---|---|---|
 | `INTERNAL_SERVICE_TOKEN` | default acceptable (§3.3) | **absent → refuse to start** (REQ-CFG-013) |
+| `API_ADDR` reachable from the host only (loopback), or `API_ALLOW_REMOTE=1` naming the exception | any bind allowed | **non-loopback bind without `API_ALLOW_REMOTE=1` → refuse to start** (REQ-CFG-033) |
 | `ANON_SALT` | default acceptable (§3.6) | **absent → refuse to start** (REQ-CFG-015) |
 | `WEB_PUBLIC_URL` | optional | **absent → refuse to start** (redirect URIs must be absolute) |
 | `DB_HOST`/`DB_USERNAME`/`DB_PASSWORD` (when `DB_CONNECTION=mariadb`) | required | required |
@@ -184,6 +186,9 @@ At `info` level both components log the effective **non-secret** configuration (
 # core
 APP_ENV=development
 API_ADDR=127.0.0.1:8080
+# production refuses a non-loopback bind unless this names the exception (REQ-CFG-033, §4.1);
+# ignored when APP_ENV=development
+#API_ALLOW_REMOTE=0
 WEB_PUBLIC_URL=http://localhost:8000
 LOG_LEVEL_API=debug
 LOG_LEVEL_WEB=debug

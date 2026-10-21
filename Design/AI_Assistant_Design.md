@@ -184,6 +184,20 @@ Results are plain JSON numbers/strings; tool text summaries round to four signif
   reads the field, so nothing refuses an over-large install: it dies mid-load as `DeviceLostError`,
   whose message advises "a smaller context length". The number is there so an administrator can tell
   that failure apart from a broken artifact, and so the install says what it needs before it runs.
+* `tools/assistant_model_hashes.txt` — one `<sha256>  <MODEL_ID>/<file>` line per artifact, the integrity
+  control behind `web/assets/models/`. Size checks prove only that a file is the length its own manifest claims;
+  the compiled `.wasm` pulled into `web/assets/models/` runs as browser code under this application's origin
+  with the assistant's API access, so without a pinned digest the install trusts whatever `huggingface.co`
+  and `raw.githubusercontent.com` answer on the day the script runs. `--pin` writes the manifest once, from
+  a network somebody trusts; reviewing it (against upstream release notes, or a second fetch over another
+  path) and committing it is the human step — nothing here can distinguish a genuine artifact from one
+  substituted before anyone looked. Every later run verifies against it and installs nothing unmatched, an
+  absent manifest being a refusal rather than a fallback to size checks, and `--verify` re-checks an existing
+  install with no network at all (§3 review rule, REQ-TECH-021's standard for vendor assets). The same digests
+  go into `app-config.json` under the bundle's own `integrity` key (`.config`, `.model_lib`, `.tokenizer`), so
+  the check repeats in the browser on every load and a directory modified after install fails with an
+  `IntegrityError` instead of executing. Keys are per `MODEL_ID`, and pinning one model keeps another model's
+  entries in the same file.
 
 ## 8. Tests
 

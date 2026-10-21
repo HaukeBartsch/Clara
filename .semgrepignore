@@ -34,3 +34,12 @@ ci/
 # Minified bundles — machine output, including the copies under assets/.
 **/*.min.js
 **/*.min.css
+
+# Go tests and the test-only database helper. Not deployed: `go build` leaves `_test.go` out of
+# the binary, and internal/testdb is imported only by those tests (REQ-TECH-028's "test fixtures
+# and helper scripts"). Their findings are fake secrets and throwaway DDL by construction — a
+# bcrypt hash of a known test password, a fixed TOTP seed, a TLS server the test itself starts —
+# so reviewing them would train nobody. The code under review is the same package's non-test files,
+# which stay in scope.
+**/*_test.go
+api/internal/testdb/

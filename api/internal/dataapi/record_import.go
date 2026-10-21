@@ -512,6 +512,17 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 			problems = append(problems, f.FieldName+": "+string(v.Code)+" — "+v.Message)
 			continue
 		}
+		// §5.1 content policy after the type validator, before the write: UTF-8,
+		// control characters and the §5.2 HTML allowlist, applied at this one
+		// place so the data API import, the UI's data entry and survey links all
+		// store identical bytes for identical input (REQ-VAL-030/001/004). The
+		// stored result is what REQ-VAL-031 lets the UI render as allowlist HTML.
+		policy, cv := validate.ApplyContentPolicy(vf, raw, h.Cfg.MaxValueBytes)
+		if cv != nil {
+			problems = append(problems, f.FieldName+": "+string(cv.Code)+" — "+cv.Message)
+			continue
+		}
+		raw = policy
 		pendings = append(pendings, pending{field: f, value: raw})
 	}
 	// Unknown keys, in dictionary order (REQ-API-139): map iteration would

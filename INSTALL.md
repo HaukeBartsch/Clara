@@ -228,6 +228,11 @@ A single file configures both components ([System_Configuration_Design.md](Desig
 # --- core
 APP_ENV=production
 API_ADDR=127.0.0.1:8080
+# Keep the loopback bind: whoever reaches this port holding INTERNAL_SERVICE_TOKEN may act as any
+# account, because the actor arrives in a header next to that token (§2.3 of the authentication
+# design). Production refuses a non-loopback API_ADDR unless API_ALLOW_REMOTE=1 names that
+# exception — set it only behind mTLS or on a network you control end to end (REQ-CFG-033).
+#API_ALLOW_REMOTE=0
 WEB_PUBLIC_URL=https://clara.example.org
 LOG_LEVEL_API=info
 LOG_LEVEL_WEB=info
@@ -830,6 +835,34 @@ All of these are `.env` settings. Restart afterwards (`systemctl restart clara-a
 | Rate limiting | *(no variable)* | Enable it and set the thresholds in the administration interface (system settings). It is off by default. |
 
 `ADMIN_BOOTSTRAP_PASSWORD` may be left empty once at least one OAuth2 provider or LDAP server is configured.
+
+### 14.1 The in-browser assistant (optional)
+
+The assistant runs a model in the browser with WebGPU, so it needs no external API — but it does need
+the model files, which are not in git. `tools/fetch_assistant_model.sh` pulls them into
+`web/assets/models/` on a network-connected machine; copy that directory to
+`/opt/clara/web/assets/models/` afterwards. Without the files the assistant is simply unavailable, and
+everything else works (`Design/AI_Assistant_Design.md` §5).
+
+The script installs nothing it cannot match against `tools/assistant_model_hashes.txt`, one SHA-256 per
+artifact:
+
+```console
+# once, on a machine you trust, then review the diff and commit the file
+tools/fetch_assistant_model.sh --pin                       # downloads, records hashes
+git diff tools/assistant_model_hashes.txt                  # this review is the control
+# every later run, air-gapped included — it verifies and writes nothing
+tools/fetch_assistant_model.sh                             # fetches what is missing, checking hashes
+tools/fetch_assistant_model.sh --verify                    # checks an existing install, no network
+```
+
+A byte count is not integrity here. The compiled `.wasm` runs as browser code under this application's
+own origin, with the assistant's access to its API, so trusting transport security alone would mean
+trusting whatever `huggingface.co` answers on the day the script happens to run — hence a manifest that
+is produced once, reviewed like any other pinned dependency (REQ-TECH-021), and demanded afterwards.
+The same hashes are written into `app-config.json` as the engine's own `integrity` record, so the check
+repeats in the browser on every load: a model directory modified after install fails with an
+`IntegrityError` instead of executing.
 
 ---
 

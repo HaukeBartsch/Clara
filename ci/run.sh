@@ -62,6 +62,58 @@ if hits=$(grep -rInoE "$external_reference" "$root/web"); then
 	exit 1
 fi
 
+# The reference positions above cannot see a runtime request: `fetch("https://…")`,
+# `new WebSocket("wss://…")` and `navigator.sendBeacon(…)` carry the URL in an argument,
+# not in src= or href=, so a page could phone home through them and this gate would stay
+# green. Those forms are checked over first-party code, where no legitimate reason to
+# name an outside host exists. Vendored libraries are excluded — web-llm.mjs calls fetch
+# by design (for its locally hosted weights) — because upstream code is held to the pinned
+# hashes in Technology_Stack_Design.md §3 rather than to a pattern (REQ-TECH-021).
+runtime_reference="(fetch|open)[[:space:]]*\([[:space:]]*[\"'\`]https?:|(fetch|open)[[:space:]]*\([[:space:]]*[\"'\`][/.]{2}|[Nn]ew[[:space:]]+WebSocket\(|EventSource\(|sendBeacon\(|importScripts\(|\.src[[:space:]]*=[[:space:]]*[\"'\`][/.]{2}|(file_get_contents|fopen|curl_init)\([[:space:]]*[\"']https?:"
+if hits=$(grep -rInoE "$runtime_reference" "$root/web" \
+	--exclude-dir=vendor --exclude-dir=minified --include='*.js' --include='*.mjs' \
+	--include='*.php' --include='*.phtml' --include='*.html'); then
+	echo "FAIL: first-party code opens a connection at runtime to an absolute URL — the" >&2
+	echo "application must work with no internet access (ASM-TECH-2, REQ-TECH-027), and CSP" >&2
+	echo "connect-src 'self' only blocks it at run time, which is a backstop and not the rule:" >&2
+	echo "$hits" >&2
+	exit 1
+fi
+
+echo "==> static analysis of the shipped code (semgrep)"
+# .semgrepignore names what is out of scope (the legacy FIONA application, vendored copies,
+# dev-only tooling); api/ and web/ are scanned in full, with findings triaged per site in
+# docs/Static_Analysis_Triage.md and deliberately no inline nosemgrep markers, so a finding
+# cannot hide behind a suppression comment. --metrics=off matters: the scanner must not post
+# anything about this codebase to semgrep.dev.
+if ! command -v semgrep >/dev/null 2>&1; then
+	echo "FAIL: semgrep is not installed, so the static-analysis gate did not run — an" >&2
+	echo "unrun check is not a passed one (same rule as the browser specs below)." >&2
+	echo "setup: python3 -m pip install --user semgrep   (or: pipx install semgrep)" >&2
+	exit 1
+fi
+# A committed rules directory wins over the registry ruleset, so a run stays reproducible and
+# works from a cached copy on a network-restricted runner. SEMGREP_CONFIG overrides either.
+semgrep_config="${SEMGREP_CONFIG:-}"
+if [[ -z "$semgrep_config" && -d "$root/.semgrep/rules" ]]; then semgrep_config="$root/.semgrep/rules"; fi
+if [[ -z "$semgrep_config" ]]; then semgrep_config="p/default"; fi
+# The verdict comes from ci/semgrep_baseline.php rather than from semgrep's exit code, so that the
+# findings docs/Static_Analysis_Triage.md has already reasoned about do not have to be re-argued by
+# hand while genuinely new ones still fail the build. That is how this repository runs a gate with
+# no inline `nosemgrep` markers at all: upstream rule coverage stays intact, and accepting a finding
+# costs one reviewable line in .semgrep/baseline.txt next to its document row. semgrep exits 1 when
+# it finds anything, so its status says nothing usable here — the report does, including the errors
+# field, because a file semgrep could not analyze is a hole in the scan rather than a clean result.
+semgrep_report="$(mktemp "${TMPDIR:-/tmp}/clara-semgrep.XXXXXX")"
+semgrep_status=0
+semgrep --metrics=off --quiet --json --config "$semgrep_config" "$root/api" "$root/web" >"$semgrep_report" || semgrep_status=$?
+if ! php "$root/ci/semgrep_baseline.php" "$root/.semgrep/baseline.txt" "$root" <"$semgrep_report"; then
+	rm -f "$semgrep_report"
+	echo "FAIL: semgrep reported findings outside the recorded triage (semgrep exit $semgrep_status)." >&2
+	exit 1
+fi
+rm -f "$semgrep_report"
+
 echo "==> relevance Sankey data is fresh (REQ-UI-060)"
 # web/app/data/relevance_sankey.php ships inside web/ (production carries no docs/, INSTALL.md §3)
 # and must match its source table in docs/Requirement_Relevance_Classification.md.

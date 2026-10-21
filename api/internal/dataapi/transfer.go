@@ -426,7 +426,17 @@ func (h *Handler) ExecuteTransfer(ctx context.Context, actor *db.User, srcProjec
 				}
 				raw = canonical
 			}
-			value = raw
+			// §5.1 content policy, exactly as on the import path: a transfer writes
+			// into target fields that may be free text, so a value stored before
+			// the policy existed must not survive the move (REQ-VAL-030). Running
+			// it over an already-clean value is a no-op.
+			policy, cv := validate.ApplyContentPolicy(vf, raw, h.Cfg.MaxValueBytes)
+			if cv != nil {
+				return nil, &TransferConfigError{Msg: fmt.Sprintf(
+					"the target project rejects the value of '%s' for field '%s': %s",
+					w.sourceField, w.field, cv.Message)}
+			}
+			value = policy
 		}
 		if rvTgt[w.event] == nil {
 			rvTgt[w.event] = map[string]string{}

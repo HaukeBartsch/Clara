@@ -7,11 +7,13 @@ fires.
 
 Scan triaged here: 2026-10-16, rules `go.lang.security.*`, `php.lang.security.*`,
 `javascript.lang.security.*`, `typescript.react.security.*`,
-`python.lang.security.audit.*`.
+`python.lang.security.audit.*`. Re-run against `p/default` on 2026-10-21 with semgrep
+1.182.0 — the version `.github/workflows/ci.yml` installs, because a baseline recorded
+against one version and checked by another fails for reasons nobody can reproduce.
 
 ## Policy
 
-Two places record a disposition, and which one applies is not a matter of taste:
+Three places record a disposition, and which one applies is not a matter of taste:
 
 - **`.semgrepignore`** — trees that are not CLARA's to review: the historic FIONA
   application under `assets/`, vendored libraries, and development/CI tooling.
@@ -21,6 +23,17 @@ Two places record a disposition, and which one applies is not a matter of taste:
   `nosemgrep` comments anywhere in the codebase: a suppression comment silences
   whatever occupies that line later, and the useful property of this report is
   that it cannot drift into covering a real bug.
+- **`.semgrep/baseline.txt`** — the machine-readable mirror of a row above, one
+  `<rule id><TAB><file>` pair per accepted finding. It exists because prose cannot
+  be a gate: `ci/run.sh` runs semgrep with `--json` and pipes it to
+  `ci/semgrep_baseline.php`, which accepts exactly the pairs this file lists and
+  fails on everything else, so an unrecorded finding is red while the upstream
+  ruleset keeps its full coverage. A pair enters only together with its row here —
+  the baseline carries no reasoning of its own. Identity is rule + file, never line
+  number, which moves with every edit; the price is that a further hit of an
+  accepted rule in the same file joins the accepted set silently, and each row's
+  `Recheck when` column is what bounds that. A baseline entry that matched nothing
+  is reported (not fatal): prune it when the site goes away.
 
 A finding that is genuinely a weakness gets fixed, and the fix — not an entry
 here — is the record.
@@ -54,4 +67,8 @@ copies served locally per REQ-TECH-021), and `docs/`, `e2e/`, `stress/`,
 `tests/`, `tools/`, `ci/` (development and CI tooling, never deployed
 per REQ-TECH-028 — which covers the Playwright HTTP fetch to a localhost server,
 the screenshot script's argument-built regexes, and the load generator's
-`HTTPSConnection` notice).
+`HTTPSConnection` notice). Also `**/*_test.go` and `api/internal/testdb/`: Go tests
+and their database helper never reach the binary, and their findings are fake
+secrets and throwaway DDL by construction — a bcrypt hash of a known test password,
+a fixed TOTP seed, the TLS server a test starts itself, a `CREATE DATABASE` name
+drawn from `crypto/rand`. The non-test files of those same packages stay in scope.

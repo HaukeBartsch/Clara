@@ -72,6 +72,7 @@ Defines how the system is configured across environments. The design document `D
 | REQ-CFG-021 | Secrets MUST be loaded only from the environment; they MUST NOT be written to logs (redacted in any startup config dump). |
 | REQ-CFG-022 | On startup, the API MUST log the effective non-secret configuration (env, db engine, endpoints) at `info` level for operational traceability. |
 | REQ-CFG-023 | The API MUST reject `/api/v1/*` requests that do not present a valid service token (see `Authentication_Authorization_Requirements.md`), regardless of any other configuration. |
+| REQ-CFG-033 | The API listens on an internal address (`API_ADDR`) whose default MUST be reachable only from the host itself, and `production` MUST refuse to start with an address that other hosts can reach unless the operator asks for that by name (`API_ALLOW_REMOTE=1`). Reason: the administration surface takes the acting account from a request header alongside the shared service token (REQ-CFG-013, REQ-AUTH-011), so that one secret is the entire credential for every account — root included — and nothing above the network layer decides who may present it. `development` keeps any bind (browser tests and split-container setups bind broadly on purpose). |
 
 ## 3. Assumptions
 
