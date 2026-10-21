@@ -1,10 +1,15 @@
 import { expect, test, type Page } from "@playwright/test"
+import { readFileSync } from "node:fs"
+import path from "node:path"
+import url from "node:url"
 
 // The Clara assistant section and its MCP endpoint (AI_Assistant area, Plan D4): the page renders
 // for an administrator, the protocol answers on this application's own route, and — the rule that
 // matters most — a write tool is refused **server-side** while the session is read-only
 // (REQ-AI-006), independent of anything the browser shows. The model itself is not exercised:
 // CI browsers have no WebGPU, and the engine's states are asserted as far as they reach here.
+
+const here = path.dirname(url.fileURLToPath(import.meta.url))
 
 const ADMIN_EMAIL = "admin@example.org"
 const ADMIN_PASSWORD = "clara-dev-481516-pw" // dev-stack.sh: "${stack_seed}-pw", development only
@@ -32,6 +37,67 @@ async function mcp(page: Page, method: string, params: Record<string, unknown>):
   }, { method, params })
 }
 
+/**
+ * Replaces the vendored engine with one that answers the way web-llm's Hermes path does, and
+ * records every request it receives in `window.__engineCalls`. Two scenarios share it: an ordinary
+ * tool round followed by a prose answer, and — when the question says "repeat yourself" — a model
+ * that ignores the result it was handed and asks for the same call again.
+ */
+async function stubHermesEngine(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    ;(window as unknown as Record<string, unknown>).__engineCalls = []
+  })
+  await page.route("**/vendor/webllm/web-llm.mjs", (route) =>
+    route.fulfill({
+      contentType: "text/javascript",
+      body: `
+          const calls = []
+          window.__engineCalls = calls
+          const delta = (part, reason) => ({ choices: [{ delta: part, finish_reason: reason || null, index: 0 }] })
+          const askForProjects = () => [
+            delta({ role: "assistant", tool_calls: [{ index: 0, function: { name: "list_projects", arguments: "{}" } }] }),
+            delta({}, "tool_calls"),
+          ]
+          export async function CreateMLCEngine(modelId, options) {
+            if (options && options.initProgressCallback) { options.initProgressCallback({ progress: 1 }) }
+            return {
+              chat: {
+                completions: {
+                  create(request) {
+                    calls.push(JSON.parse(JSON.stringify({ messages: request.messages, tools: request.tools })))
+                    const askedForTools = request.tools !== undefined
+                    const ignoresItsResult = JSON.stringify(request.messages).includes("repeat yourself")
+                    let chunks
+                    if (calls.length === 1 || (ignoresItsResult && askedForTools)) {
+                      chunks = askForProjects()
+                    } else if (calls.length === 2 && askedForTools) {
+                      chunks = [delta({}, "stop")]
+                    } else {
+                      chunks = [delta({ content: "One project, 42 records." }), delta({}, "stop")]
+                    }
+                    return (async function* () { for (const chunk of chunks) { yield chunk } })()
+                  },
+                },
+              },
+            }
+          }
+        `,
+    }),
+  )
+  // WebGPU is missing in CI browsers, so the probe is answered too: what is under test is the
+  // conversation loop, and the probe would otherwise stop before the engine is ever created.
+  await page.addInitScript(() => {
+    Object.defineProperty(window.navigator, "gpu", { value: {}, configurable: true })
+  })
+}
+
+/** The requests the stubbed engine received, newest last. */
+async function engineCalls(page: Page): Promise<Array<{ messages: Array<{ role: string; content: string | null }>; tools: unknown }>> {
+  return (await page.evaluate(() => (window as unknown as Record<string, unknown>).__engineCalls)) as Array<
+    { messages: Array<{ role: string; content: string | null }>; tools: unknown }
+  >
+}
+
 test.describe("clara assistant (AI_Assistant)", () => {
   test.skip(!process.env.CLARA_WEB_URL, "CLARA_WEB_URL not set — no running web/ application to drive")
 
@@ -46,6 +112,30 @@ test.describe("clara assistant (AI_Assistant)", () => {
     await expect(page.locator("[data-clara-as-form]")).toBeVisible()
     // The field states its own key contract, so it has to be on the page with it (assistant.js).
     await expect(page.locator("#clara-as-input-hint")).toBeVisible()
+  })
+
+  test("every string the client asks for is on the page", async ({ page }) => {
+    // `t()` answers an unknown key with the key itself, so a message whose name was left out of
+    // ControlPanelController's jsKeys list renders as `admin.assistant.error.…`. The sentence that
+    // explains a CSP-blocked WebAssembly compile spent its first release doing exactly that: the
+    // text was in en.php, the list had never heard of it. Both halves are checked from here — the
+    // file the client reads, and the block this page injects (View.php's `script[data-i18n]`).
+    const client = readFileSync(path.join(here, "..", "..", "web", "assets", "js", "assistant.js"), "utf8")
+    const asked = [...new Set(client.match(/admin\.assistant\.[a-z0-9_.]*/g) ?? [])]
+    expect(asked.length).toBeGreaterThan(10) // the scrape found this client's strings at all
+
+    await signInAsAdmin(page)
+    await page.goto("/admin?section=assistant")
+    const injected = Object.keys(
+      await page.locator("script[data-i18n]").evaluate((node) => JSON.parse(node.textContent || "{}") as Record<string, string>),
+    )
+
+    // A key ending in `.` is completed at runtime (`"admin.assistant.who." + role`), so it counts as
+    // answered when any injected key hangs off it.
+    const missing = asked
+      .map((key) => key.replace(/\.$/, ""))
+      .filter((key) => !injected.includes(key) && !injected.some((name) => name.startsWith(key + ".")))
+    expect(missing).toEqual([])
   })
 
   test("Enter sends the message; Shift+Enter writes a line break instead", async ({ page }) => {
@@ -121,51 +211,8 @@ test.describe("clara assistant (AI_Assistant)", () => {
     // `tools` answers only with a JSON array of calls (never prose), and those calls carry no id.
     // None of that is observable without a GPU, which CI browsers do not have, so the vendored
     // module is swapped for one that replies exactly as the engine does and records what it received.
-    await page.addInitScript(() => {
-      ;(window as unknown as Record<string, unknown>).__engineCalls = []
-    })
-    await page.route("**/vendor/webllm/web-llm.mjs", (route) =>
-      route.fulfill({
-        contentType: "text/javascript",
-        body: `
-          const calls = []
-          window.__engineCalls = calls
-          const delta = (part, reason) => ({ choices: [{ delta: part, finish_reason: reason || null, index: 0 }] })
-          export async function CreateMLCEngine(modelId, options) {
-            if (options && options.initProgressCallback) { options.initProgressCallback({ progress: 1 }) }
-            return {
-              chat: {
-                completions: {
-                  create(request) {
-                    calls.push(JSON.parse(JSON.stringify({ messages: request.messages, tools: request.tools })))
-                    const askedForTools = request.tools !== undefined
-                    // call 1 asks for data, call 2 says "no further calls", call 3 answers in words.
-                    let chunks
-                    if (calls.length === 1) {
-                      chunks = [
-                        delta({ role: "assistant", tool_calls: [{ index: 0, function: { name: "list_projects", arguments: "{}" } }] }),
-                        delta({}, "tool_calls"),
-                      ]
-                    } else if (calls.length === 2 && askedForTools) {
-                      chunks = [delta({}, "stop")]
-                    } else {
-                      chunks = [delta({ content: "One project, 42 records." }), delta({}, "stop")]
-                    }
-                    return (async function* () { for (const chunk of chunks) { yield chunk } })()
-                  },
-                },
-              },
-            }
-          }
-        `,
-      }),
-    )
+    await stubHermesEngine(page)
     await signInAsAdmin(page)
-    // WebGPU is missing in CI browsers, so the probe is answered too: what is under test is the
-    // conversation loop, and the probe would otherwise stop before the engine is ever created.
-    await page.addInitScript(() => {
-      Object.defineProperty(window.navigator, "gpu", { value: {}, configurable: true })
-    })
     await page.goto("/admin?section=assistant")
 
     const input = page.locator("[data-clara-as-input]")
@@ -195,6 +242,9 @@ test.describe("clara assistant (AI_Assistant)", () => {
     // 3. The engine's id-less call is named, and its tool result answers that name.
     const toolRound = calls[2].messages.find((message) => message.role === "tool")
     expect(toolRound).toBeTruthy()
+    //    …and the result is wrapped the way Hermes-3 was trained to read one. MLC's template for this
+    //    model renders a `tool` turn as role plus bare content, with no < tool_response> markers.
+    expect(toolRound?.content ?? "").toContain("< tool_response>")
 
     // And the answer stays in the conversation: a follow-up sees the reply it follows up.
     await input.fill("and its records?")
@@ -204,6 +254,27 @@ test.describe("clara assistant (AI_Assistant)", () => {
     }>
     const seen = JSON.stringify(followUp[followUp.length - 1].messages)
     expect(seen).toContain("One project, 42 records.")
+  })
+
+  test("a model that ignores the result it was handed is stopped, not indulged", async ({ page }) => {
+    // Repeating an identical call cannot improve the answer, and up to MAX_TOOL_ROUNDS of the same
+    // query is the worst thing this page can do to its own API while looking like it is thinking.
+    await stubHermesEngine(page)
+    await signInAsAdmin(page)
+    await page.goto("/admin?section=assistant")
+
+    const input = page.locator("[data-clara-as-input]")
+    await expect(input).toBeEnabled({ timeout: 15000 })
+    await input.fill("repeat yourself please")
+    await input.press("Enter")
+
+    await expect(page.locator("[data-clara-as-status]")).toContainText("asked to run list_projects a second time")
+    // One execution, then the duplicate named and refused: two lines, only one of them "done".
+    const toolLines = page.locator(".clara-as-tool")
+    await expect(toolLines).toHaveCount(2)
+    await expect(toolLines.nth(0)).toContainText("done")
+    await expect(toolLines.nth(1)).toContainText("repeated")
+    expect((await engineCalls(page)).length).toBe(2)
   })
 
   test("the MCP endpoint speaks the protocol on this origin only", async ({ page }) => {

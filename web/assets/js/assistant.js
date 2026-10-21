@@ -35,6 +35,8 @@ let stage = "startup" // last step that ran: a failure says where it stopped, no
 let roundNumber = 0
 let toolName = ""
 let adapter = "not queried yet" // WebGPU adapter identity, read once at page start (see ready())
+let contextWindow = null // configured window in tokens, so a report can say what the limit was
+let requestChars = 0 // size of the last request handed to the engine, characters of JSON
 
 // --- DOM handles and status -------------------------------------------------------------------
 
@@ -107,6 +109,11 @@ function diagnosticLines(context, error) {
     "engine=" + (engine ? "loaded" : "absent"),
     "tools=" + toolDefs.length,
     "messages=" + messages.length,
+    // The window and the size of what was last sent: a round that no longer fits does not
+    // truncate, it throws ContextWindowSizeExceededError, and these two numbers are how to tell
+    // that apart from a model that simply misbehaves. Characters over four is a rough token count.
+    "context=" + (contextWindow === null ? "(model default)" : contextWindow) + " tokens",
+    "request_chars=" + requestChars,
     "webgpu=" + adapter,
     "user_agent=" + navigator.userAgent,
     "",
@@ -395,8 +402,10 @@ function engineMessages() {
  * tools. Tools are also left out when there are none, since `tools: []` is still a tool request.
  */
 async function streamOnce(onToken, withTools) {
+  const sent = engineMessages()
+  requestChars = JSON.stringify(sent).length
   const chunks = await engine.chat.completions.create({
-    messages: engineMessages(),
+    messages: sent,
     ...(withTools && toolDefs.length > 0 ? { tools: engineTools() } : {}),
     stream: true,
   })
@@ -424,8 +433,17 @@ async function streamOnce(onToken, withTools) {
   return { text, toolCalls: toolCalls.filter(Boolean), finishReason }
 }
 
+/**
+ * A tool result as Hermes-3 was trained to read it: the payload wrapped in `< tool_response>`
+ * markers inside a `tool` turn. MLC's template for this model renders that turn as role plus bare
+ * content — the wrapper is simply not there — and a result the model does not recognise as the
+ * answer to its own call is exactly what makes it ask for the same thing again.
+ */
+const toolMessage = (callId, text) => ({ role: "tool", tool_call_id: callId, content: "< tool_response>\n" + text + "\n< /tool_response>" })
+
 async function runTurn() {
   const body = bubble("assistant", "")
+  const turnCalls = [] // what this turn already asked for, to catch a model that repeats itself
   const paint = (text) => {
     body.textContent = text
     log().scrollTop = log().scrollHeight
@@ -483,9 +501,25 @@ async function runTurn() {
         args = JSON.parse(call.function.arguments || "{}")
       } catch (error) {
         // A malformed argument blob is fed back so the model can correct itself.
-        messages.push({ role: "tool", tool_call_id: call.id, content: "invalid_request: arguments were not valid JSON" })
+        messages.push(toolMessage(call.id, "invalid_request: arguments were not valid JSON"))
         continue
       }
+
+      // Asking for the same call with the same arguments twice in one turn means the model did not
+      // take in the first answer — and it will not take in the second either. Stop and say so rather
+      // than running the identical query up to MAX_TOOL_ROUNDS times.
+      const callKey = call.function.name + "|" + JSON.stringify(args)
+      if (turnCalls.includes(callKey)) {
+        toolLine(call.function.name).done(false, t("admin.assistant.status.tool_repeated"))
+        // The refused call still gets an answer. Its `tool_calls` entry is already in the history and
+        // stays there — this turn's messages are what the *next* question is built on — so leaving it
+        // unanswered would hand the following turn a call with no result, next to the repeat it just
+        // could not resolve. Protocol wording, like every other fed-back result.
+        messages.push(toolMessage(call.id, "stopped: this exact call already ran this turn and its result is above. The assistant will not run it twice."))
+        setStatus("admin.assistant.error.repeat_stopped", { tool: call.function.name })
+        return
+      }
+      turnCalls.push(callKey)
 
       const line = toolLine(call.function.name)
       stage = "tool"
@@ -494,7 +528,7 @@ async function runTurn() {
         const accepted = await confirmWrite(call.function.name, args)
         if (!accepted) {
           line.declined()
-          messages.push({ role: "tool", tool_call_id: call.id, content: "declined_by_user: the administrator declined this change." })
+          messages.push(toolMessage(call.id, "declined_by_user: the administrator declined this change."))
           continue
         }
       }
@@ -507,12 +541,12 @@ async function runTurn() {
           line.attach(chart)
         }
         line.done(!result.isError, result.isError ? text : "")
-        messages.push({ role: "tool", tool_call_id: call.id, content: text })
+        messages.push(toolMessage(call.id, text))
       } catch (error) {
         // The model is told in protocol terms; the console is where the transport detail survives.
         console.warn("[clara-as] tool " + call.function.name + " failed", error)
         line.done(false, t("admin.assistant.status.tool_failed"))
-        messages.push({ role: "tool", tool_call_id: call.id, content: "transport_error: " + String(error.message || error) })
+        messages.push(toolMessage(call.id, "transport_error: " + String(error.message || error)))
       }
     }
   }
@@ -536,6 +570,10 @@ const absolute = (path) => (typeof path === "string" && path !== "" ? new URL(pa
 async function loadEngine(config) {
   setStatus("admin.assistant.status.model_loading")
   modelId = config.model_id
+  // The window this install asked for, kept for the diagnostics block: a round that no longer fits
+  // fails with ContextWindowSizeExceededError, and this is the number it failed against.
+  const record = (config.model_list || [])[0] || {}
+  contextWindow = (record.overrides && record.overrides.context_window_size) || null
   // A record without `model_lib` keeps it absent, so the engine's own MissingModelWasmError fires.
   const appConfig = {
     model_list: (config.model_list || []).map((record) => ({ ...record, model: absolute(record.model), model_lib: absolute(record.model_lib) })),

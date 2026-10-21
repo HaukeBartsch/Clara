@@ -795,11 +795,16 @@ final class ControlPanelController extends Controller
                 'admin.assistant.status.thinking', 'admin.assistant.status.empty_answer',
                 'admin.assistant.status.tool_running',
                 'admin.assistant.status.tool_done', 'admin.assistant.status.tool_failed',
-                'admin.assistant.status.declined', 'admin.assistant.who.user', 'admin.assistant.who.assistant',
+                'admin.assistant.status.declined', 'admin.assistant.status.tool_repeated',
+                'admin.assistant.who.user', 'admin.assistant.who.assistant',
                 'admin.assistant.confirm.body',
                 'admin.assistant.error.no_webgpu', 'admin.assistant.error.model_missing',
                 'admin.assistant.error.turn_detail', 'admin.assistant.error.engine_detail',
                 'admin.assistant.error.mcp', 'admin.assistant.error.too_many_rounds',
+                'admin.assistant.error.repeat_stopped',
+                // The one string that explains a CSP refusal has to reach the page to be read: an
+                // unregistered key renders as itself, which is what an administrator saw here.
+                'admin.assistant.error.wasm_blocked',
                 'admin.assistant.diagnostics.title',
             ],
         ]);

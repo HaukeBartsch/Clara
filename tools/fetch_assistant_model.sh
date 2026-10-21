@@ -27,6 +27,13 @@ so an interrupted run can simply be repeated.
 
   -h, --help   show this help
   --force      download every artifact again, overwriting what is on disk (FORCE=1 does the same)
+
+Environment:
+  MODEL_ID              which model to install (see the case list in this script)
+  CONTEXT_WINDOW_SIZE   tokens of context to configure; defaults to the window the model was
+                        trained at (8192 for a Llama-3.1-based Hermes-3), not the largest it
+                        declares — the KV cache is allocated for the whole window up front, and
+                        vram_required_MB in app-config.json grows with it.
 USAGE
 }
 
@@ -45,18 +52,18 @@ WEBLLM_VERSION="v0_2_86/base"   # matches web/assets/vendor/webllm — change to
 DEST="${REPO_ROOT}/web/assets/models/${MODEL_ID}/resolve/main"
 LIB_BASE="https://raw.githubusercontent.com/mlc-ai/binary-mlc-llm-libs/main/web-llm-models"
 
-# WASM, VRAM, LOW_RESOURCE and CTX all come from the model's record in the vendored bundle
-# (`prebuiltAppConfig`), the only source of truth for what this bundle can load. The list holds
-# every model the bundle admits to function calling — `functionCallingModelIds` — and nothing else,
-# because that is a hard gate in the engine: `ChatCompletionRequest.tools` on any other model id
-# throws `UnsupportedModelIdError` before inference, and the assistant sends tools on every turn.
-# A Qwen3 install therefore loads its weights, shows "Model ready", and then fails each question;
-# that is what this list exists to prevent rather than to accommodate.
+# WASM and LOW_RESOURCE come from the model's record in the vendored bundle (`prebuiltAppConfig`),
+# the only source of truth for what this bundle can load. The list holds every model the bundle
+# admits to function calling — `functionCallingModelIds` — and nothing else, because that is a hard
+# gate in the engine: `ChatCompletionRequest.tools` on any other model id throws
+# `UnsupportedModelIdError` before inference, and the assistant sends tools on every turn. A Qwen3
+# install therefore loads its weights, shows "Model ready", and then fails each question; that is
+# what this list exists to prevent rather than to accommodate.
 case "${MODEL_ID}" in
-  Hermes-3-Llama-3.1-8B-q4f32_1-MLC) WASM="Llama-3_1-8B-Instruct-q4f32_1_cs1k-webgpu.wasm"; VRAM=5779; LOW_RESOURCE=false; CTX=4096 ;;
-  Hermes-3-Llama-3.1-8B-q4f16_1-MLC) WASM="Llama-3_1-8B-Instruct-q4f16_1_cs1k-webgpu.wasm"; VRAM=4876; LOW_RESOURCE=false; CTX=4096 ;;
-  Hermes-3-Llama-3.2-3B-q4f32_1-MLC) WASM="Llama-3.2-3B-Instruct-q4f32_1_cs1k-webgpu.wasm"; VRAM=2951; LOW_RESOURCE=true;  CTX=4096 ;;
-  Hermes-3-Llama-3.2-3B-q4f16_1-MLC) WASM="Llama-3.2-3B-Instruct-q4f16_1_cs1k-webgpu.wasm"; VRAM=2263; LOW_RESOURCE=true;  CTX=4096 ;;
+  Hermes-3-Llama-3.1-8B-q4f32_1-MLC) WASM="Llama-3_1-8B-Instruct-q4f32_1_cs1k-webgpu.wasm"; LOW_RESOURCE=false ;;
+  Hermes-3-Llama-3.1-8B-q4f16_1-MLC) WASM="Llama-3_1-8B-Instruct-q4f16_1_cs1k-webgpu.wasm"; LOW_RESOURCE=false ;;
+  Hermes-3-Llama-3.2-3B-q4f32_1-MLC) WASM="Llama-3.2-3B-Instruct-q4f32_1_cs1k-webgpu.wasm"; LOW_RESOURCE=true ;;
+  Hermes-3-Llama-3.2-3B-q4f16_1-MLC) WASM="Llama-3.2-3B-Instruct-q4f16_1_cs1k-webgpu.wasm"; LOW_RESOURCE=true ;;
   *)
     echo "unknown MODEL_ID ${MODEL_ID}: add its compiled-library file name to this case (it comes from the web-llm bundle's model record)" >&2
     echo "only these ids can be used at all: Hermes-3-Llama-3.1-8B-q4f3[2_1|16_1]-MLC, Hermes-3-Llama-3.2-3B-q4f[32_1|16_1]-MLC — the bundle refuses ChatCompletionRequest.tools for every other model (AI_Assistant_Design.md §7)" >&2
@@ -201,15 +208,79 @@ printf("== %d shards, %d tokenizer files, tensor-cache.json and the compiled lib
 
 # The engine's config override (design §7): one record whose URLs all live under this origin —
 # `model` keeps the HF-style base and the bundle appends resolve/main/ itself. Both paths stay
-# relative to this application's root so one install serves any host name; assistant.js turns
-# them into absolute URLs before handing the record to CreateMLCEngine, which needs absolute
-# ones (its cleanModelUrl() calls `new URL()` without a base).
+# relative to this application's root so one host name serves any install; assistant.js turns them
+# into absolute URLs before handing the record to CreateMLCEngine, which needs absolute ones (its
+# cleanModelUrl() calls `new URL()` without a base).
 #
-# `overrides.context_window_size` is not cosmetic: Hermes-3's own mlc-chat-config.json declares
-# 131072 tokens, and the KV cache is allocated for whatever the loaded config says, so an install
-# without the override asks the GPU for tens of gigabytes before generating a token. The bundle's
-# prebuilt record overrides every Hermes-3 model to 4096 for exactly that reason; this mirrors it
-# rather than inventing a number.
+# CONTEXT WINDOW, and the memory it costs. Every tool round carries the whole conversation plus the
+# full tool list: twelve tools with their schemas are ~4.6 kB of JSON, which the engine folds into
+# the prompt on top of Clara's instructions, and a `tool` result adds whatever that call returned.
+# When a round no longer fits, the engine does not truncate — it throws
+# ContextWindowSizeExceededError, mid-conversation, after the work has already been done. So the
+# window wants to be generous; but it cannot simply be maximal, because the cache is paid for up
+# front: 2 × layers × kv_heads × head_dim bytes per token (K and V, float16) for the *whole* window,
+# allocated before the first token. Hermes-3-Llama-3.1-8B declares 131072 tokens, which is 16 GiB of
+# cache on top of its weights — a load that dies with `DeviceLostError` on any ordinary card.
+#
+# The default is therefore the window the model was trained at: rope_scaling's
+# original_max_position_embeddings (8192 for every Llama-3.1-based id in the case list), falling
+# back to the bundle's own 4096 where a model declares no rope scaling. Above that number the model
+# runs on extrapolated positions, which is a quality gamble nobody asked for; below it, rounds stop
+# fitting. CONTEXT_WINDOW_SIZE=<tokens> picks another value either way, clamped to the model's own
+# maximum, and the line this script prints says what the choice costs.
+SIZING="$(CTX_REQUESTED="${CONTEXT_WINDOW_SIZE:-}" php -r '
+$chat = json_decode(file_get_contents("mlc-chat-config.json"), true);
+$max = (int) ($chat["context_window_size"] ?? 0);
+if ($max <= 0) { fwrite(STDERR, "mlc-chat-config.json declares no usable context_window_size\n"); exit(1); }
+
+$model = is_array($chat["model_config"] ?? null) ? $chat["model_config"] : [];
+
+// The window the model was trained at, before rope extrapolation to context_window_size. Llama-3.1
+// keeps it inside model_config.rope_scaling; a config without rope scaling has no such number.
+$rope = is_array($model["rope_scaling"] ?? null) ? $model["rope_scaling"] : [];
+$trained = (int) ($rope["original_max_position_embeddings"] ?? 0);
+
+$requested = (string) getenv("CTX_REQUESTED");
+$ctx = $requested === "" ? ($trained > 0 ? min($max, $trained) : min($max, 4096)) : (int) $requested;
+if ($ctx <= 0) { fwrite(STDERR, "CONTEXT_WINDOW_SIZE must be a positive number of tokens\n"); exit(1); }
+if ($ctx > $max) {
+    fwrite(STDERR, sprintf("-- CONTEXT_WINDOW_SIZE %d is above the maximum this model declares; using %d\n", $ctx, $max));
+    $ctx = $max;
+}
+
+$layers = (int) ($model["num_hidden_layers"] ?? 0);
+$heads = (int) ($model["num_key_value_heads"] ?? $model["num_attention_heads"] ?? 0);
+$attentionHeads = (int) ($model["num_attention_heads"] ?? 0);
+$headDim = (int) ($model["head_dim"] ?? 0);
+if ($headDim <= 0 && $attentionHeads > 0) { $headDim = intdiv((int) ($model["hidden_size"] ?? 0), $attentionHeads); }
+if ($layers <= 0 || $heads <= 0 || $headDim <= 0) {
+    fwrite(STDERR, "cannot size the KV cache: the chat config names no layers, kv heads or head dim\n"); exit(1);
+}
+
+// K and V, float16 — what the WebGPU runtime keeps per token in every layer, for the whole window.
+// A global cache, which is what every id in the case list has: sliding_window_size is -1, so
+// nothing here would shrink with a sliding window.
+$kvBytesPerToken = 2 * $layers * $heads * $headDim * 2;
+$weights = 0;
+foreach ((json_decode(file_get_contents("ndarray-cache.json"), true)["records"] ?? []) as $record) {
+    $weights += (int) ($record["nbytes"] ?? 0);
+}
+$weightsMb = (int) ceil($weights / 1024 / 1024);
+$kvMb = (int) ceil($ctx * $kvBytesPerToken / 1024 / 1024);
+// "vram_required_MB" is written into app-config.json as the operator-facing figure for this install
+// — weights plus cache plus 950 MB of logits and runtime buffers, which reproduces what the bundle
+// records for Hermes-3-Llama-3.1-8B-q4f32_1 at its 4096 window (5770 against 5779). It is *not* a
+// gate: web-llm v0.2.86 never reads the field, so asking for more than the device holds is not
+// refused here — it dies mid-load as DeviceLostError, whose own message already advises "a smaller
+// context length". This number is what tells an administrator which side of that they are on.
+if ($trained > 0 && $ctx > $trained) {
+    fwrite(STDERR, sprintf("-- context window %d is above the %d this model was trained at; positions beyond that are rope-extrapolated\n", $ctx, $trained));
+}
+printf("CTX=%d\nKV_MB=%d\nWEIGHTS_MB=%d\nVRAM=%d\n", $ctx, $kvMb, $weightsMb, $weightsMb + $kvMb + 950);
+')" || { echo "could not size the context window from mlc-chat-config.json" >&2; exit 1; }
+eval "${SIZING}"
+echo "== context window ${CTX} tokens: KV cache ${KV_MB} MB on top of ${WEIGHTS_MB} MB of weights, asking the engine for ${VRAM} MB"
+
 cat > "${REPO_ROOT}/web/assets/models/app-config.json" <<JSON
 {
   "model_id": "${MODEL_ID}",

@@ -91,6 +91,20 @@ Results are plain JSON numbers/strings; tool text summaries round to four signif
   * Loop: user message → streamed tokens appended to the chat (REQ-AI-012) → tool calls executed →
     results fed back → final text. A `write` tool pauses for the confirmation dialog showing the
     formatted arguments before `callTool` (REQ-AI-007); cancel feeds a "declined" result back to the model.
+  * **A tool result is wrapped for the model, not just for the protocol.** MLC's compiled template for
+    this model (`conv_template.name` `hermes3_llama-3_1`) renders a `tool` turn as its role and its
+    content — `roles.tool` plus `role_templates.tool` of `{tool_message}` — and the bundle adds nothing
+    of its own (web-llm v0.2.86 contains no `tool_response` string at all). Hermes-3 was trained to
+    read a result inside `< tool_response>` markers, so `toolMessage()` puts them there itself: an
+    unwrapped payload reads as prose arriving from nowhere, which is what made the model ask again for
+    the call it had already been answered. The markers are model-facing formatting, like the system
+    prompt; the MCP result on the wire is unchanged.
+  * **A repeated call stops the turn.** The same tool with the same arguments twice in one turn means
+    the model did not take in the first answer, and a second identical query will not change that — so
+    instead of running it up to `MAX_TOOL_ROUNDS` times against its own API, the client marks the line
+    `repeated`, says so (`admin.assistant.error.repeat_stopped`) and ends the turn. The refused call is
+    still answered in the history: its `tool_calls` entry stays there, and the next question is built on
+    these messages, so an unanswered call would follow the user around.
   * The final text is asked for **without** `tools`. While a request carries them, this bundle
     constrains every reply to a JSON array of calls — an empty array means "no call needed" and is
     not followed by prose, and a reply that is not such an array throws
@@ -105,7 +119,10 @@ Results are plain JSON numbers/strings; tool text summaries round to four signif
     in the name, e.g. `UnsupportedModelIdError`); the status line carries one translated clause
     naming it (`admin.assistant.error.turn_detail`); and the chat gets a collapsed details block with
     where the loop stood — stage, round, tool — beside what is loaded: model id, engine, tool count,
-    WebGPU adapter, user agent. It holds counts and identifiers only, never conversation text: record
+    the configured context window and how many characters the last request carried (§7), WebGPU
+    adapter, user agent. Those two sizes are what separate a conversation that outgrew its window —
+    `ContextWindowSizeExceededError`, thrown mid-turn after the tool work was already done — from a
+    model that simply misbehaves. It holds counts and identifiers only, never conversation text: record
     values are data the model reports on, not something to paste into a bug report (REQ-AI-002).
 * **Policy needed to compile the model**: `Response::CSP` carries `'wasm-unsafe-eval'` in `script-src`.
   Fetching `model_lib` and the shards is `connect-src 'self'`, but *compiling* WebAssembly is judged
@@ -147,10 +164,26 @@ Results are plain JSON numbers/strings; tool text summaries round to four signif
   for a small GPU). Widening it means grammar-constrained output (`response_format` of type
   `structural_tag`, which the bundle accepts for any model) driven from this client rather than from
   the dependency — a deliberate redesign, not an implementation detail.
-* **The context-window override.** Every Hermes-3 prebuilt record in the bundle overrides
-  `context_window_size` to 4096; the model's own `mlc-chat-config.json` declares 131072, and the KV
-  cache is allocated from whatever the loaded config says. `app-config.json` therefore carries the
-  same override — without it the engine asks the GPU for tens of gigabytes before its first token.
+* **The context-window override, and what it costs.** The model's own `mlc-chat-config.json` declares
+  131072 tokens and the KV cache is allocated up front for whatever the loaded config says, so
+  `app-config.json` has to override it — without one the engine asks the GPU for its whole window
+  before generating a token. The fetch script computes the number rather than hardcoding it:
+  `CONTEXT_WINDOW_SIZE=<tokens>` when given (clamped to what the model declares), otherwise the window
+  the model was **trained** at — `model_config.rope_scaling.original_max_position_embeddings`, 8192 for
+  every Llama-3.1-based id here, falling back to the bundle's conservative 4096 where a config has no
+  rope scaling. Trained-at is the ceiling worth having: past it the model runs on extrapolated
+  positions, an unasked-for quality gamble, while below it a tool round can stop fitting — twelve tool
+  schemas are ~4.6 kB of JSON folded into every prompt, plus whatever the last call returned, and a
+  round that no longer fits is `ContextWindowSizeExceededError`, not a truncation.
+  The price is arithmetic: `2 × layers × kv_heads × head_dim` bytes per token (K and V, float16) for
+  the whole window — 128 KiB/token for Hermes-3-Llama-3.1-8B, so 512 MB at 4096, 1 GB at this default,
+  and 16 GB at its declared maximum, which is a load that dies on any ordinary card.
+* **`vram_required_MB` is a stated figure, not a gate.** The script sizes it as weights + cache +
+  ~950 MB of logits and buffers, which reproduces what the bundle records for
+  Hermes-3-Llama-3.1-8B-q4f32_1 at its own 4096 window (5771 against 5779) — but web-llm v0.2.86 never
+  reads the field, so nothing refuses an over-large install: it dies mid-load as `DeviceLostError`,
+  whose message advises "a smaller context length". The number is there so an administrator can tell
+  that failure apart from a broken artifact, and so the install says what it needs before it runs.
 
 ## 8. Tests
 

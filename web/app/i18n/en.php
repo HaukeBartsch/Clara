@@ -389,6 +389,7 @@ return [
     'admin.assistant.status.tool_done' => 'done',
     'admin.assistant.status.tool_failed' => 'failed',
     'admin.assistant.status.declined' => 'declined',
+    'admin.assistant.status.tool_repeated' => 'repeated',
     'admin.assistant.error.no_webgpu' => 'This browser has no WebGPU support, so the model cannot run here. Open the assistant in a recent Chrome, Edge or Brave.',
     'admin.assistant.error.model_missing' => 'The model artifacts are not installed on this server (see the notice above).',
     'admin.assistant.error.turn_detail' => 'The model could not answer: {detail}. The technical details below name the step that failed; reload this page if it keeps happening.',
@@ -396,6 +397,7 @@ return [
     'admin.assistant.error.wasm_blocked' => 'The browser refused to compile the model\'s WebAssembly library: this page\'s Content-Security-Policy does not allow \'wasm-unsafe-eval\' in script-src, so nothing was fetched and no artifact is at fault. The application sends that header itself (web/app/Response.php) — check that a proxy or an extra server header is not replacing it.',
     'admin.assistant.error.mcp' => 'The tool endpoint refused this session — sign in again as an administrator.',
     'admin.assistant.error.too_many_rounds' => 'Stopped after too many tool steps without an answer — try narrowing the question.',
+    'admin.assistant.error.repeat_stopped' => 'The model asked to run {tool} a second time with the same arguments and did not use the answer it had already been given, so this stopped here. Rephrase the question, or ask for one step at a time.',
     'admin.assistant.diagnostics.title' => 'Technical details',
     // The API documentation section (§5.9): the OpenAPI document of both API surfaces.
     'admin.api.title' => 'API documentation',
