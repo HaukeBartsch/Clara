@@ -5,8 +5,11 @@
  * rate-limiter state. The server renders the first paint from one read of
  * `GET /api/v1/system/metrics` (Design §4.25) and `GET /api/v1/system/blocked-ips` (§4.26);
  * `monitoring.js` then polls this section's data region once a second while the page is
- * visible, filling the stat cards, the eight d3 line charts of the last hour as observed
- * since the page was opened, and the blocked-IP table below. A plain table-sm re-render is
+ * visible, filling the stat cards, the eight d3 line charts of the configured period —
+ * MONITORING_PERIOD_MINUTES, ten minutes by default (REQ-CFG-034) — as observed since the page
+ * was opened, and the blocked-IP table below. The charts row's `data-clara-mon-period-minutes`
+ * is how the script learns that period, and it drops every timepoint older than it.
+ * A plain table-sm re-render is
  * enough here — the list is bounded by the number of addresses in a blockout (the Tabulator
  * rule in AGENTS.md is for tables that need it).
  */
@@ -59,7 +62,9 @@ $failed = !$metricsOk || !is_array($rateLimit);
 ?>
 <h1 class="h4 mb-3"><?= View::e($view->t('admin.monitoring.title')) ?></h1>
 
-<p class="text-body-secondary small"><?= View::e($view->t('admin.monitoring.intro')) ?></p>
+<p class="text-body-secondary small"><?= View::e($view->t('admin.monitoring.intro', [
+    'minutes' => (string) $periodMinutes,
+])) ?></p>
 
 <p class="text-body-secondary small" data-clara-mon-failed <?= $failed ? '' : 'hidden' ?>>
     <?= View::e($view->t('admin.monitoring.failed', [
@@ -77,7 +82,7 @@ $failed = !$metricsOk || !is_array($rateLimit);
     <?= View::e($view->t('admin.monitoring.window')) ?>
 </p>
 
-<div class="row g-3 mb-4">
+<div class="row g-3 mb-4" data-clara-mon-period-minutes="<?= (int) $periodMinutes ?>">
     <?php foreach ($charts as $chart): ?>
         <div class="col-md-6 col-xl-3">
             <figure class="mb-0 clara-mon-chart" data-clara-mon-chart="<?= View::e($chart) ?>">

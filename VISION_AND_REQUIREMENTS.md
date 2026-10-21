@@ -578,7 +578,7 @@ For Requirements/, Plan/, and Design/ documents provide a classification of rele
 
 The api should measure performance metrics like response times and memory amounts for database operations and api internal data processing. The information should be sufficient to later evaluate extensions to the infrastructure that runs the api and to the database system that the api talks to.
 
-Use d3.js to plot the metric values from api/v1/system/metrics over time on a new control panel page Monitoring. Show the current values at a 1 second interval and show a d3.js line graph for the last hour. Add to this page a table with the currently blocked IP addresses due to the rate limiter. Update this table as well every second.
+Use d3.js to plot the metric values from api/v1/system/metrics over time on a new control panel page Monitoring. Show the current values at a 1 second interval and show a d3.js line graph for the last 10 minutes; that span is configuration (`MONITORING_PERIOD_MINUTES`, 1–1440 minutes, REQ-CFG-034), so `60` gives back the hour this line asked for until the owner decision of 2026-10-21 (`System_Configuration_Requirements.md` DEV-CFG-7). Add to this page a table with the currently blocked IP addresses due to the rate limiter. Update this table as well every second.
 
 Add the metrics as part of the stress test. Collect during each phase the mean and standard deviation for the metrics and add them to the stress test report.
 

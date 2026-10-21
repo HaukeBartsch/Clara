@@ -269,11 +269,12 @@ SESSION_COOKIE_SECURE=1
 #             of every caller behind an unlisted proxy collapses into one rate-limit bucket
 TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1
 
-# --- account policy, time zone, appearance, two-factor
+# --- account policy, time zone, appearance, monitoring, two-factor
 AUTH_INACTIVITY_LIMIT_DAYS=180
 AUTH_PASSWORD_TOKEN_TTL_DAYS=7
 APP_TIMEZONE=UTC
 UI_THEME=bootstrap
+MONITORING_PERIOD_MINUTES=10
 AUTH_REQUIRE_2FA=0
 TOTP_ISSUER=CLARA
 TFA_EMAIL_CODE_TTL=600
@@ -832,6 +833,7 @@ All of these are `.env` settings. Restart afterwards (`systemctl restart clara-a
 | Email (login codes, invitations, password resets) | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY` (`starttls`/`tls`/`none`), `SMTP_USERNAME`, `SMTP_PASSWORD`, `OTP_MAIL_FROM` | Without `SMTP_HOST` the email methods are unavailable. `OTP_MAIL_FROM` is required once `SMTP_HOST` is set. |
 | Mandatory two-factor | `AUTH_REQUIRE_2FA=1` | Local and LDAP accounts must enroll (TOTP or email code) after their password step. |
 | Default theme | `UI_THEME=bootstrap\|darkly\|yeti` | Users can override it personally. |
+| Monitoring chart span | `MONITORING_PERIOD_MINUTES=10` | How far back the Control Panel's Monitoring charts reach, in minutes (1–1440). The page samples once a second while it is open and drops every older timepoint, so a tab left open all day keeps ten minutes and not the day. Set `60` for the old hour. |
 | Rate limiting | *(no variable)* | Enable it and set the thresholds in the administration interface (system settings). It is off by default. |
 
 `ADMIN_BOOTSTRAP_PASSWORD` may be left empty once at least one OAuth2 provider or LDAP server is configured.

@@ -49,6 +49,12 @@ test.describe("Monitoring in the Control Panel (REQ-UI-064)", () => {
     await expect(page.locator('[data-clara-mon-chart="rps"] svg path.clara-mon-line')).toHaveAttribute("d", /^M/)
     await expect(page.locator('[data-clara-mon-chart="throughput"] svg path.clara-mon-line')).toHaveAttribute("d", /^M/)
 
+    // The chart period is configuration, not a window baked into the page (REQ-CFG-034), and the
+    // intro sentence names the same number the script was handed.
+    const minutes = await page.locator("[data-clara-mon-period-minutes]").getAttribute("data-clara-mon-period-minutes")
+    expect(minutes).toMatch(/^[1-9]\d*$/)
+    await expect(page.getByText(`The charts cover the last ${minutes} minutes`)).toBeVisible()
+
     // Polling took over: the freshness line names an update, and the two-sample rates appeared.
     await expect(page.locator("[data-clara-mon-updated]")).toContainText("Updated")
     await expect(page.locator('[data-clara-mon-stat="rps"]')).toHaveText(/^\d+\.\d$/)

@@ -140,6 +140,12 @@ The rate-limit **thresholds are not environment variables**: `rate_limit_enabled
 |---|---|---|---|---|---|
 | `UI_THEME` | web | one of `bootstrap`, `darkly`, `yeti` | `bootstrap` | — | installation-wide default Bootstrap theme (GD-26, REQ-CFG-031, REQ-TECH-027): the stylesheet rendered for every user without a personal override (`users.ui_theme`, REQ-DB-008); an unknown value refuses startup (§4.1); the web layer resolves the effective theme at render time and links exactly one same-origin stylesheet (REQ-UI-040) |
 
+### 3.13 Monitoring (web)
+
+| Variable | Component | Type | Default | Required | Description |
+|---|---|---|---|---|---|
+| `MONITORING_PERIOD_MINUTES` | web | integer minutes, 1…1440 | `10` | — | how far back the Control Panel's Monitoring charts reach (REQ-CFG-034, REQ-UI-064): the page samples once a second while it is visible and drops every timepoint older than this period, so an open tab carries one bounded buffer instead of everything since it was opened. The web layer validates it at boot and passes it to `monitoring.js` as the charts row's `data-clara-mon-period-minutes` — the browser never reads the environment (REQ-UI-002); a value outside the range refuses startup (§4.1) |
+
 ## 4. Validation Rules and Startup Behavior
 
 ### 4.1 Required-at-startup matrix
@@ -165,6 +171,7 @@ The rate-limit **thresholds are not environment variables**: `rate_limit_enabled
 | `AUTH_REQUIRE_2FA` ∈ {`0`,`1`} (default `0`); `TFA_EMAIL_CODE_TTL` integer > 0; `SMTP_SECURITY` ∈ {`starttls`,`tls`,`none`} | required | required (GD-21, REQ-CFG-027/028/029) |
 | when `SMTP_HOST` is set: `OTP_MAIL_FROM` set and parseable (email method active; unset SMTP → method unavailable, no startup failure) | required | required (REQ-CFG-028) |
 | `UI_THEME` ∈ {`bootstrap`, `darkly`, `yeti`} (default `bootstrap`) | required | required (GD-26, REQ-CFG-031) |
+| `MONITORING_PERIOD_MINUTES` is an integer ≥ 1 and ≤ 1440 (default `10`) | required | required (REQ-CFG-034) |
 
 The API refuses to start with a non-zero exit and a message naming each missing/invalid variable (REQ-CFG-004); the PHP app fails at entry-point boot with an operator-readable page and no stack trace in production (REQ-CFG-005).
 
@@ -251,6 +258,10 @@ APP_TIMEZONE=UTC
 # appearance (web) — installation default theme: bootstrap | darkly | yeti (GD-26);
 # users may override it personally; an unknown value refuses startup
 UI_THEME=bootstrap
+
+# monitoring charts (web) — how far back the Monitoring page's charts reach, in minutes;
+# timepoints older than this period are dropped (REQ-CFG-034). 1…1440, default 10
+MONITORING_PERIOD_MINUTES=10
 
 # two-factor authentication (api, GD-21) — email method unavailable without SMTP_HOST
 AUTH_REQUIRE_2FA=0

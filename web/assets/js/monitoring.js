@@ -2,8 +2,9 @@
 // paint; this module takes over: once per second while the document is visible it re-reads
 // this section's data region (`GET /admin?section=monitoring` with Accept: application/json,
 // REQ-UI-044 — never /api/v1/* directly, REQ-UI-002), appends one sample to an in-memory
-// buffer, and redraws the eight d3 small multiples of the last hour as observed since the
-// page was opened. The endpoint carries counters as of now, not a series: rates are the
+// buffer, and redraws the eight d3 small multiples over the chart period — the window the
+// buffer never grows past, `MONITORING_PERIOD_MINUTES` from the environment and ten minutes by
+// default (REQ-CFG-034). The endpoint carries counters as of now, not a series: rates are the
 // difference between consecutive samples, and a counter that went backwards (an API restart)
 // reads as a gap rather than a spike. A tick never overlaps its predecessor, and polling
 // pauses while the tab is hidden. No UI string lives here (REQ-UI-045); d3 arrives as the
@@ -12,8 +13,25 @@
 import { ready, t, fetchJson, el, td, fill } from "../app.js"
 
 const POLL_MS = 1000
-const WINDOW_MS = 60 * 60 * 1000 // the last hour of samples
 const MIN_SPAN_MS = 60 * 1000 // a freshly opened page still gets a legible x axis
+const DEFAULT_PERIOD_MINUTES = 10 // what the page asks for when it says nothing (REQ-CFG-034)
+const MAX_PERIOD_MINUTES = 1440 // Config's ceiling: one day of 1 Hz samples is the useful end
+
+/**
+ * The chart period, as the rendered section declares it: `MONITORING_PERIOD_MINUTES` reaches this
+ * module through `data-clara-mon-period-minutes` on the charts row (the browser never reads the
+ * environment, REQ-UI-002). A missing or nonsensical value falls back to the default rather than
+ * leaving the page without a window.
+ */
+function periodMinutes() {
+  const node = document.querySelector("[data-clara-mon-period-minutes]")
+  const minutes = node ? Number(node.dataset.claraMonPeriodMinutes) : NaN
+  if (!Number.isFinite(minutes)) return DEFAULT_PERIOD_MINUTES
+  return Math.min(MAX_PERIOD_MINUTES, Math.max(1, Math.floor(minutes)))
+}
+
+/** The rolling window in ms: samples older than it are dropped, so the buffer stays bounded. */
+let periodMs = DEFAULT_PERIOD_MINUTES * 60 * 1000
 
 /** "2026-10-15 12:34:56" canonical UTC (REQ-DB-005) → epoch ms; the snapshot's clock, not ours. */
 function parseUtc(stamp) {
@@ -119,8 +137,23 @@ function pushSample(metrics) {
   samples.push(gauge) // one sample per snapshot; the first one only establishes the baseline
   prev = { t: now, count: totals.count, sumMs: totals.sumMs, respBytes: totals.respBytes, waitCount: num(pool.wait_count) }
 
-  const cutoff = now - WINDOW_MS
-  while (samples.length > 2 && samples[1].t < cutoff) samples.shift() // keep ≤ the last hour
+  prune(now)
+}
+
+/**
+ * Drop every timepoint outside the period `[now − periodMs, now]`, so a page that stays open keeps
+ * one period of history rather than everything since it was opened. The newest sample always stays:
+ * a page whose snapshots all predate the window still has to draw something. A snapshot whose
+ * `generated_at` never advances (a cached or proxied response) leaves the time cutoff unable to
+ * fire at all, so the length is capped as well — at the ≥ 1 s cadence the polling loop keeps, that
+ * ceiling is above what a whole period of in-range samples can reach.
+ */
+function prune(now) {
+  const cutoff = now - periodMs
+  while (samples.length > 1 && samples[0].t < cutoff) samples.shift()
+
+  const maxSamples = Math.floor(periodMs / POLL_MS) + 2
+  while (samples.length > maxSamples) samples.shift()
 }
 
 // --- d3 small multiples ---------------------------------------------------------------------
@@ -145,15 +178,21 @@ function chartNodes(figure) {
 function drawCharts() {
   if (samples.length === 0) return
   const end = samples[samples.length - 1].t
-  let start = Math.max(end - WINDOW_MS, samples[0].t)
+  let start = end - periodMs // one period wide: the whole window, whatever the buffer holds
   if (end - start < MIN_SPAN_MS) start = end - MIN_SPAN_MS
+
+  // Only the period's own timepoints are drawn and scaled — an older sample would stretch the y
+  // axis for a value that is no longer on the chart. `prune` already drops them; this is the same
+  // rule where it matters, so a snapshot that arrived out of order cannot reach the plot either.
+  const visible = samples.filter((s) => s.t >= start && s.t <= end)
+  if (visible.length === 0) return
 
   for (const chart of CHARTS) {
     const figure = document.querySelector(`[data-clara-mon-chart="${chart.key}"]`)
     if (!figure) continue
     const nodes = chartNodes(figure)
-    const values = samples.map(chart.pick).filter((v) => v !== null && v !== undefined)
-    const ceilingValue = chart.ceiling ? Math.max(...samples.map(chart.ceiling).filter((v) => v > 0), 0) : 0
+    const values = visible.map(chart.pick).filter((v) => v !== null && v !== undefined)
+    const ceilingValue = chart.ceiling ? Math.max(...visible.map(chart.ceiling).filter((v) => v > 0), 0) : 0
     const max = Math.max(...values, ceilingValue, 1) * 1.08
 
     const x = d3.scaleLinear().domain([start, end]).range([0, W])
@@ -163,7 +202,7 @@ function drawCharts() {
       .x((d) => x(d.t))
       .y((d) => y(d.value))
 
-    const points = samples.map((s) => ({ t: s.t, value: chart.pick(s) }))
+    const points = visible.map((s) => ({ t: s.t, value: chart.pick(s) }))
     nodes.line.attr("d", line(points))
 
     if (chart.ceiling && ceilingValue > 0) {
@@ -275,5 +314,6 @@ async function loop() {
 
 ready(() => {
   if (!document.querySelector("[data-clara-mon-chart]")) return
+  periodMs = periodMinutes() * 60 * 1000 // the configured window, taken before the first sample
   loop()
 })

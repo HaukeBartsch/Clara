@@ -305,6 +305,22 @@ describe('configuration validation (REQ-CFG-005)', function (): void {
         assert_contains('SESSION_LIFETIME', $message);
     });
 
+    it('takes the Monitoring chart period and refuses one outside its range (REQ-CFG-034)', function (): void {
+        assert_same(10, Config::fromValues(['INTERNAL_SERVICE_TOKEN' => 'x'])->monitoringPeriodMinutes);
+        assert_same(
+            30,
+            Config::fromValues(['INTERNAL_SERVICE_TOKEN' => 'x', 'MONITORING_PERIOD_MINUTES' => '30'])->monitoringPeriodMinutes
+        );
+
+        foreach (['0', '1441', 'ten', ''] as $raw) {
+            $message = assert_throws(ConfigError::class, static function () use ($raw): void {
+                Config::fromValues(['INTERNAL_SERVICE_TOKEN' => 'x', 'MONITORING_PERIOD_MINUTES' => $raw]);
+            })->getMessage();
+
+            assert_contains('MONITORING_PERIOD_MINUTES', $message);
+        }
+    });
+
     it('rejects a name list with an empty entry (REQ-CFG-032)', function (): void {
         $message = assert_throws(ConfigError::class, static function (): void {
             Config::fromValues(['INTERNAL_SERVICE_TOKEN' => 'x', 'LOCAL_LOGIN_NAMES' => 'Clinic A,, Clinic B']);

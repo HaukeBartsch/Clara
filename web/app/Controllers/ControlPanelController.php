@@ -719,7 +719,8 @@ final class ControlPanelController extends Controller
      * (Design §4.25, REQ-API-163) and `GET /api/v1/system/blocked-ips` (§4.26, REQ-API-164) —
      * and `monitoring.js` takes over: once a second while the page is visible it re-reads this
      * section's data region, appends the sample to a browser-side buffer, and redraws the d3
-     * line charts of the last hour as observed since the page was opened. An API that cannot
+     * line charts of the configured period (MONITORING_PERIOD_MINUTES, REQ-CFG-034) as observed
+     * since the page was opened — samples older than that period are dropped. An API that cannot
      * answer is itself the finding, so a failure renders rather than throwing.
      */
     private function monitoringPage(): Response
@@ -731,6 +732,9 @@ final class ControlPanelController extends Controller
             'metricsError' => $facts['metrics_error'],
             'rateLimit' => $facts['rate_limit'],
             'rateLimitError' => $facts['rate_limit_error'],
+            // The one place the browser learns the period: a data attribute, never an env read
+            // (REQ-UI-002). monitoring.js keeps its buffer to it (REQ-CFG-034, REQ-UI-064).
+            'periodMinutes' => $this->config->monitoringPeriodMinutes,
         ], [
             // d3 is a UMD library attaching to the global; module scripts run in document
             // order, so monitoring.js sees it. Static extras — no dynamic loadScript dance.

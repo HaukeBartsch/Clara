@@ -38,6 +38,12 @@ final class Config
     /** Same floor the Go API refuses to start below — REQ-CFG-004 keeps both sides identical (finding F8). */
     private const MIN_INTERNAL_SERVICE_TOKEN_BYTES = 32;
 
+    /**
+     * The ceiling for MONITORING_PERIOD_MINUTES (REQ-CFG-034): a day of once-a-second samples is as
+     * much history as a browser tab redraws usefully, so anything above it reads as a typo.
+     */
+    public const MAX_MONITORING_PERIOD_MINUTES = 1440;
+
     public string $appEnv = 'development';
 
     public bool $isDevelopment = true;
@@ -74,6 +80,14 @@ final class Config
 
     /** Installation default theme (REQ-CFG-031); a user may override it. */
     public string $uiTheme = 'bootstrap';
+
+    /**
+     * How far back the Monitoring charts reach (REQ-CFG-034): the browser keeps one period of
+     * samples and drops every timepoint older than it, so an open page holds a bounded buffer
+     * instead of everything since it was opened. Consumed by the web layer's Monitoring section,
+     * which carries it to `monitoring.js` as a data attribute (REQ-UI-064).
+     */
+    public int $monitoringPeriodMinutes = 10;
 
     /**
      * Authentication sources as configured: one entry per (name, source) pair —
@@ -298,6 +312,22 @@ final class Config
                 . 'assets/vendor/bootstrap/themes/ (REQ-TECH-027)';
         }
 
+        // --- monitoring charts (REQ-CFG-034) ---
+        // The Monitoring page samples once a second while it is visible, so this period is also how
+        // much history the browser tab carries: one sample per poll up to a day's worth. A value
+        // outside the range is a mistake rather than a preference, and refuses startup like every
+        // other variable (REQ-CFG-005).
+        $period = $get('MONITORING_PERIOD_MINUTES', '10');
+        if (preg_match('/^\d+$/', $period) !== 1 || (int) $period < 1 || (int) $period > self::MAX_MONITORING_PERIOD_MINUTES) {
+            $errors[] = sprintf(
+                'MONITORING_PERIOD_MINUTES must be an integer number of minutes between 1 and %d, got \'%s\'',
+                self::MAX_MONITORING_PERIOD_MINUTES,
+                $period
+            );
+        } else {
+            $c->monitoringPeriodMinutes = (int) $period;
+        }
+
         // --- authentication sources (REQ-CFG-032) ---
         $c->authSources = self::readAuthSources($c, $get, $errors);
 
@@ -514,7 +544,8 @@ final class Config
         $keys = [
             'APP_ENV', 'API_ADDR', 'INTERNAL_SERVICE_TOKEN', 'WEB_PUBLIC_URL', 'LOG_LEVEL_WEB',
             'SESSION_DIR', 'SESSION_COOKIE_NAME', 'SESSION_LIFETIME', 'SESSION_IDLE_TIMEOUT',
-            'SESSION_ROTATE_INTERVAL', 'SESSION_COOKIE_SECURE', 'UI_THEME', 'LOCAL_LOGIN_NAMES',
+            'SESSION_ROTATE_INTERVAL', 'SESSION_COOKIE_SECURE', 'UI_THEME', 'MONITORING_PERIOD_MINUTES',
+            'LOCAL_LOGIN_NAMES',
             'TRUSTED_PROXY_CIDRS',
         ];
         for ($n = 1; $n <= self::SOURCE_INDEX_MAX; $n++) {

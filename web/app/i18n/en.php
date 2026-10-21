@@ -330,7 +330,7 @@ return [
     // The Monitoring section (§5.11, REQ-UI-064): live API performance and rate-limiter state.
     // The charts carry no text — every line lives here; {placeholders} carry values.
     'admin.monitoring.title' => 'Monitoring',
-    'admin.monitoring.intro' => 'The API\'s own numbers, refreshed once per second while this page is visible. The charts cover the last hour as observed since this page was opened: the API reports counters, not history, so they fill as samples arrive and an API restart resets them and leaves a gap.',
+    'admin.monitoring.intro' => 'The API\'s own numbers, refreshed once per second while this page is visible. The charts cover the last {minutes} minutes as observed since this page was opened: the API reports counters, not history, so they fill as samples arrive and an API restart resets them and leaves a gap. Timepoints older than that leave the chart — the page keeps no history beyond the period.',
     'admin.monitoring.failed' => 'The API could not answer ({error}). The numbers below show the last sample that did arrive.',
     'admin.monitoring.window' => 'Waiting for the first sample…',
     'admin.monitoring.updated' => 'Updated {seconds} s ago.',

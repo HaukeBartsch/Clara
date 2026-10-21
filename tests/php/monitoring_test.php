@@ -101,6 +101,29 @@ describe('Monitoring section (§5.11, REQ-UI-064)', function (): void {
         assert_contains('"admin.monitoring.blocked.off"', $body);
     });
 
+    it('renders the configured chart period, ten minutes by default (REQ-CFG-034)', function (): void {
+        sign_in(['is_admin' => 1]);
+
+        // The period reaches monitoring.js as a data attribute — the browser never reads the
+        // environment (REQ-UI-002) — and the intro sentence names the same number.
+        queue_shell();
+        queue_monitoring_facts();
+        $default = router_for(http_request('GET', '/admin', browser_headers(), [], ['section' => 'monitoring']))
+            ->dispatch()->body();
+        assert_contains('data-clara-mon-period-minutes="10"', $default);
+        assert_contains('The charts cover the last 10 minutes', $default);
+
+        // MONITORING_PERIOD_MINUTES decides it; nothing about an hour is baked into the view.
+        queue_shell();
+        queue_monitoring_facts();
+        $configured = router_for(
+            http_request('GET', '/admin', browser_headers(), [], ['section' => 'monitoring']),
+            test_config(['MONITORING_PERIOD_MINUTES' => '30'])
+        )->dispatch()->body();
+        assert_contains('data-clara-mon-period-minutes="30"', $configured);
+        assert_contains('The charts cover the last 30 minutes', $configured);
+    });
+
     it('passes {metrics, rate_limit} through as its data region (REQ-UI-044)', function (): void {
         sign_in(['is_admin' => 1]);
         queue_monitoring_facts();

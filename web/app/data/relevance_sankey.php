@@ -292,7 +292,7 @@ return array (
       'column' => 0,
       'order' => 8,
       'area' => 'system-configuration',
-      'codes' => 40,
+      'codes' => 42,
     ),
     32 => 
     array (
@@ -301,7 +301,7 @@ return array (
       'order' => 80,
       'prefix' => 'REQ-CFG',
       'kind' => 'req',
-      'codes' => 32,
+      'codes' => 33,
     ),
     33 => 
     array (
@@ -319,7 +319,7 @@ return array (
       'order' => 82,
       'prefix' => 'DEV-CFG',
       'kind' => 'dev',
-      'codes' => 6,
+      'codes' => 7,
     ),
     35 => 
     array (
@@ -362,7 +362,7 @@ return array (
       'column' => 0,
       'order' => 10,
       'area' => 'user-interface',
-      'codes' => 86,
+      'codes' => 87,
     ),
     40 => 
     array (
@@ -389,7 +389,7 @@ return array (
       'order' => 102,
       'prefix' => 'DEV-UI',
       'kind' => 'dev',
-      'codes' => 18,
+      'codes' => 19,
     ),
     43 => 
     array (
@@ -405,7 +405,7 @@ return array (
       'column' => 2,
       'order' => 1,
       'class' => 'performance',
-      'codes' => 37,
+      'codes' => 40,
     ),
     45 => 
     array (
@@ -1062,7 +1062,7 @@ return array (
     array (
       'source' => 'a-system-configuration',
       'target' => 'g-system-configuration-req',
-      'value' => 41,
+      'value' => 42,
     ),
     105 => 
     array (
@@ -1074,7 +1074,7 @@ return array (
     array (
       'source' => 'g-system-configuration-req',
       'target' => 'c-performance',
-      'value' => 3,
+      'value' => 4,
     ),
     107 => 
     array (
@@ -1110,7 +1110,7 @@ return array (
     array (
       'source' => 'a-system-configuration',
       'target' => 'g-system-configuration-dev',
-      'value' => 10,
+      'value' => 11,
     ),
     113 => 
     array (
@@ -1122,7 +1122,7 @@ return array (
     array (
       'source' => 'g-system-configuration-dev',
       'target' => 'c-performance',
-      'value' => 1,
+      'value' => 2,
     ),
     115 => 
     array (
@@ -1272,7 +1272,7 @@ return array (
     array (
       'source' => 'a-user-interface',
       'target' => 'g-user-interface-dev',
-      'value' => 19,
+      'value' => 20,
     ),
     140 => 
     array (
@@ -1283,10 +1283,16 @@ return array (
     141 => 
     array (
       'source' => 'g-user-interface-dev',
+      'target' => 'c-performance',
+      'value' => 1,
+    ),
+    142 => 
+    array (
+      'source' => 'g-user-interface-dev',
       'target' => 'c-workflow',
       'value' => 14,
     ),
-    142 => 
+    143 => 
     array (
       'source' => 'g-user-interface-dev',
       'target' => 'c-resilience',
