@@ -1014,3 +1014,10 @@ Does it make sense to add the following php functions to "disabled_functions" in
 disable_functions=exec,passthru,system,proc_open,popen,shell_exec
 ```
 
+## Nicer graphics
+
+The class 'card' in the Monitoring application should have a background color like RGB: 0, 120, 151 RGB: 145, 50, 36 RGB: 0, 92, 50 RGB: 170, 115, 11. And a white color for text.
+
+## Simplify the Instrument controls
+
+Functionality of the setup section for "Instruments" should move to the Design page. Controls like add instrument, edit, remove and reorder should appear in Design.
