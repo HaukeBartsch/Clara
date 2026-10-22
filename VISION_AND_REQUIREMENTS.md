@@ -1008,11 +1008,15 @@ Add a simplified y axis to all clara monitoring charts (data-clara-mon-chart) on
 
 ## Securing php?
 
-Does it make sense to add the following php functions to "disabled_functions" in php.ini?
+Disable PHP shell-execution functions that CLARA does not use as defense in depth:
 
 ```
-disable_functions=exec,passthru,system,proc_open,popen,shell_exec
+disable_functions=exec,passthru,system,popen,shell_exec
 ```
+
+Do not disable `proc_open`: LDAP authentication uses it to run parallel directory attempts.
+Document the required PHP functions in the installation guide; if CLARA or a later dependency
+needs a disabled function, remove that function from the list on demand after review and testing.
 
 ## Nicer graphics
 

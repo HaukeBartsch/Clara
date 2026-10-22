@@ -172,6 +172,21 @@ Why each package is needed:
 
 If `dnf module list php` shows no `8.3` stream, the host is older than RHEL 9.6. Update the host, or use the Remi repository's `php:remi-8.3` stream.
 
+As defense in depth, disable PHP's shell-execution functions that CLARA does not use. Add the
+following to `/etc/php.ini` (merge with any existing `disable_functions` setting rather than
+creating a second directive), then restart PHP-FPM:
+
+```ini
+disable_functions = exec,passthru,system,popen,shell_exec
+```
+
+**Keep `proc_open` enabled.** CLARA uses it to start parallel LDAP login attempts, so including it
+in `disable_functions` breaks LDAP authentication. This setting is defense in depth, not a
+replacement for the service-account and SELinux restrictions below. If CLARA or a later dependency
+needs one of the disabled functions, remove only that function from the list when required, after
+reviewing the need and testing the changed configuration. Confirm the effective setting for both
+the CLI and PHP-FPM SAPIs with `php --ri "Core"` and `php-fpm -i`.
+
 ### 4.3 MariaDB 11.4 LTS
 
 Add the upstream repository as `/etc/yum.repos.d/mariadb.repo`:
@@ -568,7 +583,7 @@ ls -l /run/php-fpm/clara.sock        # srw-rw---- nginx nginx
 
 Notes:
 
-- **Do not disable `proc_open`** (e.g. through `disable_functions` in `/etc/php.ini`). LDAP logins start their parallel directory attempts with it.
+- **Keep `proc_open` enabled** (including in `disable_functions`, if configured). LDAP logins start their parallel directory attempts with it; see §4.2 for the recommended hardening list.
 - The RHEL default pool `www` (in `www.conf`) stays installed but CLARA does not use it. You may disable it if nothing else on the host needs PHP.
 - Size `pm.max_children` to the host. Each worker needs roughly 30–60 MB.
 
