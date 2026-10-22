@@ -76,11 +76,11 @@ function fmtUptime(seconds) {
 // pick reads one series out of a sample (null = gap); stat formats the card's current value.
 
 const CHARTS = [
-  { key: "rps", pick: (d) => d.rps },
+  { key: "rps", pick: (d) => d.rps, axisFormat: fixed(1) },
   { key: "latency", pick: (d) => d.latencyMs, format: fixed(1), unit: " ms" },
   { key: "goroutines", pick: (d) => d.goroutines, format: (v) => String(Math.round(v)) },
   { key: "heap", pick: (d) => d.heapMiB, format: fixed(1), unit: " MiB" },
-  { key: "pool", pick: (d) => d.poolInUse, ceiling: (d) => d.poolMax },
+  { key: "pool", pick: (d) => d.poolInUse, format: (v) => String(Math.round(v)), ceiling: (d) => d.poolMax },
   { key: "waits", pick: (d) => d.waitsPerS, format: fixed(2) },
   { key: "gc", pick: (d) => d.gcMs, format: fixed(2), unit: " ms" },
   { key: "throughput", pick: (d) => d.bytesPerS, statFormat: humanBytesPerSecond },
@@ -160,6 +160,10 @@ function prune(now) {
 
 const W = 240
 const H = 72
+const PLOT_LEFT = 42
+const PLOT_RIGHT = W - 4
+const PLOT_TOP = 6
+const PLOT_BOTTOM = H - 6
 
 /** One figure gets its SVG once; each redraw only rebinds the paths (cheap: tens of points). */
 function chartNodes(figure) {
@@ -169,7 +173,24 @@ function chartNodes(figure) {
     .attr("viewBox", `0 0 ${W} ${H}`)
     .attr("preserveAspectRatio", "none")
     .attr("aria-hidden", "true")
-  nodes = { svg, line: svg.append("path").attr("class", "clara-mon-line") }
+  const axis = svg.append("g").attr("class", "clara-mon-axis")
+  axis.append("line")
+    .attr("class", "clara-mon-axis-line")
+    .attr("x1", PLOT_LEFT).attr("x2", PLOT_LEFT)
+    .attr("y1", PLOT_TOP).attr("y2", PLOT_BOTTOM)
+  const tick = () => {
+    const group = axis.append("g").attr("class", "clara-mon-axis-tick")
+    group.append("line")
+      .attr("x1", PLOT_LEFT - 3).attr("x2", PLOT_LEFT)
+    group.append("text").attr("x", PLOT_LEFT - 5).attr("text-anchor", "end")
+    return group
+  }
+  nodes = {
+    svg,
+    line: svg.append("path").attr("class", "clara-mon-line"),
+    maxTick: tick().attr("class", "clara-mon-axis-tick clara-mon-axis-max"),
+    minTick: tick().attr("class", "clara-mon-axis-tick clara-mon-axis-min"),
+  }
   nodes.ceiling = svg.append("path").attr("class", "clara-mon-ceiling")
   figure.__claraMon = nodes
   return nodes
@@ -192,22 +213,51 @@ function drawCharts() {
     if (!figure) continue
     const nodes = chartNodes(figure)
     const values = visible.map(chart.pick).filter((v) => v !== null && v !== undefined)
+    if (values.length === 0) {
+      nodes.maxTick.attr("display", "none")
+      nodes.minTick.attr("display", "none")
+      nodes.line.attr("d", null)
+      if (chart.ceiling) nodes.ceiling.attr("display", "none")
+      continue
+    }
+    const observedMin = Math.min(...values)
+    const observedMax = Math.max(...values)
     const ceilingValue = chart.ceiling ? Math.max(...visible.map(chart.ceiling).filter((v) => v > 0), 0) : 0
-    const max = Math.max(...values, ceilingValue, 1) * 1.08
+    const extent = Math.max(observedMax, ceilingValue) - observedMin
+    const padding = Math.max(extent * 0.08, Math.abs(observedMax) * 0.05, 0.01)
 
     const x = d3.scaleLinear().domain([start, end]).range([0, W])
-    const y = d3.scaleLinear().domain([0, max]).range([H, 0])
+    const y = d3.scaleLinear()
+      .domain([observedMin - padding, Math.max(observedMax, ceilingValue) + padding])
+      .range([PLOT_BOTTOM, PLOT_TOP])
     const line = d3.line()
       .defined((d) => d.value !== null && d.value !== undefined)
-      .x((d) => x(d.t))
+      .x((d) => PLOT_LEFT + (x(d.t) / W) * (PLOT_RIGHT - PLOT_LEFT))
       .y((d) => y(d.value))
 
     const points = visible.map((s) => ({ t: s.t, value: chart.pick(s) }))
     nodes.line.attr("d", line(points))
 
+    const format = chart.axisFormat || chart.format || chart.statFormat || String
+    const unit = chart.unit || ""
+    nodes.maxTick
+      .attr("display", null)
+      .attr("transform", `translate(0,${y(observedMax)})`)
+      .select("text")
+      .attr("dy", observedMax === observedMin ? "-3" : "0")
+      .text(format(observedMax) + unit)
+    nodes.minTick
+      .attr("display", null)
+      .attr("transform", `translate(0,${y(observedMin)})`)
+      .select("text")
+      .attr("dy", observedMax === observedMin ? "8" : "0")
+      .text(format(observedMin) + unit)
+
     if (chart.ceiling && ceilingValue > 0) {
       // the dashed max_open ceiling: a flat line the in-use curve must stay under
-      nodes.ceiling.attr("d", `M0,${y(ceilingValue)}L${W},${y(ceilingValue)}`).attr("display", null)
+      nodes.ceiling
+        .attr("d", `M${PLOT_LEFT},${y(ceilingValue)}L${PLOT_RIGHT},${y(ceilingValue)}`)
+        .attr("display", null)
     } else if (chart.ceiling) {
       nodes.ceiling.attr("display", "none")
     }

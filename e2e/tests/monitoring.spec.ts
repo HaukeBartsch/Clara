@@ -59,6 +59,15 @@ test.describe("Monitoring in the Control Panel (REQ-UI-064)", () => {
     await expect(page.locator("[data-clara-mon-updated]")).toContainText("Updated")
     await expect(page.locator('[data-clara-mon-stat="rps"]')).toHaveText(/^\d+\.\d$/)
 
+    // Each chart's simplified y-axis labels the observed extrema in the displayed history.
+    for (const chart of ["rps", "latency", "goroutines", "heap", "pool", "waits", "gc", "throughput"]) {
+      const ticks = page.locator(`[data-clara-mon-chart="${chart}"] .clara-mon-axis-tick`)
+      await expect(ticks).toHaveCount(2)
+      await expect(ticks.locator("text")).toHaveCount(2)
+      await expect(ticks.locator("text").first()).not.toBeEmpty()
+      await expect(ticks.locator("text").last()).not.toBeEmpty()
+    }
+
     // The blocked table: nothing on this stack is blocked, and the settings line says whether
     // limiting is on at all — "nothing blocked" stays distinguishable from "limiter off".
     await expect(page.locator("[data-clara-mon-blocked-body]")).toContainText(/No addresses are blocked\.|\d+\.\d+\.\d+\.\d+/)

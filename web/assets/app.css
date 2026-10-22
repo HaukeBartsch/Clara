@@ -657,14 +657,26 @@ h1 .clara-mode-badge {
 }
 
 /* Monitoring small multiples (§5.11, REQ-UI-064): monitoring.js draws inline SVG with the
-   vendored d3 — no text inside (the viewBox stretches), only paths styled entirely through
-   currentColor and Bootstrap custom properties so both themes restyle them untouched. */
+   vendored d3. The extrema axis and chart paths use the same theme-aware currentColor. */
 .clara-mon-chart svg {
   display: block;
   width: 100%;
   height: 72px;
   color: var(--bs-link-color);
   border-bottom: 1px solid var(--bs-border-color);
+}
+
+.clara-mon-axis-line,
+.clara-mon-axis-tick line {
+  stroke: currentColor;
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+}
+
+.clara-mon-axis-tick text {
+  fill: currentColor;
+  font-size: 8px;
+  dominant-baseline: central;
 }
 
 .clara-mon-line {
