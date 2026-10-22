@@ -66,17 +66,23 @@ test.describe("setup and designer (M4)", () => {
     await expect(page).toHaveURL(/\/projects\/\d+\/setup$/)
     const projectUrl = page.url().replace(/\/setup$/, "")
 
-    // --- Setup: an event with a timepoint, an instrument, the mapping (§6.2) ---
+    // --- Setup: an event with a timepoint (§6.2) ---
     await expect(page.locator('table.clara-events tr[data-event="baseline_arm_1"]')).toBeVisible()
     await page.fill("#event-name-1", "follow_up")
     await page.fill("#event-period-1", "30")
     await page.locator("form.clara-add-event button[type=submit]").click()
     await expect(page.locator('table.clara-events tr[data-event="follow_up_arm_1"]')).toContainText("30")
 
+    // --- Design: the instrument itself (§7.1, REQ-UI-067) — Setup no longer offers it ---
+    await expect(page.locator('form[action$="action=add_instrument"]')).toHaveCount(0)
+    await page.locator("#clara-nav").getByRole("link", { name: "Design" }).click()
     await page.fill("#instrument-name", "vitals")
     await page.locator('form[action$="action=add_instrument"] button[type=submit]').click()
-    await expect(page.locator('table.clara-instruments tr[data-instrument="vitals"]')).toBeVisible()
+    await expect(success(page)).toContainText('Instrument "vitals" added.')
+    await expect(page.locator('table.clara-design-instruments tr[data-instrument="vitals"]')).toBeVisible()
 
+    // --- Setup: the instrument × event matrix of arm 1 (§6.2 D) ---
+    await page.locator("#clara-nav").getByRole("link", { name: "Setup" }).click()
     const matrix = page.locator('form.clara-mapping[data-arm="1"]')
     await matrix.locator('input[data-pair="instrument|baseline_arm_1"]').check()
     await matrix.locator('input[data-pair="vitals|baseline_arm_1"]').check()
@@ -238,5 +244,71 @@ test.describe("setup and designer (M4)", () => {
     await question.getByRole("button", { name: "Delete anyway" }).click()
     await expect(page.locator(".alert-success")).toContainText(["The change is live now."])
     await expect(page.locator('table.clara-fields tr[data-field="sex"]')).toHaveCount(0)
+  })
+
+  test("add, reorder, edit and remove an instrument on the Design page (§7.1, REQ-UI-067)", async ({ page }) => {
+    test.setTimeout(120_000)
+    const tag = Date.now()
+    const projectName = `M4 instruments ${tag}`
+
+    await signInAsAdmin(page)
+    await page.locator('header a[href="/admin"]').click()
+    await page.locator("details.clara-create summary").click()
+    await page.fill("#project-project_name", projectName)
+    await page.selectOption("#project-organization", "OUS")
+    await page.fill("#project-pi_name", "Principal Investigator")
+    await page.fill("#project-pi_email", "pi@example.org")
+    await page.locator('form[action*="action=create_project"] button[type="submit"]').click()
+    await page.getByRole("link", { name: `Open ${projectName}` }).click()
+    await expect(page).toHaveURL(/\/projects\/\d+\/setup$/)
+
+    // Setup keeps the mapping, not the instruments (§6.2 D, §7.1).
+    await expect(page.locator('form[action$="action=add_instrument"]')).toHaveCount(0)
+    await expect(page.locator("p.clara-instruments-hint a")).toHaveAttribute("href", /\/design$/)
+
+    const instruments = page.locator("table.clara-design-instruments")
+    await page.locator("#clara-nav").getByRole("link", { name: "Design" }).click()
+    await expect(instruments.locator('tr[data-instrument="instrument"]')).toBeVisible()
+
+    // --- add (REQ-UI-067) ---
+    for (const name of ["visits", "labs"]) {
+      await page.fill("#instrument-name", name)
+      await page.locator('form[action$="action=add_instrument"] button[type=submit]').click()
+      await expect(success(page)).toContainText(`Instrument "${name}" added.`)
+    }
+    await expect(instruments.locator("tbody tr")).toHaveCount(3)
+
+    // --- reorder: labs past visits to the second place ---
+    const rowOrder = async () => (await instruments.locator("tbody tr td:first-child").allInnerTexts()).map((t) => t.trim())
+    await instruments.locator('tr[data-instrument="labs"] button[aria-label="Move up"]').click()
+    await expect(success(page)).toContainText("Order saved.")
+    expect(await rowOrder()).toEqual(["instrument", "labs", "visits"])
+
+    // --- edit: rename and mark it a survey (§7.1/§7.5, REQ-UI-024) ---
+    await instruments.locator('tr[data-instrument="labs"] a', { hasText: "Edit" }).click()
+    await expect(page.locator("#instrument-edit #instrument-edit-name")).toHaveValue("labs")
+    await page.fill("#instrument-edit-name", "imaging")
+    await page.check("#instrument-edit-survey")
+    await page.locator("#instrument-edit button[type=submit]").click()
+    await expect(success(page)).toContainText('Instrument "imaging" updated.')
+    const imaging = instruments.locator('tr[data-instrument="imaging"]')
+    await expect(imaging).toBeVisible()
+    await expect(imaging.locator(".badge")).toContainText("survey")
+
+    // --- remove (REQ-API-127) ---
+    for (const name of ["imaging", "visits"]) {
+      await instruments.locator(`tr[data-instrument="${name}"] form[action$="action=delete_instrument"] button`).click()
+      await confirmDialog(page)
+      await expect(success(page)).toContainText(`Instrument "${name}" removed.`)
+      await expect(instruments.locator(`tr[data-instrument="${name}"]`)).toHaveCount(0)
+    }
+
+    // The project's last instrument says what really happens: its fields go, it stays.
+    const last = instruments.locator('tr[data-instrument="instrument"] form[action$="action=delete_instrument"]')
+    await expect(last).toHaveAttribute("data-clara-confirm", /last instrument/)
+    await last.locator("button").click()
+    await confirmDialog(page)
+    await expect(success(page)).toContainText('renamed to "instrument"')
+    await expect(instruments.locator("tbody tr")).toHaveCount(1)
   })
 })

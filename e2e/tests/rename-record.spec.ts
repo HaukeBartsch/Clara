@@ -3,7 +3,7 @@ import { expect, test, type Page } from "@playwright/test"
 // An imported instrument renamed to uppercase, end to end: a REDCap instrument export (.zip with
 // instrument.csv + OriginID.txt) is imported into a fresh project, the record identifier moves
 // back out of the empty first instrument into the imported one (REQ-UI-056), `instrument` goes
-// empty and is removed, the surviving instrument is renamed by uppercasing its name (§7.5), the
+// empty and is removed, the surviving instrument is renamed by uppercasing its name (§7.1), the
 // acting user gets permissions, the instrument maps to baseline and a first record is entered on
 // it — which works whatever the case of the instrument name: neither event nor instrument names
 // carry a case rule (REQ-DB-011); lower-case belongs to field names (REQ-DB-013). This last save
@@ -151,8 +151,8 @@ test.describe("an imported instrument renamed to uppercase (REQ-UI-053, REQ-UI-0
     await expect(fieldOrder(page)).toHaveCount(3)
     expect(await fieldOrder(page).evaluateAll((rows) => rows.map((r) => r.getAttribute("data-field")))).toEqual(["series_uid", "series_title", "series_kind"])
 
-    // --- remove the now empty first instrument (§7.5): its row's Remove button, then the modal ---
-    await page.locator("#clara-nav").getByRole("link", { name: "Setup" }).click()
+    // --- remove the now empty first instrument (§7.1): its row's Remove button, then the modal ---
+    await page.locator("#clara-nav").getByRole("link", { name: "Design" }).click()
     await page.locator(`tr[data-instrument="instrument"]`).getByRole("button", { name: "Remove" }).click()
     await expect(page.locator("#clara-confirm")).toBeVisible()
     await page.locator("#clara-confirm [data-clara-confirm-ok]").click()
@@ -160,7 +160,7 @@ test.describe("an imported instrument renamed to uppercase (REQ-UI-053, REQ-UI-0
     // The imported instrument is the first instrument now — its first field holds GD-8.
     await expect(page.locator("table[data-instrument], tr[data-instrument]")).toHaveCount(1)
 
-    // --- rename by switching the name to uppercase (§7.5, REQ-API-128) ---
+    // --- rename by switching the name to uppercase (§7.1, REQ-API-128) ---
     const upper = FORM.toUpperCase()
     await page.locator(`tr[data-instrument="${FORM}"]`).getByRole("link", { name: "Edit" }).click()
     await page.fill("#instrument-edit-name", upper)

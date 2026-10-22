@@ -5,6 +5,11 @@
 // with `?field=<id>` (or `?field=new`). Branching logic and calculations are written in the
 // expression editor (§7.3); a calculated field carries the test panel (§7.4).
 //
+// The instrument list is also where instruments are made and changed (§7.1, REQ-UI-067):
+// add, edit (name, survey flag, instrument branching), reorder and remove — moved here from
+// Setup block C, which left only the instrument × event mapping. `?edit_instrument=<id>`
+// opens one instrument's edit form, as `?field=` does for a field.
+//
 // Field order comes from `GET …/fields` — never `GET …/fields/order`, which routes to the
 // reorder handler (Plan/Web_Implementation.md §7 rule 2). Every write sends exactly the
 // attributes the field endpoints accept (§7 rule 1); the API is the only validator of names,
@@ -60,6 +65,7 @@ final class DesignController extends StructureController
             'instruments' => $instruments,
             'repeating' => self::repeatingChoices(self::listOf($this->api->get($base . '/arms')),
                 $this->api->get($base . '/instrument-event-mapping'), $instruments),
+            'editInstrument' => self::parseObjectId($this->request->query('edit_instrument')),
             'import' => self::importView(Session::kept('import')),
         ], ['scripts' => self::SCRIPTS, 'jsKeys' => self::JS_KEYS], $state['mode']);
     }
@@ -72,6 +78,79 @@ final class DesignController extends StructureController
     public function data(): Response
     {
         return Response::json($this->designRegion(true));
+    }
+
+    // --- instruments (§7.1, REQ-UI-067) ---------------------------------------------
+
+    /**
+     * POST …?action=add_instrument — `POST …/instruments` with a name unique per project
+     * (a duplicate is the API's 409, shown verbatim, §3.4). The new instrument collects no
+     * data until Setup maps it to an event (REQ-UI-018), which the success line cannot say
+     * but the list's Repeating dropdown does.
+     *
+     * The copy of these controls kept its `setup.instrument.*` keys when they moved here from
+     * Setup block C: those are the keys the translation bundles carry.
+     */
+    public function addInstrument(): Response
+    {
+        $name = trim($this->request->field('name'));
+
+        return $this->structureWrite($this->designUrl(), function (int $projectId) use ($name): void {
+            $this->api->post('/api/v1/projects/' . $projectId . '/instruments', $this->withAck(['name' => $name]));
+        }, $this->i18n->t('setup.instrument.added', ['name' => $name]));
+    }
+
+    /** PUT …/instruments/{iid} with exactly `name`, `is_survey`, `branching_logic` (§4.10). */
+    public function updateInstrument(): Response
+    {
+        $iid = $this->objectId('instrument_id');
+        $name = trim($this->request->field('name'));
+        $body = [
+            'name' => $name,
+            'is_survey' => $this->request->field('is_survey') === '1',
+            'branching_logic' => trim($this->request->field('branching_logic')),
+        ];
+
+        return $this->structureWrite($this->designUrl(), function (int $projectId) use ($iid, $body): void {
+            $this->api->put('/api/v1/projects/' . $projectId . '/instruments/' . $iid, $this->withAck($body));
+        }, $this->i18n->t('setup.instrument.updated', ['name' => $name]));
+    }
+
+    /**
+     * POST …?action=move_instrument — up/down on the list, sent as the full ordered id list
+     * §4.10 requires; the GD-8 record-identifier invariant is the API's to keep (a violation
+     * answers 400 and is shown per §3.4).
+     */
+    public function moveInstrument(): Response
+    {
+        $iid = $this->objectId('instrument_id');
+        $direction = $this->request->field('direction');
+
+        return $this->structureWrite($this->designUrl(), function (int $projectId) use ($iid, $direction): void {
+            $ids = array_map(static fn (array $i): int => (int) ($i['id'] ?? 0),
+                self::listOf($this->api->get('/api/v1/projects/' . $projectId . '/instruments')));
+            $this->api->put('/api/v1/projects/' . $projectId . '/instruments/order',
+                $this->withAck(['order' => SetupController::moved($ids, $iid, $direction)]));
+        }, $this->i18n->t('setup.reordered'));
+    }
+
+    /**
+     * POST …?action=delete_instrument — DELETE …/instruments/{iid}: 409 while a surviving
+     * expression names one of its fields; as the last remaining instrument only its fields go
+     * and it is renamed `instrument` (200, REQ-API-127), which the confirmation promised.
+     */
+    public function deleteInstrument(): Response
+    {
+        $iid = $this->objectId('instrument_id');
+        $name = $this->request->field('name');
+
+        return $this->structureWrite($this->designUrl(), function (int $projectId) use ($iid, $name): void {
+            $answer = $this->api->delete('/api/v1/projects/' . $projectId . '/instruments/' . $iid, [],
+                $this->withAck([]) ?: null);
+            $this->flashSuccess($answer !== []
+                ? $this->i18n->t('setup.instrument.reset')
+                : $this->i18n->t('setup.instrument.deleted', ['name' => $name]));
+        }, '');
     }
 
     // --- repeating instruments (§7.1, REQ-UI-054) ------------------------------------
@@ -679,6 +758,12 @@ final class DesignController extends StructureController
         }
 
         return $iid;
+    }
+
+    /** The Design page itself — where every instrument-list write lands (§7.1). */
+    private function designUrl(): string
+    {
+        return '/projects/' . $this->projectIdFromPath() . '/design';
     }
 
     private function editorUrl(int $iid): string

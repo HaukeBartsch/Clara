@@ -73,7 +73,7 @@ final class Tools
                 'arm_num' => ['type' => 'integer'],
                 'event_name' => ['type' => 'string'],
             ], 'write', ['project_id', 'arm_num', 'event_name']),
-            $this->def('add_instrument', 'Add an instrument by name to a project (Setup).', [
+            $this->def('add_instrument', 'Add an instrument by name to a project (Design).', [
                 'project_id' => ['type' => 'integer'],
                 'name' => ['type' => 'string'],
             ], 'write', ['project_id', 'name']),

@@ -1,8 +1,10 @@
 <?php
-// The Setup page (`User_Interface_Design.md` §6.2, REQ-UI-018, `project_admin`): one page,
-// four blocks — A arms, B events per arm, C instruments, D the instrument × event matrix per
-// arm. The arm-dependent blocks (B, D) are tabs, one per arm, arm 1 shown by default; a write
-// in an arm's tab returns to that tab (`?arm=`).
+// The Setup page (`User_Interface_Design.md` §6.2, REQ-UI-018, `project_admin`): arms (A),
+// events per arm (B), the instrument × event matrix per arm (D), and the record naming mode.
+// The arm-dependent blocks (B, D) are tabs, one per arm, arm 1 shown by default; a write in an
+// arm's tab returns to that tab (`?arm=`). Instruments themselves are made and changed on the
+// Designer's instrument list (§7.1, REQ-UI-067) — this page only says which of them collect
+// data at which event, so it reads the list for the matrix rows and writes nothing to it.
 //
 // Reads per render: the project detail (permissions, name), the mode, the arms with their
 // events, the instruments, the mapping — and the staging diff only while a set is open.
@@ -57,7 +59,6 @@ final class SetupController extends StructureController
             'activeArm' => $activeArm,
             'editArm' => self::parseObjectId($this->request->query('edit_arm')),
             'editEvent' => self::parseObjectId($this->request->query('edit_event')),
-            'editInstrument' => self::parseObjectId($this->request->query('edit_instrument')),
         ], ['scripts' => self::SCRIPTS, 'jsKeys' => self::JS_KEYS], $state['mode']);
     }
 
@@ -206,65 +207,6 @@ final class SetupController extends StructureController
             'safe_region_start' => $read('safe_region_start'),
             'safe_region_end' => $read('safe_region_end'),
         ];
-    }
-
-    // --- Block C: instruments -------------------------------------------------------
-
-    public function addInstrument(): Response
-    {
-        $name = trim($this->request->field('name'));
-
-        return $this->structureWrite($this->back(), function (int $projectId) use ($name): void {
-            $this->api->post('/api/v1/projects/' . $projectId . '/instruments', $this->withAck(['name' => $name]));
-        }, $this->i18n->t('setup.instrument.added', ['name' => $name]));
-    }
-
-    /** PUT …/instruments/{iid} with exactly `name`, `is_survey`, `branching_logic` (§4.10). */
-    public function updateInstrument(): Response
-    {
-        $iid = $this->objectId('instrument_id');
-        $name = trim($this->request->field('name'));
-        $body = [
-            'name' => $name,
-            'is_survey' => $this->request->field('is_survey') === '1',
-            'branching_logic' => trim($this->request->field('branching_logic')),
-        ];
-
-        return $this->structureWrite($this->back(), function (int $projectId) use ($iid, $body): void {
-            $this->api->put('/api/v1/projects/' . $projectId . '/instruments/' . $iid, $this->withAck($body));
-        }, $this->i18n->t('setup.instrument.updated', ['name' => $name]));
-    }
-
-    public function moveInstrument(): Response
-    {
-        $iid = $this->objectId('instrument_id');
-        $direction = $this->request->field('direction');
-
-        return $this->structureWrite($this->back(), function (int $projectId) use ($iid, $direction): void {
-            $ids = array_map(static fn (array $i): int => (int) ($i['id'] ?? 0),
-                self::listOf($this->api->get('/api/v1/projects/' . $projectId . '/instruments')));
-            $this->api->put('/api/v1/projects/' . $projectId . '/instruments/order',
-                $this->withAck(['order' => self::moved($ids, $iid, $direction)]));
-        }, $this->i18n->t('setup.reordered'));
-    }
-
-    /**
-     * DELETE …/instruments/{iid}: 409 while a surviving expression names one of its fields;
-     * as the last remaining instrument only its fields go and it is renamed `instrument`
-     * (200, REQ-API-127).
-     */
-    public function deleteInstrument(): Response
-    {
-        $iid = $this->objectId('instrument_id');
-        $name = $this->request->field('name');
-
-        return $this->structureWrite($this->back(), function (int $projectId) use ($iid, $name): void {
-            $answer = $this->api->delete('/api/v1/projects/' . $projectId . '/instruments/' . $iid, [],
-                $this->withAck([]) ?: null);
-            $this->flashSuccess($answer !== []
-                ? $this->i18n->t('setup.instrument.reset')
-                : $this->i18n->t('setup.instrument.deleted', ['name' => $name]));
-        }, '');
     }
 
     // --- Block D: the instrument × event matrix (per arm) ---------------------------

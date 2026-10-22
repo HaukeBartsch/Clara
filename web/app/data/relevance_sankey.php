@@ -362,7 +362,7 @@ return array (
       'column' => 0,
       'order' => 10,
       'area' => 'user-interface',
-      'codes' => 87,
+      'codes' => 91,
     ),
     40 => 
     array (
@@ -371,7 +371,7 @@ return array (
       'order' => 100,
       'prefix' => 'REQ-UI',
       'kind' => 'req',
-      'codes' => 65,
+      'codes' => 67,
     ),
     41 => 
     array (
@@ -389,7 +389,7 @@ return array (
       'order' => 102,
       'prefix' => 'DEV-UI',
       'kind' => 'dev',
-      'codes' => 19,
+      'codes' => 21,
     ),
     43 => 
     array (
@@ -413,7 +413,7 @@ return array (
       'column' => 2,
       'order' => 2,
       'class' => 'workflow',
-      'codes' => 350,
+      'codes' => 354,
     ),
     46 => 
     array (
@@ -1218,7 +1218,7 @@ return array (
     array (
       'source' => 'a-user-interface',
       'target' => 'g-user-interface-req',
-      'value' => 105,
+      'value' => 107,
     ),
     131 => 
     array (
@@ -1236,7 +1236,7 @@ return array (
     array (
       'source' => 'g-user-interface-req',
       'target' => 'c-workflow',
-      'value' => 52,
+      'value' => 54,
     ),
     134 => 
     array (
@@ -1272,7 +1272,7 @@ return array (
     array (
       'source' => 'a-user-interface',
       'target' => 'g-user-interface-dev',
-      'value' => 20,
+      'value' => 22,
     ),
     140 => 
     array (
@@ -1290,7 +1290,7 @@ return array (
     array (
       'source' => 'g-user-interface-dev',
       'target' => 'c-workflow',
-      'value' => 14,
+      'value' => 16,
     ),
     143 => 
     array (

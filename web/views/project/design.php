@@ -1,8 +1,10 @@
 <?php
 /**
- * Project page — Design (§7.1, REQ-UI-021, project_admin): the project's instruments in
- * position order; choosing one opens its field editor. Creating, reordering and the survey /
- * branching attributes of instruments belong to Setup block C (§6.2) — this page edits fields.
+ * Project page — Design (§7.1, REQ-UI-021, REQ-UI-067, project_admin): the project's
+ * instruments in position order, with the controls that make and change them — **Add**,
+ * **Edit** (name, survey flag, instrument branching), **Reorder** and **Remove** — and,
+ * choosing one, its field editor (§7.2). These came from Setup block C (§6.2); Setup keeps
+ * the instrument × event mapping, which is what decides where an instrument collects data.
  *
  * Each instrument's "Repeating" dropdown (REQ-UI-054) holds one switch per event it is
  * mapped to: on, the form can be filled out more than once for a record at that event
@@ -11,14 +13,21 @@
  * Below the list, the instrument import (§7.6, REQ-UI-053): REDCap instrument ZIPs or
  * data-dictionary CSVs, previewed through the API's dry run before anything is written.
  *
- * Reads: $instruments, $repeating (DesignController::repeatingChoices), $designUrl, $setupUrl,
- * $import (DesignController::importView, or null), $canEdit, and the structure-mode partial's
- * inputs.
+ * Edit controls are emitted only while the mode allows edits (§6.7); reorder sends the full
+ * ordered id list, and removing the last instrument resets it instead of deleting it
+ * (REQ-API-127) — the confirmation says which will happen. The strings of the moved controls
+ * keep their `setup.instrument.*` keys: they are the translated ones (`web/app/i18n/en.php`).
+ *
+ * Reads: $instruments, $repeating (DesignController::repeatingChoices), $editInstrument,
+ * $designUrl, $setupUrl, $import (DesignController::importView, or null), $canEdit, and the
+ * structure-mode partial's inputs.
  */
 
 use Clara\View;
 
 /** @var list<array<string, mixed>> $instruments */
+$act = static fn (string $action): string => $designUrl . '?action=' . $action;
+$lastInstrument = count($instruments) === 1;
 ?>
 <h1 class="h4 mb-3"><?= View::e($view->t('design.title')) ?></h1>
 
@@ -35,20 +44,97 @@ use Clara\View;
             <th scope="col"><?= View::e($view->t('setup.instrument.survey')) ?></th>
             <th scope="col"><?= View::e($view->t('setup.instrument.branching')) ?></th>
             <th scope="col"><?= View::e($view->t('design.repeating.column')) ?></th>
+            <?php if ($canEdit): ?><th scope="col"><span class="visually-hidden"><?= View::e($view->t('admin.users.actions')) ?></span></th><?php endif; ?>
         </tr></thead>
         <tbody>
-        <?php foreach ($instruments as $instrument): ?>
-            <tr>
-                <td><a href="<?= View::e($designUrl . '/instruments/' . (int) ($instrument['id'] ?? 0)) ?>"><?= View::e($instrument['name'] ?? '') ?></a></td>
+        <?php foreach ($instruments as $i => $instrument): ?>
+            <?php $iid = (int) ($instrument['id'] ?? 0); ?>
+            <tr data-instrument="<?= View::e($instrument['name'] ?? '') ?>">
+                <td><a href="<?= View::e($designUrl . '/instruments/' . $iid) ?>"><?= View::e($instrument['name'] ?? '') ?></a></td>
                 <td class="text-end"><?= (int) ($instrument['field_count'] ?? 0) ?></td>
                 <td><?php if (!empty($instrument['is_survey'])): ?><span class="badge text-bg-info"><?= View::e($view->t('setup.instrument.survey_badge')) ?></span><?php endif; ?></td>
                 <td><code class="small"><?= View::e($instrument['branching_logic'] ?? '') ?></code></td>
                 <td><?php require __DIR__ . '/../partials/repeating-dropdown.php'; ?></td>
+                <?php if ($canEdit): ?>
+                    <td class="text-end text-nowrap">
+                        <?php foreach (['up' => $i > 0, 'down' => $i < count($instruments) - 1] as $dir => $possible): ?>
+                            <?php if ($possible): ?>
+                                <form method="post" action="<?= View::e($act('move_instrument')) ?>" class="d-inline">
+                                    <?= $view->csrfField() ?>
+                                    <input type="hidden" name="instrument_id" value="<?= $iid ?>">
+                                    <input type="hidden" name="direction" value="<?= $dir ?>">
+                                    <button class="btn btn-sm btn-outline-secondary" type="submit"
+                                            aria-label="<?= View::e($view->t('setup.move_' . $dir)) ?>"><?= $dir === 'up' ? '↑' : '↓' ?></button>
+                                </form>
+                            <?php endif; ?>
+                        <?php endforeach; ?>
+                        <a class="btn btn-sm btn-outline-primary" href="<?= View::e($designUrl . '?edit_instrument=' . $iid . '#instrument-edit') ?>"><?= View::e($view->t('setup.edit')) ?></a>
+                        <form method="post" action="<?= View::e($act('delete_instrument')) ?>" class="d-inline"
+                              data-clara-confirm="<?= View::e($view->t($lastInstrument ? 'setup.instrument.confirm_reset' : 'setup.instrument.confirm_delete',
+                                  ['name' => (string) ($instrument['name'] ?? ''), 'count' => (string) (int) ($instrument['field_count'] ?? 0)])) ?>">
+                            <?= $view->csrfField() ?>
+                            <input type="hidden" name="instrument_id" value="<?= $iid ?>">
+                            <input type="hidden" name="name" value="<?= View::e($instrument['name'] ?? '') ?>">
+                            <button class="btn btn-sm btn-outline-danger" type="submit"><?= View::e($view->t('setup.remove')) ?></button>
+                        </form>
+                    </td>
+                <?php endif; ?>
             </tr>
         <?php endforeach; ?>
         </tbody>
     </table>
 </div>
+
+<?php if ($canEdit): ?>
+    <?php foreach ($instruments as $instrument): ?>
+        <?php if ((int) ($instrument['id'] ?? 0) !== $editInstrument || $editInstrument === 0) {
+            continue;
+        } ?>
+        <!-- Edit one instrument: name, survey flag (§7.5), instrument-level branching (§7.3). -->
+        <form method="post" action="<?= View::e($act('update_instrument')) ?>" class="card card-body mb-3" id="instrument-edit">
+            <?= $view->csrfField() ?>
+            <input type="hidden" name="instrument_id" value="<?= (int) $instrument['id'] ?>">
+            <div class="row g-2">
+                <div class="col-md-6">
+                    <label class="form-label mb-0 small" for="instrument-edit-name"><?= View::e($view->t('setup.instrument.name')) ?></label>
+                    <input class="form-control form-control-sm" type="text" id="instrument-edit-name" name="name" required maxlength="255"
+                           value="<?= View::e($instrument['name'] ?? '') ?>">
+                </div>
+                <div class="col-md-6 d-flex align-items-end">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="instrument-edit-survey" name="is_survey" value="1"
+                            <?= !empty($instrument['is_survey']) ? 'checked' : '' ?>>
+                        <label class="form-check-label" for="instrument-edit-survey"><?= View::e($view->t('setup.instrument.survey_help')) ?></label>
+                    </div>
+                </div>
+                <div class="col-12">
+                    <?php
+                    $exprId = 'instrument-edit-branching';
+                    $exprName = 'branching_logic';
+                    $exprValue = (string) ($instrument['branching_logic'] ?? '');
+                    $exprGrammar = 'branching';
+                    $exprLabel = $view->t('setup.instrument.branching');
+                    $exprRefsUrl = $designUrl;
+                    require __DIR__ . '/../partials/expression-editor.php';
+                    ?>
+                </div>
+            </div>
+            <div class="mt-2 d-flex gap-2">
+                <button class="btn btn-sm btn-primary" type="submit"><?= View::e($view->t('action.save')) ?></button>
+                <a class="btn btn-sm btn-outline-secondary" href="<?= View::e($designUrl) ?>"><?= View::e($view->t('action.cancel')) ?></a>
+            </div>
+        </form>
+    <?php endforeach; ?>
+
+    <form method="post" action="<?= View::e($act('add_instrument')) ?>" class="d-flex flex-wrap gap-2 align-items-end mb-4">
+        <?= $view->csrfField() ?>
+        <div>
+            <label class="form-label mb-0 small" for="instrument-name"><?= View::e($view->t('setup.instrument.name')) ?></label>
+            <input class="form-control form-control-sm" type="text" id="instrument-name" name="name" required maxlength="255">
+        </div>
+        <button class="btn btn-sm btn-primary" type="submit"><?= View::e($view->t('setup.instrument.add')) ?></button>
+    </form>
+<?php endif; ?>
 
 <?php if ($canEdit): ?>
 <section class="card mb-4 clara-import" id="import" aria-labelledby="import-title">

@@ -71,9 +71,13 @@ test.describe("repeating instruments (REQ-UI-054, REQ-UI-055)", () => {
     await page.getByRole("link", { name: `Open ${projectName}` }).click()
     await expect(page).toHaveURL(/\/projects\/\d+\/setup$/)
 
+    // The instrument is made on the Design page (§7.1, REQ-UI-067); Setup maps it to an event.
+    await page.locator("#clara-nav").getByRole("link", { name: "Design" }).click()
     await page.fill("#instrument-name", "visits")
     await page.locator('form[action*="action=add_instrument"] button[type="submit"]').click()
     await expect(success(page)).toContainText('Instrument "visits" added.')
+
+    await page.locator("#clara-nav").getByRole("link", { name: "Setup" }).click()
     const matrix = page.locator('form.clara-mapping[data-arm="1"]')
     for (const pair of ["instrument|baseline_arm_1", "visits|baseline_arm_1"]) {
       const box = matrix.locator(`input[data-pair="${pair}"]`)

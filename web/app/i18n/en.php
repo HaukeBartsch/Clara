@@ -867,6 +867,8 @@ return [
     'setup.arm.confirm_delete' => 'Remove arm {arm}? An arm that still has events or data cannot be removed.',
     'setup.arm.confirm_reset' => 'Arm {arm} is the only arm: it is not removed but renamed to arm_1, keeping its events.',
     'setup.per_arm' => 'Events and instrument assignment per arm',
+    // The view prints this straight before a link to the Design page (§7.1, REQ-UI-067).
+    'setup.design_hint' => 'Instruments are added, edited and ordered on',
     'setup.events' => 'Events',
     'setup.event.label' => 'Event label',
     'setup.event.unique' => 'Unique event name',
@@ -882,6 +884,9 @@ return [
     'setup.event.empty' => 'This arm has no events yet.',
     'setup.event.confirm_delete' => 'Remove event "{name}"? Values recorded at this event become unreachable.',
     'setup.event.confirm_reset' => 'Event "{name}" is the project\'s last event: it is not removed but reset to the plain baseline event.',
+    // The instrument list's own strings (§7.1, REQ-UI-067). They keep their `setup.` prefix
+    // now that the controls sit on the Design page: the nb/nn drafts in tools/i18n/ are keyed
+    // by these ids, so renaming them would strand every translated row for no gain.
     'setup.instruments' => 'Instruments',
     'setup.instrument.name' => 'Instrument',
     'setup.instrument.fields' => 'Fields',
@@ -899,7 +904,7 @@ return [
     'setup.mapping' => 'Instruments × events',
     'setup.mapping.apply' => 'Apply',
     'setup.mapping.saved' => 'Instrument assignment of arm {arm} saved.',
-    'setup.mapping.empty' => 'Add an event and an instrument to assign instruments to events.',
+    'setup.mapping.empty' => 'Add an event here, and an instrument on the Design page, to assign instruments to events.',
     'setup.edit' => 'Edit',
     'setup.remove' => 'Remove',
     'setup.move_up' => 'Move up',
@@ -913,7 +918,7 @@ return [
 
     // --- M4: instrument designer (§7, REQ-UI-021…023) ---
     'design.title' => 'Design',
-    'design.intro' => 'Choose an instrument to edit its fields. Instruments are added, ordered and marked as surveys in',
+    'design.intro' => 'Choose an instrument to edit its fields, or add, reorder and change one below. Assigning an instrument to an event happens on',
     'design.all_instruments' => '← All instruments',
     'design.instrument_title' => 'Fields of "{name}"',
     'design.field.empty' => 'This instrument has no fields yet. The first field of the first instrument is the record identifier.',

@@ -132,19 +132,22 @@ describe('Setup page (§6.2, REQ-UI-018)', function (): void {
         assert_same(0, m4_count('GET', '/arms'));
     });
 
-    it('renders the four blocks with arm tabs, arm 1 active, and Setup/Design in the panel', function (): void {
+    it('renders its blocks with arm tabs, arm 1 active, and Setup/Design in the panel', function (): void {
         sign_in();
         m4_queue();
 
         $body = m4_get('/projects/3/setup')->body();
 
         assert_contains('table table-sm align-middle clara-arms', $body);
-        assert_contains('clara-instruments', $body);
         assert_contains('id="arm-pane-1"', $body);
         assert_contains('class="tab-pane fade show active" id="arm-pane-1"', $body);
         assert_contains('name="map[7][]" value="4"', $body);
         assert_contains('href="/projects/3/setup"', $body);
         assert_contains('href="/projects/3/design"', $body);
+        // Instruments are managed on the Design page (§7.1, REQ-UI-067): Setup reads the list
+        // for the matrix rows and offers no control that writes to it.
+        assert_not_contains('action=add_instrument', $body);
+        assert_not_contains('action=move_instrument', $body);
         // Development: edits apply directly — no staging controls (§6.7).
         assert_not_contains('Start staging', $body);
         assert_not_contains('clara-staging-banner', $body);
@@ -246,17 +249,6 @@ describe('Setup page (§6.2, REQ-UI-018)', function (): void {
         assert_contains('clara-naming-mode', $body);
     });
 
-    it('updates an instrument with exactly name, is_survey and branching_logic (§4.10)', function (): void {
-        sign_in();
-        api_route('/api/v1/projects/3/instruments/12', ['id' => 12]);
-
-        m4_post('/projects/3/setup', ['instrument_id' => '12', 'name' => 'scores', 'is_survey' => '1',
-            'branching_logic' => ' [baseline_arm_1][age] > 18 '], 'update_instrument');
-
-        assert_same(['name' => 'scores', 'is_survey' => true, 'branching_logic' => '[baseline_arm_1][age] > 18'],
-            m4_body('PUT', '/instruments/12'));
-    });
-
     it('says when the last event was reset to baseline instead of deleted (REQ-API-133)', function (): void {
         sign_in();
         api_route('/api/v1/events/4', ['id' => 4, 'event_name' => 'baseline']);
@@ -265,16 +257,6 @@ describe('Setup page (§6.2, REQ-UI-018)', function (): void {
 
         assert_same(null, m4_body('DELETE', '/api/v1/events/4'));
         assert_contains('reset to baseline', json_encode($_SESSION['_flash']));
-    });
-
-    it('shows a duplicate-name refusal as the API\'s reason (§3.4)', function (): void {
-        sign_in();
-        api_route('/api/v1/projects/3/instruments', ['error' => 'conflict', 'message' => "instrument 'intake' already exists in this project", 'status' => 409], 409);
-
-        m4_post('/projects/3/setup', ['name' => 'intake'], 'add_instrument');
-
-        assert_contains("instrument 'intake' already exists", json_encode($_SESSION['_flash']));
-        assert_true(!isset($_SESSION['_stash']['breaking']), 'a plain conflict is not a breaking change');
     });
 
     it('serves the active references as its data region, never a page (REQ-UI-044)', function (): void {
@@ -398,6 +380,118 @@ describe('analysis-mode acknowledgement (§6.8, REQ-UI-037)', function (): void 
     it('replays nested fields exactly as posted', function (): void {
         assert_same([['arm_num', '1'], ['map[7][]', '4'], ['map[7][]', '9'], ['map[12][]', '8']],
             StructureController::flattenFields(['arm_num' => '1', 'map' => ['7' => ['4', '9'], '12' => ['8']]]));
+    });
+});
+
+describe('Design page — the instrument list (§7.1, REQ-UI-067)', function (): void {
+    it('lists the instruments with the controls that make and change them', function (): void {
+        sign_in();
+        m4_queue();
+
+        $body = m4_get('/projects/3/design')->body();
+
+        assert_contains('action="/projects/3/design?action=add_instrument"', $body);
+        assert_contains('id="instrument-name"', $body);
+        assert_contains('href="/projects/3/design?edit_instrument=7#instrument-edit"', $body);
+        assert_contains('action="/projects/3/design?action=delete_instrument"', $body);
+        // Two instruments: the first offers only down, the last only up.
+        assert_same(1, substr_count($body, 'name="direction" value="up"'));
+        assert_same(1, substr_count($body, 'name="direction" value="down"'));
+        // The confirmation names what goes with it (REQ-API-127).
+        assert_contains('with its 1 fields', $body);
+    });
+
+    it('opens one instrument\'s edit form from ?edit_instrument, filled in', function (): void {
+        sign_in();
+        m4_queue();
+
+        $body = m4_get('/projects/3/design', ['edit_instrument' => '12'])->body();
+
+        assert_contains('id="instrument-edit"', $body);
+        assert_contains('action="/projects/3/design?action=update_instrument"', $body);
+        assert_contains('value="scores"', $body);
+        assert_contains('[baseline_arm_1][age] &gt; 18', $body);
+        // scores is the survey instrument: its box is checked.
+        assert_true(preg_match('/name="is_survey" value="1"\s+checked/', $body) === 1, 'the survey box is checked');
+    });
+
+    it('offers no instrument control while production has no open set (§6.7)', function (): void {
+        sign_in();
+        m4_queue('production', false);
+
+        $body = m4_get('/projects/3/design')->body();
+
+        assert_contains('clara-design-instruments', $body);
+        assert_not_contains('action=add_instrument', $body);
+        assert_not_contains('action=delete_instrument', $body);
+    });
+
+    it('adds an instrument by name and returns to the list', function (): void {
+        sign_in();
+        m4_queue();
+
+        $response = m4_post('/projects/3/design', ['name' => 'visits'], 'add_instrument');
+
+        assert_same(['name' => 'visits'], m4_body('POST', '/instruments'));
+        assert_same('/projects/3/design', $response->headers()['Location']);
+        assert_contains('Instrument \"visits\" added.', json_encode($_SESSION['_flash']));
+    });
+
+    it('shows a duplicate-name refusal as the API\'s reason (§3.4)', function (): void {
+        sign_in();
+        api_route('/api/v1/projects/3/instruments', ['error' => 'conflict', 'message' => "instrument 'intake' already exists in this project", 'status' => 409], 409);
+
+        m4_post('/projects/3/design', ['name' => 'intake'], 'add_instrument');
+
+        assert_contains("instrument 'intake' already exists", json_encode($_SESSION['_flash']));
+        assert_true(!isset($_SESSION['_stash']['breaking']), 'a plain conflict is not a breaking change');
+    });
+
+    it('updates an instrument with exactly name, is_survey and branching_logic (§4.10)', function (): void {
+        sign_in();
+        api_route('/api/v1/projects/3/instruments/12', ['id' => 12]);
+        m4_queue();
+
+        $response = m4_post('/projects/3/design', ['instrument_id' => '12', 'name' => 'scores', 'is_survey' => '1',
+            'branching_logic' => ' [baseline_arm_1][age] > 18 '], 'update_instrument');
+
+        assert_same(['name' => 'scores', 'is_survey' => true, 'branching_logic' => '[baseline_arm_1][age] > 18'],
+            m4_body('PUT', '/instruments/12'));
+        assert_same('/projects/3/design', $response->headers()['Location']);
+    });
+
+    it('moves an instrument by sending the full ordered id list (§4.10)', function (): void {
+        sign_in();
+        m4_queue();
+
+        m4_post('/projects/3/design', ['instrument_id' => '7', 'direction' => 'down'], 'move_instrument');
+
+        assert_same([12, 7], m4_body('PUT', '/instruments/order')['order']);
+    });
+
+    it('removes an instrument and returns to the list', function (): void {
+        sign_in();
+        // Queued before m4_queue: its `/instruments` fragment is a prefix of this URL, and the
+        // fake transport answers with the first fragment that matches. An empty answer is a
+        // real delete; the reset of the last instrument answers with the renamed object.
+        api_route('/api/v1/projects/3/instruments/12', []);
+        m4_queue();
+
+        $response = m4_post('/projects/3/design', ['instrument_id' => '12', 'name' => 'scores'], 'delete_instrument');
+
+        assert_same('/projects/3/design', $response->headers()['Location']);
+        assert_same('Instrument "scores" removed.', $_SESSION['_flash'][0]['text']);
+    });
+
+    it('says the last instrument was reset to "instrument" instead of removed (REQ-API-127)', function (): void {
+        sign_in();
+        api_route('/api/v1/projects/3/instruments/7', ['id' => 7, 'name' => 'instrument']);
+        m4_queue(instruments: [m4_instruments()[0]]);
+
+        m4_post('/projects/3/design', ['instrument_id' => '7', 'name' => 'intake'], 'delete_instrument');
+
+        assert_same('The last instrument cannot be removed — its fields were deleted and it was renamed to "instrument".',
+            $_SESSION['_flash'][0]['text']);
     });
 });
 

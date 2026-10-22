@@ -910,6 +910,8 @@ Only show the pattern for naming records if the project is using "Type record id
 
 The Setup screen functionality for "Instruments" (edit, remove and add instrument) should move to the Design screen that already shows a similar table (allows to import and to set repeating by event).
 
+**Status:** Done 2026-10-21 — the Design page's instrument list now carries **Add**, **Edit** (name, survey flag, instrument branching), **Reorder** and **Remove**; Setup keeps only the instrument × event mapping and links to Design for the instruments it maps (`User_Interface_Design.md` §7.1, REQ-UI-067, DEV-UI-21; REQ-UI-018 no longer mentions instruments). Endpoints, attributes and the staging/acknowledgement rules are unchanged — only the page that posts them moved, and the controls kept their `setup.instrument.*` translation keys so existing nb/nn rows survive. Tests: `tests/php/m4_design_test.php` ("Design page — the instrument list"), `e2e/tests/design.spec.ts`.
+
 
 # Presentation
 
