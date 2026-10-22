@@ -52,11 +52,8 @@ $modelInstalled = !empty($modelInstalled);
               placeholder="<?= View::e($view->t('admin.assistant.placeholder')) ?>"
               aria-label="<?= View::e($view->t('admin.assistant.placeholder')) ?>"
               aria-describedby="clara-as-input-hint"></textarea>
-    <button class="btn btn-primary align-self-end" type="submit" data-clara-as-send>
-        <?= View::e($view->t('admin.assistant.send')) ?>
-    </button>
-    <button class="btn btn-outline-secondary align-self-end" type="button" data-clara-as-clear>
-        <?= View::e($view->t('admin.assistant.clear')) ?>
+    <button class="btn btn-outline-secondary align-self-end" type="button" data-clara-as-new-chat>
+        <?= View::e($view->t('admin.assistant.new_chat')) ?>
     </button>
 </form>
 <!-- Enter and Shift+Enter are handled in assistant.js; the rule is stated next to the field it

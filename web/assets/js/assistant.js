@@ -380,7 +380,7 @@ function mergeToolCall(accumulator, delta) {
  * The conversation as the engine receives it. Hermes function calling cannot carry a `system`
  * message: the engine prepends its own tool-usage prompt and throws `CustomSystemPromptError` when
  * the request holds one, so Clara's instructions are folded into the first user turn instead. The
- * stored history keeps its `system` entry — that is what makes Clear chat and the transcript read
+ * stored history keeps its `system` entry — that is what makes New chat and the transcript read
  * correctly — and only this copy handed to the engine is rewritten.
  */
 function engineMessages() {
@@ -593,7 +593,6 @@ async function loadEngine(config) {
 
 ready(() => {
   const input = document.querySelector("[data-clara-as-input]")
-  const sendButton = document.querySelector("[data-clara-as-send]")
   const form = document.querySelector("[data-clara-as-form]")
   if (!form) {
     return
@@ -601,7 +600,6 @@ ready(() => {
 
   const setEnabled = (on) => {
     input.disabled = !on
-    sendButton.disabled = !on || busy
   }
   setEnabled(false)
 
@@ -683,17 +681,15 @@ ready(() => {
     input.value = ""
 
     busy = true
-    sendButton.disabled = true
     runTurn()
       .catch(reportFailure)
       .finally(() => {
         busy = false
-        sendButton.disabled = false
         input.focus()
       })
   })
 
-  document.querySelector("[data-clara-as-clear]").addEventListener("click", () => {
+  document.querySelector("[data-clara-as-new-chat]").addEventListener("click", () => {
     messages = [{ role: "system", content: SYSTEM_PROMPT }]
     log().replaceChildren()
   })

@@ -110,6 +110,8 @@ test.describe("clara assistant (AI_Assistant)", () => {
     // Read-only is the default state the page shows (REQ-AI-006).
     await expect(page.getByText("Read-only", { exact: true })).toBeVisible()
     await expect(page.locator("[data-clara-as-form]")).toBeVisible()
+    await expect(page.getByRole("button", { name: "Send", exact: true })).toHaveCount(0)
+    await expect(page.getByRole("button", { name: "New chat", exact: true })).toBeVisible()
     // The field states its own key contract, so it has to be on the page with it (assistant.js).
     await expect(page.locator("#clara-as-input-hint")).toBeVisible()
   })
