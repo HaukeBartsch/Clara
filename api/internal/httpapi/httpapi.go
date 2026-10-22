@@ -9,9 +9,11 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"csms/api/internal/admin"
@@ -36,16 +38,64 @@ func NewMux(store *db.Store, cfg *config.Config, aw *audit.Writer, reg *metrics.
 	registerDocs(mux)
 
 	data := &dataapi.Handler{Store: store, Cfg: cfg, Limiter: dataapi.NewRateLimiter(), Audit: aw, Metrics: reg}
-	mux.Handle("/api/", metrics.Middleware(reg, metrics.StaticRoute("/api/"), data))
+	mux.Handle("/api/", metrics.Middleware(reg, metrics.StaticRoute("/api/"), rolloverGuard(aw, data)))
 
 	adminAPI := admin.New(store, cfg, aw, reg, data.Limiter)
 	// Metrics outermost on the administration chain so rate-limit 429s and
 	// boundary 401/403 land inside the measured latency (REQ-API-163).
 	mux.Handle("/api/v1/", metrics.Middleware(reg, adminRoute(adminAPI.Handler),
-		rateLimit(store, cfg, data.Limiter,
-			structureInvalidation(store, AdminBoundary(adminAPI.Handler, store, cfg, aw)))))
+		rolloverGuard(aw, rateLimit(store, cfg, data.Limiter,
+			structureInvalidation(store, AdminBoundary(adminAPI.Handler, store, cfg, aw))))))
 
 	return mux
+}
+
+// yearGuard is the part of *audit.Writer the rollover guard uses; a test can
+// substitute a failing implementation to check that the request survives it.
+type yearGuard interface {
+	EnsureYear(context.Context) error
+}
+
+// rolloverGuard runs the audit year check (§6.1: "at process startup and on the
+// first audit write after a calendar-year change") before the request reaches any
+// handler, which is what puts it outside every transaction the handler opens.
+// That placement is the whole point: on MariaDB the check is
+// `ALTER TABLE … ADD PARTITION`, and DDL commits implicitly — issued from inside
+// an audited operation it would end that operation's transaction midway and
+// break REQ-AUD-003, the guarantee the audit writer exists to give. A running
+// process therefore provisions the new year on its first request of that year,
+// and a write never has to.
+//
+// The check is an atomic comparison against the writer's year latch (§6.1), so
+// per-request cost is a clock read. A failed check never fails the request:
+// reads of earlier years work without it, and only a write of the unprovisioned
+// year can fail — which reports itself at the INSERT, naming the rollover. The
+// latch stays unset on failure, so the next request tries again; repeated
+// failures are reported once each rather than per request (reportedOnce), since
+// a stall that outlives one attempt outlives thousands of requests.
+func rolloverGuard(g yearGuard, next http.Handler) http.Handler {
+	if g == nil {
+		return next
+	}
+	var lastReported atomic.Pointer[string]
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := g.EnsureYear(r.Context()); err != nil {
+			if msg := err.Error(); !sameAs(&lastReported, msg) {
+				slog.Error("audit year rollover failed; serving the request anyway", "err", err)
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// sameAs reports whether msg is the failure already reported, recording it if
+// not. Only the error path touches this, so the hot path stays a clock read.
+func sameAs(seen *atomic.Pointer[string], msg string) bool {
+	if p := seen.Load(); p != nil && *p == msg {
+		return true
+	}
+	seen.Store(&msg)
+	return false
 }
 
 // adminRoute resolves the low-cardinality label for an administration request

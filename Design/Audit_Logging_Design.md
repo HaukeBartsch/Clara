@@ -224,6 +224,9 @@ Same shape for `audit_record_views` (columns per `Database_Schema_Design.md` §7
 
 **Rollover check** (idempotent; runs at process startup and on the first audit write after a calendar-year change — an in-process year latch, no scheduler): inspect `information_schema.PARTITIONS`; if the current year's or the next year's partition is missing, `ALTER TABLE audit_events ADD PARTITION (PARTITION pYYYY VALUES LESS THAN (YYYY+1))` — likewise for `audit_record_views` — before the write proceeds.
 
+**Where the check runs.** The latch is read once per request, ahead of the data-API and administration handlers (`httpapi.rolloverGuard`), and additionally by `Writer.Insert`, which has no transaction to disturb; startup covers the process before the first request lands. Reading it before the handler rather than inside `InsertTx` is a requirement of this dialect, not a convenience: `ADD PARTITION` is DDL and commits implicitly, so an issue from within an audited operation would end that operation's transaction midway and break §5's same-transaction guarantee. Because the check precedes every request, it necessarily precedes the first write of the new year. A failed check never fails the request — reads of earlier years need no new partition, and only a write of the unprovisioned year can fail, which reports itself naming the rollover — and it leaves the latch unset, so the next request retries. Concurrent processes may attempt the same `ADD PARTITION` at the same second; a loser that finds the partition present has won either way.
+
+
 ### 6.2 SQLite — per-year tables behind stable views (normative)
 
 ```sql
@@ -245,6 +248,9 @@ CREATE VIEW IF NOT EXISTS audit_events AS SELECT * FROM audit_events_2026;
 ```
 
 **Rollover check** (same trigger as §6.1): if `audit_events_<current year>` does not exist, create it with the same shape, then `DROP VIEW audit_events` and recreate it as `UNION ALL` over all `audit_events_*` tables in year order (same for `audit_record_views`). The audit tables carry no foreign keys — they are append-only business records — so view recreation has no integrity side effects.
+
+The two halves are one check, not two: creating a year table without rebuilding the view would leave everything written into it invisible, since reads only ever name the stable table. On SQLite both statements are transactional DDL, so a write path that reaches this check runs it inside the caller's transaction — which is why §6.1's placement rule has no SQLite counterpart, and why an operation that rolls back leaves no half-built year behind.
+
 
 **Write path (normative).** The writer resolves the target table name from the entry's own `created_at` year — `audit_events_2026`, `audit_events_2027`, … — and inserts into that physical table; it never issues `INSERT INTO audit_events`. Once a second year exists, `audit_events` is a compound view and SQLite rejects the insert — verified against SQLite: `Error: in prepare, cannot modify a because it is a view` (only views over a single table, without compounds, are updatable) — so writing the stable name would make every audit entry fail from the first day of the second year. The writer derives the year from the same UTC timestamp it stores, so an entry always lands in the partition its `created_at` reads back from, and §6.3's rollover stays invisible to callers.
 

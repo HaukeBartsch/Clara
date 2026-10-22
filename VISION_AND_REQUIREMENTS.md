@@ -1034,6 +1034,8 @@ Consequence: a crash or DB error between commit and audit insert leaves the chan
 
 Fix: route those writes through InsertTx inside the mutation's transaction (the mechanism already exists), rather than weakening REQ-AUD-003.
 
+Fixed: all sixteen administration-handler sites now write change and entry in one transaction (`admin/audit_write.go` helpers over new `*Tx` repository twins); `admin/audit_write_test.go` fails if a change commits while the audit write errors.
+
 2. Year rollover is never triggered by a write
 
 Documented: Audit_Logging_Design.md:225 — the rollover check runs at startup and on the first audit write after a calendar-year change, before that write proceeds.
@@ -1043,6 +1045,8 @@ Code: EnsureYear (audit.go:272) holds the in-memory latch and does the work, and
 Consequence: across the year boundary, audited writes on MariaDB have no path that provisions the new year before inserting. How hard it fails depends on one detail I did not get to confirm — whether rolloverMariaDB leaves a MAXVALUE partition. The install schema is created unpartitioned with per-year PARTITION BY RANGE applied by the rollover check (migrations/mariadb/0001_schema.sql:241-261, comment at :242-243, :257-259), which fits the reported failure mode but doesn't prove it. No catch-all partition means inserts error out and audited operations fail outright; a MAXVALUE partition means rows land there and the year just never gets its own partition. Either way the documented trigger is missing.
 
 Fix: check the latch on the write path — outside the caller's transaction on MariaDB, since DDL commits (audit.go:270-271 says so itself). Worth confirming rolloverMariaDB's partition list before deciding how urgent it is.
+
+Fixed, and the open question answered: `Audit_Logging_Design.md` §6.1 mandates **no** `MAXVALUE` partition ("a MAXVALUE guard would block later ADD PARTITION"), so the severe branch was the real one — an unprovisioned year rejects its inserts outright rather than quietly misfiling them. The check now runs ahead of every request (`httpapi.rolloverGuard`, before any handler transaction) and again in `Writer.Insert` for non-HTTP callers; `InsertTx` still performs no DDL, asserted by a test that would catch it committing the caller's transaction. Also closed on the way: SQLite created a new year's table without rebuilding the UNION ALL view, so its rows were unwritable-to-readers until something happened to call `EnsureYear`, and a rollback of the transaction that created them left the writer believing they still existed.
 
 
 
