@@ -128,46 +128,34 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 		hash = sql.NullString{String: ph, Valid: true}
 	}
 
-	reEnabled := existing != nil // a disabled account with this email
-	if reEnabled {
-		// Re-enabling resets the inactivity clock (REQ-AUTH-053).
-		if _, err := h.Store.DB.ExecContext(ctx,
-			`UPDATE users SET enabled = 1, last_login_at = NULL, display_name = ?,
-				valid_until = ? WHERE id = ?`,
-			displayName, nullStr(validUntil), existing.ID); err != nil {
-			errInternal(w)
-			return
-		}
-		if hash.Valid {
-			if err := h.Store.SetUserPasswordHash(ctx, existing.ID, hash); err != nil {
-				errInternal(w)
-				return
-			}
-		}
-		existing.Enabled = true
-		existing.DisplayName = displayName
-		existing.LastLoginAt = sql.NullString{}
-		existing.ValidUntil = validUntil
-		if hash.Valid {
-			existing.PasswordHash = hash
-		}
-	} else {
-		nu := &db.User{Email: email, DisplayName: displayName, Enabled: true,
-			PasswordHash: hash, ValidUntil: validUntil, UILanguage: "en"}
-		id, err := h.Store.CreateUser(ctx, nu)
-		if err != nil {
-			errInternal(w)
-			return
-		}
-		nu.ID = id
-		existing = nu
-	}
-
 	validJSON := any(nil)
 	if validUntil.Valid {
 		validJSON = validUntil.String
 	}
-	if err := h.Audit.Insert(ctx, audit.Entry{
+	reEnabled := existing != nil // a disabled account with this email
+	nu := &db.User{Email: email, DisplayName: displayName, Enabled: true,
+		PasswordHash: hash, ValidUntil: validUntil, UILanguage: "en"}
+	if err := h.auditTx(ctx, func(tx *sql.Tx) error {
+		if !reEnabled {
+			id, err := h.Store.CreateUserTx(ctx, tx, nu)
+			if err != nil {
+				return err
+			}
+			nu.ID = id
+			return nil
+		}
+		// Re-enabling resets the inactivity clock (REQ-AUTH-053).
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE users SET enabled = 1, last_login_at = NULL, display_name = ?,
+				valid_until = ? WHERE id = ?`,
+			displayName, nullStr(validUntil), existing.ID); err != nil {
+			return err
+		}
+		if hash.Valid {
+			return h.Store.SetUserPasswordHashTx(ctx, tx, existing.ID, hash)
+		}
+		return nil
+	}, audit.Entry{
 		EventType: audit.UserCreated, Source: audit.SourceUI,
 		UserID: u.ID, Email: u.Email,
 		Details: map[string]any{
@@ -177,6 +165,17 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		errInternal(w)
 		return
+	}
+	if reEnabled {
+		existing.Enabled = true
+		existing.DisplayName = displayName
+		existing.LastLoginAt = sql.NullString{}
+		existing.ValidUntil = validUntil
+		if hash.Valid {
+			existing.PasswordHash = hash
+		}
+	} else {
+		existing = nu
 	}
 	if reEnabled {
 		writeJSON(w, http.StatusOK, h.userObject(ctx, existing, now))

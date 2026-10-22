@@ -36,12 +36,15 @@ func scanUser(row interface{ Scan(dest ...any) error }) (User, error) {
 }
 
 // CreateUser inserts a user row and returns the new id (REQ-API-047).
-func (s *Store) CreateUser(ctx context.Context, u *User) (int64, error) {
+// CreateUserTx writes inside the caller's transaction, so a change and its audit entry commit
+// together instead of the change committing first with the entry to follow
+// (REQ-AUD-003, DEV-AUD-1).
+func (s *Store) CreateUserTx(ctx context.Context, tx *sql.Tx, u *User) (int64, error) {
 	u.AuthSource = normalizeAuthSource(u.AuthSource)
 	if u.UILanguage == "" {
 		u.UILanguage = "en"
 	}
-	res, err := s.DB.ExecContext(ctx,
+	res, err := tx.ExecContext(ctx,
 		`INSERT INTO users (email, display_name, enabled, auth_source, password_hash,
 			valid_until, last_login_at, is_admin, ui_language, ui_theme, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -52,6 +55,23 @@ func (s *Store) CreateUser(ctx context.Context, u *User) (int64, error) {
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// CreateUser inserts a user row and returns the new id (REQ-API-047).
+func (s *Store) CreateUser(ctx context.Context, u *User) (int64, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	id, err := s.CreateUserTx(ctx, tx, u)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 // UpsertBootstrap ensures the bootstrap admin row exists, is enabled, and is
@@ -195,10 +215,28 @@ func (s *Store) SetUserValidUntil(ctx context.Context, id int64, validUntil sql.
 // SetUserPasswordHash stores (or, with an invalid hash, clears) the local
 // credential. Every write of the credential ends the account's sessions
 // (REQ-AUTH-074): whoever held one opened it under the old password.
-func (s *Store) SetUserPasswordHash(ctx context.Context, id int64, hash sql.NullString) error {
-	_, err := s.DB.ExecContext(ctx,
+// SetUserPasswordHashTx writes inside the caller's transaction, so a change and its audit entry commit
+// together instead of the change committing first with the entry to follow
+// (REQ-AUD-003, DEV-AUD-1).
+func (s *Store) SetUserPasswordHashTx(ctx context.Context, tx *sql.Tx, id int64, hash sql.NullString) error {
+	_, err := tx.ExecContext(ctx,
 		`UPDATE users SET password_hash = ?, session_epoch = session_epoch + 1 WHERE id = ?`, nullStr(hash), id)
 	return err
+}
+
+// SetUserPasswordHash stores (or, with an invalid hash, clears) the local
+// credential. Every write of the credential ends the account's sessions
+// (REQ-AUTH-074): whoever held one opened it under the old password.
+func (s *Store) SetUserPasswordHash(ctx context.Context, id int64, hash sql.NullString) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := s.SetUserPasswordHashTx(ctx, tx, id, hash); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // BumpSessionEpoch raises the account's session epoch, which ends every PHP
@@ -263,12 +301,10 @@ func normalizeAuthSource(s string) string {
 // CreateRole inserts a role with its per-arm defaults and its per-pair grants
 // in one transaction, so a role never exists with half of its permission set
 // (REQ-AUTH-069).
-func (s *Store) CreateRole(ctx context.Context, r *Role, arms []RoleArm, grants []RoleGrant) (int64, error) {
-	tx, err := s.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback()
+// CreateRoleTx writes inside the caller's transaction, so a change and its audit entry commit
+// together instead of the change committing first with the entry to follow
+// (REQ-AUD-003, DEV-AUD-1).
+func (s *Store) CreateRoleTx(ctx context.Context, tx *sql.Tx, r *Role, arms []RoleArm, grants []RoleGrant) (int64, error) {
 	res, err := tx.ExecContext(ctx,
 		`INSERT INTO roles (project_id, role_name, project_admin) VALUES (?, ?, ?)`,
 		r.ProjectID, r.RoleName, boolToInt(r.ProjectAdmin))
@@ -283,10 +319,45 @@ func (s *Store) CreateRole(ctx context.Context, r *Role, arms []RoleArm, grants 
 	if err := s.replaceRolePermissionsTx(ctx, tx, r, arms, grants); err != nil {
 		return 0, err
 	}
+	return id, nil
+}
+
+// CreateRole inserts a role with its per-arm defaults and its per-pair grants
+// in one transaction, so a role never exists with half of its permission set
+// (REQ-AUTH-069).
+func (s *Store) CreateRole(ctx context.Context, r *Role, arms []RoleArm, grants []RoleGrant) (int64, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	id, err := s.CreateRoleTx(ctx, tx, r, arms, grants)
+	if err != nil {
+		return 0, err
+	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
 	return id, nil
+}
+
+// UpdateRole replaces a role's name, project_admin flag, arm defaults and pair
+// grants in one transaction (REQ-API-143): the PUT of §4.7 is a whole-object
+// replace, so a pair absent from grants reverts to its arm default by having
+// its row deleted, not by being rewritten.
+// UpdateRoleTx writes inside the caller's transaction, so a change and its audit entry commit
+// together instead of the change committing first with the entry to follow
+// (REQ-AUD-003, DEV-AUD-1).
+func (s *Store) UpdateRoleTx(ctx context.Context, tx *sql.Tx, r *Role, arms []RoleArm, grants []RoleGrant) error {
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE roles SET role_name = ?, project_admin = ? WHERE id = ?`,
+		r.RoleName, boolToInt(r.ProjectAdmin), r.ID); err != nil {
+		return err
+	}
+	if err := s.replaceRolePermissionsTx(ctx, tx, r, arms, grants); err != nil {
+		return err
+	}
+	return nil
 }
 
 // UpdateRole replaces a role's name, project_admin flag, arm defaults and pair
@@ -299,12 +370,7 @@ func (s *Store) UpdateRole(ctx context.Context, r *Role, arms []RoleArm, grants 
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE roles SET role_name = ?, project_admin = ? WHERE id = ?`,
-		r.RoleName, boolToInt(r.ProjectAdmin), r.ID); err != nil {
-		return err
-	}
-	if err := s.replaceRolePermissionsTx(ctx, tx, r, arms, grants); err != nil {
+	if err := s.UpdateRoleTx(ctx, tx, r, arms, grants); err != nil {
 		return err
 	}
 	return tx.Commit()

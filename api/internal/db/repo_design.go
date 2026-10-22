@@ -8,12 +8,44 @@ import (
 	"csms/api/internal/validate"
 )
 
+// withCommit runs fn in one transaction and bumps the structure cache only after
+// the commit lands — see AddArmTx for why the bump cannot happen inside. The plain
+// mutators below are thin wrappers over their *Tx twin through this helper.
+func (s *Store) withCommit(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := fn(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.BumpStructureCache()
+	return nil
+}
+
+// dbOrTx is satisfied by both *sql.DB and *sql.Tx, so a helper can run on
+// whichever the caller holds: a mutation inside a transaction reads its own
+// snapshot, so a default position computed here counts rows as that transaction
+// sees them rather than through a second connection.
+type dbOrTx interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 // nextPosition returns the next available position value for rows within
 // the filter clause; the caller passes a pointer to receive the value.
 // It is used by Add* methods to default position to the end of the list.
 func (s *Store) nextPosition(ctx context.Context, table, where string, posPtr any, args ...any) error {
+	return s.nextPositionOn(ctx, s.DB, table, where, posPtr, args...)
+}
+
+func (s *Store) nextPositionOn(ctx context.Context, q dbOrTx, table, where string, posPtr any, args ...any) error {
 	var maxPos sql.NullInt64
-	err := s.DB.QueryRowContext(ctx,
+	err := q.QueryRowContext(ctx,
 		`SELECT COALESCE(MAX(position), 0) FROM `+table+` WHERE `+where, args...).Scan(&maxPos)
 	if err != nil {
 		return fmt.Errorf("nextPosition %s: %w", table, err)
@@ -49,20 +81,37 @@ func scanArm(row interface{ Scan(dest ...any) error }) (Arm, error) {
 }
 
 // AddArm inserts an arm; position defaults to the end of the arm list.
-func (s *Store) AddArm(ctx context.Context, a *Arm) (int64, error) {
+// AddArmTx writes inside the caller's transaction, so a structure change and its
+// audit entry commit together (REQ-AUD-003, DEV-AUD-1). It deliberately does not bump
+// the structure cache: that has to follow the commit, because a bump before it lets a
+// concurrent request repopulate the cache from the pre-commit state and keep serving it
+// once the change lands. A caller owning the transaction bumps it after Commit.
+func (s *Store) AddArmTx(ctx context.Context, tx *sql.Tx, a *Arm) (int64, error) {
 	if a.Position == 0 {
-		if err := s.nextPosition(ctx, `arms`, `project_id = ?`, &a.Position, a.ProjectID); err != nil {
+		if err := s.nextPositionOn(ctx, tx, `arms`, `project_id = ?`, &a.Position, a.ProjectID); err != nil {
 			return 0, err
 		}
 	}
-	res, err := s.DB.ExecContext(ctx,
+	res, err := tx.ExecContext(ctx,
 		`INSERT INTO arms (project_id, arm_num, name, position) VALUES (?, ?, ?, ?)`,
 		a.ProjectID, a.ArmNum, nullStr(a.Name), a.Position)
 	if err != nil {
 		return 0, err
 	}
-	s.BumpStructureCache()
 	return res.LastInsertId()
+}
+
+// AddArm inserts an arm; position defaults to the end of the arm list.
+func (s *Store) AddArm(ctx context.Context, a *Arm) (int64, error) {
+	var id int64
+	if err := s.withCommit(ctx, func(tx *sql.Tx) error {
+		var err error
+		id, err = s.AddArmTx(ctx, tx, a)
+		return err
+	}); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 func (s *Store) GetArm(ctx context.Context, id int64) (*Arm, error) {
@@ -110,23 +159,45 @@ func (s *Store) ListArms(ctx context.Context, projectID int64) ([]Arm, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) UpdateArm(ctx context.Context, a *Arm) error {
-	_, err := s.DB.ExecContext(ctx,
+// UpdateArmTx writes inside the caller's transaction, so a structure change and its
+// audit entry commit together (REQ-AUD-003, DEV-AUD-1). It deliberately does not bump
+// the structure cache: that has to follow the commit, because a bump before it lets a
+// concurrent request repopulate the cache from the pre-commit state and keep serving it
+// once the change lands. A caller owning the transaction bumps it after Commit.
+func (s *Store) UpdateArmTx(ctx context.Context, tx *sql.Tx, a *Arm) error {
+	_, err := tx.ExecContext(ctx,
 		`UPDATE arms SET name = ?, position = ? WHERE id = ?`,
 		nullStr(a.Name), a.Position, a.ID)
 	if err != nil {
 		return err
 	}
-	s.BumpStructureCache()
+	return nil
+}
+
+func (s *Store) UpdateArm(ctx context.Context, a *Arm) error {
+	if err := s.withCommit(ctx, func(tx *sql.Tx) error { return s.UpdateArmTx(ctx, tx, a) }); err != nil {
+		return err
+	}
+	return nil
+}
+
+// DeleteArmTx writes inside the caller's transaction, so a structure change and its
+// audit entry commit together (REQ-AUD-003, DEV-AUD-1). It deliberately does not bump
+// the structure cache: that has to follow the commit, because a bump before it lets a
+// concurrent request repopulate the cache from the pre-commit state and keep serving it
+// once the change lands. A caller owning the transaction bumps it after Commit.
+func (s *Store) DeleteArmTx(ctx context.Context, tx *sql.Tx, id int64) error {
+	_, err := tx.ExecContext(ctx, `DELETE FROM arms WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
 func (s *Store) DeleteArm(ctx context.Context, id int64) error {
-	_, err := s.DB.ExecContext(ctx, `DELETE FROM arms WHERE id = ?`, id)
-	if err != nil {
+	if err := s.withCommit(ctx, func(tx *sql.Tx) error { return s.DeleteArmTx(ctx, tx, id) }); err != nil {
 		return err
 	}
-	s.BumpStructureCache()
 	return nil
 }
 
@@ -175,13 +246,18 @@ func nullInt64Value(v any) (int64, bool) {
 
 // AddEvent inserts an event; position defaults to the end of its arm's list.
 // The API supplies unique_event_name (<label>_arm_<n>, REQ-DB-011).
-func (s *Store) AddEvent(ctx context.Context, e *Event) (int64, error) {
+// AddEventTx writes inside the caller's transaction, so a structure change and its
+// audit entry commit together (REQ-AUD-003, DEV-AUD-1). It deliberately does not bump
+// the structure cache: that has to follow the commit, because a bump before it lets a
+// concurrent request repopulate the cache from the pre-commit state and keep serving it
+// once the change lands. A caller owning the transaction bumps it after Commit.
+func (s *Store) AddEventTx(ctx context.Context, tx *sql.Tx, e *Event) (int64, error) {
 	if e.Position == 0 {
-		if err := s.nextPosition(ctx, `events`, `project_id = ? AND arm_id = ?`, &e.Position, e.ProjectID, e.ArmID); err != nil {
+		if err := s.nextPositionOn(ctx, tx, `events`, `project_id = ? AND arm_id = ?`, &e.Position, e.ProjectID, e.ArmID); err != nil {
 			return 0, err
 		}
 	}
-	res, err := s.DB.ExecContext(ctx,
+	res, err := tx.ExecContext(ctx,
 		`INSERT INTO events (project_id, arm_id, event_name, unique_event_name,
 			period, safe_region_start, safe_region_end, position)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -190,8 +266,21 @@ func (s *Store) AddEvent(ctx context.Context, e *Event) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	s.BumpStructureCache()
 	return res.LastInsertId()
+}
+
+// AddEvent inserts an event; position defaults to the end of its arm's list.
+// The API supplies unique_event_name (<label>_arm_<n>, REQ-DB-011).
+func (s *Store) AddEvent(ctx context.Context, e *Event) (int64, error) {
+	var id int64
+	if err := s.withCommit(ctx, func(tx *sql.Tx) error {
+		var err error
+		id, err = s.AddEventTx(ctx, tx, e)
+		return err
+	}); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 func (s *Store) GetEvent(ctx context.Context, id int64) (*Event, error) {
@@ -321,21 +410,39 @@ func scanInstrument(row interface{ Scan(dest ...any) error }) (Instrument, error
 
 // AddInstrument inserts an instrument; position defaults to the end of the
 // instrument list.
-func (s *Store) AddInstrument(ctx context.Context, i *Instrument) (int64, error) {
+// AddInstrumentTx writes inside the caller's transaction, so a structure change and its
+// audit entry commit together (REQ-AUD-003, DEV-AUD-1). It deliberately does not bump
+// the structure cache: that has to follow the commit, because a bump before it lets a
+// concurrent request repopulate the cache from the pre-commit state and keep serving it
+// once the change lands. A caller owning the transaction bumps it after Commit.
+func (s *Store) AddInstrumentTx(ctx context.Context, tx *sql.Tx, i *Instrument) (int64, error) {
 	if i.Position == 0 {
-		if err := s.nextPosition(ctx, `instruments`, `project_id = ?`, &i.Position, i.ProjectID); err != nil {
+		if err := s.nextPositionOn(ctx, tx, `instruments`, `project_id = ?`, &i.Position, i.ProjectID); err != nil {
 			return 0, err
 		}
 	}
-	res, err := s.DB.ExecContext(ctx,
+	res, err := tx.ExecContext(ctx,
 		`INSERT INTO instruments (project_id, name, position, is_survey, branching_logic)
 		 VALUES (?, ?, ?, ?, ?)`,
 		i.ProjectID, i.Name, i.Position, boolToInt(i.IsSurvey), nullStr(i.BranchingLogic))
 	if err != nil {
 		return 0, err
 	}
-	s.BumpStructureCache()
 	return res.LastInsertId()
+}
+
+// AddInstrument inserts an instrument; position defaults to the end of the
+// instrument list.
+func (s *Store) AddInstrument(ctx context.Context, i *Instrument) (int64, error) {
+	var id int64
+	if err := s.withCommit(ctx, func(tx *sql.Tx) error {
+		var err error
+		id, err = s.AddInstrumentTx(ctx, tx, i)
+		return err
+	}); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 func (s *Store) GetInstrument(ctx context.Context, id int64) (*Instrument, error) {
@@ -454,12 +561,10 @@ func (s *Store) ListInstrumentEvents(ctx context.Context, projectID int64) ([]In
 // the arm after the change. A pair that stays mapped keeps its repeating
 // designation (REQ-DB-047) — the matrix says nothing about it, so its IsRepeating
 // is not read here; a pair that is unmapped loses the designation with its row.
-func (s *Store) SetInstrumentEventsForArm(ctx context.Context, projectID, armID int64, pairs []InstrumentEvent) error {
-	tx, err := s.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
+// SetInstrumentEventsForArmTx writes inside the caller's transaction, so a change and its audit entry commit
+// together instead of the change committing first with the entry to follow
+// (REQ-AUD-003, DEV-AUD-1).
+func (s *Store) SetInstrumentEventsForArmTx(ctx context.Context, tx *sql.Tx, projectID, armID int64, pairs []InstrumentEvent) error {
 	repeating := map[[2]int64]bool{}
 	rows, err := tx.QueryContext(ctx,
 		`SELECT instrument_id, event_id FROM instrument_events
@@ -497,11 +602,16 @@ func (s *Store) SetInstrumentEventsForArm(ctx context.Context, projectID, armID 
 	if err := s.MaterializePairGrantsTx(ctx, tx, projectID); err != nil {
 		return err
 	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	s.BumpStructureCache()
 	return nil
+}
+
+// SetInstrumentEventsForArm replaces the mapping of one arm from the full
+// checked matrix (REQ-DB-012, REQ-API-073); pairs is the complete set for
+// the arm after the change. A pair that stays mapped keeps its repeating
+// designation (REQ-DB-047) — the matrix says nothing about it, so its IsRepeating
+// is not read here; a pair that is unmapped loses the designation with its row.
+func (s *Store) SetInstrumentEventsForArm(ctx context.Context, projectID, armID int64, pairs []InstrumentEvent) error {
+	return s.withCommit(ctx, func(tx *sql.Tx) error { return s.SetInstrumentEventsForArmTx(ctx, tx, projectID, armID, pairs) })
 }
 
 // SetRepeatingEventsTx designates exactly the given events as the repeating
@@ -713,9 +823,14 @@ func fieldInsertArgs(f *Field) []any {
 // field list. The direct_identifier flag presets to true for identifier-shaped
 // validation types — email, MRN, international/national phone (REQ-EXP-020);
 // the designer MAY clear it afterwards.
-func (s *Store) AddField(ctx context.Context, f *Field) (int64, error) {
+// AddFieldTx writes inside the caller's transaction, so a structure change and its
+// audit entry commit together (REQ-AUD-003, DEV-AUD-1). It deliberately does not bump
+// the structure cache: that has to follow the commit, because a bump before it lets a
+// concurrent request repopulate the cache from the pre-commit state and keep serving it
+// once the change lands. A caller owning the transaction bumps it after Commit.
+func (s *Store) AddFieldTx(ctx context.Context, tx *sql.Tx, f *Field) (int64, error) {
 	if f.Position == 0 {
-		if err := s.nextPosition(ctx, `fields`, `project_id = ? AND instrument_id = ?`,
+		if err := s.nextPositionOn(ctx, tx, `fields`, `project_id = ? AND instrument_id = ?`,
 			&f.Position, f.ProjectID, f.InstrumentID); err != nil {
 			return 0, err
 		}
@@ -723,12 +838,27 @@ func (s *Store) AddField(ctx context.Context, f *Field) (int64, error) {
 	if !f.DirectIdentifier && validate.PresetDirectIdentifier(f.ValidationType.String) {
 		f.DirectIdentifier = true
 	}
-	res, err := s.DB.ExecContext(ctx, fieldInsertSQL, fieldInsertArgs(f)...)
+	res, err := tx.ExecContext(ctx, fieldInsertSQL, fieldInsertArgs(f)...)
 	if err != nil {
 		return 0, err
 	}
-	s.BumpStructureCache()
 	return res.LastInsertId()
+}
+
+// AddField inserts a field; position defaults to the end of its instrument's
+// field list. The direct_identifier flag presets to true for identifier-shaped
+// validation types — email, MRN, international/national phone (REQ-EXP-020);
+// the designer MAY clear it afterwards.
+func (s *Store) AddField(ctx context.Context, f *Field) (int64, error) {
+	var id int64
+	if err := s.withCommit(ctx, func(tx *sql.Tx) error {
+		var err error
+		id, err = s.AddFieldTx(ctx, tx, f)
+		return err
+	}); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 // InsertFieldTx inserts one field inside the caller's transaction — the bulk

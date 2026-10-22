@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 )
 
 // --- system settings (REQ-DB-037) ---
@@ -31,8 +32,11 @@ func (s *Store) SystemSettings(ctx context.Context) (map[string]string, error) {
 
 // SetSystemSetting upserts one runtime setting (REQ-API-112). Portable
 // update-then-insert: the primary key keeps a racing insert safe (one wins).
-func (s *Store) SetSystemSetting(ctx context.Context, key, value string) error {
-	res, err := s.DB.ExecContext(ctx, "UPDATE system_settings SET value = ? WHERE `key` = ?", value, key)
+// SetSystemSettingTx writes inside the caller's transaction, so a change and its audit entry commit
+// together instead of the change committing first with the entry to follow
+// (REQ-AUD-003, DEV-AUD-1).
+func (s *Store) SetSystemSettingTx(ctx context.Context, tx *sql.Tx, key, value string) error {
+	res, err := tx.ExecContext(ctx, "UPDATE system_settings SET value = ? WHERE `key` = ?", value, key)
 	if err != nil {
 		return err
 	}
@@ -43,12 +47,26 @@ func (s *Store) SetSystemSetting(ctx context.Context, key, value string) error {
 	// value affects 0 rows although the key exists, and the INSERT below
 	// would then fail on the primary key. Check before inserting.
 	var exists int
-	if err := s.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM system_settings WHERE `key` = ?", key).Scan(&exists); err != nil {
+	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM system_settings WHERE `key` = ?", key).Scan(&exists); err != nil {
 		return err
 	}
 	if exists > 0 {
 		return nil
 	}
-	_, err = s.DB.ExecContext(ctx, "INSERT INTO system_settings (`key`, value) VALUES (?, ?)", key, value)
+	_, err = tx.ExecContext(ctx, "INSERT INTO system_settings (`key`, value) VALUES (?, ?)", key, value)
 	return err
+}
+
+// SetSystemSetting upserts one runtime setting (REQ-API-112). Portable
+// update-then-insert: the primary key keeps a racing insert safe (one wins).
+func (s *Store) SetSystemSetting(ctx context.Context, key, value string) error {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := s.SetSystemSettingTx(ctx, tx, key, value); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

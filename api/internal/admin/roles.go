@@ -2,6 +2,7 @@ package admin
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -447,20 +448,18 @@ func (h *Handler) createRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	role := &db.Role{ProjectID: projectID, RoleName: body.Name, ProjectAdmin: body.ProjectAdmin}
-	id, err := h.Store.CreateRole(ctx, role, parsed.arms, parsed.grants)
-	if err != nil {
-		errInternal(w)
-		return
-	}
-	role.ID = id
-
 	defaults := armDefaults(projectArms, parsed.arms)
 	projectAdminInt := 0
 	if role.ProjectAdmin {
 		projectAdminInt = 1
 	}
 	shape := roleAuditShape(defaults, parsed.grants, names)
-	if err := h.Audit.Insert(ctx, audit.Entry{
+	var id int64
+	if err := h.auditTx(ctx, func(tx *sql.Tx) error {
+		var err error
+		id, err = h.Store.CreateRoleTx(ctx, tx, role, parsed.arms, parsed.grants)
+		return err
+	}, audit.Entry{
 		EventType: audit.RoleCreated, Source: audit.SourceUI,
 		UserID: u.ID, Email: u.Email, ProjectID: projectID,
 		Details: map[string]any{
@@ -473,6 +472,8 @@ func (h *Handler) createRole(w http.ResponseWriter, r *http.Request) {
 		errInternal(w)
 		return
 	}
+	role.ID = id
+
 	writeJSON(w, http.StatusCreated, newRoleObject(*role, defaults,
 		grantObjects(parsed.grants, names, defaults, eventArmOf(events, projectArms))))
 }
@@ -542,14 +543,11 @@ func (h *Handler) updateRole(w http.ResponseWriter, r *http.Request) {
 
 	updated := db.Role{ID: role.ID, ProjectID: projectID, RoleName: body.Name,
 		ProjectAdmin: body.ProjectAdmin}
-	if err := h.Store.UpdateRole(ctx, &updated, parsed.arms, parsed.grants); err != nil {
-		errInternal(w)
-		return
-	}
-
 	defaults := armDefaults(projectArms, parsed.arms)
 	after := roleAuditShape(defaults, parsed.grants, names)
-	if err := h.Audit.Insert(ctx, audit.Entry{
+	if err := h.auditTx(ctx, func(tx *sql.Tx) error {
+		return h.Store.UpdateRoleTx(ctx, tx, &updated, parsed.arms, parsed.grants)
+	}, audit.Entry{
 		EventType: audit.RoleUpdated, Source: audit.SourceUI,
 		UserID: u.ID, Email: u.Email, ProjectID: projectID,
 		Details: map[string]any{

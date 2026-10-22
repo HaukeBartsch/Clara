@@ -133,8 +133,11 @@ func (s *Store) UpdateStagingDesign(ctx context.Context, projectID int64, design
 
 // DeleteStaging closes the open set without applying it (discard) or after a
 // commit has applied the snapshot. Reports whether a row was there.
-func (s *Store) DeleteStaging(ctx context.Context, projectID int64) (bool, error) {
-	res, err := s.DB.ExecContext(ctx, `DELETE FROM project_staging WHERE project_id = ?`, projectID)
+// DeleteStagingTx writes inside the caller's transaction, so a change and its audit entry commit
+// together instead of the change committing first with the entry to follow
+// (REQ-AUD-003, DEV-AUD-1).
+func (s *Store) DeleteStagingTx(ctx context.Context, tx *sql.Tx, projectID int64) (bool, error) {
+	res, err := tx.ExecContext(ctx, `DELETE FROM project_staging WHERE project_id = ?`, projectID)
 	if err != nil {
 		return false, err
 	}
@@ -143,4 +146,22 @@ func (s *Store) DeleteStaging(ctx context.Context, projectID int64) (bool, error
 		return false, err
 	}
 	return n > 0, nil
+}
+
+// DeleteStaging closes the open set without applying it (discard) or after a
+// commit has applied the snapshot. Reports whether a row was there.
+func (s *Store) DeleteStaging(ctx context.Context, projectID int64) (bool, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	ok, err := s.DeleteStagingTx(ctx, tx, projectID)
+	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return ok, nil
 }

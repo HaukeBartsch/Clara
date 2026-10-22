@@ -403,33 +403,45 @@ func (h *Handler) createProject(w http.ResponseWriter, r *http.Request) {
 		ParticipantNames: body.ParticipantNames,
 		RecordNaming:     recordNaming,
 	}
-	id, err := h.Store.CreateProject(ctx, p)
+	// Creation is single-arm (REQ-DB-011): arm 1 only, unnamed. The arm opens
+	// with its first event "baseline" (timepoint day 0) and the project opens
+	// with one instrument "instrument" — a project always holds at least one
+	// arm, event and instrument (REQ-API-050).
+	//
+	// All four writes and their audit entry commit in one transaction. Each used
+	// to commit on its own, so an interrupted creation left a project without its
+	// arm or event and nothing in the trail said so (REQ-AUD-003). This site builds
+	// the entry from the generated project id, which is why it drives the
+	// transaction directly rather than through auditTx.
+	tx, err := h.Store.DB.BeginTx(ctx, nil)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	defer tx.Rollback()
+	id, err := h.Store.CreateProjectTx(ctx, tx, p)
 	if err != nil {
 		errInternal(w)
 		return
 	}
 	p.ID = id
-	// Creation is single-arm (REQ-DB-011): arm 1 only, unnamed. The arm opens
-	// with its first event "baseline" (timepoint day 0) and the project opens
-	// with one instrument "instrument" — a project always holds at least one
-	// arm, event and instrument (REQ-API-050).
-	armID, err := h.Store.AddArm(ctx, &db.Arm{ProjectID: id, ArmNum: 1})
+	armID, err := h.Store.AddArmTx(ctx, tx, &db.Arm{ProjectID: id, ArmNum: 1})
 	if err != nil {
 		errInternal(w)
 		return
 	}
-	if _, err := h.Store.AddEvent(ctx, &db.Event{
+	if _, err := h.Store.AddEventTx(ctx, tx, &db.Event{
 		ProjectID: id, ArmID: armID, EventName: "baseline", UniqueEventName: "baseline_arm_1",
 		Period: sql.NullInt64{Int64: 0, Valid: true},
 	}); err != nil {
 		errInternal(w)
 		return
 	}
-	if _, err := h.Store.AddInstrument(ctx, &db.Instrument{ProjectID: id, Name: "instrument"}); err != nil {
+	if _, err := h.Store.AddInstrumentTx(ctx, tx, &db.Instrument{ProjectID: id, Name: "instrument"}); err != nil {
 		errInternal(w)
 		return
 	}
-	if err := h.Audit.Insert(ctx, audit.Entry{
+	if err := h.Audit.InsertTx(ctx, tx, audit.Entry{
 		EventType: audit.ProjectCreated, Source: audit.SourceUI,
 		UserID: u.ID, Email: u.Email, ProjectID: id,
 		Details: map[string]any{"project_name": p.ProjectName},
@@ -437,6 +449,11 @@ func (h *Handler) createProject(w http.ResponseWriter, r *http.Request) {
 		errInternal(w)
 		return
 	}
+	if err := tx.Commit(); err != nil {
+		errInternal(w)
+		return
+	}
+	h.Store.BumpStructureCache()
 	writeJSON(w, http.StatusCreated, newProjectObject(p))
 }
 
@@ -632,12 +649,13 @@ func (h *Handler) updateProject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := h.Store.UpdateProject(ctx, p); err != nil {
-		errInternal(w)
-		return
-	}
+	// The write and its entry commit together when there is an entry to write
+	// (REQ-AUD-003); a PUT that changed nothing writes the row as before and has
+	// no entry to pair with.
 	if len(changes) > 0 {
-		if err := h.Audit.Insert(ctx, audit.Entry{
+		if err := h.auditTx(ctx, func(tx *sql.Tx) error {
+			return h.Store.UpdateProjectTx(ctx, tx, p)
+		}, audit.Entry{
 			EventType: audit.ProjectUpdated, Source: audit.SourceUI,
 			UserID: u.ID, Email: u.Email, ProjectID: p.ID,
 			Details: map[string]any{"changes": changes},
@@ -645,6 +663,9 @@ func (h *Handler) updateProject(w http.ResponseWriter, r *http.Request) {
 			errInternal(w)
 			return
 		}
+	} else if err := h.Store.UpdateProject(ctx, p); err != nil {
+		errInternal(w)
+		return
 	}
 	detail, err := h.buildProjectDetail(ctx, p, lv)
 	if err != nil {

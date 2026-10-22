@@ -7,6 +7,7 @@ package admin
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -132,19 +133,24 @@ func (h *Handler) putSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Diff first, then write every changed key and the entry describing them in
+	// one transaction: a settings change recorded without its values, or half a
+	// batch applied, is what REQ-AUD-003 rules out.
 	changes := map[string]map[string]string{}
 	for k, v := range next {
-		if old[k] == v {
-			continue
+		if old[k] != v {
+			changes[k] = map[string]string{"old": old[k], "new": v}
 		}
-		if err := h.Store.SetSystemSetting(r.Context(), k, v); err != nil {
-			errInternal(w)
-			return
-		}
-		changes[k] = map[string]string{"old": old[k], "new": v}
 	}
 	if len(changes) > 0 {
-		if err := h.Audit.Insert(r.Context(), audit.Entry{
+		if err := h.auditTx(r.Context(), func(tx *sql.Tx) error {
+			for k, v := range changes {
+				if err := h.Store.SetSystemSettingTx(r.Context(), tx, k, v["new"]); err != nil {
+					return err
+				}
+			}
+			return nil
+		}, audit.Entry{
 			EventType: audit.SettingsUpdated, Source: audit.SourceUI,
 			UserID: u.ID, Email: u.Email,
 			Details: map[string]any{"changes": changes},

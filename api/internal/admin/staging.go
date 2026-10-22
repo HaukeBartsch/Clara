@@ -526,11 +526,10 @@ func (h *Handler) discardStaging(w http.ResponseWriter, r *http.Request) {
 		errConflict(w, "no staging set is open")
 		return
 	}
-	if _, err := h.Store.DeleteStaging(ctx, projectID); err != nil {
-		errInternal(w)
-		return
-	}
-	if err := h.Audit.Insert(ctx, audit.Entry{
+	if err := h.auditTx(ctx, func(tx *sql.Tx) error {
+		_, err := h.Store.DeleteStagingTx(ctx, tx, projectID)
+		return err
+	}, audit.Entry{
 		EventType: audit.StagingDiscarded, Source: audit.SourceUI,
 		UserID: u.ID, Email: u.Email, ProjectID: projectID,
 		Details: map[string]any{"opened_at": set.OpenedAt},

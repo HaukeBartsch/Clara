@@ -427,18 +427,16 @@ func (h *Handler) changeMyPassword(w http.ResponseWriter, r *http.Request) {
 		errInternal(w)
 		return
 	}
-	if err := h.Store.SetUserPasswordHash(ctx, u.ID, sql.NullString{String: hash, Valid: true}); err != nil {
-		errInternal(w)
-		return
-	}
-	h.lockouts.success(u.Email)
-	if err := h.Audit.Insert(ctx, audit.Entry{
+	if err := h.auditTx(ctx, func(tx *sql.Tx) error {
+		return h.Store.SetUserPasswordHashTx(ctx, tx, u.ID, sql.NullString{String: hash, Valid: true})
+	}, audit.Entry{
 		EventType: audit.PasswordChanged, Source: audit.SourceUI,
 		UserID: u.ID, Email: u.Email, Details: map[string]any{}, // never the password (REQ-AUTH-036)
 	}); err != nil {
 		errInternal(w)
 		return
 	}
+	h.lockouts.success(u.Email)
 	epoch, err := h.Store.SessionEpoch(ctx, u.ID)
 	if err != nil {
 		errInternal(w)

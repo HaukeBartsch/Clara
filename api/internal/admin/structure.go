@@ -489,13 +489,12 @@ func (h *Handler) createArm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	arm := &db.Arm{ProjectID: projectID, ArmNum: next, Name: sql.NullString{String: name, Valid: name != ""}}
-	id, err := h.Store.AddArm(ctx, arm)
-	if err != nil {
-		errInternal(w)
-		return
-	}
-	arm.ID = id
-	if err := h.Audit.Insert(ctx, audit.Entry{
+	var id int64
+	if err := h.auditTxStructure(ctx, func(tx *sql.Tx) error {
+		var err error
+		id, err = h.Store.AddArmTx(ctx, tx, arm)
+		return err
+	}, audit.Entry{
 		EventType: audit.ArmCreated, Source: audit.SourceUI,
 		UserID: u.ID, Email: u.Email, ProjectID: projectID,
 		Details: withBreakingAcknowledgement(map[string]any{"arm_num": next, "name": name}, breakingAcknowledged),
@@ -503,6 +502,7 @@ func (h *Handler) createArm(w http.ResponseWriter, r *http.Request) {
 		errInternal(w)
 		return
 	}
+	arm.ID = id
 	writeJSON(w, http.StatusCreated, armObject{ID: arm.ID, ArmNum: next, Name: name, Events: []armEventObject{}})
 }
 
@@ -619,11 +619,9 @@ func (h *Handler) updateArm(w http.ResponseWriter, r *http.Request) {
 	if name != arm.Name.String {
 		next := *arm
 		next.Name = sql.NullString{String: name, Valid: name != ""}
-		if err := h.Store.UpdateArm(ctx, &next); err != nil {
-			errInternal(w)
-			return
-		}
-		if err := h.Audit.Insert(ctx, audit.Entry{
+		if err := h.auditTxStructure(ctx, func(tx *sql.Tx) error {
+			return h.Store.UpdateArmTx(ctx, tx, &next)
+		}, audit.Entry{
 			EventType: audit.ArmUpdated, Source: audit.SourceUI,
 			UserID: u.ID, Email: u.Email, ProjectID: arm.ProjectID,
 			Details: withBreakingAcknowledgement(map[string]any{
@@ -757,11 +755,9 @@ func (h *Handler) deleteArm(w http.ResponseWriter, r *http.Request) {
 		errConflict(w, "arm still has data")
 		return
 	}
-	if err := h.Store.DeleteArm(ctx, armID); err != nil {
-		errInternal(w)
-		return
-	}
-	if err := h.Audit.Insert(ctx, audit.Entry{
+	if err := h.auditTxStructure(ctx, func(tx *sql.Tx) error {
+		return h.Store.DeleteArmTx(ctx, tx, armID)
+	}, audit.Entry{
 		EventType: audit.ArmDeleted, Source: audit.SourceUI,
 		UserID: u.ID, Email: u.Email, ProjectID: arm.ProjectID,
 		Details: map[string]any{"arm_num": arm.ArmNum, "name": arm.Name.String},
@@ -782,11 +778,9 @@ func (h *Handler) renameLastArm(w http.ResponseWriter, r *http.Request, u *db.Us
 	if arm.Name.String != "arm_1" {
 		next := *arm
 		next.Name = sql.NullString{String: "arm_1", Valid: true}
-		if err := h.Store.UpdateArm(ctx, &next); err != nil {
-			errInternal(w)
-			return
-		}
-		if err := h.Audit.Insert(ctx, audit.Entry{
+		if err := h.auditTxStructure(ctx, func(tx *sql.Tx) error {
+			return h.Store.UpdateArmTx(ctx, tx, &next)
+		}, audit.Entry{
 			EventType: audit.ArmUpdated, Source: audit.SourceUI,
 			UserID: u.ID, Email: u.Email, ProjectID: arm.ProjectID,
 			Details: map[string]any{
@@ -964,13 +958,12 @@ func (h *Handler) createEvent(w http.ResponseWriter, r *http.Request) {
 		SafeRegionStart: nullInt64FromBody(body.SafeRegionStart),
 		SafeRegionEnd:   nullInt64FromBody(body.SafeRegionEnd),
 	}
-	id, err := h.Store.AddEvent(ctx, ev)
-	if err != nil {
-		errInternal(w)
-		return
-	}
-	ev.ID = id
-	if err := h.Audit.Insert(ctx, audit.Entry{
+	var id int64
+	if err := h.auditTxStructure(ctx, func(tx *sql.Tx) error {
+		var err error
+		id, err = h.Store.AddEventTx(ctx, tx, ev)
+		return err
+	}, audit.Entry{
 		EventType: audit.EventCreated, Source: audit.SourceUI,
 		UserID: u.ID, Email: u.Email, ProjectID: projectID,
 		Details: withBreakingAcknowledgement(map[string]any{
@@ -980,6 +973,7 @@ func (h *Handler) createEvent(w http.ResponseWriter, r *http.Request) {
 		errInternal(w)
 		return
 	}
+	ev.ID = id
 	obj := NewEventObject(*ev)
 	obj.ArmNum = arm.ArmNum
 	writeJSON(w, http.StatusCreated, obj)
@@ -1971,13 +1965,12 @@ func (h *Handler) createInstrument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	inst := &db.Instrument{ProjectID: projectID, Name: name}
-	id, err := h.Store.AddInstrument(ctx, inst)
-	if err != nil {
-		errInternal(w)
-		return
-	}
-	inst.ID = id
-	if err := h.Audit.Insert(ctx, audit.Entry{
+	var id int64
+	if err := h.auditTxStructure(ctx, func(tx *sql.Tx) error {
+		var err error
+		id, err = h.Store.AddInstrumentTx(ctx, tx, inst)
+		return err
+	}, audit.Entry{
 		EventType: audit.InstrumentCreated, Source: audit.SourceUI,
 		UserID: u.ID, Email: u.Email, ProjectID: projectID,
 		Details: withBreakingAcknowledgement(map[string]any{"name": name, "position": inst.Position}, breakingAcknowledged),
@@ -1985,6 +1978,7 @@ func (h *Handler) createInstrument(w http.ResponseWriter, r *http.Request) {
 		errInternal(w)
 		return
 	}
+	inst.ID = id
 	writeJSON(w, http.StatusCreated, instrumentObject{
 		ID: inst.ID, Name: name, Position: inst.Position, FieldCount: 0,
 		RepeatingEvents: []string{},
@@ -3408,29 +3402,22 @@ func (h *Handler) createField(w http.ResponseWriter, r *http.Request) {
 		writeDesignError(w, derr)
 		return
 	}
-	id, err := h.Store.AddField(ctx, f)
-	if err != nil {
-		errInternal(w)
-		return
-	}
-	f.ID = id
-	if len(refs) > 0 {
-		tx, err := h.Store.DB.BeginTx(ctx, nil)
+	// The field row and its calculation dependencies land in one transaction with
+	// the audit entry: a field whose deps failed to record would silently never
+	// recalculate (REQ-AUD-003).
+	var id int64
+	if err := h.auditTxStructure(ctx, func(tx *sql.Tx) error {
+		var err error
+		id, err = h.Store.AddFieldTx(ctx, tx, f)
 		if err != nil {
-			errInternal(w)
-			return
+			return err
 		}
-		defer tx.Rollback()
-		if err := putCalcDepsTx(ctx, tx, projectID, id, refs); err != nil {
-			errInternal(w)
-			return
+		f.ID = id
+		if len(refs) > 0 {
+			return putCalcDepsTx(ctx, tx, projectID, id, refs)
 		}
-		if err := tx.Commit(); err != nil {
-			errInternal(w)
-			return
-		}
-	}
-	if err := h.Audit.Insert(ctx, audit.Entry{
+		return nil
+	}, audit.Entry{
 		EventType: audit.FieldCreated, Source: audit.SourceUI,
 		UserID: u.ID, Email: u.Email, ProjectID: projectID,
 		Details: withBreakingAcknowledgement(map[string]any{
@@ -4875,12 +4862,9 @@ func (h *Handler) putMapping(w http.ResponseWriter, r *http.Request) {
 		errInternal(w)
 		return
 	}
-	if err := h.Store.SetInstrumentEventsForArm(ctx, projectID, arm.ID, pairs); err != nil {
-		errInternal(w)
-		return
-	}
 	// Audit the changed instruments with their full per-arm checked state
-	// (1/0 over the arm's events), §3.3 mapping_updated shape.
+	// (1/0 over the arm's events), §3.3 mapping_updated shape. Computed before the
+	// write so the entry describes the change the transaction below applies.
 	oldSet := map[[2]int64]bool{}
 	newSet := map[[2]int64]bool{}
 	for _, p := range oldPairs {
@@ -4908,7 +4892,9 @@ func (h *Handler) putMapping(w http.ResponseWriter, r *http.Request) {
 			pairsAudit[name] = state
 		}
 	}
-	if err := h.Audit.Insert(ctx, audit.Entry{
+	if err := h.auditTxStructure(ctx, func(tx *sql.Tx) error {
+		return h.Store.SetInstrumentEventsForArmTx(ctx, tx, projectID, arm.ID, pairs)
+	}, audit.Entry{
 		EventType: audit.MappingUpdated, Source: audit.SourceUI,
 		UserID: u.ID, Email: u.Email, ProjectID: projectID,
 		Details: withBreakingAcknowledgement(map[string]any{
