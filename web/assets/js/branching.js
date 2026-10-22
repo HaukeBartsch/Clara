@@ -366,7 +366,7 @@ function compareStrings(l, r, op) {
 // The §4.1 canonical forms attach the offset directly ("2026-03-01 09:30+01:00");
 // a space-separated offset is accepted as well, mirroring expr.go's parse.
 const INSTANT_RE =
-  /^(\d{4})-(\d{1,2})-(\d{1,2})(?: (\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?(?: ?)([+-])(\d{2}):?(\d{2})?$/
+  /^(\d{4})-(\d{1,2})-(\d{1,2})(?: (\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?(?: ?([+-])(\d{2}):?(\d{2})?)?$/
 
 function daysInMonth(year, month) {
   const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0

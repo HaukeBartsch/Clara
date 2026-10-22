@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -248,7 +249,10 @@ func TestBranchingCorpus(t *testing.T) {
 	if len(cases) != len(inputs) {
 		t.Fatalf("corpus has %d cases, inputs define %d — regenerate with UPDATE_CORPUS=1", len(cases), len(inputs))
 	}
-	for _, cs := range cases {
+	for i, cs := range cases {
+		if !reflect.DeepEqual(cs, inputs[i]) {
+			t.Fatalf("corpus case %q differs from hand-authored case: got %+v, want %+v", cs.Name, cs, inputs[i])
+		}
 		t.Run(cs.Name, func(t *testing.T) {
 			got, err := runCorpusCase(t, cs)
 			if cs.WantErr {
@@ -285,7 +289,9 @@ func TestGenerateBranchingCorpus(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: EvalLogic: %v", cases[i].Name, err)
 		}
-		cases[i].Expected = got
+		if got != cases[i].Expected {
+			t.Fatalf("%s: got %v, want hand-authored expectation %v", cases[i].Name, got, cases[i].Expected)
+		}
 	}
 	raw, err := json.MarshalIndent(cases, "", "  ")
 	if err != nil {

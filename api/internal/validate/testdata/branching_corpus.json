@@ -437,7 +437,7 @@
       "e1|t2": "2026-03-05 10:00:00"
     },
     "choices": null,
-    "expected": false
+    "expected": true
   },
   {
     "name": "datetime_offset_colon_instant_equal",
@@ -447,7 +447,7 @@
       "e1|t2": "2026-03-05 10:00"
     },
     "choices": null,
-    "expected": false
+    "expected": true
   },
   {
     "name": "datetime_offset_ordering",
@@ -457,7 +457,7 @@
       "e1|t2": "2026-03-05 14:00"
     },
     "choices": null,
-    "expected": true
+    "expected": false
   },
   {
     "name": "canonical_attached_equal",
@@ -477,7 +477,7 @@
       "e1|t2": "2026-03-05 10:00:30"
     },
     "choices": null,
-    "expected": false
+    "expected": true
   },
   {
     "name": "canonical_date_attached_ordering",
