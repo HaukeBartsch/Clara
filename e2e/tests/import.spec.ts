@@ -126,4 +126,93 @@ test.describe("instrument import (REQ-UI-053)", () => {
     await page.selectOption("#f-study_kind", "US")
     await expect(field("study_note")).toBeHidden()
   })
+
+  test("create a project, move an imported field, enter data and export it", async ({ page }) => {
+    test.setTimeout(120_000)
+    const tag = Date.now()
+    const projectName = `Workflow ${tag}`
+
+    await signInAsAdmin(page)
+    await page.locator('header a[href="/admin"]').click()
+    await expect(page.locator('#clara-nav a[href="/admin?section=projects"]')).toHaveAttribute("aria-current", "page")
+    await page.locator("details.clara-create summary").click()
+    await page.fill("#project-project_name", projectName)
+    await page.selectOption("#project-organization", "OUS")
+    await page.fill("#project-pi_name", "Principal Investigator")
+    await page.fill("#project-pi_email", "pi@example.org")
+    await page.locator('form[action*="action=create_project"] button[type="submit"]').click()
+    await page.getByRole("link", { name: `Open ${projectName}` }).click()
+    await expect(page).toHaveURL(/\/projects\/\d+\/setup$/)
+    const projectId = /\/projects\/(\d+)/.exec(page.url())?.[1]
+    expect(projectId).toBeDefined()
+
+    // Import two instruments, then move a checkbox field across them in the designer.
+    await page.locator("#clara-nav").getByRole("link", { name: "Design" }).click()
+    await page.setInputFiles("#import-files", [
+      { name: "a_studies.csv", mimeType: "text/csv", buffer: Buffer.from(STUDIES) },
+      { name: "b_series.csv", mimeType: "text/csv", buffer: Buffer.from(SERIES) },
+    ])
+    await page.getByRole("button", { name: "Preview" }).click()
+    await expect(page.locator("[data-clara-import-problems]")).toHaveCount(0)
+    await page.getByRole("button", { name: "Import", exact: true }).click()
+    await expect(success(page)).toContainText("instruments created: 2, fields: 6")
+
+    const instruments = page.locator("table.clara-design-instruments")
+    await instruments.getByRole("link", { name: "series", exact: true }).click()
+    await page.getByRole("button", { name: "Move field series_flags", exact: true }).click()
+    const dialog = page.locator("#clara-move")
+    await expect(dialog).toBeVisible()
+    await dialog.locator("#move-instrument").selectOption({ label: "studies" })
+    await dialog.getByRole("button", { name: "Move", exact: true }).click()
+    await expect(success(page)).toContainText('Field "series_flags" moved.')
+    await expect(page.locator("table.clara-fields tbody tr[data-field='series_flags']")).toHaveCount(1)
+
+    // Map both instruments so the imported design is available for record entry.
+    await page.locator("#clara-nav").getByRole("link", { name: "Setup" }).click()
+    const matrix = page.locator('form.clara-mapping[data-arm="1"]')
+    for (const name of ["instrument", "studies", "series"]) {
+      const pair = matrix.locator(`input[data-pair="${name}|baseline_arm_1"]`)
+      if (!(await pair.isChecked())) await pair.check()
+    }
+    await matrix.locator("button[type=submit]").click()
+    await expect(success(page)).toContainText("Instrument assignment of arm 1 saved.")
+
+    // Give the acting administrator project access, create a participant, and save entered values.
+    await page.locator("#clara-nav").getByRole("link", { name: "Members" }).click()
+    const adminOption = await page.locator("#member-user option", { hasText: ADMIN_EMAIL }).getAttribute("value")
+    await page.locator("#member-user").selectOption(adminOption ?? "")
+    await page.locator('form[action*="action=add_member"] button[type="submit"]').click()
+
+    await page.locator("#clara-nav").getByRole("link", { name: "Record Status Dashboard" }).click()
+    await page.fill("#new-record-id", "WF001")
+    await page.getByRole("button", { name: "Create" }).click()
+    await expect(page).toHaveURL(/\/records\/WF001/)
+    await page.locator(".clara-instrument-nav").getByRole("link", { name: /studies/ }).click()
+    const form = page.locator("form[data-clara-record-form]")
+    await page.selectOption("#f-study_kind", "MR")
+    await page.fill("#f-study_note", "workflow scanner note")
+    await form.locator('[data-clara-field="series_flags"]').getByLabel("Localizer", { exact: true }).check()
+    await form.locator("[data-clara-save]").click()
+    await expect(success(page)).toContainText("WF001")
+
+    // Verify the moved value and imported values make it into the exported data.
+    await page.goto(`/projects/${projectId}/export`)
+    await expect(page.locator("[data-clara-export-level]")).toHaveText("Full dataset")
+    await page.selectOption("#export-values", "label")
+    const [download] = await Promise.all([
+      page.waitForEvent("download"),
+      page.locator("[data-clara-export-download]").click(),
+    ])
+    expect(download.suggestedFilename()).toMatch(/\.csv$/)
+    const csv = await (await download.createReadStream()).toArray()
+    const exported = Buffer.concat(csv).toString("utf8")
+    expect(exported).toContain("study_uid")
+    expect(exported).toContain("study_kind")
+    expect(exported).toContain("series_flags")
+    expect(exported).toContain("WF001")
+    expect(exported).toContain("Magnetic resonance")
+    expect(exported).toContain("workflow scanner note")
+    expect(exported).toContain("series_flags___1")
+    expect(exported).toContain("Checked")
+  })
 })
