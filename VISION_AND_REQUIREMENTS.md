@@ -910,8 +910,6 @@ Only show the pattern for naming records if the project is using "Type record id
 
 The Setup screen functionality for "Instruments" (edit, remove and add instrument) should move to the Design screen that already shows a similar table (allows to import and to set repeating by event).
 
-**Status:** Done 2026-10-21 — the Design page's instrument list now carries **Add**, **Edit** (name, survey flag, instrument branching), **Reorder** and **Remove**; Setup keeps only the instrument × event mapping and links to Design for the instruments it maps (`User_Interface_Design.md` §7.1, REQ-UI-067, DEV-UI-21; REQ-UI-018 no longer mentions instruments). Endpoints, attributes and the staging/acknowledgement rules are unchanged — only the page that posts them moved, and the controls kept their `setup.instrument.*` translation keys so existing nb/nn rows survive. Tests: `tests/php/m4_design_test.php` ("Design page — the instrument list"), `e2e/tests/design.spec.ts`.
-
 
 # Presentation
 
@@ -1023,3 +1021,55 @@ The class 'card' in the Monitoring application should have a background color li
 ## Simplify the Instrument controls
 
 Functionality of the setup section for "Instruments" should move to the Design page. Controls like add instrument, edit, remove and reorder should appear in Design.
+
+## latest findings
+
+1. Audit entries don't share their operation's transaction
+
+Documented: Audit_Logging_Design.md:182 (REQ-AUD-003) — "the audit INSERT is issued before COMMIT … a failure to write the entry fails the operation. No data change commits without its audit entry."
+
+Code: in the structure/admin handlers the mutation commits on its own first, then the audit row is written separately through Writer.Insert, which runs on w.DB with no surrounding transaction (audit.go:177-189). Verified directly for arm creation: structure.go:492 calls Store.AddArm (commits inside), and only :498 calls h.Audit.Insert. The auditor counts ~12 such sites across structure.go, projects.go, roles.go, users.go, members.go, and notes the data path does it correctly (InsertTx, e.g. record_import.go:672, completion.go:263) — so the correct pattern exists in the codebase and just isn't used here.
+
+Consequence: a crash or DB error between commit and audit insert leaves the change applied with no trace, silently. For a system whose compliance story rests on an append-only trail, that's the guarantee breaking in its quietest direction.
+
+Fix: route those writes through InsertTx inside the mutation's transaction (the mechanism already exists), rather than weakening REQ-AUD-003.
+
+2. Year rollover is never triggered by a write
+
+Documented: Audit_Logging_Design.md:225 — the rollover check runs at startup and on the first audit write after a calendar-year change, before that write proceeds.
+
+Code: EnsureYear (audit.go:272) holds the in-memory latch and does the work, and its own comment says to call it "at process startup and before any audit write batch". Neither InsertTx nor Insert calls it — on SQLite each write lazily creates that year's table via ensureTableTx, so SQLite self-heals; on MariaDB the write path does nothing at all. Call sites are startup plus three read/admin handlers (admin/queries.go:514, :775, audit_export.go:43), i.e. only someone opening the Events log clears the latch.
+
+Consequence: across the year boundary, audited writes on MariaDB have no path that provisions the new year before inserting. How hard it fails depends on one detail I did not get to confirm — whether rolloverMariaDB leaves a MAXVALUE partition. The install schema is created unpartitioned with per-year PARTITION BY RANGE applied by the rollover check (migrations/mariadb/0001_schema.sql:241-261, comment at :242-243, :257-259), which fits the reported failure mode but doesn't prove it. No catch-all partition means inserts error out and audited operations fail outright; a MAXVALUE partition means rows land there and the year just never gets its own partition. Either way the documented trigger is missing.
+
+Fix: check the latch on the write path — outside the caller's transaction on MariaDB, since DDL commits (audit.go:270-271 says so itself). Worth confirming rolloverMariaDB's partition list before deciding how urgent it is.
+
+
+
+1. Chronological comparison silently degrades to string comparison
+
+Documented: Data_Validation_Design.md:238 — two valid date-times compare by "chronological comparison of absolute instants"; REQ-VAL-041 (Requirements/Data_Validation_Requirements.md:113) makes the rule binding: "MUST compare absolute instants (stored wall time + offset)".
+
+Code: canonicalInstantRE (expr.go:1056-1057) puts no ? on its offset groups, so the ±HH:MM suffix is mandatory — while the comment directly beneath it (:1059-1061) promises "with or without the ±HH:MM collection offset; a missing offset reads as UTC". An offset-less value therefore fails to parse, and expr.go:963-968 falls through to compareStrings.
+
+Consequence: byte-wise comparison decides date questions. 12:00 +02:00 = 10:00 — the same instant — is false; 11:00 -0400 < 14:00 is true, though 15:00Z is not before 14:00Z. I traced every committed corpus case through that code path and they match the wrong answers exactly (branching_corpus.json:440, :450 = false; :460 = true) against hand-written intent that says otherwise (logic_corpus_test.go:119, :124 = true; :129 = false, "// 15:00Z vs 14:00Z"). Cases where both operands carry offsets do work (:470 = true), so ordinary testing reads as green.
+
+Why it survived — arguably the worse finding: the oracle is self-certifying. TestBranchingCorpus asserts the evaluator against testdata/branching_corpus.json (:243, :255), and that file is written by TestGenerateBranchingCorpus, which computes expectations with EvalLogic (:262-268). The only tie back to the hand-written cases is a count check (:240) — the declared Expected: literals are never compared, so they are inert documentation. UPDATE_CORPUS=1 rewrites reality into the expectations and CI stays green. Per the file header (:10-16) this same corpus is what web/assets/js/branching.js is held to, so a wrong expectation is wrong in both languages by construction.
+
+Fix: make groups 3–4 optional with a missing offset defaulting to UTC as the comment already claims; re-derive those four date cases from reviewed intent rather than regeneration; and have the test compare computed against declared Expected so the corpus stops attesting to itself. The JS evaluator moves in the same change.
+
+2. Two parsers implement two grammars for one documented language
+
+Documented: Data_Validation_Design.md:234 — "single normative definition; every evaluator MUST implement them", reinforced by REQ-VAL-044 (Requirements:111), with §7.2 (:224-230) defining rejection solely as "not well-formed per the §7.1 grammar".
+
+Code: branchParser.parseComparison (expr.go:608-621) parses an operand and then unconditionally checks for a comparison operator, consuming a right-hand operand — and its operand may be a parenthesised group or a function call. logicParser.parseComparison (:1157-1191) does the opposite: it returns immediately for tokLParen (:1173) and tokIdent (:1175) without ever looking for an operator, its own comment asserting "the grammar never compares one with an operator, so nothing follows it" (:1155-1156). Trailing tokens then fail the EOF check.
+
+Consequence: the design-time validator accepts forms the runtime evaluator rejects — ([a] = 1) = 1, and per the pass is_blank([x]) = 1. An expression can be saved into a field's branching logic and only fail later on the evaluation path, where it gates data entry and export filtering. That is the dangerous direction for a validation rule: it fails open, or fails at display time rather than at save time.
+
+Fix: one grammar in both places — either let logicParser treat a call or group as a comparable operand, or reject those forms in branchParser and say so in §7.1 — then regenerate the corpus from reviewed expectations.
+
+
+Support for OpenID Connect (PingFederate). PingFederate supports OAuth2 and OpenID Connect (OIDC).
+
+Use golang.org/x/oauth2 package for handling Authorization code flow.
+Use coreos/go-oidc client library for provider discovery and ID token verification.
