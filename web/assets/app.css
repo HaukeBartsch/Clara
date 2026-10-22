@@ -674,6 +674,54 @@ h1 .clara-mode-badge {
   vector-effect: non-scaling-stroke;
 }
 
+/* Monitoring stat cards use the palette called out in VISION_AND_REQUIREMENTS.md: four
+   teal/red/green/amber surfaces with white text for readability. */
+.clara-mon-stat-card-a,
+.clara-mon-stat-card-b,
+.clara-mon-stat-card-c,
+.clara-mon-stat-card-d {
+  border: 0;
+  color: #fff;
+}
+
+.clara-mon-stat-card-a {
+  background-color: rgb(0, 120, 151);
+}
+
+.clara-mon-stat-card-b {
+  background-color: rgb(145, 50, 36);
+}
+
+.clara-mon-stat-card-c {
+  background-color: rgb(0, 92, 50);
+}
+
+.clara-mon-stat-card-d {
+  background-color: rgb(170, 115, 11);
+}
+
+.clara-mon-stat-card-a .card-body,
+.clara-mon-stat-card-b .card-body,
+.clara-mon-stat-card-c .card-body,
+.clara-mon-stat-card-d .card-body {
+  color: inherit;
+}
+
+.clara-mon-stat-card-a .text-body-secondary,
+.clara-mon-stat-card-b .text-body-secondary,
+.clara-mon-stat-card-c .text-body-secondary,
+.clara-mon-stat-card-d .text-body-secondary,
+.clara-mon-stat-card-a .small,
+.clara-mon-stat-card-b .small,
+.clara-mon-stat-card-c .small,
+.clara-mon-stat-card-d .small,
+.clara-mon-stat-card-a [data-clara-mon-stat],
+.clara-mon-stat-card-b [data-clara-mon-stat],
+.clara-mon-stat-card-c [data-clara-mon-stat],
+.clara-mon-stat-card-d [data-clara-mon-stat] {
+  color: #fff !important;
+}
+
 /* The pool chart's dashed max_open ceiling, deliberately quieter than the in-use curve. */
 .clara-mon-ceiling {
   fill: none;

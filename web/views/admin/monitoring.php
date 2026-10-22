@@ -30,7 +30,20 @@ $fmtUptime = static function (float $seconds): string {
 };
 
 $stat = static function (string $key, string $labelKey, string $value): string {
-    return '<div class="card"><div class="card-body py-2">'
+    $palette = [
+        'rps' => 'clara-mon-stat-card-a',
+        'latency' => 'clara-mon-stat-card-b',
+        'goroutines' => 'clara-mon-stat-card-c',
+        'heap' => 'clara-mon-stat-card-d',
+        'pool' => 'clara-mon-stat-card-a',
+        'waits' => 'clara-mon-stat-card-b',
+        'throughput' => 'clara-mon-stat-card-c',
+        'blocked' => 'clara-mon-stat-card-d',
+        'uptime' => 'clara-mon-stat-card-a',
+    ];
+    $cardClass = $palette[$key] ?? 'clara-mon-stat-card-a';
+
+    return '<div class="card ' . View::e($cardClass) . '"><div class="card-body py-2">'
         . '<div class="small text-body-secondary">' . View::e($labelKey) . '</div>'
         . '<div class="fs-5" data-clara-mon-stat="' . View::e($key) . '">' . $value . '</div>'
         . '</div></div>';
