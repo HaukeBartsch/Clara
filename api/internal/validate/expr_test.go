@@ -165,6 +165,65 @@ func TestValidateBranching(t *testing.T) {
 	}
 }
 
+// TestBranchingGrammarsAgree holds the design-time validator and the runtime
+// evaluator to one grammar (Data_Validation_Design.md §7.1, REQ-VAL-044): an
+// expression that saves MUST be one the evaluators accept. While the two
+// parsers disagreed, `([a] = 1) = 1` and `is_blank([x]) = 1` passed design time
+// and failed only on the evaluation path, where branching gates data entry —
+// the direction §7.2 rules out. web/assets/js/branching.js is held to the same
+// accept set by the corpus cases (logic_corpus_test.go).
+func TestBranchingGrammarsAgree(t *testing.T) {
+	// Atoms spanning every shape the grammar can start a condition with, plus
+	// the malformed shapes that must fail in both parsers.
+	atoms := []string{
+		`[e][a]`, `1`, `"x"`, `""`,
+		`is_blank([e][a])`, `is_not_blank([e][a])`, `text_contains([e][a], "x")`,
+		`([e][a] = 1)`, `(is_blank([e][a]))`, `(([e][a] && [e][b]) || 1)`,
+		`unknown_fn([e][a])`, `is_blank()`, `is_blank([e][a], 2)`,
+	}
+	ops := []string{" = ", " != ", " <> ", " < ", " && ", " || "}
+
+	var exprs []string
+	for _, l := range atoms {
+		exprs = append(exprs, l)
+		for _, op := range ops {
+			for _, r := range atoms {
+				exprs = append(exprs, l+op+r)
+			}
+		}
+	}
+
+	diverged := 0
+	for _, expr := range exprs {
+		berr := ValidateBranching(expr, nil)
+		_, lerr := CompileLogic(expr)
+		if (berr == nil) != (lerr == nil) {
+			diverged++
+			t.Errorf("grammars disagree on %q: ValidateBranching=%v CompileLogic=%v", expr, berr, lerr)
+		}
+	}
+	if t.Failed() {
+		t.Fatalf("%d of %d expressions diverge", diverged, len(exprs))
+	}
+
+	// The forms the widened parser used to accept are rejected by both.
+	for _, expr := range []string{
+		`([e][a] = 1) = 1`,
+		`is_blank([e][a]) = 1`,
+		`is_not_blank([e][a]) = 0`,
+		`text_contains([e][a], "x") = 1`,
+		`1 = ([e][a] = 1)`,
+		`[e][a] = is_blank([e][a])`,
+	} {
+		if err := ValidateBranching(expr, nil); err == nil {
+			t.Errorf("%q: design time accepts a form the grammar of §7.1 excludes", expr)
+		}
+		if _, err := CompileLogic(expr); err == nil {
+			t.Errorf("%q: evaluator parses a form the grammar of §7.1 excludes", expr)
+		}
+	}
+}
+
 // TestBareFieldReferences: the branching grammar accepts a single-segment
 // [field] reference (the §3.6.3 minimum form — empty Event, callers resolve
 // it against the project's first event); the calc grammar keeps the

@@ -619,6 +619,38 @@
     "want_err": true
   },
   {
+    "name": "err_group_compared",
+    "expr": "([e1][a] = 1) = 1",
+    "values": {},
+    "choices": null,
+    "expected": false,
+    "want_err": true
+  },
+  {
+    "name": "err_call_compared",
+    "expr": "is_blank([e1][x]) = 1",
+    "values": {},
+    "choices": null,
+    "expected": false,
+    "want_err": true
+  },
+  {
+    "name": "err_call_compared_neq",
+    "expr": "text_contains([e1][x], \"a\") != 0",
+    "values": {},
+    "choices": null,
+    "expected": false,
+    "want_err": true
+  },
+  {
+    "name": "err_call_as_operand",
+    "expr": "[e1][a] = is_blank([e1][x])",
+    "values": {},
+    "choices": null,
+    "expected": false,
+    "want_err": true
+  },
+  {
     "name": "redcap_single_quote",
     "expr": "[e1][t] = '2'",
     "values": {

@@ -1072,6 +1072,8 @@ Consequence: the design-time validator accepts forms the runtime evaluator rejec
 
 Fix: one grammar in both places — either let logicParser treat a call or group as a comparable operand, or reject those forms in branchParser and say so in §7.1 — then regenerate the corpus from reviewed expectations.
 
+**Status:** Fixed 2026-10-22. One grammar, in the direction `REQ-VAL-029` already words it — comparisons are "between a reference or a constant" — so `branchParser` no longer takes a group or a function call as a comparison operand (`parseComparison` / `parseSimpleOperand`). That is the grammar `logicParser` and `web/assets/js/branching.js` already implemented: two of the three evaluators were right and the design-time validator was the outlier. `Data_Validation_Design.md` §7.1 now states the operand rule and §7.2 names the case, so the choice is recorded rather than implied. Guards: `TestBranchingGrammarsAgree` sweeps ~1 000 composed expressions and fails if `ValidateBranching` and `CompileLogic` disagree on accept/reject; four hand-declared cases (`err_group_compared`, `err_call_compared`, `err_call_compared_neq`, `err_call_as_operand`) joined the shared corpus as `want_err`, so `branching.js` is held to them too — verified 102/102 by running the corpus against the module directly. The regeneration appended only those four and rewrote no existing expectation, which matters given the self-certifying-oracle finding above. No committed expression in the repository used a rejected form, so nothing stored needs migrating.
+
 
 Support for OpenID Connect (PingFederate). PingFederate supports OAuth2 and OpenID Connect (OIDC).
 

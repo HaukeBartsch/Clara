@@ -605,42 +605,15 @@ func (p *branchParser) parseAnd() error {
 	return nil
 }
 
+// parseComparison parses the §7.1 comparison level: `operand [op operand]`,
+// where a comparison is between a reference or a constant (REQ-VAL-029) and a
+// bare operand is a truth test (ASM-VAL-6). A parenthesized group or a function
+// call is a condition of its own — the grammar never compares one with an
+// operator, so nothing follows it. logicParser and branching.js implement this
+// same shape; TestBranchingGrammarsAgree holds all three to one accept set, so
+// nothing validated here can fail later on an evaluation path.
 func (p *branchParser) parseComparison() error {
-	// A comparison is operand [op operand]; a bare operand is also valid
-	// (truthiness, ASM-VAL-6).
-	if err := p.parseOperand(); err != nil {
-		return err
-	}
-	if p.cur().kind == tokOp && isCompareOp(p.cur().text) {
-		p.advance()
-		if err := p.parseOperand(); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func isCompareOp(op string) bool {
-	switch op {
-	case "=", "!=", "<", ">", "<=", ">=":
-		return true
-	}
-	return false
-}
-
-func (p *branchParser) parseOperand() error {
-	t := p.cur()
-	switch t.kind {
-	case tokRef:
-		p.advance()
-		if p.resolve != nil && !p.resolve(t.ref) {
-			return fmt.Errorf("reference %s does not name an active value-carrying field", t.text)
-		}
-		p.refs = append(p.refs, t.ref)
-		return nil
-	case tokNum, tokStr:
-		p.advance()
-		return nil
+	switch p.cur().kind {
 	case tokLParen:
 		p.advance()
 		if err := p.enter(); err != nil { // security finding F5
@@ -657,6 +630,43 @@ func (p *branchParser) parseOperand() error {
 		return nil
 	case tokIdent:
 		return p.parseCall()
+	}
+	if err := p.parseSimpleOperand(); err != nil {
+		return err
+	}
+	if p.cur().kind == tokOp && isCompareOp(p.cur().text) {
+		p.advance()
+		if err := p.parseSimpleOperand(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func isCompareOp(op string) bool {
+	switch op {
+	case "=", "!=", "<", ">", "<=", ">=":
+		return true
+	}
+	return false
+}
+
+// parseSimpleOperand accepts the comparison operands of §7.1 — a field
+// reference or a constant. Groups and calls belong to parseComparison, which
+// treats them as whole conditions.
+func (p *branchParser) parseSimpleOperand() error {
+	t := p.cur()
+	switch t.kind {
+	case tokRef:
+		p.advance()
+		if p.resolve != nil && !p.resolve(t.ref) {
+			return fmt.Errorf("reference %s does not name an active value-carrying field", t.text)
+		}
+		p.refs = append(p.refs, t.ref)
+		return nil
+	case tokNum, tokStr:
+		p.advance()
+		return nil
 	default:
 		return fmt.Errorf("unexpected token in branching expression: %q", t.text)
 	}

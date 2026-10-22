@@ -162,6 +162,14 @@ func corpusInputs() []corpusCase {
 		{Name: "err_unterminated_ref", Expr: `[e1][x = 1`, Values: map[string]string{}, WantErr: true},
 		{Name: "err_bare_identifier", Expr: `foo`, Values: map[string]string{}, WantErr: true},
 		{Name: "err_arithmetic_in_branching", Expr: `[e1][a] + 1`, Values: map[string]string{}, WantErr: true},
+		// A group or a call is a whole condition, never a comparison operand
+		// (REQ-VAL-029 "between a reference or a constant", §7.1). The
+		// design-time parser used to accept these while both evaluators
+		// rejected them — TestBranchingGrammarsAgree keeps them in step.
+		{Name: "err_group_compared", Expr: `([e1][a] = 1) = 1`, Values: map[string]string{}, WantErr: true},
+		{Name: "err_call_compared", Expr: `is_blank([e1][x]) = 1`, Values: map[string]string{}, WantErr: true},
+		{Name: "err_call_compared_neq", Expr: `text_contains([e1][x], "a") != 0`, Values: map[string]string{}, WantErr: true},
+		{Name: "err_call_as_operand", Expr: `[e1][a] = is_blank([e1][x])`, Values: map[string]string{}, WantErr: true},
 		// REDCap's spellings (REQ-VAL-044): single quotes, and/or in any case, <>.
 		{Name: "redcap_single_quote", Expr: `[e1][t] = '2'`, Values: map[string]string{"e1|t": "2"}, Expected: true},
 		{Name: "redcap_or_word", Expr: `[t] = '2' or [t] = '4'`, Values: map[string]string{"|t": "4"}, Expected: true},

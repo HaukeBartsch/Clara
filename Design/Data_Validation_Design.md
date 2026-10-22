@@ -217,13 +217,13 @@ Tokens (whitespace ignored):
 - **Logical:** `&&` (AND) also written `and`, `||` (OR) also written `or` — the words in any letter case, as REDCap writes them (ASM-VAL-6, REQ-VAL-044); a field name never collides with them because a reference is always bracketed
 - **Grouping:** parentheses
 
-**Precedence** (tightest to loosest): function call → comparison → `&&` → `||`; parentheses override. Examples: `[ev][age] >= 18 && [ev][consent] = 1`; `([ev][status] = "done" || is_blank([ev][status]))`; `text_contains([ev][notes], "follow-up")`; in REDCap's spelling `[project_annotation_type] = '2' or [project_annotation_type] = '4'` (FIONA's `projects` instrument) and `[routing_dest_project] <> ''`.
+**Precedence** (tightest to loosest): function call → comparison → `&&` → `||`; parentheses override. **Comparison operands are references and constants only** (REQ-VAL-029): a parenthesized group or a function call is a complete condition of its own, never an operand of a comparison operator, so `([ev][a] = 1) = 1` and `is_blank([ev][x]) = 1` are not well-formed (§7.2 rule 1) — write `[ev][a] = 1` and `is_blank([ev][x])`. The three evaluators (the design-time validator, the API evaluator of §7.3, and `web/assets/js/branching.js`) implement this one grammar; `TestBranchingGrammarsAgree` holds the Go pair to it and the branching corpus holds all three. Examples: `[ev][age] >= 18 && [ev][consent] = 1`; `([ev][status] = "done" || is_blank([ev][status]))`; `text_contains([ev][notes], "follow-up")`; in REDCap's spelling `[project_annotation_type] = '2' or [project_annotation_type] = '4'` (FIONA's `projects` instrument) and `[routing_dest_project] <> ''`.
 
 ### 7.2 Design-time validation
 
 A field's or instrument's (REQ-VAL-040) branching expression is rejected with a machine-readable reason (REQ-VAL-029; the designer displays the reason, REQ-UI-021) if:
 
-1. it is not well-formed (parse error, unbalanced parentheses, misplaced operator); or
+1. it is not well-formed (parse error, unbalanced parentheses, misplaced operator, a group or function call used as a comparison operand — §7.1); or
 2. a reference names a field that does not exist, is not value-carrying (description/header/transfer — REQ-VAL-034), or is not active at the referenced event (REQ-DB-012) — or, written `[field(code)]`, names a field that is not a checkbox or a code the checkbox does not have (REQ-VAL-044). The instrument import (REQ-API-152) holds a reference to a field it creates to existence and value-carrying only: it maps no instrument, so the active-at-event part applies once the instrument is mapped; or
 3. a function is misspelled or has the wrong number of arguments.
 
