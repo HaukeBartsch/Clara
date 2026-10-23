@@ -256,6 +256,8 @@ final class Router
         ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
             'handler' => 'updateProject', 'guard' => 'admin', 'action' => 'update_project'],
         ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
+            'handler' => 'startMonitoringStressTest', 'guard' => 'admin', 'action' => 'monitoring_stress_test'],
+        ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
             'handler' => 'saveTranslations', 'guard' => 'admin', 'action' => 'save_translations'],
         // The Clara assistant's read-write switch (REQ-AI-006): a session flag only — every MCP
         // tool call is separately gated server-side against it.

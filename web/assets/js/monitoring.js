@@ -319,6 +319,37 @@ function showFailed(errorCode) {
   line.hidden = !errorCode
 }
 
+function renderStressTest(stressTest) {
+  const section = document.querySelector("[data-clara-mon-stress]")
+  if (!section) return
+
+  const button = section.querySelector("[data-clara-mon-stress-button]")
+  const message = section.querySelector("[data-clara-mon-stress-message]")
+  const progress = section.querySelector("[data-clara-mon-stress-progress]")
+  const status = stressTest && typeof stressTest.status === "string" ? stressTest.status : ""
+  const phases = ["startup", "setup", "import", "export", "complete", "failed"]
+  const phase = stressTest && phases.includes(stressTest.phase) ? stressTest.phase : "failed"
+  section.dataset.status = status
+  if (button) button.disabled = status === "running"
+  if (progress) {
+    progress.hidden = !stressTest
+    progress.value = Math.max(0, Math.min(100, num(stressTest && stressTest.progress)))
+  }
+  if (message) {
+    message.hidden = !stressTest
+    if (stressTest) {
+      const phaseText = t(`admin.monitoring.stress.phase.${phase}`)
+      const percent = String(Math.round(progress ? progress.value : 0))
+      const knownErrors = ["project_names_exist", "status_unavailable", "worker_failed"]
+      const errorCode = knownErrors.includes(stressTest.error) ? stressTest.error : "worker_failed"
+      const error = status === "failed" ? t(`admin.monitoring.stress.error.${errorCode}`) : ""
+      message.textContent = [phaseText, t("admin.monitoring.stress.progress_percent", { percent }), error]
+        .filter(Boolean)
+        .join(" — ")
+    }
+  }
+}
+
 // --- the polling loop -------------------------------------------------------------------------
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -340,6 +371,7 @@ async function tick() {
       currentValues()
     }
     renderRateLimit(facts.rate_limit || null)
+    renderStressTest(facts.stress_test || null)
     showFailed(facts.metrics_error || facts.rate_limit_error || null) // one failing endpoint is the finding, not an error page
     if (facts.metrics) lastSuccessAt = Date.now()
   } catch (error) {

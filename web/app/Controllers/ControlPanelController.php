@@ -18,6 +18,7 @@ namespace Clara\Controllers;
 
 use Clara\ApiException;
 use Clara\ConfigCheck;
+use Clara\MonitoringStressTest;
 use Clara\Navigation;
 use Clara\Response;
 use Clara\Session;
@@ -640,8 +641,8 @@ final class ControlPanelController extends Controller
     /**
      * The data region of `GET /admin` for `Accept: application/json` (§2.1, REQ-UI-044):
      * the Translations section's key rows — exactly what its rendered table would show,
-     * nothing more — and the Monitoring section's combined `{metrics, rate_limit}` snapshot
-     * pair (§5.11, REQ-UI-064), which its script re-reads once per second. Every other
+     * nothing more — and the Monitoring section's `{metrics, rate_limit, stress_test}` values
+     * (§5.11, REQ-UI-064/068), which its script re-reads once per second. Every other
      * section carries no region and answers 406.
      */
     public function data(): Response
@@ -651,7 +652,10 @@ final class ControlPanelController extends Controller
             return $this->apiSpec();
         }
         if (($section['key'] ?? '') === 'monitoring') {
-            return Response::json($this->monitoringFacts());
+            $facts = $this->monitoringFacts();
+            $facts['stress_test'] = $this->monitoringStressStatus();
+
+            return Response::json($facts);
         }
         if (($section['key'] ?? '') !== 'translations') {
             return Response::notAcceptable();
@@ -714,14 +718,15 @@ final class ControlPanelController extends Controller
     // --- Monitoring (§5.11, REQ-UI-064) ----------------------------------------------
 
     /**
-     * The Monitoring section: live API performance and rate-limiter state. The server-rendered
-     * first paint reads the same two endpoints the page then polls — `GET /api/v1/system/metrics`
-     * (Design §4.25, REQ-API-163) and `GET /api/v1/system/blocked-ips` (§4.26, REQ-API-164) —
-     * and `monitoring.js` takes over: once a second while the page is visible it re-reads this
-     * section's data region, appends the sample to a browser-side buffer, and redraws the d3
-     * line charts of the configured period (MONITORING_PERIOD_MINUTES, REQ-CFG-034) as observed
-     * since the page was opened — samples older than that period are dropped. An API that cannot
-     * answer is itself the finding, so a failure renders rather than throwing.
+     * The Monitoring section: live API performance, rate-limiter state, and background stress-test
+     * status. The server-rendered first paint reads the two API endpoints the page then polls —
+     * `GET /api/v1/system/metrics` (Design §4.25, REQ-API-163) and
+     * `GET /api/v1/system/blocked-ips` (§4.26, REQ-API-164) — and monitoring.js takes over:
+     * once a second while the page is visible it re-reads this section's data region, appends
+     * the sample to a browser-side buffer, and redraws the d3 line charts of the configured
+     * period (MONITORING_PERIOD_MINUTES, REQ-CFG-034) as observed since the page was opened —
+     * samples older than that period are dropped. An API that cannot answer is itself the
+     * finding, so a failure renders rather than throwing.
      */
     private function monitoringPage(): Response
     {
@@ -732,6 +737,7 @@ final class ControlPanelController extends Controller
             'metricsError' => $facts['metrics_error'],
             'rateLimit' => $facts['rate_limit'],
             'rateLimitError' => $facts['rate_limit_error'],
+            'stressTest' => $this->monitoringStressStatus(),
             // The one place the browser learns the period: a data attribute, never an env read
             // (REQ-UI-002). monitoring.js keeps its buffer to it (REQ-CFG-034, REQ-UI-064).
             'periodMinutes' => $this->config->monitoringPeriodMinutes,
@@ -748,8 +754,52 @@ final class ControlPanelController extends Controller
                 'admin.monitoring.chart.gc', 'admin.monitoring.chart.throughput',
                 'admin.monitoring.blocked.none', 'admin.monitoring.blocked.on', 'admin.monitoring.blocked.off',
                 'admin.monitoring.failed', 'admin.monitoring.updated',
+                'admin.monitoring.stress.phase.startup', 'admin.monitoring.stress.phase.setup',
+                'admin.monitoring.stress.phase.import', 'admin.monitoring.stress.phase.export',
+                'admin.monitoring.stress.phase.complete', 'admin.monitoring.stress.phase.failed',
+                'admin.monitoring.stress.progress',
+                'admin.monitoring.stress.progress_percent',
+                'admin.monitoring.stress.error.project_names_exist',
+                'admin.monitoring.stress.error.status_unavailable', 'admin.monitoring.stress.error.worker_failed',
             ],
         ]);
+    }
+
+    /** Starts the Monitoring section's authenticated background stress-test worker. */
+    public function startMonitoringStressTest(): Response
+    {
+        try {
+            (new MonitoringStressTest($this->config))->start(Session::userId());
+        } catch (\RuntimeException $e) {
+            $this->logger->error('monitoring stress test could not start', [
+                'reason' => $e->getMessage(),
+                'user' => Session::userId(),
+            ]);
+            $this->flashDanger($this->i18n->t('admin.monitoring.stress.start_failed'));
+
+            return $this->toSection('monitoring');
+        }
+
+        $this->flashSuccess($this->i18n->t('admin.monitoring.stress.started'));
+
+        return $this->toSection('monitoring');
+    }
+
+    /** @return array<string, mixed>|null */
+    private function monitoringStressStatus(): ?array
+    {
+        try {
+            return (new MonitoringStressTest($this->config))->status();
+        } catch (\RuntimeException $e) {
+            $this->logger->error('monitoring stress test status unavailable', ['reason' => $e->getMessage()]);
+
+            return [
+                'status' => 'failed',
+                'phase' => 'failed',
+                'progress' => 0,
+                'error' => 'status_unavailable',
+            ];
+        }
     }
 
     /**

@@ -45,10 +45,10 @@ Everything runs sequentially on purpose: SQLite serializes its writers, so
 concurrent callers would measure lock waiting rather than API throughput.
 
 Authentication needs the internal service token (X-Internal-Service-Token)
-and a bootstrap administrator: the script logs in once with
-POST /api/v1/auth/login (source "local") and uses the returned user id as
-X-Internal-User-Id on every administration call — the same trust model nginx
-uses.
+and an administrator. Standalone runs log in once with POST
+/api/v1/auth/login (source "local"); the Monitoring action supplies the
+already-authenticated user's id instead, without passing a password to the
+worker. Both use X-Internal-User-Id on every administration call.
 
 Usage (see run_stress.sh for a launcher that starts a throwaway server):
 
@@ -71,6 +71,30 @@ import threading
 import time
 import urllib.parse
 from urllib.parse import urlparse
+
+
+STATUS_FILE = None
+STATUS = {"status": "starting", "phase": "startup", "progress": 0, "detail": ""}
+
+
+def write_status(status=None, phase=None, progress=None, detail=None, error=None):
+    """Atomically publish progress for the Monitoring page, when requested."""
+    if status is not None:
+        STATUS["status"] = status
+    if phase is not None:
+        STATUS["phase"] = phase
+    if progress is not None:
+        STATUS["progress"] = max(0, min(100, int(progress)))
+    if detail is not None:
+        STATUS["detail"] = str(detail)[:240]
+    if error is not None:
+        STATUS["error"] = error
+    STATUS["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    if STATUS_FILE:
+        temporary = STATUS_FILE + f".{os.getpid()}.tmp"
+        with open(temporary, "w") as output:
+            json.dump(STATUS, output)
+        os.replace(temporary, STATUS_FILE)
 
 
 # --- HTTP plumbing -----------------------------------------------------------
@@ -219,9 +243,21 @@ def setup_projects(api, cfg, rnd):
     projects = []
     totals = {"events": 0, "instruments": 0, "fields": 0}
     mix = {}  # created-field kinds → count, for the report
+    names = [
+        f"{cfg.project_prefix}{i + 1:02d}" if cfg.project_prefix else f"stress_p{i:03d}"
+        for i in range(cfg.projects)
+    ]
+    existing = api.admin("GET", "/api/v1/projects")
+    existing_names = {project.get("project_name") for project in existing}
+    collisions = [name for name in names if name in existing_names]
+    if collisions:
+        raise RuntimeError("project names already exist: " + ", ".join(collisions))
+
     start = time.perf_counter()
     for i in range(cfg.projects):
-        name = f"stress_p{i:03d}"
+        name = names[i]
+        write_status(phase="setup", progress=5 + int(35 * i / cfg.projects),
+                     detail=f"Creating project {i + 1}/{cfg.projects}: {name}")
 
         # Project — arm 1 and its first event "baseline" come with creation.
         created = api.admin("POST", "/api/v1/projects",
@@ -247,6 +283,9 @@ def setup_projects(api, cfg, rnd):
         instruments = []   # names, position order
         instr_ids = []     # database ids, same order
         for j in range(n_instr):
+            write_status(phase="setup",
+                         progress=5 + int(35 * (i + 0.4 * j / max(n_instr, 1)) / cfg.projects),
+                         detail=f"{name}: creating instrument {j + 1}/{n_instr}")
             created_instr = api.admin("POST", f"/api/v1/projects/{created['id']}/instruments",
                                       {"name": f"instr_{j:03d}"}, want=(201,))
             instruments.append(f"instr_{j:03d}")
@@ -265,6 +304,9 @@ def setup_projects(api, cfg, rnd):
 
         fields_by_instr = {}
         for j, instr in enumerate(instruments):
+            write_status(phase="setup",
+                         progress=5 + int(35 * (i + 0.4 + 0.55 * (j + 1) / max(n_instr, 1)) / cfg.projects),
+                         detail=f"{name}: adding fields to instrument {j + 1}/{n_instr}")
             specs = []
             if j == 0:
                 # The record identifier stays a plain text field.
@@ -278,6 +320,7 @@ def setup_projects(api, cfg, rnd):
                 mix[kind] = mix.get(kind, 0) + 1
 
         # Mapping: every instrument active in every event of arm 1.
+        write_status(phase="setup", detail=f"{name}: mapping instruments to events")
         api.admin("PUT", f"/api/v1/projects/{created['id']}/instrument-event-mapping",
                   {"arm_num": 1, "mapping": {instr: events for instr in instruments}})
 
@@ -290,6 +333,7 @@ def setup_projects(api, cfg, rnd):
         if (i + 1) % 20 == 0 or i + 1 == cfg.projects:
             print(f"setup: {i + 1}/{cfg.projects} projects "
                   f"({time.perf_counter() - start:.0f}s elapsed)", flush=True)
+    write_status(phase="setup", progress=40, detail="Project setup complete")
     return projects, totals, mix, time.perf_counter() - start
 
 
@@ -325,9 +369,10 @@ def import_rows(api, specs, cfg, rnd):
     """POST the shuffled rows in batches of same-project runs (one token per
     call); every row must pass validation — a rejected row fails the test."""
     values = 0
+    rows_done = 0
 
     def flush(batch):
-        nonlocal values
+        nonlocal values, rows_done
         p = batch[0][0]
         form = {"token": p["token"], "content": "record", "action": "import",
                 "returnFormat": "json"}
@@ -346,6 +391,10 @@ def import_rows(api, specs, cfg, rnd):
             if r["import_record_id"] == 0:
                 raise RuntimeError(f"import rejected {p['name']}/{r['record_id']}"
                                    f"/{r['form_name']}: {r['import_form_name']}")
+        rows_done += len(batch)
+        progress = 40 + int(40 * rows_done / max(len(specs), 1))
+        write_status(phase="import", progress=progress,
+                     detail=f"Imported {rows_done}/{len(specs)} instrument records")
 
     start = time.perf_counter()
     print(f"import: {len(specs)} rows shuffled, streaming in batches of "
@@ -395,6 +444,8 @@ def export_projects(api, projects, out_dir):
     total_rows = 0
     start = time.perf_counter()
     for i, p in enumerate(projects):
+        write_status(phase="export", progress=80 + int(18 * i / max(len(projects), 1)),
+                     detail=f"Exporting project {i + 1}/{len(projects)}: {p['name']}")
         n_raw, data_rows = stream_one(p, ".raw", {})
         n_label, _ = stream_one(p, ".label", {"rawOrLabel": "label"})
         raw_bytes += n_raw
@@ -700,6 +751,12 @@ def main():
     ap.add_argument("--service-token", default=os.environ.get("SERVICE_TOKEN", "dev-internal-token"))
     ap.add_argument("--email", default=os.environ.get("ADMIN_EMAIL", "admin@stress.local"))
     ap.add_argument("--password", default=os.environ.get("ADMIN_PASSWORD", "stress-bootstrap-password"))
+    ap.add_argument("--user-id", type=int, default=0,
+                    help="use this existing administrator id instead of logging in")
+    ap.add_argument("--project-prefix", default="",
+                    help="name projects as <prefix>01, <prefix>02, …")
+    ap.add_argument("--status-file", default="",
+                    help="atomically write phase progress for a supervising UI")
     ap.add_argument("--projects", type=int, default=200)
     ap.add_argument("--min-events", type=int, default=1)
     ap.add_argument("--max-events", type=int, default=200)
@@ -717,14 +774,20 @@ def main():
     ap.add_argument("--out", default=os.environ.get("STRESS_OUT", "stress-out"),
                     help="directory for the CSV exports, the report and the metric series")
     cfg = ap.parse_args()
+    global STATUS_FILE
+    STATUS_FILE = cfg.status_file or None
     if cfg.seed == 0:
         cfg.seed = int(time.time())
     rnd = random.Random(cfg.seed)
     os.makedirs(cfg.out, exist_ok=True)
+    write_status(status="running", phase="startup", progress=1, detail="Connecting to the API")
 
     api = API(cfg.base_url, cfg.service_token)
-    api.login(cfg.email, cfg.password)
-    print(f"logged in as user {api.user_id} at {cfg.base_url} "
+    if cfg.user_id > 0:
+        api.user_id = cfg.user_id
+    else:
+        api.login(cfg.email, cfg.password)
+    print(f"using administrator user {api.user_id} at {cfg.base_url} "
           f"(seed {cfg.seed}, {cfg.projects} projects)", flush=True)
 
     # Sampling runs alongside every phase; None when switched off.
@@ -740,9 +803,11 @@ def main():
         set_phase("setup")
         projects, totals, mix, setup_s = setup_projects(api, cfg, rnd)
         set_phase("import")
+        write_status(phase="import", progress=40, detail="Preparing test records")
         specs = generate_rows(projects, cfg, rnd)
         values, import_s = import_rows(api, specs, cfg, rnd)
         set_phase("export")
+        write_status(phase="export", progress=80, detail="Exporting project data")
         per_project, raw_bytes, label_bytes, csv_rows, export_s = \
             export_projects(api, projects, cfg.out)
     finally:  # the collected series is written out even when a phase failed
@@ -787,13 +852,15 @@ csv directory:        {os.path.abspath(cfg.out)}
         f.write("\nper-project exports (name, data rows, raw bytes, label bytes):\n")
         for name, rows, n_raw, n_label in per_project:
             f.write(f"{name},{rows},{n_raw},{n_label}\n")
+    write_status(status="complete", phase="complete", progress=100,
+                 detail=f"Finished; {len(projects)} projects and their data were left in place")
 
 
 if __name__ == "__main__":
     try:
         main()
-    except (RuntimeError, SystemExit) as e:
-        if isinstance(e, SystemExit) and getattr(e, "code", 1) in (0, None):
-            raise
+    except Exception as e:
+        error = "project_names_exist" if str(e).startswith("project names already exist:") else "worker_failed"
+        write_status(status="failed", phase="failed", detail=str(e) or type(e).__name__, error=error)
         print(f"stress test failed: {e}", file=sys.stderr)
         sys.exit(1)

@@ -85,6 +85,10 @@ describe('Monitoring section (§5.11, REQ-UI-064)', function (): void {
         assert_contains('data-clara-mon-stat="pool">3 / 25<', $body);
         assert_contains('data-clara-mon-stat="uptime">0:02<', $body);
         assert_contains('data-clara-mon-stat="blocked">1<', $body);
+        assert_contains('data-clara-mon-stress-button', $body);
+        assert_contains('action="/admin?section=monitoring&amp;action=monitoring_stress_test"', $body);
+        assert_contains('StressTest01', $body);
+        assert_contains('data-clara-mon-stress-progress', $body);
 
         // The eight small multiples; the blocked table shows its one row, and the settings line
         // tells "nothing is blocked" from "rate limiting is off".
@@ -137,6 +141,7 @@ describe('Monitoring section (§5.11, REQ-UI-064)', function (): void {
         assert_same(7, $payload['metrics']['process']['goroutines']);
         assert_same(600, $payload['rate_limit']['rpm']);
         assert_same('203.0.113.7', $payload['rate_limit']['blocked'][0]['ip']);
+        assert_same(null, $payload['stress_test']);
         assert_true(!isset($payload['metrics_error']) || $payload['metrics_error'] === null);
         assert_true(!isset($payload['rate_limit_error']) || $payload['rate_limit_error'] === null);
     });

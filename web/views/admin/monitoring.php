@@ -72,12 +72,37 @@ $values = [
 
 $charts = ['rps', 'latency', 'goroutines', 'heap', 'pool', 'waits', 'gc', 'throughput'];
 $failed = !$metricsOk || !is_array($rateLimit);
+$stressStatus = is_array($stressTest ?? null) ? $stressTest : null;
+$stressState = (string) ($stressStatus['status'] ?? '');
+$stressPhase = in_array($stressStatus['phase'] ?? '', ['startup', 'setup', 'import', 'export', 'complete', 'failed'], true)
+    ? (string) $stressStatus['phase']
+    : 'startup';
 ?>
 <h1 class="h4 mb-3"><?= View::e($view->t('admin.monitoring.title')) ?></h1>
 
 <p class="text-body-secondary small"><?= View::e($view->t('admin.monitoring.intro', [
     'minutes' => (string) $periodMinutes,
 ])) ?></p>
+
+<section class="mb-4" data-clara-mon-stress data-status="<?= View::e($stressState) ?>" aria-labelledby="clara-mon-stress-heading">
+    <h2 class="h6" id="clara-mon-stress-heading"><?= View::e($view->t('admin.monitoring.stress.title')) ?></h2>
+    <p class="text-body-secondary small"><?= View::e($view->t('admin.monitoring.stress.description')) ?></p>
+    <form method="post" action="/admin?section=monitoring&amp;action=monitoring_stress_test" class="mb-2">
+        <?= $view->csrfField() ?>
+        <button class="btn btn-sm btn-warning" type="submit" data-clara-mon-stress-button
+            <?= $stressState === 'running' ? 'disabled' : '' ?>>
+            <?= View::e($view->t('admin.monitoring.stress.start')) ?>
+        </button>
+    </form>
+    <p class="small mb-2" data-clara-mon-stress-message <?= $stressStatus === null ? 'hidden' : '' ?>>
+        <?php if ($stressStatus !== null): ?>
+            <?= View::e($view->t('admin.monitoring.stress.phase.' . $stressPhase)) ?>
+        <?php endif; ?>
+    </p>
+    <progress class="w-100" max="100" value="<?= (int) ($stressStatus['progress'] ?? 0) ?>"
+        data-clara-mon-stress-progress aria-label="<?= View::e($view->t('admin.monitoring.stress.progress')) ?>"
+        <?= $stressStatus === null ? 'hidden' : '' ?>></progress>
+</section>
 
 <p class="text-body-secondary small" data-clara-mon-failed <?= $failed ? '' : 'hidden' ?>>
     <?= View::e($view->t('admin.monitoring.failed', [

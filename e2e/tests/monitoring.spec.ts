@@ -40,6 +40,7 @@ test.describe("Monitoring in the Control Panel (REQ-UI-064)", () => {
     await signInAsAdmin(page)
     await page.goto("/admin?section=monitoring")
     await expect(page.getByRole("heading", { level: 1, name: "Monitoring" })).toBeVisible()
+    await expect(page.getByRole("button", { name: "Start Stress Test" })).toBeVisible()
 
     // First paint (server-rendered): the gauge cards answer from one snapshot, rates are em-dashed.
     await expect(page.locator('[data-clara-mon-stat="goroutines"]')).not.toBeEmpty()
