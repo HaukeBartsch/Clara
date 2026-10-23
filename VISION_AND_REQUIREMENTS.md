@@ -1088,3 +1088,14 @@ Use coreos/go-oidc client library for provider discovery and ID token verificati
 
 
 Two things worth fixing regardless of OIDC: Oauth.php:291 writes the endpoint cache to an undefined variable $resolved instead of $this->endpointsCache, so the cache never populates — I ran the pattern and confirmed every callback re-fetches .well-known twice, coupling login latency to a document fetch. And logout is local-only (Auth.php:457-466), so an IdP-side revocation leaves a CLARA session alive for up to 8 hours.
+
+
+## Ability to export and clean up projects from the system
+
+Support exporting and importing a project using ODM-XML (operational data model of CDISC - Clinical Data Interchange Standards Consortium).
+
+Support deleting of a project in any mode, warn the user and inform about CDISC export.
+
+## Record status dashboard header improvements
+
+The record status dashboard shows an event dropdown followed by a list of instrument buttons. Change this display to a table with instruments as rows and events as columns. Each table entry should be either empty (if the instrument is not enabled for the event) or have the bubble (button) to switch to that instrument.
