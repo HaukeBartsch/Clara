@@ -1087,7 +1087,7 @@ Use golang.org/x/oauth2 package for handling Authorization code flow.
 Use coreos/go-oidc client library for provider discovery and ID token verification.
 
 
-Two things worth fixing regardless of OIDC: Oauth.php:291 writes the endpoint cache to an undefined variable $resolved instead of $this->endpointsCache, so the cache never populates — I ran the pattern and confirmed every callback re-fetches .well-known twice, coupling login latency to a document fetch. And logout is local-only (Auth.php:457-466), so an IdP-side revocation leaves a CLARA session alive for up to 8 hours.
+One thing worth fixing regardless of OIDC: logout is local-only (Auth.php:457-466), so an IdP-side revocation leaves a CLARA session alive until its bounds expire — up to 8 hours, or less with the default idle timeout. The endpoint-discovery cache assignment in Oauth.php has been fixed; its cache is per request, so authorization, token, and userinfo lookups now share one discovery fetch.
 
 
 ## Ability to export and clean up projects from the system
@@ -1099,3 +1099,8 @@ Support deleting of a project in any mode, warn the user and inform about CDISC 
 ## Record status dashboard header improvements
 
 The record status dashboard shows an event dropdown followed by a list of instrument buttons. Change this display to a table with instruments as rows and events as columns. Each table entry should be either empty (if the instrument is not enabled for the event) or have the bubble (button) to switch to that instrument.
+
+
+## Adjust the notes field
+
+Field of type notes should display as multi-line (5 lines) text area HTML areas.

@@ -288,7 +288,7 @@ final class Oauth
             $token = $issuer . '/token';
         }
 
-        return $resolved[$issuer] = [
+        return $this->endpointsCache[$issuer] = [
             'authorize' => $authorize,
             'token' => $token,
             'userinfo' => trim((string) ($discovered['userinfo_endpoint'] ?? '')) !== ''

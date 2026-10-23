@@ -82,6 +82,24 @@ describe('oauth2 authorization code (Sequence A, §2.1)', function (): void {
         assert_same('Hospital 1', $txn['source_name']);
     });
 
+    it('fetches discovery once per OAuth request and reuses its endpoints', function (): void {
+        oauth_provider_endpoints();
+        api_route('/protocol/openid-connect/token', ['access_token' => 'at-1']);
+        api_route('/protocol/openid-connect/userinfo', ['email' => 'researcher@example.org']);
+
+        $config = oauth_config();
+        $oauth = oauth_client($config);
+        $oauth->begin($config->oauthProviders[0], 'Hospital 1');
+        $txn = $_SESSION['_oauth_txn'];
+        $oauth->complete('the-code', (string) $txn['state']);
+
+        $discoveryRequests = array_filter(
+            $GLOBALS['api_calls'],
+            static fn (array $call): bool => str_ends_with($call['url'], '/.well-known/openid-configuration')
+        );
+        assert_same(1, count($discoveryRequests), 'authorize, token and userinfo reuse one discovery response');
+    });
+
     it('falls back to the conventional endpoints when no discovery document exists', function (): void {
         oauth_provider_endpoints('https://idp.example.org', 404);
         $config = oauth_config();
