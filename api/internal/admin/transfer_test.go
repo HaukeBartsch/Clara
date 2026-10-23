@@ -18,17 +18,17 @@ import (
 // xferConfig is the reference instruction text of these tests: it names the
 // target project twice with its spaces, resolves one copy by short event name
 // and one by unique_event_name, and carries a comment.
-const xferConfig = "create [Target Study][pid] record_name # the new record's name\n" +
+const xferConfig = "create_record [Target Study][pid] record_name # the new record's name\n" +
 	"copy age  [Target Study][visit][age_in]\n" +
 	"copy city [Target Study][visit_arm_1][city_in]"
 
 type transferFixture struct {
-	src, tgt       int64
-	srcInstrID     int64 // intake on the source project
-	tgtInstrID     int64 // enroll on the target project
-	visitEventID   int64 // the target's visit event row (pair grants address it)
-	mem            *db.User
-	admin          *db.User
+	src, tgt     int64
+	srcInstrID   int64 // intake on the source project
+	tgtInstrID   int64 // enroll on the target project
+	visitEventID int64 // the target's visit event row (pair grants address it)
+	mem          *db.User
+	admin        *db.User
 }
 
 func newTransferFixture(t *testing.T) (*env, transferFixture) {
@@ -150,13 +150,13 @@ func TestTransferDesignValidation(t *testing.T) {
 
 	bad("empty", "", "copy instructions")
 	bad("no_create", "copy age [Target Study][visit][age_in]", "create")
-	bad("two_creates", "create [Target Study][pid] record_name\ncreate [Target Study][pid] age", "only one create")
+	bad("two_creates", "create_record [Target Study][pid] record_name\ncreate_record [Target Study][pid] age", "only one create")
 	// The design-time answer names an unknown project on purpose — the runtime
 	// one never does (REQ-DB-050 vs REQ-API-165).
-	bad("ghost_project", "create [Ghost Study][pid] record_name", "no project named 'Ghost Study'")
-	bad("wrong_identifier", "create [Target Study][age_in] record_name", "record identifier field 'pid'")
-	bad("cross_instrument_source", "create [Target Study][pid] faraway", "not a value-carrying field of this instrument")
-	bad("create_arity", "create [Target Study][visit][pid] record_name", "not valid")
+	bad("ghost_project", "create_record [Ghost Study][pid] record_name", "no project named 'Ghost Study'")
+	bad("wrong_identifier", "create_record [Target Study][age_in] record_name", "record identifier field 'pid'")
+	bad("cross_instrument_source", "create_record [Target Study][pid] faraway", "not a value-carrying field of this instrument")
+	bad("create_arity", "create_record [Target Study][visit][pid] record_name", "not valid")
 
 	// A checkbox stores nothing under its own name (REQ-DB-042).
 	rec := e.do("POST", f.fieldsPath(f.src, f.srcInstrID), map[string]any{
@@ -165,15 +165,15 @@ func TestTransferDesignValidation(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("seed checkbox: %d %s", rec.Code, rec.Body.String())
 	}
-	bad("checkbox_source", "create [Target Study][pid] mood\ncopy mood [Target Study][visit][age_in]", "choice columns")
+	bad("checkbox_source", "create_record [Target Study][pid] mood\ncopy mood [Target Study][visit][age_in]", "choice columns")
 
 	// A non-value target field cannot receive a transfer.
 	e.mustField(f.tgt, f.tgtInstrID, "note_t", "description", 9)
-	bad("nonvalue_target", "create [Target Study][pid] record_name\ncopy age [Target Study][visit][note_t]", "cannot receive")
+	bad("nonvalue_target", "create_record [Target Study][pid] record_name\ncopy age [Target Study][visit][note_t]", "cannot receive")
 
 	// A transfer field is not a value: it cannot be another transfer's source.
 	e.mustCreateTransferField(t, f, "xfer2", xferConfig)
-	bad("transfer_as_source", "create [Target Study][pid] record_name\ncopy xfer2 [Target Study][visit][age_in]", "value-carrying")
+	bad("transfer_as_source", "create_record [Target Study][pid] record_name\ncopy xfer2 [Target Study][visit][age_in]", "value-carrying")
 }
 
 // --- execution (REQ-API-165) and idempotency ---
@@ -319,12 +319,115 @@ func TestTransferAuthorization(t *testing.T) {
 	}
 }
 
+func TestTransferCreateProjectFromTemplate(t *testing.T) {
+	e, f := newTransferFixture(t)
+	for i, field := range []string{"project_token", "project_id"} {
+		e.mustField(f.src, f.srcInstrID, field, "text", 10+i)
+	}
+	config := "create_project record_name [Target Study] project_token project_id"
+	e.mustCreateTransferField(t, f, "create_project", config)
+	if _, err := e.Store.DB.Exec(
+		`UPDATE data SET value = ? WHERE project_id = ? AND record_id = ? AND unique_event_name = ? AND field_name = ?`,
+		"New Study", f.src, "R1", "baseline_arm_1", "record_name"); err != nil {
+		t.Fatalf("set project name: %v", err)
+	}
+
+	path := f.execPath("R1") + "?event=baseline_arm_1&instrument=intake&field=create_project"
+	rec := e.do("POST", path, nil, f.mem)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create project: %d %s", rec.Code, rec.Body.String())
+	}
+	var result struct {
+		TargetProject string   `json:"target_project"`
+		TargetRecord  string   `json:"target_record"`
+		Created       bool     `json:"created"`
+		Copied        []string `json:"copied"`
+		SkippedEmpty  []string `json:"skipped_empty"`
+	}
+	e.decode(rec, &result)
+	if result.TargetProject != "New Study" || !result.Created || result.TargetRecord != "" ||
+		result.Copied == nil || result.SkippedEmpty == nil {
+		t.Fatalf("result = %+v, want created New Study", result)
+	}
+
+	project, err := e.Store.GetProjectByName(context.Background(), "New Study")
+	if err != nil || project == nil {
+		t.Fatalf("get new project: project=%v err=%v", project, err)
+	}
+	instruments, err := e.Store.ListInstruments(context.Background(), project.ID)
+	if err != nil || len(instruments) != 1 || instruments[0].Name != "enroll" {
+		t.Fatalf("cloned instruments = %+v, err=%v; want enroll", instruments, err)
+	}
+	fields, err := e.Store.ListFields(context.Background(), project.ID)
+	if err != nil || len(fields) != 3 {
+		t.Fatalf("cloned fields = %d, err=%v; want 3", len(fields), err)
+	}
+	events, err := e.Store.ListEventsByArm(context.Background(), project.ID, func() int64 {
+		arms, armErr := e.Store.ListArms(context.Background(), project.ID)
+		if armErr != nil || len(arms) != 1 {
+			t.Fatalf("cloned arms = %+v, err=%v", arms, armErr)
+		}
+		return arms[0].ID
+	}())
+	if err != nil || len(events) != 1 || events[0].UniqueEventName != "visit_arm_1" {
+		t.Fatalf("cloned events = %+v, err=%v; want visit_arm_1", events, err)
+	}
+	pairs, err := e.Store.ListInstrumentEvents(context.Background(), project.ID)
+	if err != nil || len(pairs) != 1 || pairs[0].InstrumentID != instruments[0].ID ||
+		pairs[0].EventID != events[0].ID {
+		t.Fatalf("cloned mappings = %+v, err=%v; want enroll mapped at visit_arm_1", pairs, err)
+	}
+
+	assignment, err := e.Store.GetAssignment(context.Background(), f.mem.ID, project.ID)
+	if err != nil || assignment == nil || assignment.RoleID.Valid || assignment.Token == "" {
+		t.Fatalf("project assignment = %+v, err=%v; want role-less membership with token", assignment, err)
+	}
+	if got, _ := e.valueSQL(t, f.src, "R1", "baseline_arm_1", "project_token"); got != assignment.Token {
+		t.Errorf("copied project token = %q, want membership token", got)
+	}
+	if got, _ := e.valueSQL(t, f.src, "R1", "baseline_arm_1", "project_id"); got != itoa(project.ID) {
+		t.Errorf("copied project id = %q, want %d", got, project.ID)
+	}
+
+	// A second click is an exact no-op for an already-existing project.
+	if _, err := e.Store.DB.Exec(`DELETE FROM data WHERE project_id = ? AND record_id = ?
+		AND unique_event_name = ? AND field_name IN ('project_token', 'project_id')`,
+		f.src, "R1", "baseline_arm_1"); err != nil {
+		t.Fatalf("clear writeback fields: %v", err)
+	}
+	rec = e.do("POST", path, nil, f.mem)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("repeat create project: %d %s", rec.Code, rec.Body.String())
+	}
+	e.decode(rec, &result)
+	if result.Created || result.TargetProject != "New Study" {
+		t.Fatalf("repeat result = %+v, want existing project without creation", result)
+	}
+	if n := e.countSQL(t, `SELECT count(*) FROM user_projects WHERE project_id = ?`, project.ID); n != 1 {
+		t.Errorf("memberships = %d, want one after repeated click", n)
+	}
+	if _, exists := e.valueSQL(t, f.src, "R1", "baseline_arm_1", "project_token"); exists {
+		t.Error("existing-project no-op wrote a project token")
+	}
+	if n := e.countSQL(t, `SELECT count(*) FROM audit_events WHERE project_id = ? AND event_type = 'transfer_executed'`, f.src); n != 2 {
+		t.Errorf("transfer audit entries = %d, want both creation and no-op attempts", n)
+	}
+	var auditDetails string
+	if err := e.Store.DB.QueryRow(`SELECT details FROM audit_events
+		WHERE project_id = ? AND event_type = 'project_created'`, project.ID).Scan(&auditDetails); err != nil {
+		t.Fatalf("read project audit: %v", err)
+	}
+	if strings.Contains(auditDetails, assignment.Token) {
+		t.Error("project token leaked into audit details")
+	}
+}
+
 // --- the availability probe (REQ-API-166): enabled per actor, fail-closed ---
 
 func TestTransferAvailabilityProbe(t *testing.T) {
 	e, f := newTransferFixture(t)
 	e.mustCreateTransferField(t, f, "xfer", xferConfig)
-	e.seedTransferField(t, f, "xfer_ghost", "create [Ghost Study][pid] record_name")
+	e.seedTransferField(t, f, "xfer_ghost", "create_record [Ghost Study][pid] record_name")
 
 	probe := func(u *db.User) map[string]bool {
 		t.Helper()
@@ -463,7 +566,7 @@ func TestTransferEventlessTarget(t *testing.T) {
 	e.mustField(plain, form, "pid", "text", 1)
 	e.mustField(plain, form, "note_in", "text", 2)
 
-	const plainConfig = "create [Plain Study][pid] record_name\ncopy age [Plain Study][note_in]"
+	const plainConfig = "create_record [Plain Study][pid] record_name\ncopy age [Plain Study][note_in]"
 	if rec := e.do("POST", f.fieldsPath(f.src, f.srcInstrID), map[string]any{
 		"field_name": "xfer_plain", "field_type": "transfer", "choices": plainConfig,
 	}, f.admin); rec.Code != http.StatusCreated {
@@ -472,7 +575,7 @@ func TestTransferEventlessTarget(t *testing.T) {
 	// An event token against an event-less target is rejected at design time.
 	if rec := e.do("POST", f.fieldsPath(f.src, f.srcInstrID), map[string]any{
 		"field_name": "xfer_plain_bad", "field_type": "transfer",
-		"choices": "create [Plain Study][pid] record_name\ncopy age [Plain Study][visit_arm_1][note_in]",
+		"choices": "create_record [Plain Study][pid] record_name\ncopy age [Plain Study][visit_arm_1][note_in]",
 	}, f.admin); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "has no events") {
 		t.Fatalf("event token on event-less target: %d %s", rec.Code, rec.Body.String())
 	}

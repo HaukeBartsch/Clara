@@ -302,34 +302,42 @@ A `transfer` field carries no value of its own (REQ-VAL-006); its `choices` attr
 Operations are written one per line; the first token of a line is its keyword:
 
 ```
-config    := op { op }                                              # 1–256 operations, the first a create
-create_op := "create" [project][identifier_field] source_field
-copy_op   := "copy" source_field [project][event][target_field]     # event-enabled target
-           |  "copy" source_field [project][target_field]           # event-less target
+config := create_record { copy } | create_project
+create_record := "create_record" [project][identifier_field] source_field
+create_project := "create_project" source_field template_project [token_field [project_id_field]]
+copy_op   := "copy" source_field [project][event][target_field] # event-enabled target
+           | "copy" source_field [project][target_field]         # event-less target
 ```
 
 Example — one record per subject in a `followup` project, its name taken from this record's `subject_code`:
 
 ```
 # create the follow-up record and fill it from this one
-create [followup][subject_id]  subject_code
+create_record [followup][subject_id] subject_code
 copy   age          [followup][baseline_arm_1][age]
 copy   sex          [followup][baseline_arm_1][sex]
 copy   notes        [followup][week_4_arm_1][notes]
 ```
 
+Example — create a project from a template and write its token and ID into this record:
+
+```
+create_project project_name [Template Project] [project_token] [project_id]
+```
+
 Rules:
 
 - **Lexing.** Line-oriented: `#` starts an end-of-line comment (the rest of the line is ignored), blank lines are ignored, whitespace separates tokens. A token is a bare lower-case identifier (`[a-z0-9_]+`) or one or more adjacent bracket groups — `[proj][baseline]` is one token, `[proj] [baseline]` two; names inside brackets may not contain brackets and are trimmed of surrounding whitespace. Whether a name *resolves* is the design-time check (§12.2), not the lexicon's.
-- **Exactly one `create`, first** (REQ-VAL-046): the button transfers to exactly one target record, whose record name is the create operation's source value — which is what makes re-triggering an update of that record rather than a second record (REQ-API-165). A second `create` anywhere, or a `copy` before it, is rejected.
-- **One target project.** Every operation names the same target project as the create; instructions spanning two projects are rejected — one button fills one record in one project.
-- **Identifier equality.** The create's second bracket group must name the target project's **record identifier field** (GD-8 on the target).
-- **Event resolution.** A copy into an event-enabled target names its event as a full `unique_event_name` (always accepted) or a plain `event_name` when it names exactly one of the target's events; an ambiguous or unknown name is rejected. An event-less target takes no event token — `[project][field]`; naming one there is rejected too. An event-enabled target needs **at least one copy**: the identifier rows are written at each distinct copied-into event, so a create alone would place the record's values nowhere.
+- **Record transfers.** Exactly one `create_record` must be first, followed by zero or more `copy` operations. The button transfers to exactly one target record, whose record name is the create operation's source value — which is what makes re-triggering an update of that record rather than a second record (REQ-API-165). A second `create_record` or a `copy` before it is rejected.
+- **Project creation.** `create_project <source_field> <template_project> [<token_field> [<project_id_field>]]` is a standalone alternative to record transfer. The value of `source_field` names the project; the template name is a bare token or one bracket group (use `[Template Project]` for spaces). Existing project names are a no-op. A new project copies the template's arms, events, instruments, fields and instrument/event mappings, then gives the acting user role-less project-admin membership. Optional output fields receive that membership's project token and the new project ID in the current record. Output fields must be distinct, non-calculated, value-carrying fields of the transfer field's instrument; output fields cannot be the project-name source. It cannot be combined with `create_record` or `copy` (REQ-VAL-047).
+- **One target project.** Every record-transfer operation names the same target project as the `create_record`; instructions spanning two projects are rejected — one button fills one record in one project.
+- **Identifier equality.** The `create_record` second bracket group must name the target project's **record identifier field** (GD-8 on the target).
+- **Event resolution.** A copy into an event-enabled target names its event as a full `unique_event_name` (always accepted) or a plain `event_name` when it names exactly one of the target's events; an ambiguous or unknown name is rejected. An event-less target takes no event token — `[project][field]`; naming one there is rejected too. An event-enabled target needs **at least one copy**: the identifier rows are written at each distinct copied-into event, so a create_record alone would place the record's values nowhere.
 - **Field names.** Every `source_field` must name an existing value-carrying field of the transfer field's **same instrument** (§12.2, REQ-VAL-046) — non-value types and a checkbox's own row are neither source nor target; checkbox choice columns `<field>___<code>` (REQ-DB-042) may be both.
 - **Caps.** The instruction text is bounded: 16384 characters, at most 256 operations per config (admin-entered stored text).
 
 ### 12.2 Validation timing
 
-**Design time** (creating or updating the field, REQ-API-068/069): the grammar parses; every source reference names an existing value-carrying field of the same instrument; and every target reference resolves against the current database state — target project exists, event exists, target field exists, carries values and is active at that pair (REQ-VAL-046, REQ-DB-050). An unknown target project is **named** in the rejection: a deliberate bounded disclosure of project-name existence (REQ-DB-050), accepted so typo'd targets fail where the designer sees them — runtime authorization stays strict and never discloses (REQ-API-165, REQ-API-007).
+**Design time** (creating or updating the field, REQ-API-068/069): the grammar parses; every source and output field names an existing value-carrying field of the same instrument; record-transfer target references resolve against the current database state — target project exists, event exists, target field exists, carries values and is active at that pair (REQ-VAL-046, REQ-DB-050); and a project-creation template exists (REQ-VAL-047). An unknown target or template project is **named** in the rejection: a deliberate bounded disclosure of project-name existence (REQ-DB-050), accepted so typo'd references fail where the designer sees them — runtime authorization stays strict and never discloses (REQ-API-165, REQ-API-007).
 
 **Runtime**: every execution re-parses and re-resolves the whole config against the live design before writing anything (`API_Endpoints_Design.md` §4.27) — a target whose design moved under a saved config fails then (and its button goes absent per the availability probe, REQ-API-166), never silently writes to a stale position.

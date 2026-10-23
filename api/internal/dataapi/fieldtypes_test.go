@@ -97,7 +97,7 @@ func TestTransferIsNonValueAndExportsRawConfig(t *testing.T) {
 	if err != nil || demo == nil {
 		t.Fatalf("demo instrument: %v", err)
 	}
-	const cfg = "create [Elsewhere][record_id] record_id\ncopy age [Elsewhere][baseline_arm_1][age_copy]"
+	const cfg = "create_record [Elsewhere][record_id] record_id\ncopy age [Elsewhere][baseline_arm_1][age_copy]"
 	if _, err := f.s.AddField(ctx, &db.Field{ProjectID: f.pid, InstrumentID: demo.ID,
 		FieldName: "handoff", FieldType: "transfer", Position: 10,
 		FieldLabel: sql.NullString{String: "Handoff", Valid: true},

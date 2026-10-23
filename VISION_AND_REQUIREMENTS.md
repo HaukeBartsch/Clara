@@ -963,7 +963,7 @@ Here an example coding for the transfer button (use '#' to indicate comments til
 
 ```
 # create a new record in [project] with record name [record_id] that gets the value of the current instruments [field]
-create [project][record_id] [field]
+create_record [project][record_id] [field]
 # copy the value of the current instruments field to the new records [event][place_for_field1]
 copy [field]  [project][baseline][place_for_field1]
 # copy the value of the current instruments field to the new records [event][place_for_field2]

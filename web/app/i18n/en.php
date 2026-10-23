@@ -944,7 +944,7 @@ return [
     'design.field.branching' => 'Branching logic',
     'design.field.calculation' => 'Calculation',
     'design.field.transfer' => 'Copy instructions',
-    'design.field.transfer_help' => 'One create line first — [target project][record identifier field] source_field — then copy lines: source_field [target project][event][target field]. Text after # is a comment. The instructions are checked against both projects when you save.',
+    'design.field.transfer_help' => 'Use create_record [target project][record ID field] source_field, then copy lines: source_field [target project][event][target field]. Or use one create_project project_name [template project] [token_field] [project_id_field]; the last two fields are optional. A project is created only if its name does not already exist. Text after # is a comment.',
     'design.type.text' => 'Text',
     'design.type.notes' => 'Notes (multi-line text)',
     'design.type.dropdown' => 'Dropdown',
@@ -1159,8 +1159,11 @@ return [
     'record.delete.nothing' => 'This form has no values to delete.',
     // Transfer button (§8.3, REQ-UI-065): the confirm names what it does to the other project.
     'record.transfer.button' => 'Transfer',
-    'record.transfer.confirm' => 'Copy {record} from form {instrument} into the target project? The target record is created if it does not exist yet; named values are updated in place, and empty source values are left alone.',
+    'record.transfer.confirm' => 'Run the configured transfer from form {instrument} for record {record}?',
     'record.transfer.done' => 'The values were copied to record {record} in project {project}.',
+    'record.transfer.project_done' => 'Project {project}: {created}.',
+    'record.transfer.project_created' => 'created from its template and you are its administrator',
+    'record.transfer.project_exists' => 'already exists; no changes were made',
 
     // --- M6: export (§6.4) ---
     'export.title' => 'Export',

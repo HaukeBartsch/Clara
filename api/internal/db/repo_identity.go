@@ -539,15 +539,14 @@ func scanAssignment(row interface{ Scan(dest ...any) error }) (Assignment, error
 	return a, nil
 }
 
-// AddAssignment inserts a membership row and returns the new id
-// (REQ-API-054). An empty token is filled with a fresh UUID v4 (GD-5,
-// REQ-AUTH-029); the caller reads it back from a.Token.
-func (s *Store) AddAssignment(ctx context.Context, a *Assignment) (int64, error) {
+// AddAssignmentTx inserts a membership row inside the caller's transaction.
+// An empty token is filled with a fresh UUID v4 (GD-5, REQ-AUTH-029).
+func (s *Store) AddAssignmentTx(ctx context.Context, tx *sql.Tx, a *Assignment) (int64, error) {
 	if a.Token == "" {
 		a.Token = newToken()
 	}
 	a.CreatedAt = nowUTC()
-	res, err := s.DB.ExecContext(ctx,
+	res, err := tx.ExecContext(ctx,
 		`INSERT INTO user_projects (user_id, project_id, role_id, token, created_at)
 		 VALUES (?, ?, ?, ?, ?)`,
 		a.UserID, a.ProjectID, nullInt64(a.RoleID), a.Token, a.CreatedAt)
@@ -555,6 +554,23 @@ func (s *Store) AddAssignment(ctx context.Context, a *Assignment) (int64, error)
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// AddAssignment inserts a membership row and returns the new id (REQ-API-054).
+func (s *Store) AddAssignment(ctx context.Context, a *Assignment) (int64, error) {
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	id, err := s.AddAssignmentTx(ctx, tx, a)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
 }
 
 func (s *Store) GetAssignment(ctx context.Context, userID, projectID int64) (*Assignment, error) {

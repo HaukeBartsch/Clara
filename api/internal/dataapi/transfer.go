@@ -80,8 +80,10 @@ type transferWrite struct {
 type transferPlan struct {
 	project       *db.Project
 	dict          *projectDict
-	identifier    string // the target project's record identifier field
-	createSource  string // the source field whose value names the target record
+	createProject bool
+	template      *db.Project
+	identifier    string          // the target project's record identifier field
+	createSource  string          // the source field whose value names the target record
 	writes        []transferWrite // create rows first (config order), then copies
 	eventsInOrder []string        // distinct events, first-appearance order
 }
@@ -105,6 +107,16 @@ func (h *Handler) resolveTransfer(ctx context.Context, config string) (*transfer
 	ops, err := validate.ParseTransferConfig(config)
 	if err != nil {
 		return nil, &TransferConfigError{Msg: err.Error()}
+	}
+	if ops[0].Kind == "create_project" {
+		template, err := h.Store.GetProjectByName(ctx, ops[0].Template)
+		if err != nil {
+			return nil, err
+		}
+		if template == nil {
+			return nil, &TransferConfigError{Msg: "no template project named '" + ops[0].Template + "'", ProjectMissing: true}
+		}
+		return &transferPlan{createProject: true, template: template}, nil
 	}
 	name := ops[0].TargetProject
 	for _, op := range ops[1:] {
@@ -302,10 +314,292 @@ func (h *Handler) ExecuteTransfer(ctx context.Context, actor *db.User, srcProjec
 		}
 		return nil, err
 	}
+	if plan.createProject {
+		return h.executeCreateProjectTransfer(ctx, actor, srcProjectID, recordID, event, tf, srcDict, plan)
+	}
 	sub, err := h.transferTargetSubject(ctx, actor, plan.project)
 	if err != nil {
 		return nil, err
 	}
+	return h.executeRecordTransfer(ctx, actor, srcProjectID, recordID, event, tf, srcDict, plan, sub)
+}
+
+func (h *Handler) executeCreateProjectTransfer(ctx context.Context, actor *db.User, srcProjectID int64,
+	recordID, event string, transferField recField, srcDict *projectDict, plan *transferPlan) (*TransferResult, error) {
+	ops, err := validate.ParseTransferConfig(transferField.Choices.String)
+	if err != nil {
+		return nil, &TransferConfigError{Msg: err.Error()}
+	}
+	op := ops[0]
+	source, ok := srcDict.byName[op.SourceField]
+	if !ok || source.Instrument != transferField.Instrument || !transferValueField(source) {
+		return nil, &TransferConfigError{Msg: fmt.Sprintf(
+			"project name source '%s' is not a value-carrying field of instrument '%s'", op.SourceField, transferField.Instrument)}
+	}
+	if op.TokenField != "" && op.TokenField == op.IDField ||
+		op.SourceField == op.TokenField || op.SourceField == op.IDField {
+		return nil, &TransferConfigError{Msg: "create_project source, token and project ID fields must be different"}
+	}
+	for _, name := range []string{op.TokenField, op.IDField} {
+		if name == "" {
+			continue
+		}
+		target, exists := srcDict.byName[name]
+		if !exists || target.Instrument != transferField.Instrument || !transferValueField(target) ||
+			target.FieldType == "calculated" {
+			return nil, &TransferConfigError{Msg: fmt.Sprintf(
+				"create_project destination '%s' is not a value-carrying field of instrument '%s'", name, transferField.Instrument)}
+		}
+	}
+	if srcDict.hasEvents {
+		if _, exists := srcDict.eventArm[event]; !exists {
+			return nil, &TransferConfigError{Msg: "unknown event '" + event + "' for the source project"}
+		}
+	} else {
+		event = ""
+	}
+
+	sourceProject, err := h.Store.GetProject(ctx, srcProjectID)
+	if err != nil {
+		return nil, err
+	}
+	if sourceProject == nil {
+		return nil, ErrTransferTargetAccess
+	}
+	sourceSubject, err := h.transferTargetSubject(ctx, actor, sourceProject)
+	if err != nil {
+		return nil, err
+	}
+	if authz.DataRank(srcDict.pairAccess(sourceSubject, event, op.SourceField).Data) < lvlViewEdit {
+		return nil, ErrTransferTargetAccess
+	}
+	for _, name := range []string{op.TokenField, op.IDField} {
+		if name != "" && authz.DataRank(srcDict.pairAccess(sourceSubject, event, name).Data) < lvlViewEdit {
+			return nil, ErrTransferTargetAccess
+		}
+	}
+
+	tx, err := h.Store.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	sourceValues, err := h.Store.ListDataValuesByRecordTx(ctx, tx, srcProjectID, recordID)
+	if err != nil {
+		return nil, err
+	}
+	values := valuesIndex(sourceValues)[event]
+	sourceByEvent := valuesIndex(sourceValues)
+	if sourceByEvent[event] == nil {
+		sourceByEvent[event] = map[string]string{}
+	}
+	projectName := strings.TrimSpace(values[op.SourceField])
+	if projectName == "" || len(projectName) > 255 || strings.ContainsFunc(projectName, func(r rune) bool { return r < 0x20 }) {
+		return nil, &TransferConfigError{Msg: fmt.Sprintf("the value of '%s' is not a usable project name", op.SourceField)}
+	}
+	existing, err := h.Store.GetProjectByName(ctx, projectName)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil {
+		if err := h.AuditTx(ctx, tx, audit.Entry{
+			EventType: audit.TransferExecuted, Source: audit.SourceUI, UserID: actor.ID, Email: actor.Email,
+			ProjectID: srcProjectID, TargetRecord: recordID,
+			Details: transferExecutedDetails{Field: transferField.FieldName, TargetProject: projectName},
+		}); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		return &TransferResult{TargetProject: projectName, Copied: []string{}, SkippedEmpty: []string{}}, nil
+	}
+
+	project := &db.Project{ProjectName: projectName}
+	projectID, err := h.Store.CreateProjectTx(ctx, tx, project)
+	if err != nil {
+		return nil, err
+	}
+	project.ID = projectID
+	if err := h.cloneProjectStructureTx(ctx, tx, plan.template.ID, projectID); err != nil {
+		return nil, err
+	}
+	assignment := &db.Assignment{UserID: actor.ID, ProjectID: projectID}
+	if _, err := h.Store.AddAssignmentTx(ctx, tx, assignment); err != nil {
+		return nil, err
+	}
+	outputs := map[string]string{}
+	if op.TokenField != "" {
+		outputs[op.TokenField] = assignment.Token
+	}
+	if op.IDField != "" {
+		outputs[op.IDField] = fmt.Sprint(projectID)
+	}
+	reg, err := h.validationRegistry(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for fieldName, value := range outputs {
+		target := srcDict.byName[fieldName]
+		vf := validate.Field{Name: fieldName, Type: target.FieldType, ValidationType: target.ValidationType.String,
+			ValidationMin: target.ValidationMin.String, ValidationMax: target.ValidationMax.String, Choices: target.Choices.String}
+		if failure := validate.ValidateValue(vf, value, reg); failure != nil {
+			return nil, &TransferConfigError{Msg: fmt.Sprintf("the source project rejects the value for field '%s': %s", fieldName, failure.Message)}
+		}
+		query := `INSERT INTO data
+				(project_id, record_id, unique_event_name, repeating_instrument, repeating_instance_number, field_name, value)
+				VALUES (?, ?, ?, '', 1, ?, ?)`
+		if h.Store.Dialect == db.DialectSQLite {
+			query += ` ON CONFLICT(project_id, record_id, unique_event_name, repeating_instrument, repeating_instance_number, field_name)
+					DO UPDATE SET value = excluded.value`
+		} else {
+			query += ` ON DUPLICATE KEY UPDATE value = VALUES(value)`
+		}
+		if _, err := tx.ExecContext(ctx, query, srcProjectID, recordID, event, fieldName, value); err != nil {
+			return nil, err
+		}
+		sourceByEvent[event][fieldName] = value
+	}
+	if len(outputs) > 0 {
+		sourceInstances := srcDict.instancesIndex(sourceValues)
+		sourceCalcChanges, err := h.recomputeCalculated(ctx, tx, srcProjectID, recordID, sourceByEvent, sourceInstances, srcDict)
+		if err != nil {
+			return nil, err
+		}
+		for _, change := range sortedCalculated(sourceCalcChanges) {
+			if err := h.AuditTx(ctx, tx, audit.Entry{
+				EventType: audit.CalculatedRecomputed, Source: audit.SourceUI, UserID: actor.ID,
+				Email: actor.Email, ProjectID: srcProjectID, TargetRecord: recordID,
+				Details: calculatedDetails{RecordID: recordID, Field: change.Field, Instrument: change.Instrument,
+					Event: change.Event, Instance: furtherInstance(change.Instance), Old: change.Old, New: change.New},
+			}); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if err := h.AuditTx(ctx, tx, audit.Entry{
+		EventType: audit.TransferExecuted, Source: audit.SourceUI, UserID: actor.ID, Email: actor.Email,
+		ProjectID: srcProjectID, TargetRecord: recordID,
+		Details: transferExecutedDetails{Field: transferField.FieldName, TargetProject: projectName, Created: true},
+	}); err != nil {
+		return nil, err
+	}
+	if err := h.AuditTx(ctx, tx, audit.Entry{
+		EventType: audit.ProjectCreated, Source: audit.SourceUI, UserID: actor.ID, Email: actor.Email,
+		ProjectID: projectID, Details: map[string]any{"project_name": projectName, "template_project": plan.template.ProjectName},
+	}); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	h.Store.BumpStructureCache()
+	return &TransferResult{TargetProject: projectName, Created: true, Copied: []string{}, SkippedEmpty: []string{}}, nil
+}
+
+func (h *Handler) cloneProjectStructureTx(ctx context.Context, tx *sql.Tx, templateID, projectID int64) error {
+	arms, err := h.Store.ListArms(ctx, templateID)
+	if err != nil {
+		return err
+	}
+	eventIDs := map[int64]int64{}
+	for _, arm := range arms {
+		newArm := arm
+		newArm.ID, newArm.ProjectID = 0, projectID
+		armID, err := h.Store.AddArmTx(ctx, tx, &newArm)
+		if err != nil {
+			return err
+		}
+		events, err := h.Store.ListEventsByArm(ctx, templateID, arm.ID)
+		if err != nil {
+			return err
+		}
+		for _, event := range events {
+			newEvent := event
+			newEvent.ID, newEvent.ProjectID, newEvent.ArmID = 0, projectID, armID
+			eventID, err := h.Store.AddEventTx(ctx, tx, &newEvent)
+			if err != nil {
+				return err
+			}
+			eventIDs[event.ID] = eventID
+		}
+	}
+	instruments, err := h.Store.ListInstruments(ctx, templateID)
+	if err != nil {
+		return err
+	}
+	instrumentIDs := map[int64]int64{}
+	for _, instrument := range instruments {
+		newInstrument := instrument
+		newInstrument.ID, newInstrument.ProjectID = 0, projectID
+		instrumentID, err := h.Store.AddInstrumentTx(ctx, tx, &newInstrument)
+		if err != nil {
+			return err
+		}
+		instrumentIDs[instrument.ID] = instrumentID
+	}
+	fields, err := h.Store.ListFields(ctx, templateID)
+	if err != nil {
+		return err
+	}
+	fieldIDs := map[int64]int64{}
+	for _, field := range fields {
+		newField := field
+		newField.ID, newField.ProjectID, newField.InstrumentID = 0, projectID, instrumentIDs[field.InstrumentID]
+		fieldID, err := h.Store.AddFieldTx(ctx, tx, &newField)
+		if err != nil {
+			return err
+		}
+		fieldIDs[field.ID] = fieldID
+	}
+	pairs, err := h.Store.ListInstrumentEvents(ctx, templateID)
+	if err != nil {
+		return err
+	}
+	for _, pair := range pairs {
+		query := `INSERT INTO instrument_events (instrument_id, event_id, is_repeating) VALUES (?, ?, ?)`
+		repeating := 0
+		if pair.IsRepeating {
+			repeating = 1
+		}
+		if _, err := tx.ExecContext(ctx, query, instrumentIDs[pair.InstrumentID], eventIDs[pair.EventID], repeating); err != nil {
+			return err
+		}
+	}
+	deps, err := tx.QueryContext(ctx, `SELECT calculated_field_id, ref_unique_event_name, ref_field_name
+			FROM calculated_dependencies WHERE project_id = ?`, templateID)
+	if err != nil {
+		return err
+	}
+	type dependency struct {
+		fieldID int64
+		event   string
+		field   string
+	}
+	var copiedDeps []dependency
+	for deps.Next() {
+		var dep dependency
+		if err := deps.Scan(&dep.fieldID, &dep.event, &dep.field); err != nil {
+			deps.Close()
+			return err
+		}
+		copiedDeps = append(copiedDeps, dep)
+	}
+	if err := deps.Close(); err != nil {
+		return err
+	}
+	for _, dep := range copiedDeps {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO calculated_dependencies
+				(project_id, calculated_field_id, ref_unique_event_name, ref_field_name) VALUES (?, ?, ?, ?)`,
+			projectID, fieldIDs[dep.fieldID], dep.event, dep.field); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (h *Handler) executeRecordTransfer(ctx context.Context, actor *db.User, srcProjectID int64, recordID, event string,
+	tf recField, srcDict *projectDict, plan *transferPlan, sub *subject) (*TransferResult, error) {
 	if !transferPairGate(plan.dict, sub, plan) {
 		return nil, ErrTransferTargetAccess
 	}
@@ -537,7 +831,7 @@ func (h *Handler) ExecuteTransfer(ctx context.Context, actor *db.User, srcProjec
 		Email:        actor.Email,
 		ProjectID:    srcProjectID,
 		TargetRecord: recordID,
-		Details: transferExecutedDetails{Field: fieldName, TargetProject: plan.project.ProjectName,
+		Details: transferExecutedDetails{Field: tf.FieldName, TargetProject: plan.project.ProjectName,
 			TargetRecord: name, Created: !existed, Copied: copied, SkippedEmpty: skippedEmpty},
 	}); err != nil {
 		return nil, err
@@ -594,6 +888,9 @@ func (h *Handler) transferEnabled(ctx context.Context, actor *db.User, srcDict *
 	plan, err := h.resolveTransfer(ctx, tf.Choices.String)
 	if err != nil {
 		return false
+	}
+	if plan.createProject {
+		return true
 	}
 	for _, w := range plan.writes {
 		if w.kind != "copy" {

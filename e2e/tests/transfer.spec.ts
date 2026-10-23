@@ -95,7 +95,7 @@ test.describe("transfer fields (REQ-UI-065, REQ-API-165)", () => {
     }
 
     // The transfer editor: raw instructions instead of the choice rows (REQ-DB-050).
-    const config = `create [${tgtName}][record_id] record_name # the new record's name\ncopy age [${tgtName}][baseline][age_in]`
+    const config = `create_record [${tgtName}][record_id] record_name # the new record's name\ncopy age [${tgtName}][baseline][age_in]`
     await addField(page, srcId, async () => {
       await page.fill("#field-label", "Handoff")
       await page.selectOption("#field-type", "transfer")
@@ -110,7 +110,7 @@ test.describe("transfer fields (REQ-UI-065, REQ-API-165)", () => {
     await addField(page, srcId, async () => {
       await page.fill("#field-label", "Ghost handoff")
       await page.selectOption("#field-type", "transfer")
-      await page.fill("#field-transfer", "create [Ghost Study 42][record_id] record_name")
+      await page.fill("#field-transfer", "create_record [Ghost Study 42][record_id] record_name")
     }, "xfer_ghost")
     await expect(danger(page)).toContainText(`no project named 'Ghost Study 42'`)
 

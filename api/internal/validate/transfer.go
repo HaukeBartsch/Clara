@@ -20,17 +20,16 @@ const (
 )
 
 // TransferOp is one operation of a transfer field's instruction text. Kind is
-// "create" or "copy". SourceField names a value-carrying field of the same
-// instrument as the transfer field. TargetProject is a project name; for
-// "create", RecordIDField is the target project's record identifier field
-// (the created record's name is SourceField's value); for "copy", Event is the
-// target event token ("" when the config addresses an event-less target) and
-// TargetField the destination field.
+// "create_record", "create_project" or "copy". SourceField names a
+// value-carrying field of the same instrument as the transfer field.
 type TransferOp struct {
 	Kind          string
 	SourceField   string
 	TargetProject string
 	RecordIDField string
+	Template      string
+	TokenField    string
+	IDField       string
 	Event         string
 	TargetField   string
 }
@@ -40,14 +39,16 @@ type TransferOp struct {
 // lower-case identifier or one or more adjacent bracket groups ([proj][base]);
 // whitespace separates tokens. Operations:
 //
-//	create [project][identifier_field] <source_field>
+// create_record [project][identifier_field] <source_field>
+//
 //	copy   <source_field> [project][event][target_field]   (event-enabled target)
 //	copy   <source_field> [project][target_field]          (event-less target)
 //
-// Exactly one create operation must appear, before any copy: one button
-// transfers to one target record, which is what makes re-triggering an update
-// (REQ-API-165). Bracketed names may not contain brackets; whitespace inside a
-// group is kept trimmed — whether a name resolves is the design-time check.
+// A create_project operation is standalone: it creates (or leaves untouched)
+// a project named by SourceField from Template, optionally returning the
+// project's token and id to TokenField and IDField in the source record.
+// Bracketed names may not contain brackets; whitespace inside a group is kept
+// trimmed — whether a name resolves is the design-time check.
 // Returns line-numbered errors.
 func ParseTransferConfig(s string) ([]TransferOp, error) {
 	if len([]rune(s)) > maxTransferConfigLen {
@@ -67,14 +68,19 @@ func ParseTransferConfig(s string) ([]TransferOp, error) {
 			return nil, fmt.Errorf("line %d: %w", i+1, err)
 		}
 		switch op.Kind {
-		case "create":
+		case "create_record", "create_project":
 			if len(ops) > 0 {
-				// ops[0] is checked first; a second create anywhere is ambiguous ownership.
 				return nil, fmt.Errorf("line %d: only one create operation is allowed", i+1)
+			}
+			if op.Kind == "create_project" && len(ops) != 0 {
+				return nil, fmt.Errorf("line %d: create_project cannot be combined with other operations", i+1)
 			}
 		case "copy":
 			if len(ops) == 0 {
-				return nil, fmt.Errorf("line %d: copy before the create operation", i+1)
+				return nil, fmt.Errorf("line %d: copy before the create_record operation", i+1)
+			}
+			if ops[0].Kind == "create_project" {
+				return nil, fmt.Errorf("line %d: create_project cannot be combined with other operations", i+1)
 			}
 		}
 		ops = append(ops, op)
@@ -82,8 +88,8 @@ func ParseTransferConfig(s string) ([]TransferOp, error) {
 	if len(ops) == 0 {
 		return nil, fmt.Errorf("transfer config has no operations")
 	}
-	if ops[0].Kind != "create" {
-		return nil, fmt.Errorf("the first operation must be create")
+	if ops[0].Kind != "create_record" && ops[0].Kind != "create_project" {
+		return nil, fmt.Errorf("the first operation must be create_record or create_project")
 	}
 	return ops, nil
 }
@@ -103,16 +109,38 @@ func parseTransferLine(line string) (TransferOp, error) {
 	}
 	var op TransferOp
 	switch {
-	case isKeyword(tokens, 0, "create") && len(tokens) == 3:
+	case isKeyword(tokens, 0, "create_record") && len(tokens) == 3:
 		target, err := bracketedNames(tokens[1], 2)
 		if err != nil {
-			return TransferOp{}, fmt.Errorf("create target must be [project][identifier_field]: %w", err)
+			return TransferOp{}, fmt.Errorf("create_record target must be [project][identifier_field]: %w", err)
 		}
 		src, err := singleName(tokens[2])
 		if err != nil {
-			return TransferOp{}, fmt.Errorf("create needs one source field: %w", err)
+			return TransferOp{}, fmt.Errorf("create_record needs one source field: %w", err)
 		}
-		op = TransferOp{Kind: "create", TargetProject: target[0], RecordIDField: target[1], SourceField: src}
+		op = TransferOp{Kind: "create_record", TargetProject: target[0], RecordIDField: target[1], SourceField: src}
+	case isKeyword(tokens, 0, "create_project") && len(tokens) >= 3 && len(tokens) <= 5:
+		src, err := singleName(tokens[1])
+		if err != nil {
+			return TransferOp{}, fmt.Errorf("create_project needs one source field: %w", err)
+		}
+		template, err := singleName(tokens[2])
+		if err != nil {
+			return TransferOp{}, fmt.Errorf("create_project needs one template project name: %w", err)
+		}
+		op = TransferOp{Kind: "create_project", SourceField: src, Template: template}
+		if len(tokens) >= 4 {
+			op.TokenField, err = singleName(tokens[3])
+			if err != nil {
+				return TransferOp{}, fmt.Errorf("create_project token destination must be one field name: %w", err)
+			}
+		}
+		if len(tokens) == 5 {
+			op.IDField, err = singleName(tokens[4])
+			if err != nil {
+				return TransferOp{}, fmt.Errorf("create_project id destination must be one field name: %w", err)
+			}
+		}
 	case isKeyword(tokens, 0, "copy") && len(tokens) == 3:
 		src, err := singleName(tokens[1])
 		if err != nil {
@@ -127,10 +155,11 @@ func parseTransferLine(line string) (TransferOp, error) {
 			op.Event = names[1]
 		}
 	case len(tokens) > 0 && len(tokens[0]) == 1 && !tokens[0][0].bracketed &&
-		(tokens[0][0].text == "create" || tokens[0][0].text == "copy"):
+		(tokens[0][0].text == "create_record" || tokens[0][0].text == "create_project" ||
+			tokens[0][0].text == "create" || tokens[0][0].text == "copy"):
 		return TransferOp{}, fmt.Errorf("malformed %s operation", tokens[0][0].text)
 	default:
-		return TransferOp{}, fmt.Errorf("expected create or copy, got %q", line)
+		return TransferOp{}, fmt.Errorf("expected create_record, create_project or copy, got %q", line)
 	}
 	return op, nil
 }

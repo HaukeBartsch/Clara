@@ -421,10 +421,20 @@ final class RecordController extends DataEntryController
             return $back;
         }
 
-        $this->flashSuccess($this->i18n->t('record.transfer.done', [
-            'project' => (string) ($result['target_project'] ?? ''),
-            'record' => (string) ($result['target_record'] ?? ''),
-        ]));
+        $project = (string) ($result['target_project'] ?? '');
+        if ((string) ($result['target_record'] ?? '') === '') {
+            $this->flashSuccess($this->i18n->t('record.transfer.project_done', [
+                'project' => $project,
+                'created' => !empty($result['created'])
+                    ? $this->i18n->t('record.transfer.project_created')
+                    : $this->i18n->t('record.transfer.project_exists'),
+            ]));
+        } else {
+            $this->flashSuccess($this->i18n->t('record.transfer.done', [
+                'project' => $project,
+                'record' => (string) $result['target_record'],
+            ]));
+        }
 
         return $back;
     }

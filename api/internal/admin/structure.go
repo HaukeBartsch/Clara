@@ -3067,6 +3067,24 @@ func (h *Handler) validateTransferDesign(ctx context.Context, f *db.Field, d *de
 				return validationf("transfer source %q is a checkbox: name one of its choice columns instead", op.SourceField)
 			}
 		}
+		if op.Kind == "create_project" {
+			if op.TokenField != "" && op.TokenField == op.IDField {
+				return validationf("create_project token and project ID destinations must be different fields")
+			}
+			if op.SourceField == op.TokenField || op.SourceField == op.IDField {
+				return validationf("create_project source and output fields must be different")
+			}
+			for _, name := range []string{op.TokenField, op.IDField} {
+				if name == "" {
+					continue
+				}
+				output, exists := d.fields[name]
+				if !exists || !valueCarrying(output.FieldType) || output.FieldType == "calculated" ||
+					output.InstrumentID != f.InstrumentID {
+					return validationf("create_project destination %q is not a value-carrying field of this instrument", name)
+				}
+			}
+		}
 	}
 	if err := h.Data.ResolveTransferTarget(ctx, f.Choices.String); err != nil {
 		var ce *dataapi.TransferConfigError
