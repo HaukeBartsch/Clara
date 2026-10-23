@@ -95,7 +95,12 @@ func (h *Handler) recordRead(w http.ResponseWriter, r *http.Request) {
 		errNotFound(w)
 		return
 	}
-	lv, err := h.access(ctx, u, projectID)
+	asg, err := h.Store.GetAssignment(ctx, u.ID, projectID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	lv, err := authz.EffectiveForAssignment(ctx, h.Store, u, projectID, asg)
 	if err != nil {
 		errInternal(w)
 		return
@@ -107,7 +112,7 @@ func (h *Handler) recordRead(w http.ResponseWriter, r *http.Request) {
 		errForbidden(w)
 		return
 	}
-	visible, err := authz.RecordVisible(ctx, h.Store, u, projectID, recordID)
+	visible, err := authz.RecordVisibleForAssignment(ctx, h.Store, u, asg, projectID, recordID)
 	if err != nil {
 		errInternal(w)
 		return

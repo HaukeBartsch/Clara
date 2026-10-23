@@ -231,9 +231,7 @@ func Effective(ctx context.Context, store *db.Store, user *db.User, projectID in
 }
 
 // EffectiveForAssignment is §4.1 for a caller that has already resolved the
-// assignment — the data API, whose token lookup *is* the assignment lookup
-// (REQ-AUTH-032), reads its levels without paying for the row twice. A nil
-// assignment is "not a member".
+// assignment. A nil assignment is "not a member".
 func EffectiveForAssignment(ctx context.Context, store *db.Store, user *db.User,
 	projectID int64, asg *db.Assignment) (*Levels, error) {
 	arms, err := store.ListArms(ctx, projectID)
@@ -434,6 +432,12 @@ func ActiveGroup(ctx context.Context, store *db.Store, userID, projectID int64) 
 	if err != nil {
 		return 0, err
 	}
+	return ActiveGroupForAssignment(ctx, store, asg)
+}
+
+// ActiveGroupForAssignment returns the active group for a previously resolved
+// assignment, avoiding a second assignment lookup by user and project.
+func ActiveGroupForAssignment(ctx context.Context, store *db.Store, asg *db.Assignment) (int64, error) {
 	if asg == nil { // not a member: no active group
 		return 0, nil
 	}
@@ -457,7 +461,21 @@ func RecordVisible(ctx context.Context, store *db.Store, user *db.User, projectI
 	if user.IsAdmin {
 		return true, nil
 	}
-	group, err := ActiveGroup(ctx, store, user.ID, projectID)
+	asg, err := store.GetAssignment(ctx, user.ID, projectID)
+	if err != nil {
+		return false, err
+	}
+	return RecordVisibleForAssignment(ctx, store, user, asg, projectID, recordID)
+}
+
+// RecordVisibleForAssignment applies the record-scope rule using an assignment
+// already resolved for the same user and project.
+func RecordVisibleForAssignment(ctx context.Context, store *db.Store, user *db.User,
+	asg *db.Assignment, projectID int64, recordID string) (bool, error) {
+	if user.IsAdmin {
+		return true, nil
+	}
+	group, err := ActiveGroupForAssignment(ctx, store, asg)
 	if err != nil || group == 0 {
 		return group == 0, err
 	}
