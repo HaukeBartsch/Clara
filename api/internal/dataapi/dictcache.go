@@ -1,19 +1,18 @@
 package dataapi
 
-// Cross-call caches for the structure a record action needs: the project
-// dictionary (loadDict) and the validation-type registry
-// (validationRegistry). Both are read on every import/export/delete and
-// change only through design writes, so they are kept until the store's
-// structure generation moves (db.Store.StructureGeneration): each cached
-// value carries the generation observed before it was built, and a later
-// mismatch — including a write that landed while the build was running —
-// drops the entry. The caches serve one API process, matching the single
-// instance deployment behind nginx (Technology_Stack_Design.md §5).
+// Cross-call caches for project structure, validation types, and effective
+// authorization levels. Structure-derived values carry the generation
+// observed before they were built, and a later mismatch drops the entry.
+// Authorization entries are additionally checked against live assignment
+// role and user-admin state. The caches serve one API process, matching the
+// single instance deployment behind nginx (Technology_Stack_Design.md §5).
 
 import (
 	"container/list"
+	"database/sql"
 	"sync"
 
+	"csms/api/internal/authz"
 	"csms/api/internal/validate"
 )
 
@@ -22,6 +21,7 @@ import (
 // least-recently-used first. A miss only costs one rebuild, which is what
 // every call paid before caching existed.
 const maxCachedDicts = 32
+const maxCachedLevels = 256
 
 type dictEntry struct {
 	projectID int64
@@ -74,6 +74,76 @@ func (c *dictCache) put(projectID int64, gen uint64, d *projectDict) {
 		back := c.lru.Back()
 		c.lru.Remove(back)
 		delete(c.entries, back.Value.(*dictEntry).projectID)
+	}
+}
+
+type levelsKey struct {
+	userID    int64
+	projectID int64
+}
+
+type levelsEntry struct {
+	key       levelsKey
+	gen       uint64
+	isAdmin   bool
+	isMember  bool
+	roleID    int64
+	hasRoleID bool
+	levels    *authz.Levels
+}
+
+// authzCache holds immutable effective levels per user/project. Assignment
+// role and administrator state remain live inputs, so a mismatch invalidates
+// the cached entry even when it did not advance the structure generation.
+type authzCache struct {
+	mu      sync.Mutex
+	entries map[levelsKey]*list.Element
+	lru     *list.List
+}
+
+func (c *authzCache) get(userID, projectID int64, gen uint64, isAdmin, isMember bool,
+	roleID sql.NullInt64) (*authz.Levels, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key := levelsKey{userID: userID, projectID: projectID}
+	el := c.entries[key]
+	if el == nil {
+		return nil, false
+	}
+	e := el.Value.(*levelsEntry)
+	if e.gen != gen || e.isAdmin != isAdmin || e.isMember != isMember ||
+		e.hasRoleID != roleID.Valid || (roleID.Valid && e.roleID != roleID.Int64) {
+		c.lru.Remove(el)
+		delete(c.entries, key)
+		return nil, false
+	}
+	c.lru.MoveToFront(el)
+	return e.levels, true
+}
+
+func (c *authzCache) put(userID, projectID int64, gen uint64, isAdmin, isMember bool,
+	roleID sql.NullInt64, levels *authz.Levels) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entries == nil {
+		c.entries = map[levelsKey]*list.Element{}
+		c.lru = list.New()
+	}
+	key := levelsKey{userID: userID, projectID: projectID}
+	e := &levelsEntry{
+		key: key, gen: gen, isAdmin: isAdmin, isMember: isMember,
+		roleID: roleID.Int64, hasRoleID: roleID.Valid, levels: levels,
+	}
+	if el := c.entries[key]; el != nil {
+		el.Value = e
+		c.lru.MoveToFront(el)
+		return
+	}
+	c.entries[key] = c.lru.PushFront(e)
+	for c.lru.Len() > maxCachedLevels {
+		back := c.lru.Back()
+		c.lru.Remove(back)
+		delete(c.entries, back.Value.(*levelsEntry).key)
 	}
 }
 

@@ -2,6 +2,7 @@ package dataapi
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"csms/api/internal/db"
@@ -83,6 +84,84 @@ func TestDictCacheInvalidatedByStructureWrites(t *testing.T) {
 	}
 	if r3 == r1 {
 		t.Errorf("registry survived a structure write; want a rebuild")
+	}
+}
+
+func TestAuthzCacheTracksStructureAndAssignmentChanges(t *testing.T) {
+	h, _, readonly := testHandler(t)
+	ctx := context.Background()
+
+	first, err := h.resolveToken(ctx, readonly)
+	if err != nil {
+		t.Fatalf("first resolveToken: %v", err)
+	}
+	second, err := h.resolveToken(ctx, readonly)
+	if err != nil {
+		t.Fatalf("second resolveToken: %v", err)
+	}
+	if second.Levels != first.Levels {
+		t.Fatal("effective levels were rebuilt on a cache hit")
+	}
+	if got := second.Levels.DataFor(1); got != "read_only" {
+		t.Fatalf("initial arm level = %q, want read_only", got)
+	}
+
+	assignment := second.Assignment
+	role, err := h.Store.GetRole(ctx, assignment.RoleID.Int64)
+	if err != nil || role == nil {
+		t.Fatalf("GetRole: role=%v err=%v", role, err)
+	}
+	roleArms, err := h.Store.ListRoleArms(ctx, role.ID)
+	if err != nil || len(roleArms) != 1 {
+		t.Fatalf("ListRoleArms: arms=%v err=%v", roleArms, err)
+	}
+	roleArms[0].DataAccessLevel = "view_edit"
+	grants, err := h.Store.ListRoleGrants(ctx, role.ID)
+	if err != nil {
+		t.Fatalf("ListRoleGrants: %v", err)
+	}
+	if err := h.Store.UpdateRole(ctx, role, roleArms, grants); err != nil {
+		t.Fatalf("UpdateRole: %v", err)
+	}
+	h.Store.BumpStructureCache()
+
+	afterRoleUpdate, err := h.resolveToken(ctx, readonly)
+	if err != nil {
+		t.Fatalf("resolveToken after role update: %v", err)
+	}
+	if afterRoleUpdate.Levels == first.Levels {
+		t.Fatal("cached levels survived a generation change")
+	}
+	if got := afterRoleUpdate.Levels.DataFor(1); got != "view_edit" {
+		t.Errorf("updated arm level = %q, want view_edit", got)
+	}
+
+	if _, err := h.Store.AddArm(ctx, &db.Arm{ProjectID: second.Project.ID, ArmNum: 2}); err != nil {
+		t.Fatalf("AddArm: %v", err)
+	}
+	afterStructureUpdate, err := h.resolveToken(ctx, readonly)
+	if err != nil {
+		t.Fatalf("resolveToken after structure update: %v", err)
+	}
+	if afterStructureUpdate.Levels == afterRoleUpdate.Levels {
+		t.Fatal("cached levels survived a project structure change")
+	}
+	if got := afterStructureUpdate.Levels.DataFor(2); got != "no_access" {
+		t.Errorf("new arm level = %q, want no_access", got)
+	}
+
+	if err := h.Store.SetAssignmentRole(ctx, assignment.UserID, assignment.ProjectID, sql.NullInt64{}); err != nil {
+		t.Fatalf("SetAssignmentRole: %v", err)
+	}
+	afterAssignmentUpdate, err := h.resolveToken(ctx, readonly)
+	if err != nil {
+		t.Fatalf("resolveToken after assignment update: %v", err)
+	}
+	if afterAssignmentUpdate.Levels == afterStructureUpdate.Levels {
+		t.Fatal("cached levels survived an assignment role change")
+	}
+	if !afterAssignmentUpdate.Levels.Unrestricted {
+		t.Error("role-less assignment should receive unrestricted levels")
 	}
 }
 

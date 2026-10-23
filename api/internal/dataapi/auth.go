@@ -123,10 +123,11 @@ func (s *subject) canDeleteValues() bool {
 
 // resolveToken is the data-API token check (Authentication_
 // Authorization_Design.md §4.3): the single indexed lookup, the account
-// active rule, and the effective levels — all read at call time, so role
-// changes and user disabling take effect immediately (REQ-AUTH-033). A
-// token that is not a project API token may still be a survey link
-// (§3.10); both misses render as the same uniform 401.
+// active rule, and effective levels. Levels are cached by user/project and
+// structure generation; the assignment role and administrator flag are
+// checked live so permission changes take effect immediately (REQ-AUTH-033).
+// A token that is not a project API token may still be a survey link (§3.10);
+// both misses render as the same uniform 401.
 func (h *Handler) resolveToken(ctx context.Context, token string) (*subject, error) {
 	if token == "" {
 		return nil, errInvalidToken
@@ -153,9 +154,15 @@ func (h *Handler) resolveToken(ctx context.Context, token string) (*subject, err
 	// resolution of §4.1 for both surfaces, arm defaults and pair grants alike
 	// (REQ-AUTH-069). A role that vanished resolves to no access, not to the
 	// full rights of a role-less member.
-	lv, err := authz.EffectiveForAssignment(ctx, h.Store, u, p.ID, a)
-	if err != nil {
-		return nil, err
+	roleID := a.RoleID
+	gen := h.Store.StructureGeneration()
+	lv, ok := h.levels.get(u.ID, p.ID, gen, u.IsAdmin, a != nil, roleID)
+	if !ok {
+		lv, err = authz.EffectiveForAssignment(ctx, h.Store, u, p.ID, a)
+		if err != nil {
+			return nil, err
+		}
+		h.levels.put(u.ID, p.ID, gen, u.IsAdmin, a != nil, roleID, lv)
 	}
 	return &subject{Assignment: a, User: u, Project: p, Levels: lv}, nil
 }

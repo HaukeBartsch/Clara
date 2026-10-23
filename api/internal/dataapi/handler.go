@@ -27,10 +27,11 @@ type Handler struct {
 	// closed content vocabulary (REQ-API-163); nil turns it off.
 	Metrics *metrics.Registry
 
-	// Structure caches shared across calls; see dictcache.go. Both are used
-	// under their internal locks, so the zero values work in place.
-	dicts dictCache
-	regs  registryCache
+	// Cross-call caches; see dictcache.go. Each is internally synchronized,
+	// so the zero values work in place.
+	dicts  dictCache
+	regs   registryCache
+	levels authzCache
 
 	// linkLocks serialise survey-link submissions of one link inside this process
 	// (record_import.go, REQ-API-145). They are striped by link id, so an import of
