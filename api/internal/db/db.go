@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -32,6 +33,12 @@ type Store struct {
 	// structGen invalidates cached views of project structure (arms, events,
 	// instruments, fields, instrument-event mapping); see StructureGeneration.
 	structGen atomic.Uint64
+
+	settingsGen        atomic.Uint64
+	settingsCacheMu    sync.Mutex
+	settingsCache      map[string]string
+	settingsCacheGen   uint64
+	settingsCacheValid bool
 }
 
 // StructureGeneration returns the process-local structure generation: a
@@ -51,6 +58,10 @@ func (s *Store) StructureGeneration() uint64 { return s.structGen.Load() }
 // structureInvalidation middleware in httpapi. Extra bumps are harmless —
 // they only cost one dictionary reload per cached project.
 func (s *Store) BumpStructureCache() { s.structGen.Add(1) }
+
+// BumpSystemSettingsCache invalidates the process-local system settings view.
+// Call only after the transaction writing settings has committed.
+func (s *Store) BumpSystemSettingsCache() { s.settingsGen.Add(1) }
 
 // Open connects to the configured database (REQ-DB-002), sets sane pool
 // limits, and verifies connectivity (REQ-TECH-014: fail fast on an

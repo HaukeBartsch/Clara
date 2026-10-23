@@ -14,6 +14,31 @@ import (
 // scalar text (rate_limit_enabled, rate_limit_rpm, …). Values are
 // interpreted and validated at the API boundary (REQ-API-112).
 func (s *Store) SystemSettings(ctx context.Context) (map[string]string, error) {
+	s.settingsCacheMu.Lock()
+	defer s.settingsCacheMu.Unlock()
+
+	generation := s.settingsGen.Load()
+	if s.settingsCacheValid && s.settingsCacheGen == generation {
+		return cloneSystemSettings(s.settingsCache), nil
+	}
+
+	for {
+		settings, err := s.loadSystemSettings(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if current := s.settingsGen.Load(); current != generation {
+			generation = current
+			continue
+		}
+		s.settingsCache = settings
+		s.settingsCacheGen = generation
+		s.settingsCacheValid = true
+		return cloneSystemSettings(settings), nil
+	}
+}
+
+func (s *Store) loadSystemSettings(ctx context.Context) (map[string]string, error) {
 	rows, err := s.DB.QueryContext(ctx, "SELECT `key`, value FROM system_settings")
 	if err != nil {
 		return nil, err
@@ -30,11 +55,20 @@ func (s *Store) SystemSettings(ctx context.Context) (map[string]string, error) {
 	return out, rows.Err()
 }
 
+func cloneSystemSettings(settings map[string]string) map[string]string {
+	out := make(map[string]string, len(settings))
+	for key, value := range settings {
+		out[key] = value
+	}
+	return out
+}
+
 // SetSystemSetting upserts one runtime setting (REQ-API-112). Portable
 // update-then-insert: the primary key keeps a racing insert safe (one wins).
 // SetSystemSettingTx writes inside the caller's transaction, so a change and its audit entry commit
 // together instead of the change committing first with the entry to follow
-// (REQ-AUD-003, DEV-AUD-1).
+// (REQ-AUD-003, DEV-AUD-1). The caller must bump the settings cache after the
+// transaction commits successfully.
 func (s *Store) SetSystemSettingTx(ctx context.Context, tx *sql.Tx, key, value string) error {
 	res, err := tx.ExecContext(ctx, "UPDATE system_settings SET value = ? WHERE `key` = ?", value, key)
 	if err != nil {
@@ -68,5 +102,9 @@ func (s *Store) SetSystemSetting(ctx context.Context, key, value string) error {
 	if err := s.SetSystemSettingTx(ctx, tx, key, value); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.BumpSystemSettingsCache()
+	return nil
 }

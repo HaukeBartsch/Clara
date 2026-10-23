@@ -158,6 +158,7 @@ func (h *Handler) putSettings(w http.ResponseWriter, r *http.Request) {
 			errInternal(w)
 			return
 		}
+		h.Store.BumpSystemSettingsCache()
 	}
 
 	s, err := h.settings(r.Context())

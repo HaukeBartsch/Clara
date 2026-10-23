@@ -29,6 +29,56 @@ func TestSystemSettingsSeed(t *testing.T) {
 	}
 }
 
+func TestSystemSettingsCacheInvalidation(t *testing.T) {
+	s := migrateTestStore(t)
+	ctx := context.Background()
+
+	settings, err := s.SystemSettings(ctx)
+	if err != nil {
+		t.Fatalf("SystemSettings initial read: %v", err)
+	}
+	settings["rate_limit_rpm"] = "caller mutation"
+	settings, err = s.SystemSettings(ctx)
+	if err != nil {
+		t.Fatalf("SystemSettings cached read: %v", err)
+	}
+	if settings["rate_limit_rpm"] != "600" {
+		t.Fatalf("cached rate_limit_rpm = %q, want 600 (caller must not mutate cache)", settings["rate_limit_rpm"])
+	}
+
+	if _, err := s.DB.ExecContext(ctx,
+		"UPDATE system_settings SET value = '120' WHERE `key` = 'rate_limit_rpm'"); err != nil {
+		t.Fatalf("direct settings update: %v", err)
+	}
+	settings, err = s.SystemSettings(ctx)
+	if err != nil {
+		t.Fatalf("SystemSettings before invalidation: %v", err)
+	}
+	if settings["rate_limit_rpm"] != "600" {
+		t.Fatalf("cached rate_limit_rpm = %q before invalidation, want 600", settings["rate_limit_rpm"])
+	}
+
+	s.BumpSystemSettingsCache()
+	settings, err = s.SystemSettings(ctx)
+	if err != nil {
+		t.Fatalf("SystemSettings after invalidation: %v", err)
+	}
+	if settings["rate_limit_rpm"] != "120" {
+		t.Fatalf("rate_limit_rpm after invalidation = %q, want 120", settings["rate_limit_rpm"])
+	}
+
+	if err := s.SetSystemSetting(ctx, "rate_limit_rpm", "300"); err != nil {
+		t.Fatalf("SetSystemSetting: %v", err)
+	}
+	settings, err = s.SystemSettings(ctx)
+	if err != nil {
+		t.Fatalf("SystemSettings after SetSystemSetting: %v", err)
+	}
+	if settings["rate_limit_rpm"] != "300" {
+		t.Fatalf("rate_limit_rpm after SetSystemSetting = %q, want 300", settings["rate_limit_rpm"])
+	}
+}
+
 // SetSystemSetting upserts: a new key inserts, an existing one is replaced in
 // place (REQ-API-112). The update path must not leave a second row behind.
 func TestSetSystemSettingUpserts(t *testing.T) {
