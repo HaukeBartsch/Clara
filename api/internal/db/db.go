@@ -102,11 +102,7 @@ func Open(cfg *config.Config, reg *metrics.Registry) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
-	// Single connection per request, explicit transactions (REQ-DB-026); a
-	// modest pool is sufficient and keeps SQLite from over-subscribing.
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxIdleTime(0)
+	configurePool(db, d)
 
 	ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
 	defer cancel()
@@ -123,6 +119,23 @@ func Open(cfg *config.Config, reg *metrics.Registry) (*Store, error) {
 	}
 
 	return &Store{DB: db, Dialect: d, Cfg: cfg}, nil
+}
+
+func configurePool(db *sql.DB, d Dialect) {
+	if d == DialectMariaDB {
+		db.SetMaxOpenConns(25)
+		db.SetMaxIdleConns(25)
+		// Bound idle retention and connection age to limit stale reuse and
+		// periodically refresh connections.
+		db.SetConnMaxIdleTime(5 * time.Minute)
+		db.SetConnMaxLifetime(30 * time.Minute)
+		return
+	}
+
+	// SQLite serializes writes, so keep its pool modest.
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxIdleTime(0)
 }
 
 // Close releases the pool.

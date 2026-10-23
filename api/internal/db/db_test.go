@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -45,6 +46,9 @@ func TestOpenSQLiteSelectsDialect(t *testing.T) {
 	if s.Cfg != cfg {
 		t.Errorf("Store.Cfg is not the config Open was given")
 	}
+	if got := s.DB.Stats().MaxOpenConnections; got != 10 {
+		t.Errorf("SQLite pool max open connections = %d, want 10", got)
+	}
 	// SQLite enforces foreign keys per connection and defaults to off; the
 	// cascade rules the repositories rely on (REQ-DB-004) need it on.
 	var on int
@@ -53,6 +57,20 @@ func TestOpenSQLiteSelectsDialect(t *testing.T) {
 	}
 	if on != 1 {
 		t.Errorf("foreign_keys = %d, want 1", on)
+	}
+}
+
+func TestConfigureMariaDBPool(t *testing.T) {
+	db, err := sql.Open("mysql", "user:password@tcp(127.0.0.1:3306)/clara")
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer db.Close()
+
+	configurePool(db, DialectMariaDB)
+
+	if got := db.Stats().MaxOpenConnections; got != 25 {
+		t.Errorf("MariaDB pool max open connections = %d, want 25", got)
 	}
 }
 
