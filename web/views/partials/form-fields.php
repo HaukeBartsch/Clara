@@ -248,7 +248,7 @@ $fieldAttrs = static function (array $field, ?string $staticValue = null) use ($
                     <!-- Multi-line free text (REQ-DB-044). The newline after the tag is the one a
                          parser drops, so a value that starts with a line break keeps it. -->
                     <textarea class="form-control form-control-sm<?= $error !== '' ? ' is-invalid' : '' ?>" id="<?= View::e($id) ?>"
-                              name="value[<?= View::e($name) ?>]" rows="4">
+                              name="value[<?= View::e($name) ?>]" rows="5">
 <?= View::e($value) ?></textarea>
                 <?php else: ?>
                     <?php

@@ -112,6 +112,7 @@ test.describe("yes/no and notes fields (REQ-DB-043/044)", () => {
     await answer("Yes").check()
     await expect(notes).toBeVisible()
     await expect(notes.locator("textarea")).toHaveCount(1)
+    await expect(notes.locator("textarea")).toHaveAttribute("rows", "5")
     await page.fill("#f-history", "Started at 18.\nStopped in 2020.")
     await form.locator("[data-clara-save]").click()
     await expect(success(page)).toContainText("Record YN001 created")

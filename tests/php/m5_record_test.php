@@ -1115,7 +1115,7 @@ describe('yes/no and notes fields in data entry (REQ-DB-043/044, REQ-UI-025)', f
         assert_contains('for="f-consent-1">No</label>', $body);
         assert_contains('data-clara-field="consent" data-clara-type="yesno"', $body);
         assert_contains('data-clara-choices="1$Yes##0$No"', $body, 'branching resolves the stored labels');
-        assert_contains('name="value[remarks]" rows="4">' . "\n" . "Line one\nline &lt;two&gt;</textarea>", $body);
+        assert_contains('name="value[remarks]" rows="5">' . "\n" . "Line one\nline &lt;two&gt;</textarea>", $body);
         assert_contains('name="was[remarks]" value="Line one' . "\n" . 'line &lt;two&gt;"', $body);
     });
 
