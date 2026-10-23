@@ -29,6 +29,7 @@ var wantFiles = []string{
 	"0013_record_naming.sql",
 	"0014_field_annotation.sql",
 	"0015_repeating_instruments.sql",
+	"0016_data_lookup_indexes.sql",
 }
 
 var dialects = []string{"sqlite", "mariadb"}

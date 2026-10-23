@@ -102,6 +102,81 @@ func TestMigrateCreatesSchema(t *testing.T) {
 	}
 }
 
+func TestMigrateDataLookupIndexes(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	rows, err := s.DB.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'data'`)
+	if err != nil {
+		t.Fatalf("query data indexes: %v", err)
+	}
+	indexes := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			t.Fatalf("scan data index: %v", err)
+		}
+		indexes[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		t.Fatalf("iterate data indexes: %v", err)
+	}
+	if err := rows.Close(); err != nil {
+		t.Fatalf("close data indexes: %v", err)
+	}
+
+	for _, name := range []string{"idx_data_project", "idx_data_record"} {
+		if indexes[name] {
+			t.Errorf("obsolete data index %q still exists", name)
+		}
+	}
+
+	for index, wantColumns := range map[string][]string{
+		"idx_data_project_field": {"project_id", "field_name"},
+		"idx_data_project_event": {"project_id", "unique_event_name"},
+	} {
+		if !indexes[index] {
+			t.Errorf("data index %q is missing", index)
+			continue
+		}
+		columnRows, err := s.DB.QueryContext(ctx, `SELECT name FROM pragma_index_info(?) ORDER BY seqno`, index)
+		if err != nil {
+			t.Fatalf("query columns for %s: %v", index, err)
+		}
+		var gotColumns []string
+		for columnRows.Next() {
+			var column string
+			if err := columnRows.Scan(&column); err != nil {
+				columnRows.Close()
+				t.Fatalf("scan columns for %s: %v", index, err)
+			}
+			gotColumns = append(gotColumns, column)
+		}
+		if err := columnRows.Err(); err != nil {
+			columnRows.Close()
+			t.Fatalf("iterate columns for %s: %v", index, err)
+		}
+		if err := columnRows.Close(); err != nil {
+			t.Fatalf("close columns for %s: %v", index, err)
+		}
+		if len(gotColumns) != len(wantColumns) {
+			t.Errorf("columns for %s = %v, want %v", index, gotColumns, wantColumns)
+			continue
+		}
+		for i, column := range gotColumns {
+			if column != wantColumns[i] {
+				t.Errorf("columns for %s = %v, want %v", index, gotColumns, wantColumns)
+				break
+			}
+		}
+	}
+}
+
 func TestMigrateSeedsLanguages(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
