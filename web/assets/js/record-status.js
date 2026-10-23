@@ -121,7 +121,16 @@ async function load() {
   for (const body of bodies) {
     const columns = columnsOf(body.closest("table"))
     const base = body.dataset.recordBase
-    fill(body, records.length ? records.map((record) => row(base, columns, record)) : [notice(Number(body.dataset.columns), t("records.empty"))])
+    // Stress projects can have many rows and columns; populate the live table in one mutation.
+    const rows = document.createDocumentFragment()
+    if (records.length) {
+      for (const record of records) {
+        rows.appendChild(row(base, columns, record))
+      }
+    } else {
+      rows.appendChild(notice(Number(body.dataset.columns), t("records.empty")))
+    }
+    body.replaceChildren(rows)
   }
 }
 
