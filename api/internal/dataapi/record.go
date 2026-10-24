@@ -543,6 +543,20 @@ func canonicalizeDate(value, vtype, format string, offsetFor func(time.Time) str
 	return t.Format("2006-01-02 15:04") + offsetFor(t), true
 }
 
+// CanonicalizeImportedDate is the shared door onto the date canonicalization the
+// record import runs (GD-16, REQ-VAL-041): same grammar, same field format, the
+// collection offset of APP_TIMEZONE. The ODM interchange importer walks through it
+// (Design/ODM_Interchange_Design.md §6.2 step 5), so a date arriving in an
+// interchange file stores the identical bytes a POST /api/ of the same value
+// stores — one implementation, no drift between the two write paths (O-7).
+//
+// The data API's `tz` parameter has no counterpart on the interchange route, which
+// takes no format options (ODM_Interchange_Design.md §7), so the configured default
+// is the offset an imported date collects at.
+func (h *Handler) CanonicalizeImportedDate(value, vtype, format string) (string, bool) {
+	return canonicalizeDate(value, vtype, format, h.collectionOffsetFor(""))
+}
+
 // collectionOffsetFor resolves the §4.1 collection-offset order: the tz
 // parameter (a direct ±HH:MM or an IANA name resolved at the value's date)
 // when present and parseable, else APP_TIMEZONE.

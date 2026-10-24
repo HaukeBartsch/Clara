@@ -93,6 +93,8 @@ const (
 	// §3.5 export events
 	Export      = "export"
 	AuditExport = "audit_export" // REQ-AUD-031: a read of the trail itself, not of record data
+	ODMExport   = "odm_export"   // REQ-ODM-061: an ODM XML project file out (REQ-API-169)
+	ODMImport   = "odm_import"   // REQ-ODM-061: an ODM XML project file in (REQ-API-170)
 
 	// §3.6 survey events
 	SurveySubmitted   = "survey_submitted"

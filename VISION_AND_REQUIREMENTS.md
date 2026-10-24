@@ -1109,3 +1109,14 @@ Field of type notes should display as multi-line (5 lines) text area HTML areas.
 ## Authentication setup test page
 
 To simplify authentication setup, create an administrator-only page that lists the configured LDAP and OAuth/OpenID Connect sources and tests the settings from `.env.example`. Allow an administrator to enter test credentials for LDAP and to complete the normal interactive OAuth/OIDC sign-in flow. Show useful connection stages and allowlisted identity/group claims returned by the endpoints. Do not render or log passwords, client secrets, authorization codes, access tokens, or ID tokens. Provider or directory roles are diagnostic information only and do not grant CLARA permissions; diagnostic tests must not create a CLARA login.
+
+
+# Project interchange (CDISC ODM XML)
+
+A project on this platform should be exportable to, and importable from, CDISC ODM XML (the Operational Data Model of the Clinical Data Interchange Standards Consortium), so that a study definition and its collected data can move between CLARA and another clinical system without a hand-made converter. "Project" here means one project's structure and records — not the CLARA installation itself.
+
+The file carries both halves ODM defines for this: the metadata (the study, its events, its instruments and fields with their choice lists) and the clinical data (each record's values, grouped by event and by repeat instance). Import creates a new project from such a file; it never rewrites an existing one.
+
+This is an administrator's function, not an ordinary member's: a whole-study interchange file is a bulk copy of everything a study holds, in or out. The two export formats above (CSV raw, CSV labels) are unchanged and stay what every REDCap-compatible caller sees.
+
+**Status:** Implemented 2026-10-23 on the administration API only — `GET /api/v1/projects/{id}/export/odm` and `POST /api/v1/projects/import/odm`, both restricted to an installation administrator (REQ-ODM-001/002, routes in `Design/API_Endpoints_Design.md` §4.29). Mapping, dialect and losses are normative in `Design/ODM_Interchange_Design.md`; the format's own requirements are `Requirements/ODM_Interchange_Requirements.md`. Two things this deliberately does not do yet: no web UI for either direction (REQ-ODM-005, DEV-ODM-6 — the Export page is member-facing and this is admin-only), and import creates a project rather than updating one through the staging set (DEV-ODM-4). DEV-ODM-1 records that ODM is a third format beside the two named above; DEV-ODM-3 that CLARA-only design attributes (branching logic, the sensitivity flags, transfer instructions) travel in a private extension namespace because ODM has no element for them.

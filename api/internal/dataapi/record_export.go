@@ -11,6 +11,7 @@ package dataapi
 // streamExport as an ExportSpec.
 
 import (
+	"context"
 	"encoding/csv"
 	"encoding/json"
 	"net/http"
@@ -34,6 +35,31 @@ type ExportSpec struct {
 	Token      string   // token column — the project/link token; "" for the UI surface
 	Surface    string   // audit.SourceAPI | audit.SourceUI (Details["surface"], §3.5)
 	RecordView bool     // write the audit_record_views row when values returned (§4)
+	// AuditAs names the audit event this export writes, defaulting to `export`.
+	// The ODM project export names it so a whole-study interchange file is
+	// distinguishable in the trail from a CSV of the same data (REQ-ODM-061).
+	AuditAs string
+
+	// AuditExtra adds the caller's own detail keys to the export audit row, read
+	// just before it is written (Design/ODM_Interchange_Design.md §9): a format
+	// that counts what it wrote reports them here, so this stays the one place an
+	// export audit entry is assembled. nil adds nothing.
+	AuditExtra func() map[string]any
+
+	// RowsSettled is waited on before the audit row is written — RunExportRows
+	// sets it to the channel that closes once the consumer of this export's rows
+	// has taken them all, so counts reported through AuditExtra describe the file
+	// that went out. A canceled request stops the waiting; the row is still
+	// written (REQ-ODM-025).
+	RowsSettled <-chan struct{}
+
+	// SurrogateKeys stamps each flat JSON row with the reserved member
+	// SurrogateKeyColumn, naming the record's position among the records that
+	// contributed rows (S1, S2, …). The ODM exporter needs a key per record where
+	// the applied level removed the identifier column, and only the pipeline knows
+	// where one record's rows end (REQ-ODM-031). Off by default: a tabular export
+	// gains nothing from it, and the member is stream metadata rather than a column.
+	SurrogateKeys bool
 
 	// PairExport reports the acting caller's export level rank for one
 	// (instrument, event) pair — expNone when the pair may contribute nothing.
@@ -808,6 +834,8 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		returned    []string
 		instruments = map[string]bool{}
 		firstJSON   = true
+		subjectTag  string // the current record's surrogate key, when SurrogateKeys is on
+		emitted     int    // records that contributed rows, in emission order
 		writeRow    func(cells []string)
 	)
 	if enc == "csv" {
@@ -840,6 +868,19 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 				v, _ := json.Marshal(cells[i])
 				b.Write(v)
 			}
+			if s.SurrogateKeys {
+				// A reserved member, lifted out of the row by RunExportRows and never
+				// a column: it names which record this row belongs to where the
+				// applied level removed the identifier column itself. The value is a
+				// count in emission order, not an identifier, so nothing personal
+				// crosses here (REQ-ODM-031, ODM_Interchange_Design.md §4.1).
+				k, _ := json.Marshal(SurrogateKeyColumn)
+				t, _ := json.Marshal(subjectTag)
+				b.WriteByte(',')
+				b.Write(k)
+				b.WriteByte(':')
+				b.Write(t)
+			}
 			b.WriteByte('}')
 			_, _ = w.Write([]byte(b.String()))
 		}
@@ -857,6 +898,10 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		rv := valuesIndex(dvs)
 		if !evaluate(rv) {
 			continue
+		}
+		emitted++
+		if s.SurrogateKeys {
+			subjectTag = surrogateKeyOf(emitted)
 		}
 
 		// De-identified date shift needs the record's persisted offset. The pass
@@ -1232,23 +1277,43 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		instrList = append(instrList, i)
 	}
 	sort.Strings(instrList)
-	h.writeExportAudit(ctx, audit.Entry{
-		EventType: audit.Export,
+	// A caller streaming rows through RunExportRows counts what its own writer
+	// emitted, and its numbers only mean something once those rows have been
+	// taken; the wait is bounded by the request's context, so a client that left
+	// mid-download still gets this row (REQ-ODM-025).
+	// The trail outlives the response: a client that vanished mid-download still
+	// gets its audit row (REQ-ODM-025), and waiting for a row consumer must not
+	// be cut short by the request ending.
+	auditCtx := context.WithoutCancel(ctx)
+	if s.RowsSettled != nil {
+		select {
+		case <-s.RowsSettled:
+		case <-auditCtx.Done():
+		}
+	}
+	details := map[string]any{
+		"surface": surface,
+		// The most protective level among the pairs delivered, plus how many
+		// pairs the request held that were dropped for want of a level — never
+		// a higher level some individual pair would have permitted (§4.3).
+		"sensitivity":   exportName(floor),
+		"pairs_dropped": dropped,
+		"filters":       filters,
+	}
+	if s.AuditExtra != nil {
+		for k, v := range s.AuditExtra() {
+			details[k] = v // the format's own keys (§9 of the ODM design)
+		}
+	}
+	h.writeExportAudit(auditCtx, audit.Entry{
+		EventType: s.auditEvent(),
 		Source:    s.Surface,
 		UserID:    s.User.ID,
 		Email:     s.User.Email,
 		Token:     s.Token,
 		ProjectID: s.ProjectID,
 		ArmNum:    singleArm,
-		Details: map[string]any{
-			"surface": surface,
-			// The most protective level among the pairs delivered, plus how many
-			// pairs the request held that were dropped for want of a level — never
-			// a higher level some individual pair would have permitted (§4.3).
-			"sensitivity":   exportName(floor),
-			"pairs_dropped": dropped,
-			"filters":       filters,
-		},
+		Details:   details,
 	}, audit.RecordView{
 		UserID:      s.User.ID,
 		Email:       s.User.Email,
@@ -1258,6 +1323,17 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		Instruments: instrList,
 	}, s.RecordView && len(returned) > 0)
 }
+
+// SurrogateKeyColumn is the reserved row member carrying a record's surrogate
+// key while ExportSpec.SurrogateKeys is on. It describes the stream, not the
+// study: a consumer that did not ask for it ignores it, and it never appears as
+// a column of a tabular export.
+const SurrogateKeyColumn = "_clara_subject"
+
+// surrogateKeyOf names the n-th record that contributed rows (S1, S2, …): a
+// position in one document's first-appearance order, meaningless outside the file
+// it was written in and never derived from the stored identifier (REQ-ODM-031).
+func surrogateKeyOf(n int) string { return "S" + strconv.Itoa(n) }
 
 func nonNil(vals []string) []string {
 	if vals == nil {

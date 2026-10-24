@@ -1301,6 +1301,25 @@ The gate is the record history read's own (§4.16): data access ≥ `read_only` 
 
 The endpoint writes one entry per call and returns no data: it discloses nothing a caller of §4.16 did not already hold, and it is the sole write path for REQ-AUD-035. It belongs on the administration surface because its actor is the acting account — `source=ui`, no token (REQ-AUD-018) — while record pulls keep keying `audit_record_views` by their token (§4.15, REQ-AUD-013, DEV-AUD-6).
 
+### 4.29 Project interchange — CDISC ODM XML (REQ-API-169…170)
+
+**`GET /api/v1/projects/{id}/export/odm`** — the project as one CDISC ODM 1.3 document: `Study` + `GlobalVariables`, one `MetaDataVersion` describing the current structure, and `ClinicalData` for the records in scope (`ODM_Interchange_Design.md` §2–§4). No query parameters; unknown ones are accepted and ignored (REQ-API-017). Gates on `is_admin` — not `project_admin`, since a whole-study file is bulk data movement (REQ-ODM-002); any other actor gets the uniform 403 of §4.2 and nothing is written (REQ-AUD-004).
+
+→ 200 `application/xml; charset=utf-8`, `Content-Disposition: attachment; filename="<slug>_odm_<YYYY-MM-DD>.xml"` (the dictionary export's filename sanitizer, REQ-API-153), streamed with metadata first and one `<SubjectData>` per record as it is produced (REQ-TECH-011, O-2). No byte-order mark (REQ-EXP-016). A store failure after the first byte truncates the stream, as CSV does — no synthesized closing element, so a partial file cannot pass as complete.
+
+Values arrive through the same pipeline `format=csv|json` uses (`dataapi.RunExportRows`, §4.14's transformation and per-pair levels included), so an ODM export at a de-identified rank holds the same hashes and shifted dates the CSV holds (REQ-ODM-021, D-8 of `Data_Export_Anonymization_Design.md`). Where that pipeline removes the record identifier column (below `export_full`, REQ-EXP-020), ODM still needs a key and gets a per-file surrogate with `X-CLARA-ODM-Key: surrogate` naming it (§4.1). Audit: `odm_export` (§3.5 of the audit design).
+
+**`POST /api/v1/projects/import/odm`** — creates a new project from an ODM document. Body: the XML itself (`application/xml`; not base64 in JSON — an XML upload needs no envelope, unlike REQ-API-152's ZIP payloads), bounded by the 32 MiB import limit with the same 400 (REQ-API-144, REQ-ODM-014). Gates on `is_admin`.
+
+| Parameter | Values | Default | Meaning |
+|---|---|---|---|
+| `project_name` | any valid project name | `StudyName` | the new project's name; a collision → 409 `conflict`, never a rename of the existing project (REQ-ODM-044) |
+| `dry_run` | `1` | off | parse, resolve and validate the whole document, answer the report, write nothing (REQ-ODM-046) |
+
+→ 201 (live) / 200 (`dry_run`) with `{project_id, project_name, dry_run, arms, events, instruments, fields, records_added, records_updated, records_failed, problems[]}`, each problem `{file,row,field,code,message}` with the codes of `ODM_Interchange_Design.md` §7 — the instrument import's shape (REQ-ODM-060). 400 for a body that is not ODM 1.3 (`not_odm`), carries a `DOCTYPE` (`dtd_forbidden`), breaks a structural bound (`too_deep`, `too_large`) or contradicts itself (`duplicate_oid`, `dangling_ref`, `no_metadataversion`); the problem list says which, and nothing is written (REQ-ODM-054). Structure builds in one transaction; records load one transaction per record after it, each value validated by `validate` as on any other write path (REQ-ODM-040/041/042, O-6/O-7). Audit: `odm_import`, with counts and options only — never a value or document text (REQ-AUD-014).
+
+Neither route is reachable from the browser: no PHP route proxies them in this step (REQ-ODM-005, DEV-ODM-6), so they exist behind the internal service-token boundary alone (REQ-TECH-018).
+
 ## 5. Permission summary
 
 The normative endpoint → permission mapping is in `API_Endpoints_Requirement.md` §4.22; it is reproduced here as an overview:
@@ -1315,6 +1334,7 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirement.m
 | `POST /api/v1/auth/verify-password` (§4.3, REQ-API-123) | pre-authentication — service token only, no user id (DEV-API-17) |
 | `POST /api/v1/auth/session-replay` (§4.3, REQ-API-148) | any active user (self — the account whose session id was replayed; no session epoch) |
 | `POST /api/v1/projects` | `is_admin` |
+| `GET /api/v1/projects/{id}/export/odm`, `POST /api/v1/projects/import/odm` (§4.29) | `is_admin` only (REQ-ODM-002) |
 | `GET /api/v1/projects` | project visibility (REQ-API-007) |
 | `GET /api/v1/projects/{id}` | data access ≥ `read_only` + visibility |
 | `PUT /api/v1/projects/{id}` | `project_admin` |
