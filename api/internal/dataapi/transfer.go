@@ -81,7 +81,7 @@ type transferPlan struct {
 	project       *db.Project
 	dict          *projectDict
 	createProject bool
-	template      *db.Project
+	template      *db.Project // create_project: the design to clone; nil is an empty project
 	identifier    string          // the target project's record identifier field
 	createSource  string          // the source field whose value names the target record
 	writes        []transferWrite // create rows first (config order), then copies
@@ -109,6 +109,11 @@ func (h *Handler) resolveTransfer(ctx context.Context, config string) (*transfer
 		return nil, &TransferConfigError{Msg: err.Error()}
 	}
 	if ops[0].Kind == "create_project" {
+		if ops[0].Template == "" {
+			// One argument is a whole instruction: an empty project, cloned from
+			// nothing, which its new administrator designs from scratch (REQ-VAL-047).
+			return &transferPlan{createProject: true}, nil
+		}
 		template, err := h.Store.GetProjectByName(ctx, ops[0].Template)
 		if err != nil {
 			return nil, err
@@ -421,8 +426,10 @@ func (h *Handler) executeCreateProjectTransfer(ctx context.Context, actor *db.Us
 		return nil, err
 	}
 	project.ID = projectID
-	if err := h.cloneProjectStructureTx(ctx, tx, plan.template.ID, projectID); err != nil {
-		return nil, err
+	if plan.template != nil {
+		if err := h.cloneProjectStructureTx(ctx, tx, plan.template.ID, projectID); err != nil {
+			return nil, err
+		}
 	}
 	assignment := &db.Assignment{UserID: actor.ID, ProjectID: projectID}
 	if _, err := h.Store.AddAssignmentTx(ctx, tx, assignment); err != nil {
@@ -484,9 +491,16 @@ func (h *Handler) executeCreateProjectTransfer(ctx context.Context, actor *db.Us
 	}); err != nil {
 		return nil, err
 	}
+	// An empty-project creation names no template, and the acting user in the
+	// entry's fixed columns is all that records who raised the project — `projects`
+	// has no creator column (REQ-API-168).
+	projectCreated := map[string]any{"project_name": projectName}
+	if plan.template != nil {
+		projectCreated["template_project"] = plan.template.ProjectName
+	}
 	if err := h.AuditTx(ctx, tx, audit.Entry{
 		EventType: audit.ProjectCreated, Source: audit.SourceUI, UserID: actor.ID, Email: actor.Email,
-		ProjectID: projectID, Details: map[string]any{"project_name": projectName, "template_project": plan.template.ProjectName},
+		ProjectID: projectID, Details: projectCreated,
 	}); err != nil {
 		return nil, err
 	}

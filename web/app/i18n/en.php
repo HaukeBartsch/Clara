@@ -960,7 +960,7 @@ return [
     'design.field.branching' => 'Branching logic',
     'design.field.calculation' => 'Calculation',
     'design.field.transfer' => 'Copy instructions',
-    'design.field.transfer_help' => 'Use create_record [target project][record ID field] source_field, then copy lines: source_field [target project][event][target field]. Or use one create_project project_name [template project] [token_field] [project_id_field]; the last two fields are optional. A project is created only if its name does not already exist. Text after # is a comment.',
+    'design.field.transfer_help' => 'Use create_record [target project][record ID field] source_field, then copy lines: source_field [target project][event][target field]. Or use one create_project [field for the project name] [template project] [field for the project token] [field for the project id]: the first is a field of this instrument whose value names the new project. Without a template project the new project is created empty; the token and id fields need a template before them. A project is created only if its name does not already exist. Text after # is a comment.',
     'design.type.text' => 'Text',
     'design.type.notes' => 'Notes (multi-line text)',
     'design.type.dropdown' => 'Dropdown',
@@ -1178,7 +1178,7 @@ return [
     'record.transfer.confirm' => 'Run the configured transfer from form {instrument} for record {record}?',
     'record.transfer.done' => 'The values were copied to record {record} in project {project}.',
     'record.transfer.project_done' => 'Project {project}: {created}.',
-    'record.transfer.project_created' => 'created from its template and you are its administrator',
+    'record.transfer.project_created' => 'created and you are its administrator',
     'record.transfer.project_exists' => 'already exists; no changes were made',
 
     // --- M6: export (§6.4) ---

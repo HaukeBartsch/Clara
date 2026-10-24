@@ -47,9 +47,11 @@ func TestParseTransferConfig(t *testing.T) {
 		{name: "two creates", in: "create_record [p][record_id] [x]\ncopy [a] [p][e][b]\ncreate_record [q][record_id] [y]", wantErr: "only one create"},
 		{name: "unknown keyword", in: "send [a] [p][e][b]", wantErr: "expected create_record"},
 		{name: "bracketed keyword rejected", in: "[create_record] [p][record_id] [x]", wantErr: "expected create_record"},
-		{name: "legacy keyword rejected", in: "create [p][record_id] [x]", wantErr: "malformed create"},
-		{name: "create missing source", in: "create_record [p][record_id]", wantErr: "malformed create_record"},
-		{name: "copy missing target", in: "create_record [p][record_id] [x]\ncopy [a]", wantErr: "malformed copy"},
+		{name: "legacy keyword rejected", in: "create [p][record_id] [x]", wantErr: `write create_record or create_project`},
+		{name: "create missing source", in: "create_record [p][record_id]",
+			wantErr: "create_record takes 2 arguments, not 1: create_record [project][identifier_field] <source_field>"},
+		{name: "copy missing target", in: "create_record [p][record_id] [x]\ncopy [a]",
+			wantErr: "copy takes 2 arguments, not 1: copy <source_field> [project][event][target_field]"},
 		{name: "bare target project rejected", in: "create_record [p][record_id] [x]\ncopy [a] p[e][b]", wantErr: "must be written in [brackets]"},
 		{name: "unexpected character", in: "create_record [p][record_id] x!", wantErr: "unexpected character"},
 		{name: "copy target one group", in: "create_record [p][record_id] [x]\ncopy [a] [b]", wantErr: "copy target must be"},
@@ -69,7 +71,13 @@ func TestParseTransferConfig(t *testing.T) {
 		{name: "create project cannot copy", in: "create_project project_name template\ncopy age [Target][event][age]",
 			wantErr: "cannot be combined"},
 		{name: "create project wrong arity", in: "create_project project_name template token id extra",
-			wantErr: "malformed create_project"},
+			wantErr: "create_project takes 1 to 4 arguments, not 5"},
+		// The name of the new project is a field reference, and one argument is a
+		// whole instruction: no template means an empty project (REQ-VAL-047).
+		{name: "create project alone is an empty project", in: "create_project [record]",
+			want: []TransferOp{{Kind: "create_project", SourceField: "record"}}},
+		{name: "create project name is a reference bare or bracketed", in: "create_project record template",
+			want: []TransferOp{{Kind: "create_project", SourceField: "record", Template: "template"}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

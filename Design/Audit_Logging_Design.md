@@ -72,7 +72,7 @@ Rules: `old` is `null` for `create`; for `delete`, `new` is `null` and the `old`
 
 | Code | When | `details` payload |
 |---|---|---|
-| `project_created` | `POST /api/v1/projects` (REQ-API-050) | `{"project_name":"…"}` |
+| `project_created` | `POST /api/v1/projects` (REQ-API-050), and a `create_project` transfer instruction that raises one (REQ-API-168) | `{"project_name":"…"}`, plus `"template_project":"…"` when the instruction cloned a template — an empty-project creation names none. The acting user is the fixed `user_id`/`email` column, which is where a project's creator is recorded: `projects` has no creator column of its own (REQ-VAL-047) |
 | `project_updated` | `PUT /api/v1/projects/{id}` (REQ-API-052) | `{"changes":{"pi_name":{"old":"…","new":"…"},"…":"…"}}` |
 | `arm_created` | REQ-API-059 | `{"arm_num":2,"name":"…"}` |
 | `arm_updated` | REQ-API-128 | `{"arm_num":1,"last_arm_reset":true,"changes":{"name":{"old":"…","new":"arm_1"}}}` (deleting the last remaining arm renames it) |

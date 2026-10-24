@@ -3058,6 +3058,12 @@ func (h *Handler) validateTransferDesign(ctx context.Context, f *db.Field, d *de
 	for _, op := range ops {
 		sf, ok := d.fields[op.SourceField]
 		if !ok || !valueCarrying(sf.FieldType) || sf.InstrumentID != f.InstrumentID {
+			if op.Kind == "create_project" {
+				// A new project's name always comes from a field of this instrument
+				// (REQ-VAL-047): the designer who types the project name itself here
+				// needs told that in those words, not in type vocabulary.
+				return validationf("create_project names the new project by the value of a field of this instrument: %q is not such a field", op.SourceField)
+			}
 			return validationf("transfer source %q is not a value-carrying field of this instrument", op.SourceField)
 		}
 		if sf.FieldType == "checkbox" {

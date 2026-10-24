@@ -158,6 +158,15 @@ func TestTransferDesignValidation(t *testing.T) {
 	bad("cross_instrument_source", "create_record [Target Study][pid] faraway", "not a value-carrying field of this instrument")
 	bad("create_arity", "create_record [Target Study][visit][pid] record_name", "not valid")
 
+	// A create_project line names the new project by a field of this instrument,
+	// and that mistake is answered in those words rather than in type vocabulary.
+	// A template is not among the mistakes: one argument alone is a whole
+	// instruction, tested in TestTransferCreateProjectEmpty.
+	bad("project_name_must_be_a_field", "create_project [New Study] [Target Study]",
+		"names the new project by the value of a field of this instrument")
+	bad("project_wrong_arity", "create_project record_name template token id extra",
+		"takes 1 to 4 arguments, not 5")
+
 	// A checkbox stores nothing under its own name (REQ-DB-042).
 	rec := e.do("POST", f.fieldsPath(f.src, f.srcInstrID), map[string]any{
 		"field_name": "mood", "field_type": "checkbox", "choices": "1$ok##2$low",
@@ -419,6 +428,112 @@ func TestTransferCreateProjectFromTemplate(t *testing.T) {
 	}
 	if strings.Contains(auditDetails, assignment.Token) {
 		t.Error("project token leaked into audit details")
+	}
+}
+
+// The project name a create_project line uses is a reference to a field of the
+// current instrument, and `[fieldname]` is that reference — the same argument a
+// bare `fieldname` is, carrying the field's stored value into the new project's
+// name (REQ-VAL-047). The bracketed spelling is what VISION writes, so it is
+// pinned here end to end: design-time acceptance and one executed click.
+func TestTransferCreateProjectBracketedName(t *testing.T) {
+	e, f := newTransferFixture(t)
+	e.mustCreateTransferField(t, f, "create_project", "create_project [record_name] [Target Study]")
+
+	path := f.execPath("R1") + "?event=baseline_arm_1&instrument=intake&field=create_project"
+	rec := e.do("POST", path, nil, f.mem)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create project: %d %s", rec.Code, rec.Body.String())
+	}
+	var result struct {
+		TargetProject string `json:"target_project"`
+		Created       bool   `json:"created"`
+	}
+	e.decode(rec, &result)
+	if !result.Created || result.TargetProject != "P-001" { // R1's stored record_name value
+		t.Fatalf("result = %+v, want created project P-001", result)
+	}
+	project, err := e.Store.GetProjectByName(context.Background(), "P-001")
+	if err != nil || project == nil {
+		t.Fatalf("new project = %v, err = %v; want one named from the field value", project, err)
+	}
+	instruments, err := e.Store.ListInstruments(context.Background(), project.ID)
+	if err != nil || len(instruments) != 1 || instruments[0].Name != "enroll" {
+		t.Fatalf("cloned instruments = %+v, err=%v; want enroll", instruments, err)
+	}
+}
+
+// One argument is a whole create_project instruction: with no template the button
+// raises an **empty** project — no arms, events, instruments or fields (REQ-VAL-047).
+// Nothing on the projects row records who created it, so the acting user has to be
+// findable two ways: the role-less membership that makes them its only project
+// admin, and the project_created audit entry written against the new project
+// without a template name (REQ-API-168).
+func TestTransferCreateProjectEmpty(t *testing.T) {
+	e, f := newTransferFixture(t)
+	e.mustCreateTransferField(t, f, "create_project", "create_project [record_name]")
+
+	rec := e.do("POST", f.execPath("R1")+"?event=baseline_arm_1&instrument=intake&field=create_project", nil, f.mem)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create empty project: %d %s", rec.Code, rec.Body.String())
+	}
+	var result struct {
+		TargetProject string `json:"target_project"`
+		Created       bool   `json:"created"`
+	}
+	e.decode(rec, &result)
+	if !result.Created || result.TargetProject != "P-001" { // R1's stored record_name value
+		t.Fatalf("result = %+v, want created project P-001", result)
+	}
+	project, err := e.Store.GetProjectByName(context.Background(), "P-001")
+	if err != nil || project == nil {
+		t.Fatalf("new project = %v, err = %v", project, err)
+	}
+	for _, structure := range []struct{ what, table string }{
+		{"arms", "arms"}, {"events", "events"}, {"instruments", "instruments"}, {"fields", "fields"},
+	} {
+		if n := e.countSQL(t, `SELECT count(*) FROM `+structure.table+` WHERE project_id = ?`, project.ID); n != 0 {
+			t.Errorf("%s of the empty project = %d, want 0", structure.what, n)
+		}
+	}
+	// instrument_events hangs off the instrument and event rows, not the project.
+	if n := e.countSQL(t, `SELECT count(*) FROM instrument_events ie
+		JOIN instruments i ON i.id = ie.instrument_id WHERE i.project_id = ?`, project.ID); n != 0 {
+		t.Errorf("instrument/event mappings of the empty project = %d, want 0", n)
+	}
+
+	assignment, err := e.Store.GetAssignment(context.Background(), f.mem.ID, project.ID)
+	if err != nil || assignment == nil || assignment.RoleID.Valid || assignment.Token == "" {
+		t.Fatalf("project assignment = %+v, err = %v; want role-less membership with token", assignment, err)
+	}
+	if n := e.countSQL(t, `SELECT count(*) FROM user_projects WHERE project_id = ?`, project.ID); n != 1 {
+		t.Errorf("members = %d, want the acting user alone", n)
+	}
+
+	var auditUser int64
+	var auditDetails string
+	if err := e.Store.DB.QueryRow(`SELECT user_id, details FROM audit_events
+		WHERE project_id = ? AND event_type = 'project_created'`, project.ID).Scan(&auditUser, &auditDetails); err != nil {
+		t.Fatalf("read project_created audit: %v", err)
+	}
+	if auditUser != f.mem.ID {
+		t.Errorf("project_created written by user %d, want the acting user %d", auditUser, f.mem.ID)
+	}
+	if !strings.Contains(auditDetails, "P-001") || strings.Contains(auditDetails, "template_project") {
+		t.Errorf("project_created details = %s, want the project name and no template", auditDetails)
+	}
+
+	// A second click on an empty project that already exists stays a no-op.
+	rec = e.do("POST", f.execPath("R1")+"?event=baseline_arm_1&instrument=intake&field=create_project", nil, f.mem)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("repeat create: %d %s", rec.Code, rec.Body.String())
+	}
+	e.decode(rec, &result)
+	if result.Created {
+		t.Error("repeat click created a second project")
+	}
+	if n := e.countSQL(t, `SELECT count(*) FROM user_projects WHERE project_id = ?`, project.ID); n != 1 {
+		t.Errorf("members after the repeat = %d, want one", n)
 	}
 }
 

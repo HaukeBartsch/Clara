@@ -44,9 +44,20 @@ type TransferOp struct {
 //	copy   <source_field> [project][event][target_field]   (event-enabled target)
 //	copy   <source_field> [project][target_field]          (event-less target)
 //
+//	create_project <project_name_field> [<template_project> [<token_field> [<project_id_field>]]]
+//
+// A field of the current instrument is named bare or in one bracket group —
+// `record_name` and `[record_name]` are the same reference, and both differ from
+// a literal word only in how it reads, never in what it means: an argument that
+// takes a field always resolves to a field, and its stored value is what the
+// operation uses.
+//
 // A create_project operation is standalone: it creates (or leaves untouched)
-// a project named by SourceField from Template, optionally returning the
-// project's token and id to TokenField and IDField in the source record.
+// a project named by SourceField's value, optionally from Template, and
+// optionally returning the project's token and id to TokenField and IDField in
+// the source record. One argument is a complete instruction: with no Template the
+// project is created empty, and its two outputs — which follow the template
+// positionally — then have no place in the line (REQ-VAL-047).
 // Bracketed names may not contain brackets; whitespace inside a group is kept
 // trimmed — whether a name resolves is the design-time check.
 // Returns line-numbered errors.
@@ -101,11 +112,57 @@ type transferPart struct {
 	bracketed bool
 }
 
+// transferArity is each operation's argument count and the shape to show when a
+// line misses it. A hand-typed config gets its errors back in words: which
+// operation, how many arguments it takes, how many it saw, and the syntax.
+var transferArity = map[string]struct {
+	min, max int
+	syntax   string
+}{
+	"create_record":  {2, 2, "create_record [project][identifier_field] <source_field>"},
+	"copy":           {2, 2, "copy <source_field> [project][event][target_field]"},
+	"create_project": {1, 4, "create_project <project_name_field> [<template_project> [<token_field> [<project_id_field>]]]"},
+}
+
+// transferArityError answers a keyword carrying the wrong number of arguments.
+// The plain "malformed create_project operation" this replaced named nothing to
+// act on: a designer whose line ran one argument long read it as the field
+// reference itself being refused, since a bracket group is how a reference is
+// written — and never which argument had gone missing.
+func transferArityError(keyword string, got int) error {
+	a := transferArity[keyword]
+	want := fmt.Sprintf("%d arguments", a.min)
+	if a.max != a.min {
+		want = fmt.Sprintf("%d to %d arguments", a.min, a.max)
+	}
+	return fmt.Errorf("%s takes %s, not %d: %s", keyword, want, got, a.syntax)
+}
+
+// keywordOf names the operation keyword of a line's first token, or "" when it
+// is not one — a bracketed [copy] is a name, never a keyword.
+func keywordOf(tokens [][]transferPart) string {
+	for _, word := range []string{"create_record", "create_project", "copy", "create"} {
+		if isKeyword(tokens, 0, word) {
+			return word
+		}
+	}
+	return ""
+}
+
 // parseTransferLine parses one instruction line (comment stripped, trimmed).
 func parseTransferLine(line string) (TransferOp, error) {
 	tokens, err := lexTransferLine(line)
 	if err != nil {
 		return TransferOp{}, err
+	}
+	if kw := keywordOf(tokens); kw != "" {
+		if a, ok := transferArity[kw]; ok {
+			if n := len(tokens) - 1; n < a.min || n > a.max {
+				return TransferOp{}, transferArityError(kw, n)
+			}
+		} else if kw == "create" {
+			return TransferOp{}, fmt.Errorf(`unknown operation "create": write create_record or create_project`)
+		}
 	}
 	var op TransferOp
 	switch {
@@ -119,16 +176,20 @@ func parseTransferLine(line string) (TransferOp, error) {
 			return TransferOp{}, fmt.Errorf("create_record needs one source field: %w", err)
 		}
 		op = TransferOp{Kind: "create_record", TargetProject: target[0], RecordIDField: target[1], SourceField: src}
-	case isKeyword(tokens, 0, "create_project") && len(tokens) >= 3 && len(tokens) <= 5:
+	// The lengths here restate transferArity rather than trusting it — this parses
+	// admin-typed text, so indexing stays guarded even if the two ever drift.
+	case isKeyword(tokens, 0, "create_project") && len(tokens) >= 2 && len(tokens) <= 5:
 		src, err := singleName(tokens[1])
 		if err != nil {
 			return TransferOp{}, fmt.Errorf("create_project needs one source field: %w", err)
 		}
-		template, err := singleName(tokens[2])
-		if err != nil {
-			return TransferOp{}, fmt.Errorf("create_project needs one template project name: %w", err)
+		op = TransferOp{Kind: "create_project", SourceField: src}
+		if len(tokens) >= 3 {
+			// With no second argument the operation creates an empty project (REQ-VAL-047).
+			if op.Template, err = singleName(tokens[2]); err != nil {
+				return TransferOp{}, fmt.Errorf("create_project needs one template project name: %w", err)
+			}
 		}
-		op = TransferOp{Kind: "create_project", SourceField: src, Template: template}
 		if len(tokens) >= 4 {
 			op.TokenField, err = singleName(tokens[3])
 			if err != nil {
@@ -154,10 +215,6 @@ func parseTransferLine(line string) (TransferOp, error) {
 		if len(names) == 3 {
 			op.Event = names[1]
 		}
-	case len(tokens) > 0 && len(tokens[0]) == 1 && !tokens[0][0].bracketed &&
-		(tokens[0][0].text == "create_record" || tokens[0][0].text == "create_project" ||
-			tokens[0][0].text == "create" || tokens[0][0].text == "copy"):
-		return TransferOp{}, fmt.Errorf("malformed %s operation", tokens[0][0].text)
 	default:
 		return TransferOp{}, fmt.Errorf("expected create_record, create_project or copy, got %q", line)
 	}
