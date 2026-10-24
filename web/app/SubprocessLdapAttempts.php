@@ -24,7 +24,7 @@ final class SubprocessLdapAttempts implements LdapAttemptSet
     /** @var list<array{id: string, process: mixed, stdout: mixed, buffer: string}> */
     private array $running = [];
 
-    /** @var array<string, array{outcome: string, email?: string, display_name?: string}> */
+    /** @var array<string, array<string, mixed>> */
     private array $settled = [];
 
     /** True once every child has been stopped and reaped. */
@@ -153,6 +153,17 @@ final class SubprocessLdapAttempts implements LdapAttemptSet
             if (isset($decoded[$field]) && is_scalar($decoded[$field])) {
                 $outcome[$field] = (string) $decoded[$field];
             }
+        }
+        if (isset($decoded['diagnostic']) && is_array($decoded['diagnostic'])) {
+            $outcome['diagnostic'] = $decoded['diagnostic'];
+        }
+        foreach (['stage', 'reason'] as $field) {
+            if (isset($decoded[$field]) && is_scalar($decoded[$field])) {
+                $outcome[$field] = (string) $decoded[$field];
+            }
+        }
+        if (isset($decoded['errno']) && is_int($decoded['errno'])) {
+            $outcome['errno'] = $decoded['errno'];
         }
 
         $this->settled[(string) $child['id']] = $outcome;

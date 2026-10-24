@@ -31,6 +31,9 @@ final class Oauth
 
     /** Discovery results per issuer, for the life of this object (one request). */
     private array $endpointsCache = [];
+    private int $lastDiscoveryStatus = 0;
+    private int $lastTokenStatus = 0;
+    private int $lastUserInfoStatus = 0;
 
     public function __construct(
         private readonly Config $config,
@@ -55,7 +58,7 @@ final class Oauth
      * and produce the URL that starts the provider's own login. The caller turns it
      * into a redirect — nothing about the user is decided until the callback returns.
      */
-    public function begin(array $provider, string $sourceName): string
+    public function begin(array $provider, string $sourceName, string $purpose = 'login'): string
     {
         // 16 random bytes in hex, the form §2.1 step 1 fixes for `state`.
         $state = bin2hex(random_bytes(16));
@@ -68,6 +71,7 @@ final class Oauth
             'state' => $state,
             'code_verifier' => $verifier,
             'source_name' => $sourceName,
+            'purpose' => $purpose,
         ]);
 
         return $this->endpoints($provider)['authorize'] . '?' . http_build_query([
@@ -118,6 +122,96 @@ final class Oauth
         ];
     }
 
+    /**
+     * Completes an administrator diagnostic round trip without resolving a CLARA user.
+     *
+     * @return array<string, mixed> bounded endpoint and claim data; never token material
+     */
+    public function completeTest(string $code, string $state): array
+    {
+        $txn = Session::takeOauthTransaction();
+        $provider = $txn === [] ? null : $this->provider((int) $txn['provider_index']);
+        if ($txn === [] || ($txn['purpose'] ?? 'login') !== 'auth_test' || $provider === null
+            || $code === '' || !hash_equals($txn['state'], $state)) {
+            $this->logger->warn('oauth diagnostic callback rejected', ['reason' => 'state_mismatch']);
+            throw new ApiException('state_mismatch', '', 401);
+        }
+
+        $endpoints = $this->safeEndpoints($this->endpoints($provider));
+        try {
+            $tokens = $this->exchange($provider, $txn['code_verifier'], $code);
+        } catch (ApiException $e) {
+            if ($e->code() !== 'provider_unavailable') {
+                throw $e;
+            }
+
+            return [
+                'ok' => false,
+                'stage' => 'token_exchange',
+                'issuer' => mb_substr($provider['issuer'], 0, 500),
+                'endpoints' => $endpoints,
+                'discovery_status' => $this->lastDiscoveryStatus,
+                'token_status' => $this->lastTokenStatus,
+                'userinfo_status' => 0,
+                'userinfo_claims' => [],
+                'id_token_claims' => [],
+            ];
+        }
+        $userinfo = $this->userInfo($provider, (string) $tokens['access_token']);
+        $idClaims = $this->idTokenClaims((string) ($tokens['id_token'] ?? ''));
+        $allow = ['iss', 'sub', 'aud', 'exp', 'iat', 'auth_time', 'email', 'email_verified',
+            'name', 'given_name', 'family_name', 'preferred_username', 'groups', 'roles', 'memberOf', 'acr', 'amr'];
+
+        return [
+            'ok' => true,
+            'issuer' => mb_substr($provider['issuer'], 0, 500),
+            'endpoints' => $endpoints,
+            'discovery_status' => $this->lastDiscoveryStatus,
+            'token_status' => $this->lastTokenStatus,
+            'userinfo_status' => $this->lastUserInfoStatus,
+            'userinfo_claims' => $this->safeClaims($userinfo, $allow),
+            'id_token_claims' => $this->safeClaims($idClaims, $allow),
+        ];
+    }
+
+    /** @param array{authorize: string, token: string, userinfo: string} $endpoints
+     * @return array{authorize: string, token: string, userinfo: string}
+     */
+    private function safeEndpoints(array $endpoints): array
+    {
+        return array_map(static fn (string $url): string => mb_substr($url, 0, 2048), $endpoints);
+    }
+
+    /** @param array<mixed> $claims @param list<string> $allow @return array<string, mixed> */
+    private function safeClaims(array $claims, array $allow): array
+    {
+        $safe = [];
+        foreach ($claims as $name => $value) {
+            $name = (string) $name;
+            if (!in_array($name, $allow, true) && preg_match('/groups?|roles?|memberof/i', $name) !== 1) {
+                continue;
+            }
+            $name = mb_substr($name, 0, 200);
+            if (is_scalar($value)) {
+                $safe[$name] = mb_substr((string) $value, 0, 500);
+            } elseif (is_array($value)) {
+                $items = [];
+                foreach ($value as $item) {
+                    if (!is_scalar($item)) {
+                        continue;
+                    }
+                    $items[] = mb_substr((string) $item, 0, 500);
+                    if (count($items) === 30) {
+                        break;
+                    }
+                }
+                $safe[$name] = $items;
+            }
+        }
+
+        return $safe;
+    }
+
     // --- the provider's side ---------------------------------------------------
 
     /**
@@ -140,6 +234,7 @@ final class Oauth
                 'code_verifier' => $verifier,
             ])
         );
+        $this->lastTokenStatus = (int) $response['status'];
 
         $tokens = is_string($response['body']) && $response['body'] !== ''
             ? json_decode($response['body'], true)
@@ -218,6 +313,7 @@ final class Oauth
             ['Accept: application/json', 'Authorization: Bearer ' . $accessToken],
             null
         );
+        $this->lastUserInfoStatus = (int) $response['status'];
 
         if ($response['status'] < 200 || $response['status'] >= 300) {
             return [];
@@ -274,6 +370,7 @@ final class Oauth
             ['Accept: application/json'],
             null
         );
+        $this->lastDiscoveryStatus = (int) $document['status'];
         $discovered = $document['status'] >= 200 && $document['status'] < 300
             ? (json_decode((string) $document['body'], true) ?: [])
             : [];

@@ -60,14 +60,41 @@ describe('Control Panel (§5, REQ-UI-047)', function (): void {
 
         $response = router_for(http_request('GET', '/admin', browser_headers(), [], ['section' => 'settings']))->dispatch();
 
-        // All five sections are built since M3, in the panel's canonical order (§5).
+        // Every built section is present in the panel's canonical order (§5).
         $body = $response->body();
         $positions = array_map(static fn (string $s): int|false => strpos($body, 'href="/admin?section=' . $s . '"'),
-            ['projects', 'users', 'audits', 'translations', 'settings']);
+            ['projects', 'users', 'audits', 'translations', 'settings', 'monitoring', 'assistant', 'auth', 'check', 'api']);
         assert_true(!in_array(false, $positions, true), 'every section has its panel entry');
         $sorted = $positions;
         sort($sorted);
         assert_same($sorted, $positions, 'the entries keep the canonical order');
+    });
+
+    it('lists configured authentication sources without displaying secrets', function (): void {
+        sign_in(['is_admin' => 1]);
+        queue_shell();
+        $config = test_config([
+            'LDAP_SERVER_1_URL' => 'ldaps://directory.example.org:636',
+            'LDAP_SERVER_1_SEARCH_BASE' => 'ou=users,dc=example,dc=org',
+            'LDAP_SERVER_1_BIND_DN' => 'cn=readonly,dc=example,dc=org',
+            'LDAP_SERVER_1_BIND_PASSWORD' => 'ldap-secret',
+            'OAUTH2_1_ISSUER' => 'https://idp.example.org',
+            'OAUTH2_1_CLIENT_ID' => 'visible-client-id',
+            'OAUTH2_1_CLIENT_SECRET' => 'oauth-secret',
+        ]);
+
+        $response = router_for(
+            http_request('GET', '/admin', browser_headers(), [], ['section' => 'auth']),
+            $config
+        )->dispatch();
+        $body = $response->body();
+
+        assert_same(200, $response->status());
+        assert_contains('directory.example.org', $body);
+        assert_contains('idp.example.org', $body);
+        assert_contains('visible-client-id', $body);
+        assert_not_contains('ldap-secret', $body);
+        assert_not_contains('oauth-secret', $body);
     });
 
     it('is closed to anyone who is not an administrator', function (): void {

@@ -32,7 +32,7 @@ use Clara\LdapAttempt;
 /** Prints the answer and stops — the only way this process ends. */
 function answer(array $result): never
 {
-    fwrite(STDOUT, json_encode($result, JSON_UNESCAPED_SLASHES) . "\n");
+    fwrite(STDOUT, json_encode($result, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE) . "\n");
     exit(0);
 }
 
@@ -95,7 +95,16 @@ $result = @ldap_search(
     $searchLink,
     (string) $job['search_base'],
     LdapAttempt::filter((string) $job['uid_attr'], (string) $job['login']),
-    [(string) $job['email_attr'], (string) $job['name_attr']]
+    array_values(array_unique([
+        (string) $job['email_attr'],
+        (string) $job['name_attr'],
+        ...(!empty($job['diagnostic']) ? [
+            (string) $job['uid_attr'],
+            'memberOf',
+            'groups',
+            'roles',
+        ] : []),
+    ]))
 );
 
 if ($result === false) {
@@ -127,6 +136,36 @@ foreach ((array) $entries[0] as $key => $value) {
 // The address is read from the entry we found, not from what the user typed: that is
 // what makes the directory the authority on identity (§2.2 step 3, REQ-AUTH-004).
 $identity = LdapAttempt::identity($attributes, (string) $job['email_attr'], (string) $job['name_attr']);
+$diagnostic = [];
+if (!empty($job['diagnostic'])) {
+    $safeAttributes = [];
+    foreach ([(string) $job['uid_attr'], (string) $job['email_attr'], (string) $job['name_attr'],
+        'memberOf', 'groups', 'roles'] as $attribute) {
+        $values = $attributes[strtolower($attribute)] ?? null;
+        if (!is_array($values)) {
+            continue;
+        }
+        $safeAttributes[$attribute] = [];
+        foreach ($values as $key => $value) {
+            if (!is_int($key) || !is_scalar($value)) {
+                continue;
+            }
+            $safeAttributes[$attribute][] = substr((string) $value, 0, 500);
+            if (count($safeAttributes[$attribute]) === 30) {
+                break;
+            }
+        }
+    }
+    $diagnostic = [
+        'search' => 'ok',
+        'user_bind' => 'pending',
+        'identity' => [
+            'email' => substr($identity['email'], 0, 500),
+            'display_name' => substr($identity['display_name'], 0, 500),
+        ],
+        'attributes' => $safeAttributes,
+    ];
+}
 
 // --- step 2: bind as that entry -------------------------------------------------
 $userLink = $connect();
@@ -135,7 +174,16 @@ if ($userLink === null) {
 }
 
 if (!@ldap_bind($userLink, $entryDn, (string) $job['password'])) {
-    answer(['outcome' => LdapAttempt::mapError(ldap_errno($userLink)), 'stage' => 'user_bind']);
+    $result = [
+        'outcome' => LdapAttempt::mapError(ldap_errno($userLink)),
+        'stage' => 'user_bind',
+        'errno' => ldap_errno($userLink),
+    ];
+    if ($diagnostic !== []) {
+        $diagnostic['user_bind'] = 'failed';
+        $result['diagnostic'] = $diagnostic;
+    }
+    answer($result);
 }
 
 @ldap_unbind($userLink);
@@ -145,7 +193,17 @@ if ($identity['email'] === '') {
     // The password matched but the entry names no address under the configured
     // claim: there is no account to log in as, and inventing one from the submitted
     // login would be PHP deciding identity rather than the directory.
-    answer(['outcome' => 'unreachable', 'reason' => 'no_email_attribute']);
+    $result = ['outcome' => 'unreachable', 'reason' => 'no_email_attribute'];
+    if ($diagnostic !== []) {
+        $diagnostic['user_bind'] = 'ok';
+        $result['diagnostic'] = $diagnostic;
+    }
+    answer($result);
 }
 
-answer(['outcome' => 'ok'] + $identity);
+$answer = ['outcome' => 'ok'] + $identity;
+if ($diagnostic !== []) {
+    $diagnostic['user_bind'] = 'ok';
+    $answer['diagnostic'] = $diagnostic;
+}
+answer($answer);

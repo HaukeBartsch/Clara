@@ -1,8 +1,7 @@
 <?php
 // The Control Panel (User_Interface_Design.md §5, REQ-UI-047): the one is_admin page that
 // carries every installation-administration function. Its left panel lists the sections
-// (Projects, Users, Audits, Translations, Settings, Configuration Check, API documentation —
-// Clara\Navigation),
+// from Clara\Navigation,
 // `?section=` picks the one in the right-hand panel (Projects when absent), and every
 // mutation is a POST to /admin with its ?action= (§2.1, REQ-UI-005; the router has already
 // checked the CSRF token).
@@ -18,6 +17,7 @@ namespace Clara\Controllers;
 
 use Clara\ApiException;
 use Clara\ConfigCheck;
+use Clara\LdapRace;
 use Clara\MonitoringStressTest;
 use Clara\Navigation;
 use Clara\Response;
@@ -93,11 +93,81 @@ final class ControlPanelController extends Controller
             'monitoring' => $this->monitoringPage(),
             'assistant' => $this->assistantPage(),
             'check' => $this->configCheckPage(),
+            'auth' => $this->authTestPage(Session::takeAuthTestReport()),
             'api' => $this->apiDocsPage(),
             default => $this->page('admin/none', [
                 'pageTitle' => $this->i18n->t('admin.title'),
             ], ['titleKey' => 'admin.title']),
         };
+    }
+
+    /** Tests one configured LDAP source without calling the login API. */
+    public function testLdap(): Response
+    {
+        $index = filter_var($this->request->field('server'), FILTER_VALIDATE_INT);
+        $login = trim($this->request->field('username'));
+        $password = $this->request->field('password');
+        $server = null;
+        foreach ($this->config->ldapServers as $candidate) {
+            if ($candidate['index'] === $index) {
+                $server = $candidate;
+                break;
+            }
+        }
+        if ($server === null || $login === '' || $password === '' || strlen($login) > 256 || strlen($password) > 1024) {
+            return $this->authTestPage([], $this->i18n->t('admin.auth.invalid'));
+        }
+
+        $result = (new LdapRace($this->config, $this->logger))->testServer($server, $login, $password);
+        unset($password, $result['email'], $result['display_name']);
+        Session::setAuthTestReport(['kind' => 'ldap', 'server' => (int) $index, 'result' => $result]);
+
+        return Response::redirect('/admin?section=auth');
+    }
+
+    /** Starts an isolated OAuth/OIDC test flow for one configured provider. */
+    public function testOauth(): Response
+    {
+        $index = filter_var($this->request->field('provider'), FILTER_VALIDATE_INT);
+        foreach ($this->config->oauthProviders as $provider) {
+            if ($provider['index'] === $index) {
+                return Response::redirect($this->auth->beginOauthTestRedirect($provider));
+            }
+        }
+
+        return $this->authTestPage([], $this->i18n->t('admin.auth.invalid'));
+    }
+
+    /** Renders non-secret source settings and a one-time diagnostic report. */
+    private function authTestPage(array $report = [], string $error = ''): Response
+    {
+        $providers = array_map(fn (array $provider): array => [
+            'index' => $provider['index'],
+            'issuer' => $provider['issuer'],
+            'client_id' => $provider['client_id'],
+            'redirect_uri' => $provider['redirect_uri'] !== ''
+                ? $provider['redirect_uri']
+                : $this->config->webPublicUrl . '/auth/callback',
+            'email_attr' => $provider['email_attr'],
+            'names' => $provider['names'],
+        ], $this->config->oauthProviders);
+        $servers = array_map(static fn (array $server): array => [
+            'index' => $server['index'],
+            'url' => $server['url'],
+            'bind_dn' => $server['bind_dn'],
+            'search_base' => $server['search_base'],
+            'uid_attr' => $server['uid_attr'],
+            'email_attr' => $server['email_attr'],
+            'name_attr' => $server['name_attr'],
+            'names' => $server['names'],
+        ], $this->config->ldapServers);
+
+        return $this->section('auth', 'admin/auth_test', 'admin.auth.title', [
+            'providers' => $providers,
+            'servers' => $servers,
+            'report' => $report,
+            'error' => $error,
+        ]);
     }
 
     /**

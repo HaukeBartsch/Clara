@@ -99,6 +99,30 @@ final class LoginController extends Controller
      */
     public function callback(): Response
     {
+        if (Session::oauthTransactionPurpose() === 'auth_test') {
+            if (!Session::isAdmin()) {
+                try {
+                    $this->auth->completeOauthTest('', $this->request->query('state'));
+                } catch (ApiException) {
+                    // Consume the transaction; the diagnostic is never resumed without its admin session.
+                }
+
+                return Response::redirect('/login');
+            }
+
+            try {
+                $report = $this->auth->completeOauthTest(
+                    $this->request->query('error') === '' ? $this->request->query('code') : '',
+                    $this->request->query('state')
+                );
+            } catch (ApiException) {
+                $report = ['ok' => false];
+            }
+            Session::setAuthTestReport(['kind' => 'oauth'] + $report);
+
+            return Response::redirect('/admin?section=auth');
+        }
+
         // The error the provider reports (access_denied and friends) is its own words and
         // never a reason to log anybody in: one line, back to the form.
         if ($this->request->query('error') !== '') {

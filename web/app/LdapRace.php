@@ -36,11 +36,11 @@ final class LdapRace
     /**
      * Starts one attempt per server under the selected name.
      *
-     * @param list<array<string, string|int>> $servers the servers Config parsed
+     * @param list<array<string, string|int|bool>> $servers the servers Config parsed
      * @return array{set: LdapAttemptSet, deadline_unix_ms: float}|null null when there
      *         is no directory to try, which lets the caller skip the whole branch
      */
-    public function start(array $servers, string $login, string $password): ?array
+    public function start(array $servers, string $login, string $password, bool $diagnostic = false): ?array
     {
         if ($servers === []) {
             return null;
@@ -62,6 +62,7 @@ final class LdapRace
                 'login' => $login,
                 'password' => $password,
                 'timeout_seconds' => self::ATTEMPT_TIMEOUT_SECONDS,
+                'diagnostic' => $diagnostic,
             ];
         }
 
@@ -71,6 +72,28 @@ final class LdapRace
             'set' => $set,
             'deadline_unix_ms' => microtime(true) * 1000 + self::ATTEMPT_TIMEOUT_SECONDS * 1000,
         ];
+    }
+
+    /**
+     * Tests one explicitly selected configured directory without finalizing a login.
+     *
+     * @param array<string, mixed> $server
+     * @return array<string, mixed>
+     */
+    public function testServer(array $server, string $login, string $password): array
+    {
+        $running = $this->start([$server], $login, $password, true);
+        if ($running === null) {
+            return ['outcome' => 'unreachable', 'reason' => 'not_configured'];
+        }
+
+        try {
+            $settled = $running['set']->settle((int) $running['deadline_unix_ms']);
+        } finally {
+            $running['set']->cancel();
+        }
+
+        return $settled['ldap-' . (int) $server['index']] ?? ['outcome' => 'unreachable', 'reason' => 'no_answer'];
     }
 
     /**

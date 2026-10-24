@@ -36,7 +36,7 @@ Go API ──► SQLite / MariaDB
 - `/api/v1/*` is reachable only from the trusted internal path (REQ-AUTH-014, REQ-API-040); the proxy strips `X-Internal-Service-Token`, `X-Internal-User-Id` and `X-Internal-Session-Epoch` from every externally-originated request (rules fixed in `Technology_Stack_Design.md` §5).
 - Inter-component traffic is loopback or TLS (REQ-AUTH-034).
 - The browser never calls `/api/v1/*` directly (GD-1, REQ-AUTH-010, REQ-UI-002).
-- No credential rides a URL this deployment logs: the data API reads its token from the body only (REQ-API-010, DEV-API-30) and both reference proxies refuse a non-`POST` on `/api/`, so those query strings hold nothing to redact. What remains is the invite/reset link `/set-password?token=…`, whose query string the web server MUST NOT log (REQ-AUTH-049).
+- The reference proxy access logs omit query strings and referrers (INSTALL.md §11.2/§11.3, REQ-AUTH-049), so the OAuth authorization code returned to `/auth/callback` is not logged. The data API reads its token from the body only (REQ-API-010, DEV-API-30), and the invite/reset link `/set-password?token=…` remains a GET whose token the web server MUST NOT log.
 
 ## 2. Authentication Sequences
 
@@ -199,6 +199,14 @@ Runs in the API on the `source = "oauth2"` leg of Sequence C, **before any accou
 **Discovery posture.** The discovery document is required: it names `jwks_uri`, and its own `issuer` value MUST equal the configured issuer (REQ-AUTH-082). Deriving `authorize`/`token`/`userinfo` by appending conventional names to the issuer root is withdrawn — PingFederate serves `/as/authorization.oauth2`, `/as/token.oauth2` and `/idp/userinfo.openid`, so a derived path produces a misleading upstream error where a hard stop names the provider. INSTALL.md §14 gains "the provider publishes no discovery document" as its own cause.
 
 **Logout receiver (REQ-AUTH-083).** With `OIDC_SINGLE_SIGN_OUT=1` the web layer exposes `OAUTH2_N_BACKCHANNEL_LOGOUT_PATH` for the provider to POST a `logout_token` to. The token is verified by steps 1–5 above — with `event` required to name back-channel logout and the same issuer/audience rules — and then every session of that account ends. Sessions live in PHP files keyed by session id (§3), so this needs a secondary index from (`iss`, `sub`) to live session ids, written at login and dropped at logout or expiry under `SESSION_DIR` (0700); the receiver additionally raises the account's session epoch (REQ-AUTH-074) so that in-flight API calls stop. PingFederate publishes its session identifier as `pi.sri`, not OIDC `sid`, and offers no Session Management iframe: resolution is by subject, and polling is not designed for. The proxy must expose this path to the provider and nothing else (REQ-CFG-036).
+
+### 2.11 Authentication connection diagnostics (REQ-AUTH-085)
+
+The Control Panel's Authentication Test section is guarded by the normal `is_admin` route guard. It enumerates only the immutable sources parsed from environment configuration; it accepts no caller-supplied host, issuer, or endpoint.
+
+- **LDAP:** a CSRF-protected POST names one configured server index and carries the test username/password. PHP launches the existing isolated LDAP child with that server's configured search credentials and a five-second timeout. The check reports search and user-bind outcomes, the configured identity attributes, and a bounded allowlist of returned `uid`, `mail`, `cn`, `memberOf`, `groups`, and `roles` values. No login API call or CLARA session is made. The entered password remains only in the request and child stdin.
+- **OAuth/OIDC:** a CSRF-protected POST starts the configured authorization-code/PKCE flow and marks its single-use session transaction as `auth_test`. The existing callback verifies state, exchanges the code server-side, then stores a one-time report and redirects to the diagnostic section; it never calls the login API or establishes a CLARA session. The report includes discovered endpoint URLs, endpoint status, and only allowlisted non-secret claims (`iss`, `sub`, email/name claims, groups/roles, and assurance claims). Claims are not interpreted as CLARA roles.
+- Both reports are escaped when rendered, bounded, and one-time session data. Passwords, bind credentials, client secrets, authorization codes, access tokens, and ID tokens are excluded from report data, HTML, and logs; the reference proxy formats omit query strings and referrers. Failed requests return generic translated outcomes and technical stage/status information only.
 
 ## 3. Session Schema (GD-1)
 

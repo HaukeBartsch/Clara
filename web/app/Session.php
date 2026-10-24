@@ -416,7 +416,7 @@ final class Session
      * takeOauthTransaction(), which removes it — because `state` is what stops a
      * forged callback being accepted twice (§2.1 step 3).
      *
-     * @param array{provider_index: int, state: string, code_verifier: string, source_name: string} $txn
+     * @param array{provider_index: int, state: string, code_verifier: string, source_name: string, purpose?: string} $txn
      */
     public static function beginOauthTransaction(array $txn): void
     {
@@ -444,7 +444,35 @@ final class Session
             'state' => (string) ($txn['state'] ?? ''),
             'code_verifier' => (string) ($txn['code_verifier'] ?? ''),
             'source_name' => (string) ($txn['source_name'] ?? ''),
+            'purpose' => (string) ($txn['purpose'] ?? 'login'),
         ];
+    }
+
+    /** The purpose of a live OAuth transaction, or '' when none is available. */
+    public static function oauthTransactionPurpose(): string
+    {
+        $txn = $_SESSION['_oauth_txn'] ?? null;
+        if (!is_array($txn) || !isset($txn['started_at'])
+            || (int) $txn['started_at'] + self::OAUTH_TRANSACTION_SECONDS < time()) {
+            return '';
+        }
+
+        return (string) ($txn['purpose'] ?? 'login');
+    }
+
+    /** Stores a bounded, non-secret diagnostic report for the next admin page render. */
+    public static function setAuthTestReport(array $report): void
+    {
+        $_SESSION['_auth_test_report'] = $report;
+    }
+
+    /** Returns and removes the one-time diagnostic report. */
+    public static function takeAuthTestReport(): array
+    {
+        $report = $_SESSION['_auth_test_report'] ?? [];
+        unset($_SESSION['_auth_test_report']);
+
+        return is_array($report) ? $report : [];
     }
 
     /**

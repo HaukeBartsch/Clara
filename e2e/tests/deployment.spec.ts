@@ -96,6 +96,20 @@ const RULES: Rule[] = [
     apache: ["RequestHeader set X-Real-IP expr=%{REMOTE_ADDR}"],
   },
   {
+    id: "access-logs-omit-query-credentials",
+    why: "OAuth callback codes and other query-string credentials must not enter access logs",
+    nginx: [
+      'log_format clara_safe',
+      '"$request_method $uri $server_protocol"',
+      "access_log /var/log/nginx/clara.access.log clara_safe;",
+    ],
+    apache: [
+      "LogFormat",
+      "%m %U %H",
+      "CustomLog /var/log/httpd/clara_access.log clara_safe",
+    ],
+  },
+  {
     id: "no-forwarded-for-chain",
     why: "one address per caller and no chain to argue about (§5)",
     nginx: ['proxy_set_header X-Forwarded-For "";'],
@@ -182,6 +196,8 @@ test.describe("reverse-proxy reference configurations", () => {
 
     // Aggregated so one run names every rule that broke, not just the first.
     expect(missing, `rules no longer enforced:\n  ${missing.join("\n  ")}`).toEqual([])
+    expect(nginx).not.toContain("access_log /var/log/nginx/clara.access.log;")
+    expect(apache).not.toContain("CustomLog /var/log/httpd/clara_access.log combined")
   })
 
   test("Apache keeps the file-system probe inside <Directory>, where it works", () => {

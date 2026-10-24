@@ -1104,3 +1104,8 @@ The record status dashboard shows an event dropdown followed by a list of instru
 ## Adjust the notes field
 
 Field of type notes should display as multi-line (5 lines) text area HTML areas.
+
+
+## Authentication setup test page
+
+To simplify authentication setup, create an administrator-only page that lists the configured LDAP and OAuth/OpenID Connect sources and tests the settings from `.env.example`. Allow an administrator to enter test credentials for LDAP and to complete the normal interactive OAuth/OIDC sign-in flow. Show useful connection stages and allowlisted identity/group claims returned by the endpoints. Do not render or log passwords, client secrets, authorization codes, access tokens, or ID tokens. Provider or directory roles are diagnostic information only and do not grant CLARA permissions; diagnostic tests must not create a CLARA login.

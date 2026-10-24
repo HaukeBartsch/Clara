@@ -623,6 +623,8 @@ The configuration below ships as [`deploy/nginx/clara.conf`](deploy/nginx/clara.
 ```nginx
 # /etc/nginx/conf.d/clara.conf — CLARA reverse proxy (Technology_Stack_Design.md §5)
 
+log_format clara_safe '$remote_addr - $remote_user [$time_local] "$request_method $uri $server_protocol" $status $body_bytes_sent "$http_user_agent"';
+
 upstream clara_api {
     server 127.0.0.1:8080;        # API_ADDR
     keepalive 8;
@@ -632,6 +634,7 @@ server {
     listen 80;
     listen [::]:80;
     server_name clara.example.org;
+    access_log /var/log/nginx/clara.access.log clara_safe;
     return 301 https://$host$request_uri;
 }
 
@@ -651,7 +654,8 @@ server {
     add_header Strict-Transport-Security "max-age=31536000" always;
     fastcgi_hide_header X-Powered-By;
 
-    access_log /var/log/nginx/clara.access.log;
+    # $uri excludes query parameters; OAuth callback codes must not enter access logs.
+    access_log /var/log/nginx/clara.access.log clara_safe;
     error_log  /var/log/nginx/clara.error.log;
 
     root /opt/clara/web/public;
@@ -745,6 +749,7 @@ What the configuration enforces ([Technology_Stack_Design.md](Design/Technology_
 | `/docs`, `/openapi.json`, `/healthz` never reach the API | not proxied; PHP answers 404 |
 | `X-Internal-Service-Token`, `X-Internal-User-Id` and `X-Internal-Session-Epoch` are stripped from every external request | `proxy_set_header … ""` / `fastcgi_param … ""` |
 | `X-Real-IP` is always nginx's own `$remote_addr`, for both the API and PHP — and neither believes it from an unlisted peer | `proxy_set_header` / `fastcgi_param HTTP_X_REAL_IP`; `dataapi.SourceIP`, `Request::clientIp` |
+| Access logs omit query strings and referrers, so OAuth callback codes are not logged | `log_format clara_safe` (`$uri`, not `$request`) |
 | Exports stream instead of buffering | `proxy_buffering off`; PHP sends `X-Accel-Buffering: no` |
 
 The stock `/etc/nginx/nginx.conf` still contains a default `server` on port 80. It does not interfere, and you can remove it.
@@ -755,6 +760,9 @@ Apache httpd 2.4 implements the same routing rules and is an approved alternativ
 in this guide changes: the certificate paths (§11.1), the PHP-FPM socket (§10), the SELinux labels and
 booleans (§7) and the firewall (§12) are identical, because httpd runs in the same `httpd_t` domain that
 §7 already provisions for nginx.
+
+Its `clara_safe` access-log format uses `%U` (path only) and omits referrers; do not replace it with
+`combined`, whose request line includes query parameters such as OAuth callback codes.
 
 ```bash
 # RHEL: a drop-in in conf.d/. Debian/Ubuntu: copy to /etc/apache2/sites-available/ and a2ensite instead.

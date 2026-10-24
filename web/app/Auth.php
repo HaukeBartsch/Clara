@@ -597,6 +597,18 @@ final class Auth
         return $this->oauth->begin($provider, $sourceName);
     }
 
+    /** Starts an isolated Control Panel diagnostic authorization round trip. */
+    public function beginOauthTestRedirect(array $provider): string
+    {
+        return $this->oauth->begin($provider, '', 'auth_test');
+    }
+
+    /** Completes a diagnostic round trip without calling the login API. */
+    public function completeOauthTest(string $code, string $state): array
+    {
+        return $this->oauth->completeTest($code, $state);
+    }
+
     /** The provider a stored callback transaction belongs to (null if it was removed). */
     public function oauthProvider(int $index): ?array
     {

@@ -19,6 +19,12 @@ This document outlines the security model for the clinical study management syst
 - **Containment:** credentials entered under a name never travel to sources registered under a different name — an improvement over the old chain, which sent a failed local password onward to every configured LDAP server.
 - The selected name and winning source are recorded in the login audit event and session (REQ-AUTH-067).
 
+### Authentication connection diagnostics
+- The administrator-only Control Panel diagnostic (REQ-AUTH-085) lists configured LDAP and OAuth/OIDC sources without exposing client secrets or bind passwords.
+- LDAP checks use one selected configured server and credentials entered for that check; they do not call the login API or create a CLARA session.
+- OAuth/OIDC checks are interactive authorization-code round trips, isolated from normal login; the callback reports safe endpoint status and allowlisted claims without establishing a CLARA session.
+- Passwords, client secrets, codes, and tokens are never rendered, logged, or retained in the diagnostic report. Directory/provider groups and role claims are informational only; CLARA permissions remain locally administered.
+
 ### Identity Providers & LDAP
 - Multiple Providers: The system will support generic OAuth2 integration with multiple identity providers (`OAUTH2_N_*`, REQ-CFG-011), each registered under one or more source names.
 - LDAP: up to 3 configured servers, tried in parallel within the selected name's set rather than as a sequential fallback (REQ-AUTH-003, DEV-AUTH-14).

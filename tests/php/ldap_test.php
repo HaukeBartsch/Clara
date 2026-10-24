@@ -335,6 +335,26 @@ describe('the credential race over its launcher (Sequence I, §2.9)', function (
         assert_true($running['deadline_unix_ms'] > microtime(true) * 1000, 'the deadline is in the future');
     });
 
+    it('tests only the selected LDAP source and carries diagnostic mode to its child', function (): void {
+        $launcher = new FakeLdapLauncher([
+            'ldap-2' => [
+                'outcome' => 'ok',
+                'diagnostic' => [
+                    'search' => 'ok',
+                    'user_bind' => 'ok',
+                    'attributes' => ['memberOf' => ['cn=research']],
+                ],
+            ],
+        ]);
+        $race = new LdapRace(test_config(), new Logger('error', true), $launcher);
+        $result = $race->testServer(ldap_server(2), 'researcher', 'typed-password');
+
+        assert_same([['ldap-2']], $launcher->startCalls);
+        assert_same(true, $launcher->jobs[0]['diagnostic']);
+        assert_same('typed-password', $launcher->jobs[0]['password']);
+        assert_same('cn=research', $result['diagnostic']['attributes']['memberOf'][0]);
+    });
+
     it('takes the first attempt to report ok, whoever it was', function (): void {
         $launcher = new FakeLdapLauncher([
             'ldap-1' => ['outcome' => 'unreachable'],

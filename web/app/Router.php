@@ -263,6 +263,10 @@ final class Router
         // tool call is separately gated server-side against it.
         ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
             'handler' => 'setAssistantMode', 'guard' => 'admin', 'action' => 'assistant_mode'],
+        ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
+            'handler' => 'testLdap', 'guard' => 'admin', 'action' => 'test_ldap'],
+        ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
+            'handler' => 'testOauth', 'guard' => 'admin', 'action' => 'test_oauth'],
 
         // The assistant's MCP endpoint (REQ-AI-004): same-origin JSON-RPC over POST, admin
         // session + CSRF like every mutation. The Accept split sends the request to `data()`

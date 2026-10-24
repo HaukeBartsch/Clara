@@ -20,7 +20,7 @@ interface LdapAttemptSet
      * too late to take part in this login is not reachable for it, and the race
      * does not wait for it (§2.9).
      *
-     * @return array<string, array{outcome: string, email?: string, display_name?: string}>
+     * @return array<string, array<string, mixed>>
      */
     public function settle(int $deadlineUnixMs): array;
 

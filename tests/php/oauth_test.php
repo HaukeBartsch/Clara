@@ -135,6 +135,84 @@ describe('oauth2 authorization code (Sequence A, §2.1)', function (): void {
         assert_same('a-secret', $tokenRequest['client_secret'], 'the client authenticates to its own token endpoint (§2.1 step 4)');
     });
 
+    it('runs a diagnostic round trip without returning credential material or creating a CLARA login', function (): void {
+        oauth_provider_endpoints();
+        api_route('/protocol/openid-connect/token', [
+            'access_token' => 'must-not-escape',
+            'id_token' => oauth_id_token([
+                'sub' => 'subject-7',
+                'email' => 'researcher@example.org',
+                'roles' => ['member', 'project-admin'],
+                'https://idp.example.org/claims/groups' => ['clinical-research'],
+                'private_data' => 'not-allowlisted',
+            ]),
+        ]);
+        api_route('/protocol/openid-connect/userinfo', [
+            'email' => 'researcher@example.org',
+            'groups' => ['research', 'clinic'],
+        ]);
+
+        $config = oauth_config();
+        $oauth = oauth_client($config);
+        $url = $oauth->begin($config->oauthProviders[0], '', 'auth_test');
+        $state = (string) $_SESSION['_oauth_txn']['state'];
+        $report = $oauth->completeTest('test-code', $state);
+        $encoded = (string) json_encode($report);
+
+        assert_true(str_starts_with($url, 'https://idp.example.org/'));
+        assert_same(true, $report['ok']);
+        assert_same(['research', 'clinic'], $report['userinfo_claims']['groups']);
+        assert_same(['member', 'project-admin'], $report['id_token_claims']['roles']);
+        assert_same(['clinical-research'], $report['id_token_claims']['https://idp.example.org/claims/groups']);
+        assert_not_contains('private_data', $encoded);
+        assert_not_contains('must-not-escape', $encoded);
+        assert_not_contains('a-secret', $encoded);
+        assert_same(0, api_calls_to('/api/v1/auth/login'), 'diagnostics do not resolve or establish a CLARA user');
+        assert_same([], Session::takeOauthTransaction(), 'the test transaction is single-use');
+    });
+
+    it('returns from the diagnostic callback to the admin page without signing in', function (): void {
+        oauth_provider_endpoints();
+        api_route('/protocol/openid-connect/token', ['access_token' => 'hidden-token']);
+        api_route('/protocol/openid-connect/userinfo', ['email' => 'admin-test@example.org']);
+        $config = oauth_config();
+        sign_in(['is_admin' => 1]);
+        $oauth = oauth_client($config);
+        $oauth->begin($config->oauthProviders[0], '', 'auth_test');
+        $state = (string) $_SESSION['_oauth_txn']['state'];
+
+        $response = router_for(http_request(
+            'GET',
+            '/auth/callback',
+            browser_headers(),
+            [],
+            ['code' => 'diagnostic-code', 'state' => $state]
+        ), $config)->dispatch();
+
+        assert_same(302, $response->status());
+        assert_same('/admin?section=auth', $response->headers()['Location']);
+        assert_true(Session::isAdmin(), 'the existing administrator session remains the same');
+        assert_same(true, Session::takeAuthTestReport()['ok']);
+        assert_same(0, api_calls_to('/api/v1/auth/login'));
+    });
+
+    it('reports safe OAuth endpoint statuses when the token exchange fails', function (): void {
+        oauth_provider_endpoints();
+        api_route('/protocol/openid-connect/token', ['error' => 'invalid_client', 'error_description' => 'client secret leaked here'], 401);
+        $config = oauth_config();
+        $oauth = oauth_client($config);
+        $oauth->begin($config->oauthProviders[0], '', 'auth_test');
+
+        $report = $oauth->completeTest('bad-code', (string) $_SESSION['_oauth_txn']['state']);
+        $encoded = (string) json_encode($report);
+
+        assert_same(false, $report['ok']);
+        assert_same('token_exchange', $report['stage']);
+        assert_same(401, $report['token_status']);
+        assert_not_contains('client secret leaked here', $encoded);
+        assert_not_contains('a-secret', $encoded);
+    });
+
     it('reads a non-default claim, and falls back to the ID token when userinfo withholds it', function (): void {
         oauth_provider_endpoints();
         api_route('/protocol/openid-connect/token', ['access_token' => 'at-1', 'id_token' => oauth_id_token(['mail' => 'from@idtoken.example'])]);
