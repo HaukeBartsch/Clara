@@ -80,11 +80,24 @@ test.describe("account page (REQ-UI-063)", () => {
     await expect(member.locator(`#clara-token-${project.id}`)).toHaveValue("")
     expect(await member.content()).not.toContain(token)
 
+    await member.goto("/account/tokens")
+    await expect(member.locator("body")).not.toContainText(token)
+
     // The administrator's Audits section holds the one view, by the member, of their own token.
     await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD)
     await page.goto(`/admin?section=audits&project=${project.id}&event_type=token_viewed`)
     const views = page.locator("table.clara-audits tbody tr", { hasText: "token_viewed" })
     await expect(views).toHaveCount(1)
     await expect(views.first()).toContainText(email)
+  })
+
+  test("the account panel keeps the two-factor and password pages aligned with the token section", async ({ page }) => {
+    await signIn(page, ADMIN_EMAIL, ADMIN_PASSWORD)
+    for (const section of ["/account/two-factor", "/account/password"]) {
+      await page.goto(section)
+      await expect(page.locator("#clara-nav")).toBeVisible()
+      await expect(page.locator('a[href="/account/tokens"]')).toBeVisible()
+      await expect(page.locator(`#clara-nav a[href="${section}"]`)).toHaveAttribute("aria-current", "page")
+    }
   })
 })
