@@ -1288,20 +1288,59 @@ func TestRecordImportEventNameAlias(t *testing.T) {
 	// The rejection names the key the caller used — redcap_event_name here —
 	// so the message is about what was sent; the old report named an empty
 	// event for a caller that had sent none.
-	res = f.importRows(t, importForm("tok-edit", map[string]string{
+	code, body := f.call(t, importForm("tok-edit", map[string]string{
 		"record_id": "8DISC033", "form_name": "demo", "redcap_event_name": "v1_arm_1_arm_1", "age": "48",
 	}))
-	if res[0].ImportRecordID != 0 ||
-		!strings.Contains(res[0].ImportFormName, "redcap_event_name: CONTENT_INVALID — unknown event 'v1_arm_1_arm_1'") {
-		t.Fatalf("unknown alias event = %v", res[0])
+	mustStatus(t, code, 400, body)
+	if body != `{"error":"The following values of redcap_event_name are invalid: v1_arm_1_arm_1"}` {
+		t.Fatalf("unknown alias event response = %s", body)
 	}
 
 	// event_name keeps its own spelling when it is the key that was used.
-	res = f.importRows(t, importForm("tok-edit", map[string]string{
+	code, body = f.call(t, importForm("tok-edit", map[string]string{
 		"record_id": "8DISC034", "form_name": "demo", "event_name": "v1_arm_1_arm_1",
 	}))
-	if !strings.Contains(res[0].ImportFormName, "event_name: CONTENT_INVALID — unknown event 'v1_arm_1_arm_1'") {
-		t.Fatalf("unknown event_name = %v", res[0])
+	mustStatus(t, code, 400, body)
+	if body != `{"error":"The following values of event_name are invalid: v1_arm_1_arm_1"}` {
+		t.Fatalf("unknown event_name response = %s", body)
+	}
+}
+
+func TestRecordImportAggregatesInvalidEventsBeforeApplyingRows(t *testing.T) {
+	f := newRecordFixture(t)
+
+	code, body := f.call(t, importForm("tok-edit",
+		map[string]string{"record_id": "8DISC050", "redcap_event_name": "z_invalid", "age": "50"},
+		map[string]string{"record_id": "8DISC051", "redcap_event_name": "a_invalid", "age": "51"},
+		map[string]string{"record_id": "8DISC052", "redcap_event_name": "z_invalid", "age": "52"},
+		map[string]string{"record_id": "8DISC053", "redcap_event_name": "baseline_arm_1", "age": "53"},
+	))
+
+	mustStatus(t, code, 400, body)
+	want := `{"error":"The following values of redcap_event_name are invalid: a_invalid, z_invalid"}`
+	if body != want {
+		t.Fatalf("aggregate response = %s, want %s", body, want)
+	}
+	if got := storedValue(t, f, "8DISC053", "baseline_arm_1", "age"); got != "" {
+		t.Errorf("valid row was applied despite request-level aggregate error: age = %q", got)
+	}
+
+	form := importForm("tok-edit",
+		map[string]string{"record_id": "8DISC054", "redcap_event_name": "bad_event", "age": "54"},
+	)
+	form.Set("returnContent", "count")
+	code, body = f.call(t, form)
+	mustStatus(t, code, 400, body)
+	if body != `{"error":"The following values of redcap_event_name are invalid: bad_event"}` {
+		t.Fatalf("count-mode aggregate response = %s", body)
+	}
+
+	form.Set("returnContent", "")
+	form.Set("returnFormat", "csv")
+	code, body = f.call(t, form)
+	mustStatus(t, code, 400, body)
+	if strings.TrimSpace(body) != "The following values of redcap_event_name are invalid: bad_event" {
+		t.Fatalf("CSV aggregate response = %q", body)
 	}
 }
 
@@ -1430,10 +1469,9 @@ func TestRecordImportFlatRow(t *testing.T) {
 		"token": {"tok-edit"}, "content": {"record"}, "returnFormat": {"json"},
 		"data": {`[{"record_id":"8DISC014","age":"47"}]`},
 	})
-	res = importResults(t, code, body)
-	if len(res) != 1 || res[0].ImportRecordID != importInvalid ||
-		!strings.Contains(res[0].ImportFormName, "unknown event") {
-		t.Fatalf("event-less flat row = %v, want a rejected row naming the event problem", res)
+	mustStatus(t, code, 400, body)
+	if body != `{"error":"The following values of event_name are invalid: \"\""}` {
+		t.Fatalf("event-less flat row response = %s", body)
 	}
 }
 

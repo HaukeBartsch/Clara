@@ -70,6 +70,7 @@ return [
     'login.failure.expired' => 'This account’s validity period has ended — an administrator must extend it.',
     'login.failure.mfa_code' => 'That code is wrong or has expired.',
     'login.failure.provider_unavailable' => 'The sign-in service could not be reached. Please try again shortly.',
+    'login.failure.email_unverified' => 'Your identity provider did not verify your e-mail address. Please contact your administrator.',
     'login.failure.state_mismatch' => 'The sign-in attempt was interrupted. Please try again.',
     // The proof behind a challenge lapsed (REQ-API-131): not a wrong code, and
     // the only honest instruction is to start again.
@@ -258,6 +259,8 @@ return [
     'admin.check.web.sign_in.local_only' => 'Local accounts only; no OAuth2 provider or LDAP server is configured.',
     'admin.check.web.sign_in.plain' => 'Unencrypted connection configured: {list}. Prefer ldaps:// and https:// so passwords and tokens do not cross the network in clear text.',
     'admin.check.web.sign_in.ok' => '{oauth} OAuth2 provider(s) and {ldap} LDAP server(s), all over encrypted connections.',
+    'admin.check.web.oidc_email_verified.title' => 'OAuth email verification',
+    'admin.check.web.oidc_email_verified.required' => 'OAuth sign-in requires email_verified=true. The provider must return the JSON boolean true with the configured email claim; the authentication test exposes the claim for review.',
     'admin.check.api.reachable.title' => 'API answers',
     'admin.check.api.reachable.ok' => 'The API answered the check.',
     'admin.check.api.reachable.failed' => 'The API could not answer the check ({code}). Look at systemctl status clara-api and journalctl -u clara-api.',

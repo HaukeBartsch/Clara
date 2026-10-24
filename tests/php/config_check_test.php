@@ -241,6 +241,18 @@ describe('ConfigCheck rating (INSTALL.md)', function (): void {
         assert_same('LDAP_SERVER_1_URL', check_find(check_evaluate($config), 'web.sign_in')['params']['list']);
     });
 
+    it('reports the required OIDC email verification claim when OAuth is configured', function (): void {
+        $config = check_production_config([
+            'OAUTH2_1_ISSUER' => 'https://idp.example.org',
+            'OAUTH2_1_CLIENT_ID' => 'clara',
+            'OAUTH2_1_CLIENT_SECRET' => 'secret',
+        ]);
+        $check = check_find(check_evaluate($config), 'web.oidc_email_verified');
+
+        assert_same(ConfigCheck::INFO, $check['status']);
+        assert_same('admin.check.web.oidc_email_verified.required', $check['messageKey']);
+    });
+
     it('rates the web files: .env mode and placeholders, session directory, writable code', function (): void {
         $statuses = check_statuses(check_evaluate(null, [
             'https' => false,

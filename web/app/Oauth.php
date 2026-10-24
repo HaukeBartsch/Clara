@@ -257,7 +257,7 @@ final class Oauth
     }
 
     /**
-     * The address the provider vouches for (Sequence A step 5, REQ-AUTH-004).
+     * The address the provider vouches for (Sequence A step 5, REQ-AUTH-004/078).
      *
      * The userinfo endpoint is asked first: it returns what the issuer says about the
      * holder of that access token, fetched over the same TLS channel that just
@@ -282,12 +282,19 @@ final class Oauth
 
         foreach ($sets as $claims) {
             $email = strtolower(trim((string) ($claims[$claim] ?? '')));
-            if ($email !== '') {
-                return [
-                    'email' => $email,
-                    'display_name' => trim((string) ($claims['name'] ?? '')),
-                ];
+            if ($email === '') {
+                continue;
             }
+
+            if (($claims['email_verified'] ?? null) !== true) {
+                $this->logger->warn('oauth identity rejected', ['reason' => 'email_unverified']);
+                throw new ApiException('email_unverified', '', 401);
+            }
+
+            return [
+                'email' => $email,
+                'display_name' => trim((string) ($claims['name'] ?? '')),
+            ];
         }
 
         // The provider answered and named no address for the configured claim: there

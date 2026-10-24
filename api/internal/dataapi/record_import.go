@@ -188,6 +188,10 @@ func (h *Handler) contentRecordImport(w http.ResponseWriter, r *http.Request, en
 		writeError(w, enc, http.StatusBadRequest, "Invalid request")
 		return
 	}
+	if message := aggregateUnknownEventValues(rows, sub, d); message != "" {
+		writeError(w, enc, http.StatusBadRequest, message)
+		return
+	}
 
 	// The conditional stamp decides which submission of a link is the one (REQ-API-145).
 	// Inside this process they also take turns, so the loser opens its transaction
@@ -231,6 +235,55 @@ func (h *Handler) contentRecordImport(w http.ResponseWriter, r *http.Request, en
 		return
 	}
 	render(w, enc, p.Delimiter(), results)
+}
+
+func aggregateUnknownEventValues(rows []map[string]string, sub *subject, d *projectDict) string {
+	if !d.hasEvents || sub.isLink() {
+		return ""
+	}
+
+	invalid := map[string]map[string]struct{}{}
+	for _, row := range rows {
+		event, key := row["event_name"], "event_name"
+		if alias := row["redcap_event_name"]; alias != "" {
+			switch {
+			case event == "":
+				event, key = alias, "redcap_event_name"
+			case event != alias:
+				continue
+			}
+		}
+		if _, ok := d.eventArm[event]; ok {
+			continue
+		}
+		if invalid[key] == nil {
+			invalid[key] = map[string]struct{}{}
+		}
+		invalid[key][event] = struct{}{}
+	}
+	if len(invalid) == 0 {
+		return ""
+	}
+
+	keys := make([]string, 0, len(invalid))
+	for key := range invalid {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	messages := make([]string, 0, len(keys))
+	for _, key := range keys {
+		values := make([]string, 0, len(invalid[key]))
+		for value := range invalid[key] {
+			if value == "" {
+				value = `""`
+			}
+			values = append(values, value)
+		}
+		sort.Strings(values)
+		messages = append(messages, "The following values of "+key+" are invalid: "+strings.Join(values, ", "))
+	}
+	return strings.Join(messages, "; ")
 }
 
 // importOneRow runs one data[] entry: validate everything first, then apply

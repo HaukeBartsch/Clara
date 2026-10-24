@@ -39,6 +39,7 @@ final class Messages
             // and do not imply the user did anything wrong (REQ-API-131).
             'first_factor_expired' => $i18n->t('login.failure.expired_session'),
             'provider_unavailable' => $i18n->t('login.failure.provider_unavailable'),
+            'email_unverified' => $i18n->t('login.failure.email_unverified'),
             'state_mismatch' => $i18n->t('login.failure.state_mismatch'),
             'rate_limited' => self::rateLimited($i18n, $e),
             default => self::generic($i18n, $e, $ref, $isDevelopment),

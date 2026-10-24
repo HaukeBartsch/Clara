@@ -85,7 +85,7 @@ describe('oauth2 authorization code (Sequence A, §2.1)', function (): void {
     it('fetches discovery once per OAuth request and reuses its endpoints', function (): void {
         oauth_provider_endpoints();
         api_route('/protocol/openid-connect/token', ['access_token' => 'at-1']);
-        api_route('/protocol/openid-connect/userinfo', ['email' => 'researcher@example.org']);
+        api_route('/protocol/openid-connect/userinfo', ['email' => 'researcher@example.org', 'email_verified' => true]);
 
         $config = oauth_config();
         $oauth = oauth_client($config);
@@ -113,7 +113,9 @@ describe('oauth2 authorization code (Sequence A, §2.1)', function (): void {
     it('exchanges the code with the verifier and reads the address from userinfo', function (): void {
         oauth_provider_endpoints();
         api_route('/protocol/openid-connect/token', ['access_token' => 'at-1', 'expires_in' => 300]);
-        api_route('/protocol/openid-connect/userinfo', ['sub' => '42', 'email' => 'Researcher@Example.org', 'name' => 'Rae Researcher']);
+        api_route('/protocol/openid-connect/userinfo', [
+            'sub' => '42', 'email' => 'Researcher@Example.org', 'email_verified' => true, 'name' => 'Rae Researcher',
+        ]);
 
         $config = oauth_config();
         $oauth = oauth_client($config);
@@ -215,7 +217,9 @@ describe('oauth2 authorization code (Sequence A, §2.1)', function (): void {
 
     it('reads a non-default claim, and falls back to the ID token when userinfo withholds it', function (): void {
         oauth_provider_endpoints();
-        api_route('/protocol/openid-connect/token', ['access_token' => 'at-1', 'id_token' => oauth_id_token(['mail' => 'from@idtoken.example'])]);
+        api_route('/protocol/openid-connect/token', ['access_token' => 'at-1', 'id_token' => oauth_id_token([
+            'mail' => 'from@idtoken.example', 'email_verified' => true,
+        ])]);
         api_route('/protocol/openid-connect/userinfo', ['sub' => '42']);
 
         $config = oauth_config(['OAUTH2_1_EMAIL_ATTR' => 'mail']);
@@ -225,6 +229,39 @@ describe('oauth2 authorization code (Sequence A, §2.1)', function (): void {
         $identity = $oauth->complete('the-code', (string) $_SESSION['_oauth_txn']['state']);
 
         assert_same('from@idtoken.example', $identity['email'], 'the ID token is the documented alternative (§2.1 step 5)');
+    });
+
+    it('rejects OAuth identities without a boolean-true email_verified claim', function (): void {
+        foreach ([[], ['email_verified' => false], ['email_verified' => 'true'], ['email_verified' => 1]] as $verification) {
+            oauth_provider_endpoints();
+            api_route('/protocol/openid-connect/token', ['access_token' => 'at-1']);
+            api_route('/protocol/openid-connect/userinfo', ['email' => 'researcher@example.org'] + $verification);
+
+            $config = oauth_config();
+            $oauth = oauth_client($config);
+            $oauth->begin($config->oauthProviders[0], '');
+            $error = assert_throws(
+                Clara\ApiException::class,
+                static fn () => $oauth->complete('the-code', (string) $_SESSION['_oauth_txn']['state'])
+            );
+            assert_same('email_unverified', $error->code());
+        }
+    });
+
+    it('does not establish a login when the provider has not verified the email', function (): void {
+        oauth_provider_endpoints();
+        api_route('/protocol/openid-connect/token', ['access_token' => 'at-1']);
+        api_route('/protocol/openid-connect/userinfo', ['email' => 'member@example.org', 'email_verified' => false]);
+        $config = oauth_config();
+        $request = http_request('GET', '/auth/callback', browser_headers(), [], [
+            'code' => 'the-code', 'state' => peek_oauth_state($config),
+        ]);
+
+        $response = router_for($request, $config)->dispatch();
+
+        assert_contains('did not verify your e-mail address', $response->body());
+        assert_true(!Session::isAuthenticated(), 'an unverified email must not establish a CLARA session');
+        assert_same(0, api_calls_to('/api/v1/auth/login'));
     });
 
     it('rejects a callback whose state is not this browser\'s, once', function (): void {
@@ -259,7 +296,7 @@ describe('oauth2 authorization code (Sequence A, §2.1)', function (): void {
     it('completes the login through Sequence C and establishes the session', function (): void {
         oauth_provider_endpoints();
         api_route('/protocol/openid-connect/token', ['access_token' => 'at-1']);
-        api_route('/protocol/openid-connect/userinfo', ['email' => 'member@example.org']);
+        api_route('/protocol/openid-connect/userinfo', ['email' => 'member@example.org', 'email_verified' => true]);
         api_route('/api/v1/auth/login', [
             'id' => 12, 'email' => 'member@example.org', 'display_name' => 'Member',
             'is_admin' => false, 'auth_source' => 'oauth2', 'ui_language' => 'en', 'ui_theme' => null,

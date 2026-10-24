@@ -301,6 +301,9 @@ final class ConfigCheck
                 'oauth' => (string) count($config->oauthProviders), 'ldap' => (string) count($config->ldapServers),
             ], '§14'),
         };
+        if ($config->oauthProviders !== []) {
+            $checks[] = self::result('web.oidc_email_verified', self::INFO, 'required', [], '§14');
+        }
 
         return $checks;
     }

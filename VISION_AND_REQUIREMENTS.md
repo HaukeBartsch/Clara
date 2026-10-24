@@ -713,7 +713,7 @@ Fixed findings carry a **Status** line with the date and how the fix landed; the
   - Promote only on the local source, or only while no other admin exists.
   - Never re-enable a disabled account.
   - Require `email_verified = true` from OIDC providers.
-- **Status:** Fixed 2026-10-02 for the first two bullets. Login-time promotion now creates the row only when absent, never re-enables a disabled account, and promotes an existing enabled row only on a `local` login or while no other enabled administrator exists (`Store.EnsureBootstrapForLogin`; REQ-AUTH-007 revised, DEV-AUTH-15). Administration after setup is assigned through `PUT /api/v1/users/{id}` with `is_admin` (REQ-API-136), and at least one enabled administrator always exists (REQ-AUTH-068). Regression tests `TestAuthBootstrapDisabledStaysDisabled`, `TestAuthBootstrapNoRePromotion`, `TestUpdateUserAdminFlag`, `TestLastAdminRevocationRace`. The third bullet (`email_verified = true` from OIDC providers) is not implemented — OIDC assertions are handled in the PHP layer, where it remains open work.
+- **Status:** Fixed 2026-10-24. Login-time promotion creates the row only when absent, never re-enables a disabled account, and promotes an existing enabled row only on a `local` login or while no other enabled administrator exists (`Store.EnsureBootstrapForLogin`; REQ-AUTH-007 revised, DEV-AUTH-15). Administration after setup is assigned through `PUT /api/v1/users/{id}` with `is_admin` (REQ-API-136), and at least one enabled administrator always exists (REQ-AUTH-068). Regression tests `TestAuthBootstrapDisabledStaysDisabled`, `TestAuthBootstrapNoRePromotion`, `TestUpdateUserAdminFlag`, `TestLastAdminRevocationRace`. OAuth login also now requires the selected email claim's `email_verified` claim to be the JSON boolean `true`; an absent, false, or mistyped value is rejected before the API login call (`web/app/Oauth.php`, REQ-AUTH-078). The API-side signed-assertion verification of REQ-AUTH-076…084 remains separate open work.
 
 ### F11 — Survey links do not expire (Medium, Req-change)
 
@@ -927,7 +927,7 @@ For the presentation use medium strong font for headings (currently Avenir Next 
 
 Security findings with no fix (detail in my previous message)
 
-F7 plaintext tokens at rest (+ REQ-API-102 re-fetch, a Req-change) · F8 shared listener / APP_ENV defaults to development / `source: oauth2` logs in with no credential / no peer-address check at the boundary — token length is now floored at 32 bytes and the reference proxy configs shipped (2026-10-18) · F13 account enumeration — one user-facing line since PHP maps both codes, but `/auth/login` still answers two codes, skips argon2id for unknown accounts, and sends reset mail synchronously · F15 email-only lockout key (the limiter maps now sweep themselves) · F18 TOTP secrets unencrypted at rest — both redemption races closed 2026-10-19 · F20 fail-open role-less member · plus the two acknowledged leftovers: OIDC email_verified (F10) and SESSION_DIR=/tmp/csms-sessions (F17). Fixed 2026-10-19: F14 open redirect — backslashes and control characters now refused in one shared rule — and F19 token in the query string, where `POST /api/` is now the only way in, the token reads from the request body alone, and GET answers 405 (DEV-API-30 reverses this document's own GET clause).
+F7 plaintext tokens at rest (+ REQ-API-102 re-fetch, a Req-change) · F8 shared listener / APP_ENV defaults to development / `source: oauth2` logs in with no credential / no peer-address check at the boundary — token length is now floored at 32 bytes and the reference proxy configs shipped (2026-10-18) · F13 account enumeration — one user-facing line since PHP maps both codes, but `/auth/login` still answers two codes, skips argon2id for unknown accounts, and sends reset mail synchronously · F15 email-only lockout key (the limiter maps now sweep themselves) · F18 TOTP secrets unencrypted at rest — both redemption races closed 2026-10-19 · F20 fail-open role-less member · plus the acknowledged SESSION_DIR=/tmp/csms-sessions (F17). OAuth `email_verified` is now enforced in the PHP callback (F10), though signed-assertion verification at the API boundary remains open (REQ-AUTH-076…084). Fixed 2026-10-19: F14 open redirect — backslashes and control characters now refused in one shared rule — and F19 token in the query string, where `POST /api/` is now the only way in, the token reads from the request body alone, and GET answers 405 (DEV-API-30 reverses this document's own GET clause).
 
 "Corrections for interface" — 2 items left
 
@@ -946,7 +946,7 @@ Scattered feature requirements — 4 items left
 
 Open-ended questions in the doc, never answered with a decision
 
-- The REDCap-style aggregate import error ({"error":"The following values of redcap_event_name are invalid: …"}) — Clara answers per-row CONTENT_INVALID messages instead; nobody has recorded whether that satisfies the ask.
+- The REDCap-style aggregate import error ({"error":"The following values of redcap_event_name are invalid: …"}) is implemented under REQ-API-140: unknown event values are deduplicated and sorted in one request-level error before any batch row is applied.
 - "Check if other functionality in api/ can be implemented by using official packages" — no recorded outcome.
 
 Explicitly parked ("Later")
