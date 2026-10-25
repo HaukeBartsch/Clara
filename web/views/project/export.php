@@ -1,6 +1,6 @@
 <?php
 /**
- * Project page — Export (§6.4, REQ-UI-020): two downloads. The data export — CSV or JSON,
+ * Project page — Export (§6.4, REQ-UI-020/069): the data export — CSV or JSON,
  * codes or labels, the header style, the CSV delimiter, decimal separator and byte-order
  * mark — pre-selected for the UI language ($csvDefaults) — and the arms to include, with a
  * badge stating the sensitivity level the download will be delivered at. Its form is a plain
@@ -11,7 +11,7 @@
  * only and no record values, so it carries none of the form's options (REQ-UI-020).
  *
  * Reads: $exportUrl, $arms (list of {arm_num, name, level, dropped}), $level, $dropped,
- * $formats, $values, $headers, $delimiters, $decimals, $csvDefaults.
+ * $formats, $values, $headers, $delimiters, $decimals, $csvDefaults, $isAdmin.
  */
 
 use Clara\View;
@@ -133,6 +133,17 @@ $multiArm = count($arms) > 1;
             <span class="form-text m-0"><?= View::e($view->t('export.audit_note')) ?></span>
         </div>
     </form>
+<?php endif; ?>
+
+<?php if ($isAdmin): ?>
+    <div class="card card-body mt-4 clara-odm-export">
+        <h2 class="h6 mb-1"><?= View::e($view->t('export.odm_title')) ?></h2>
+        <p class="text-body-secondary small mb-3"><?= View::e($view->t('export.odm_intro')) ?></p>
+        <div>
+            <a class="btn btn-sm btn-outline-primary" data-clara-odm-download
+               href="<?= View::e($exportUrl . '?download=odm') ?>"><?= View::e($view->t('export.odm_download')) ?></a>
+        </div>
+    </div>
 <?php endif; ?>
 
 <!-- The second download of the page (REQ-UI-020): the data dictionary, design only and no

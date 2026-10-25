@@ -1,5 +1,5 @@
 <?php
-// The export action (`User_Interface_Design.md` §6.4, REQ-UI-020): one page offering the
+// The export action (`User_Interface_Design.md` §6.4, REQ-UI-020/069): one page offering the
 // project export — CSV or JSON, codes or labels, the header style, the CSV delimiter, decimal
 // separator and byte-order mark, and the arms to include — and, on `?download=1`, the file
 // itself, proxied from `GET /api/v1/projects/{id}/export` piece by piece so a large export
@@ -71,6 +71,13 @@ final class ExportController extends ProjectPageController
         $projectId = $this->projectIdOf($detail);
         $arms = self::exportableArms($detail, $permissions);
 
+        if ($this->request->query('download') === 'odm') {
+            if (!Session::isAdmin()) {
+                throw new ApiException('forbidden', '', 403);
+            }
+
+            return $this->downloadODM($projectId, $this->projectName($detail));
+        }
         if ($this->request->query('download') === '1') {
             return $this->download($projectId, $this->projectName($detail), $arms);
         }
@@ -80,6 +87,7 @@ final class ExportController extends ProjectPageController
 
         return $this->renderSection($detail, 'project/export', 'export.title', [
             'exportUrl' => '/projects/' . $projectId . '/export',
+            'isAdmin' => Session::isAdmin(),
             'arms' => $arms,
             'level' => self::appliedLevel($arms),
             // Pairs the member may not export: stated on the card rather than hidden
@@ -317,6 +325,46 @@ final class ExportController extends ProjectPageController
                 $sink->begin(303, ['Location' => $back, 'Cache-Control' => 'no-store']);
             }
         });
+    }
+
+    /** The installation-admin-only project interchange download (REQ-ODM-005). */
+    private function downloadODM(int $projectId, string $projectName): Response
+    {
+        $back = '/projects/' . $projectId . '/export';
+        $path = '/api/v1/projects/' . $projectId . '/export/odm';
+
+        return Response::stream(function (StreamSink $sink) use ($path, $back, $projectName): void {
+            try {
+                $this->api->stream($path, [],
+                    static function (int $status, array $upstream) use ($sink, $projectName): void {
+                        Session::close();
+                        $sink->begin(200, [
+                            'Content-Type' => 'application/xml; charset=UTF-8',
+                            'Content-Disposition' => 'attachment; filename="'
+                                . self::odmFilename($upstream['content-disposition'] ?? '', $projectName) . '"',
+                            'Cache-Control' => 'no-store',
+                            'X-Accel-Buffering' => 'no',
+                        ]);
+                    },
+                    static fn (string $chunk) => $sink->write($chunk)
+                );
+            } catch (ApiException $e) {
+                $this->logger->info('ODM export refused', ['code' => $e->code(), 'status' => $e->status()]);
+                Session::flash('danger', $this->apiFailureMessage($e));
+                $sink->begin(303, ['Location' => $back, 'Cache-Control' => 'no-store']);
+            }
+        });
+    }
+
+    /** An API filename is forwarded only when it has the expected safe ODM shape. */
+    public static function odmFilename(string $disposition, string $projectName): string
+    {
+        if (preg_match('/filename="([A-Za-z0-9._-]{1,120}\.xml)"/', $disposition, $m) === 1) {
+            return $m[1];
+        }
+        $base = trim((string) preg_replace('/[^A-Za-z0-9._-]+/', '_', $projectName), '._-');
+
+        return ($base === '' ? 'export' : substr($base, 0, 80)) . '_' . gmdate('Y-m-d') . '.xml';
     }
 
     /**

@@ -220,7 +220,7 @@ The audit row is written by the pipeline (`writeExportAudit`, `record_export.go:
 1. **Parse** (§9 limits first): decode into an intermediate model — `Study`/`GlobalVariables`, one `MetaDataVersion` (events, forms, groups, items, codelists, methods), and `ClinicalData` grouped by `SubjectKey`. Unknown elements are recorded as problems, not errors (REQ-ODM-053). A second `MetaDataVersion` in the document is a problem (`mdv_ignored`) and only the first builds.
 2. **Resolve** the design against CLARA's rules: names sanitized and de-duplicated, `field_name` uniqueness per project enforced (a name used twice across instruments is renamed with a suffix and warned, since `fields(project_id, field_name)` is unique), matrix groups collected, checkbox parents reconstructed from derived items when no parent extension row exists, GD-8 taken from `KeySequence="1"` or the first field of the first form.
 3. **Validate** the design through the existing design path: the same `stagedDesign` snapshot and validation view the instrument import uses (`admin/staged_design.go`, REQ-API-152), so calculation expressions, branching references, choice grammars and the record-identifier rule are checked by the code that owns them rather than a second implementation.
-4. **Build** — one transaction: project row (name from `project_name` or `StudyName`, 409 on collision, REQ-ODM-044), arms, events, instruments, fields, mapping, repeat flags, then `MaterializePairGrants`. Any failure here rolls the whole thing back and answers 400 with the problem list (REQ-ODM-040).
+4. **Build** — one transaction: project row (name from `project_name` or `StudyName`, 409 on collision, REQ-ODM-044), arms, events, instruments, fields, mapping, repeat flags, then `MaterializePairGrants`. Request-supplied project metadata overrides the corresponding values from the CLARA extension before the row is built (REQ-ODM-006); omitted parameters preserve the document values/defaults. Any failure here rolls the whole thing back and answers 400 with the problem list (REQ-ODM-040).
 5. **Load records** — after commit, one transaction per record in file order: resolve event → `unique_event_name`, instrument → owning form, instance number, then per value run `validate.ValidateValue` against the field's spec and `validate.ApplyContentPolicy` (the same calls `dataapi/record_import.go:501-520` makes), canonicalize dates, and write with `Store.UpsertDataValueTx` / clear with `DeleteDataValueTx`. A value that fails fails **its record** and the rest continue (REQ-ODM-041); an unknown item is a per-record problem, not a failure, matching how the data import reports unknown keys.
 6. **Report** — §7's counts plus problems, and audit (§9).
 
@@ -235,7 +235,7 @@ Value semantics live in `validate`, storage in `db`, and the ODM importer orches
 | Route | Contract |
 |---|---|
 | `GET /api/v1/projects/{id}/export/odm` | `is_admin`; streamed `application/xml; charset=utf-8`, `Content-Disposition: attachment; filename="<project-slug>_odm_<YYYY-MM-DD>.xml"` (the dictionary export's sanitizer, REQ-API-153); no query options in this step — the file is the project, at the caller's level (REQ-ODM-026) |
-| `POST /api/v1/projects/import/odm` | `is_admin`; body `application/xml` (the document itself, not base64 in JSON — an XML upload has no reason to be wrapped); query/form parameters `project_name` (optional), `dry_run` (`1`); answer 201 with the report on success, 200 for a dry run |
+| `POST /api/v1/projects/import/odm` | `is_admin`; body `application/xml` (the document itself, not base64 in JSON — an XML upload has no reason to be wrapped); query parameters `project_name`, `organization`, `pi_name`, `pi_email`, `participant_names`, `dm_name`, `dm_email`, `rek_number`, `rek_start_date`, `rek_end_date`, `start_date`, and `end_date` (each optional; supplied values override document metadata, including empty optional values), plus `dry_run=1`; answer 201 with the report on success, 200 for a dry run |
 
 Report shape (both calls' import answer; mirrors the instrument import's `importNote` list, REQ-ODM-060):
 
@@ -264,7 +264,7 @@ Dropped **with a warning**, never silently (REQ-ODM-053): instrument completion 
 
 ## 9. Limits, XML Safety and Audit
 
-- **Size.** The import body is bounded by the administration API's 32 MiB (`importBodyLimit`, REQ-API-144) with the same 400 the instrument import answers; the reverse proxy's own bound (32 MiB in both reference configs) stays the outer limit, so no `deploy/` change is needed.
+- **Size.** The administration API accepts up to 32 MiB (`importBodyLimit`, REQ-API-144) and answers with the same 400 as the instrument import when exceeded. The browser upload is capped at 31 MiB so its multipart framing remains within the existing 32 MiB web and reverse-proxy request bounds; no `deploy/` change is needed.
 - **XML safety.** A `DOCTYPE` declaration or any entity declaration is refused before parsing (`dtd_forbidden`, REQ-ODM-013) — `encoding/xml` does not expand general entities, and refusing anyway keeps a future parser change from turning this into an expansion path. Element nesting is bounded (64) and the token count is bounded by the byte limit, so a deeply-nested or explosive document costs one request (REQ-ODM-014). Only `utf-8` is accepted; a BOM is tolerated and stripped (as the CSV reader does).
 - **Output.** All XML is written with `encoding/xml` token writers (`xml.Encoder`/`Flush`), never string concatenation, so no value can escape its element or forge an attribute regardless of what a record holds.
 - **Imported text is untrusted** from the moment it is stored: labels, notes and choice text pass `validate.ApplyContentPolicy` and render escaped (REQ-ODM-062).
@@ -290,7 +290,7 @@ Dropped **with a warning**, never silently (REQ-ODM-053): instrument completion 
 
 | Requirement | Section |
 |---|---|
-| REQ-ODM-001…005 (surfaces, gating, no UI) | §7, §9 |
+| REQ-ODM-001…006 (surfaces, gating, UI metadata overrides) | §7, §9; web UI §5.2 and §6.4 in `User_Interface_Design.md` |
 | REQ-ODM-010…014 (dialect, refusal, limits) | §2, §9 |
 | REQ-ODM-020…026 (export content) | §3, §4, §6.1 |
 | REQ-ODM-030/031 (subject key) | §4.1 |

@@ -138,10 +138,41 @@ test.describe("export (M6)", () => {
     expect(copied).toHaveLength(4) // one row per designed field, not per record
     expect(copied).toContain("age")
 
+    // --- the administrator-only CDISC export/import flow (REQ-UI-069, REQ-ODM-005/006) ---
+    await expect(page.locator("[data-clara-odm-download]")).toBeVisible()
+    const [odm] = await Promise.all([page.waitForEvent("download"), page.locator("[data-clara-odm-download]").click()])
+    expect(odm.suggestedFilename()).toMatch(/\.xml$/)
+    const odmBytes = await (await odm.createReadStream()).toArray().then((parts) => Buffer.concat(parts))
+    const odmXml = odmBytes.toString("utf8")
+    expect(odmXml).toContain('<ODM xmlns="http://www.cdisc.org/ns/odm/v1.3"')
+    expect(odmXml).toContain("E001")
+
+    const importedName = `M6 ODM imported ${tag}`
+    await page.goto("/admin?section=projects")
+    await page.locator("details.clara-project-import summary").click()
+    await page.fill("#import-project-project_name", importedName)
+    await page.selectOption("#import-project-organization", "OUS")
+    await page.fill("#import-project-pi_name", "Imported PI")
+    await page.fill("#import-project-pi_email", "imported-pi@example.org")
+    await page.locator("#project-odm-file").setInputFiles({
+      name: "study.xml", mimeType: "application/xml", buffer: odmBytes,
+    })
+    await page.locator('form[action*="action=import_project"] button[type="submit"]').click()
+    const importedProjectLink = page.getByRole("link", { name: `Open ${importedName}` })
+    await expect(importedProjectLink).toBeVisible()
+    const importedProjectId = new URL(await importedProjectLink.getAttribute("href") ?? "", "http://localhost").pathname.split("/")[2]
+    const importedProject = await admin(request, "GET", `/api/v1/projects/${importedProjectId}`)
+    expect(importedProject.project_name).toBe(importedName)
+    expect(importedProject.organization).toBe("OUS")
+    expect(importedProject.pi_name).toBe("Imported PI")
+    expect(importedProject.pi_email).toBe("imported-pi@example.org")
+    expect(importedProject.participant_names).toBe(`M6_ODM_IMPORTED_${tag}_[0-9][0-9][0-9]`)
+
     // --- the member: the most protective selected level is stated, and it follows the selection ---
     const member = await newPage(browser)
     await signIn(member, memberEmail, memberPassword)
     await member.goto(`/projects/${project.id}/export`)
+    await expect(member.locator("[data-clara-odm-download]")).toHaveCount(0)
     const memberLevel = member.locator("[data-clara-export-level]")
     await expect(memberLevel).toHaveText("De-identified")
     await member.uncheck("#export-arm-2")

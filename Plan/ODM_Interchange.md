@@ -10,7 +10,7 @@ This document outlines how a CLARA **project** — one study's structure and rec
 ## Surfaces
 - `GET /api/v1/projects/{id}/export/odm` — streamed download (REQ-ODM-025, REQ-TECH-011).
 - `POST /api/v1/projects/import/odm` — creates a new project; `dry_run=1` answers the report without writing (REQ-ODM-046).
-- Administration API only, `is_admin` only: a whole-study copy is bulk data movement, above what a project role takes or injects (REQ-ODM-001/002). The REDCap-compatible data API keeps its `csv`/`json` set untouched (REQ-ODM-003), and the Export page gains no ODM option in this step (REQ-ODM-005, DEV-ODM-6).
+- Administration API and web UI, `is_admin` only: a whole-study copy is bulk data movement, above what a project role takes or injects (REQ-ODM-001/002). The Export page offers the ODM download to installation administrators; the Control Panel's New Project flow accepts an ODM upload and metadata fields (REQ-ODM-005/006, DEV-ODM-6). The REDCap-compatible data API keeps its `csv`/`json` set untouched (REQ-ODM-003).
 
 ## Export
 - Values are stored codes; the raw/label axis belongs to the tabular exports and an ODM consumer resolves `CodedValue` against the shipped `CodeList` (REQ-ODM-022).
@@ -22,7 +22,7 @@ This document outlines how a CLARA **project** — one study's structure and rec
 - Structure first, atomically: project row, arms, events, instruments, fields, mapping, repeat flags in one transaction — no half-built project (REQ-ODM-040).
 - Records second, one transaction per record, each keeping or failing on its own, exactly as the data import path behaves (REQ-ODM-041).
 - Nothing is trusted because it arrived in an ODM document: type and choice validation, date canonicalization, content policy and length bounds all run as on any other write (REQ-ODM-042), and no expression in the file is ever executed (REQ-ODM-047).
-- The new project's name comes from the request or `StudyName`; a collision is 409, never a rename of an existing project (REQ-ODM-044).
+- The new project's name comes from the request or `StudyName`; a collision is 409, never a rename of an existing project (REQ-ODM-044). Values entered in the import form override matching project metadata from the ODM extension; optional blanks clear those values (REQ-ODM-006).
 
 ## Mapping (summary — normative tables in the design document)
 | CLARA | ODM |
@@ -42,4 +42,4 @@ This document outlines how a CLARA **project** — one study's structure and rec
 - `odm_export` and `odm_import` audit events: level, scope, counts, options — never a value or a document body (REQ-ODM-061); refused calls write nothing (REQ-AUD-004).
 
 ## Out of scope for this step
-Transactional/delta ODM, an existing-project update through the staging set, XSD-validating against a schema at runtime, CRF page layout and `LogicalPageDef`, DAG membership and audit history in `AdminData`, and any web UI (REQ-ODM-005, ASM-ODM-1/5, DEV-ODM-4/6).
+Transactional/delta ODM, an existing-project update through the staging set, XSD-validating against a schema at runtime, CRF page layout and `LogicalPageDef`, and DAG membership and audit history in `AdminData` (ASM-ODM-1/5, DEV-ODM-4).

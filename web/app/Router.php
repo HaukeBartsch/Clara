@@ -254,6 +254,8 @@ final class Router
         ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
             'handler' => 'createProject', 'guard' => 'admin', 'action' => 'create_project'],
         ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
+            'handler' => 'importProject', 'guard' => 'admin', 'action' => 'import_project'],
+        ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
             'handler' => 'updateProject', 'guard' => 'admin', 'action' => 'update_project'],
         ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
             'handler' => 'startMonitoringStressTest', 'guard' => 'admin', 'action' => 'monitoring_stress_test'],

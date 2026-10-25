@@ -157,6 +157,7 @@ func (h *Handler) importODM(w http.ResponseWriter, r *http.Request) {
 		errInternal(w) // the document is sound; this installation could not judge it
 		return
 	}
+	applyODMProjectOverrides(plan.project, r.URL.Query())
 
 	report := &odmImportReport{
 		ProjectName: name,
@@ -189,6 +190,38 @@ func (h *Handler) importODM(w http.ResponseWriter, r *http.Request) {
 	report.Problems = problems.out()
 	h.auditODMImport(ctx, u, report)
 	writeJSON(w, http.StatusCreated, report) // 201 live, 200 for the dry run (§7)
+}
+
+func applyODMProjectOverrides(project *db.Project, values map[string][]string) {
+	get := func(key string) (string, bool) {
+		items, ok := values[key]
+		if !ok || len(items) == 0 {
+			return "", false
+		}
+		return strings.TrimSpace(items[0]), true
+	}
+
+	if value, ok := get("organization"); ok {
+		project.Organization = value
+	}
+	if value, ok := get("pi_name"); ok {
+		project.PIName = value
+	}
+	if value, ok := get("pi_email"); ok {
+		project.PIEmail = value
+	}
+	if value, ok := get("participant_names"); ok {
+		project.ParticipantNames = value
+	}
+	for key, target := range map[string]*sql.NullString{
+		"dm_name": &project.DMName, "dm_email": &project.DMEmail, "rek_number": &project.RekNumber,
+		"rek_start_date": &project.RekStartDate, "rek_end_date": &project.RekEndDate,
+		"start_date": &project.StartDate, "end_date": &project.EndDate,
+	} {
+		if value, ok := get(key); ok {
+			*target = sql.NullString{String: value, Valid: value != ""}
+		}
+	}
 }
 
 // readODMBody takes the request body within the administration import bound

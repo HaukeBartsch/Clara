@@ -76,6 +76,12 @@ final class ApiClient
     }
 
     /** @return array<mixed> */
+    public function postXml(string $path, string $body, array $query = []): array
+    {
+        return $this->callEncoded('POST', $path, $query, $body, 'application/xml');
+    }
+
+    /** @return array<mixed> */
     public function put(string $path, array $body = [], array $query = []): array
     {
         return $this->call('PUT', $path, $query, $body);
@@ -261,21 +267,31 @@ final class ApiClient
      */
     private function call(string $method, string $path, array $query, ?array $body): array
     {
+        // Every API body is a JSON object (§4.1); PHP encodes an empty array as `[]`, which the
+        // API refuses as malformed — so an empty body goes out as `{}` (staging start, a dry run
+        // of the stored expression).
+        $encoded = $body === null ? null : ($body === [] ? '{}' : (string) json_encode($body));
+
+        return $this->callEncoded($method, $path, $query, $encoded, $body === null ? null : 'application/json');
+    }
+
+    /**
+     * @param array<string, scalar|null> $query
+     * @return array<mixed>
+     */
+    private function callEncoded(string $method, string $path, array $query, ?string $body, ?string $contentType): array
+    {
         $url = $this->config->apiBaseUrl . $path;
         if ($query !== []) {
             $url .= (str_contains($url, '?') ? '&' : '?') . http_build_query($query);
         }
 
         $headers = $this->boundaryHeaders('application/json');
-        if ($body !== null) {
-            $headers[] = 'Content-Type: application/json';
+        if ($contentType !== null) {
+            $headers[] = 'Content-Type: ' . $contentType;
         }
 
-        // Every API body is a JSON object (§4.1); PHP encodes an empty array as `[]`, which the
-        // API refuses as malformed — so an empty body goes out as `{}` (staging start, a dry run
-        // of the stored expression).
-        $encoded = $body === null ? null : ($body === [] ? '{}' : (string) json_encode($body));
-        $response = $this->transport->request($method, $url, $headers, $encoded);
+        $response = $this->transport->request($method, $url, $headers, $body);
         $status = $response['status'];
 
         if ($status === 0) {

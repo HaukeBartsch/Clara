@@ -191,6 +191,55 @@ describe('Control Panel — Projects (§5.2, REQ-UI-012)', function (): void {
             'participant_names' => 'E[0-9][0-9]', 'rek_number' => 'REK-1'], api_request_body('/api/v1/projects'));
     });
 
+    it('imports an ODM file with all project metadata supplied by the administrator', function (): void {
+        sign_in(['is_admin' => 1]);
+        queue_shell();
+        api_route('/api/v1/projects/import/odm', [
+            'project_id' => 43, 'project_name' => 'Imported study', 'records_added' => 2,
+            'records_updated' => 0, 'records_failed' => 0, 'problems' => [],
+        ], 201);
+        $file = tempnam(sys_get_temp_dir(), 'clara-odm-');
+        assert_true(is_string($file), 'temporary ODM upload is available');
+        $xml = '<ODM xmlns="http://www.cdisc.org/ns/odm/v1.3"/>';
+        file_put_contents($file, $xml);
+        $fields = [
+            'project_name' => 'Imported study', 'organization' => 'OUS', 'pi_name' => 'PI',
+            'pi_email' => 'pi@example.org', 'participant_names' => 'IMPORTED_[0-9][0-9][0-9]',
+            'dm_name' => '', 'dm_email' => '', 'rek_number' => 'REK-43', 'rek_start_date' => '',
+            'rek_end_date' => '', 'start_date' => '2026-01-01', 'end_date' => '',
+        ];
+        try {
+            $request = new \Clara\Request('POST', '/admin', browser_headers(),
+                ['section' => 'projects', 'action' => 'import_project'],
+                ['csrf_token' => M3_CSRF] + $fields, [], '', [
+                    'odm_file' => ['name' => 'study.xml', 'tmp_name' => $file, 'size' => strlen($xml), 'error' => UPLOAD_ERR_OK],
+                ]);
+            $response = router_for($request)->dispatch();
+        } finally {
+            unlink($file);
+        }
+
+        assert_same('/admin?section=projects&created=43', $response->headers()['Location']);
+        $call = array_values(array_filter($GLOBALS['api_calls'], static fn (array $c): bool =>
+            str_contains($c['url'], '/api/v1/projects/import/odm')))[0];
+        assert_same($xml, $call['body'], 'the original XML is forwarded as the request body');
+        assert_true(in_array('Content-Type: application/xml', $call['headers'], true));
+        parse_str((string) parse_url($call['url'], PHP_URL_QUERY), $query);
+        foreach ($fields as $key => $value) {
+            assert_same($value, $query[$key] ?? null, "import metadata query $key");
+        }
+        assert_contains('2 records added', $_SESSION['_flash'][0]['text']);
+    });
+
+    it('keeps project import inaccessible to non-administrators', function (): void {
+        sign_in();
+
+        $response = m3_post('/admin', [], 'import_project');
+
+        assert_same(403, $response->status());
+        assert_same(0, api_calls_to('/api/v1/projects/import/odm'));
+    });
+
     it('clears an emptied optional field on edit (null), keeping the others', function (): void {
         sign_in(['is_admin' => 1]);
         queue_shell();
@@ -216,6 +265,9 @@ describe('Control Panel — Projects (§5.2, REQ-UI-012)', function (): void {
         assert_contains('<option value="SUN">Sunnaas Sykehus, Nesodden (Specialized rehabilitation hospital)</option>', $body);
         assert_contains('<option value="NAT EU">NAT EU</option>', $body);
         assert_contains('<option value="OTHER">Other</option>', $body);
+        assert_contains('action=import_project', $body);
+        assert_contains('name="odm_file"', $body);
+        assert_contains('Import project</button>', $body);
         assert_same(0, preg_match('/value="HBE"/', $body), 'the previous codes are gone');
         assert_same(1, preg_match('/<input type="hidden" id="project-participant_names" name="participant_names"/', $body));
         assert_same(0, preg_match('/<label[^>]*for="project-participant_names"/', $body), 'no label for the pattern');

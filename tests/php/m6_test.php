@@ -137,6 +137,7 @@ describe('export page (§6.4, REQ-UI-020)', function (): void {
         assert_contains('name="delimiter"', $body);
         assert_contains('/assets/js/export.js', $body);
         assert_contains('href="/projects/3/export"', $body, 'the left panel carries the entry');
+        assert_not_contains('data-clara-odm-download', $body, 'non-administrators do not see whole-project export');
         assert_same(0, api_calls_to('/export'), 'rendering the page exports nothing');
     });
 
@@ -319,6 +320,39 @@ describe('data dictionary download (REQ-UI-020, REQ-API-153)', function (): void
         assert_contains('clara-dictionary-export', $body);
         assert_contains('href="/projects/3/export?download=dictionary"', $body);
         assert_contains('Download data dictionary', $body);
+    });
+
+    describe('CDISC ODM export (REQ-UI-069, REQ-ODM-005)', function (): void {
+        it('shows the project interchange download only to administrators and streams it', function (): void {
+            sign_in(['is_admin' => 1]);
+            $xml = '<ODM xmlns="http://www.cdisc.org/ns/odm/v1.3"><Study/></ODM>';
+            api_route('/api/v1/projects/3/export/odm', $xml, 200, [
+                'Content-Type' => 'application/xml; charset=utf-8',
+                'Content-Disposition' => 'attachment; filename="8DISC_study_2026_odm_2026-10-24.xml"',
+            ]);
+            m6_queue(m6_detail([1 => ['view_edit', 'export_full']]));
+
+            $body = m6_get('/projects/3/export')->body();
+            assert_contains('data-clara-odm-download', $body);
+            assert_contains('Export project as CDISC ODM', $body);
+
+            $sink = m6_stream(m6_get('/projects/3/export', ['download' => 'odm']));
+            assert_same(200, $sink->status);
+            assert_same('application/xml; charset=UTF-8', $sink->headers['Content-Type']);
+            assert_same('attachment; filename="8DISC_study_2026_odm_2026-10-24.xml"', $sink->headers['Content-Disposition']);
+            assert_same($xml, $sink->body());
+        });
+
+        it('refuses a direct ODM download by a non-administrator', function (): void {
+            sign_in();
+            m6_queue(m6_detail([1 => ['view_edit', 'export_full']]));
+
+            $response = m6_get('/projects/3/export', ['download' => 'odm']);
+
+            assert_not_contains('data-clara-odm-download', $response->body());
+            assert_contains('You do not have permission', $response->body());
+            assert_same(0, api_calls_to('/export/odm'));
+        });
     });
 
     it('streams the API\'s REDCap instrument ZIP under the name the API gives it (REQ-API-153)', function (): void {

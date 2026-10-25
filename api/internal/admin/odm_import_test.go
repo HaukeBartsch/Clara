@@ -321,6 +321,39 @@ func TestImportODMWithoutExtension(t *testing.T) {
 	}
 }
 
+func TestImportODMProjectMetadataOverrides(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("odm-metadata@example.org")
+	query := "project_name=Form+name&organization=OUS&pi_name=Form+PI&pi_email=pi%40example.org" +
+		"&participant_names=FORM_%5B0-9%5D%5B0-9%5D&dm_name=Data+manager&dm_email=dm%40example.org" +
+		"&rek_number=REK-42&rek_start_date=2026-01-02&rek_end_date=2026-12-31&start_date=2026-02-01&end_date=2026-11-30"
+	rec := e.do("POST", "/api/v1/projects/import/odm?"+query, tinyODM(""), admin)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var report odmImportReport
+	e.decode(rec, &report)
+
+	project, err := e.Store.GetProject(context.Background(), report.ProjectID)
+	if err != nil {
+		t.Fatalf("GetProject: %v", err)
+	}
+	if project == nil {
+		t.Fatal("import did not create its project")
+	}
+	if project.ProjectName != "Form name" || project.Organization != "OUS" ||
+		project.PIName != "Form PI" || project.PIEmail != "pi@example.org" ||
+		project.ParticipantNames != "FORM_[0-9][0-9]" {
+		t.Errorf("required metadata = %+v", project)
+	}
+	if project.DMName.String != "Data manager" || project.DMEmail.String != "dm@example.org" ||
+		project.RekNumber.String != "REK-42" || project.RekStartDate.String != "2026-01-02" ||
+		project.RekEndDate.String != "2026-12-31" || project.StartDate.String != "2026-02-01" ||
+		project.EndDate.String != "2026-11-30" {
+		t.Errorf("optional metadata = %+v", project)
+	}
+}
+
 // A dry run answers what the live call would do and writes nothing at all — not even
 // the project row (REQ-ODM-046).
 func TestImportODMDryRun(t *testing.T) {

@@ -53,6 +53,8 @@ final class ControlPanelController extends Controller
     /** The required project attributes (§5.2, REQ-DB-006). */
     private const PROJECT_REQUIRED = ['project_name', 'organization', 'pi_name', 'pi_email', 'participant_names'];
 
+    private const ODM_IMPORT_LIMIT = 31 * 1024 * 1024;
+
     /**
      * The event codes of Audit_Logging_Design.md §3 — the audit filter's select (§5.6) — in
      * alphabetical order, exactly the API's catalog (api/internal/audit/audit.go; a test keeps the
@@ -65,7 +67,7 @@ final class ControlPanelController extends Controller
         'event_updated', 'export', 'field_created', 'field_deleted', 'field_moved', 'field_reordered',
         'field_updated', 'i18n_updated', 'instrument_completed', 'instrument_created', 'instrument_deleted',
         'instrument_reordered', 'instrument_uncompleted', 'instrument_updated', 'invite_accepted', 'login_failure',
-        'login_success', 'logout', 'mapping_updated', 'membership_changed', 'password_changed',
+        'login_success', 'logout', 'mapping_updated', 'membership_changed', 'odm_export', 'odm_import', 'password_changed',
         'password_reset_completed', 'password_reset_requested', 'project_created', 'project_ended',
         'project_mode_changed', 'project_updated', 'record_created', 'record_deleted', 'record_read', 'record_updated',
         'role_created', 'role_updated', 'session_replay_detected', 'settings_updated', 'staging_committed',
@@ -415,7 +417,7 @@ final class ControlPanelController extends Controller
     // --- Projects (§5.2, REQ-UI-012) --------------------------------------------
 
     /** @param array<string, string> $form sticky create/edit values */
-    private function projectsPage(string $error = '', array $form = [], int $editId = 0): Response
+    private function projectsPage(string $error = '', array $form = [], int $editId = 0, bool $importOpen = false): Response
     {
         $editId = $editId !== 0 ? $editId : $this->idParam($this->request->query('edit'));
         if ($editId !== 0 && $form === []) {
@@ -431,6 +433,7 @@ final class ControlPanelController extends Controller
             'error' => $error,
             'form' => $form,
             'editId' => $editId,
+            'importOpen' => $importOpen,
             'createdId' => $this->idParam($this->request->query('created')),
         ]);
     }
@@ -460,6 +463,64 @@ final class ControlPanelController extends Controller
         $this->flashSuccess($this->i18n->t('admin.projects.created', ['name' => $form['project_name']]));
 
         return $this->toSection('projects', '&created=' . (int) ($created['id'] ?? 0));
+    }
+
+    public function importProject(): Response
+    {
+        $form = $this->projectForm();
+        foreach (['project_name', 'organization', 'pi_name', 'pi_email'] as $required) {
+            if ($form[$required] === '') {
+                return $this->projectsPage($this->i18n->t('admin.projects.import_metadata_required'), $form, 0, true);
+            }
+        }
+        $uploads = $this->request->uploads('odm_file');
+        if ($uploads === [] || (count($uploads) === 1 && $uploads[0]['error'] === UPLOAD_ERR_NO_FILE)) {
+            return $this->projectsPage($this->i18n->t('admin.projects.import_file_required'), $form, 0, true);
+        }
+        if (count($uploads) !== 1) {
+            return $this->projectsPage($this->i18n->t('admin.projects.import_upload_failed'), $form, 0, true);
+        }
+        $upload = $uploads[0];
+        if ($upload['error'] !== UPLOAD_ERR_OK || !is_file($upload['tmp_name'])) {
+            return $this->projectsPage($this->i18n->t('admin.projects.import_upload_failed'), $form, 0, true);
+        }
+        if ($upload['size'] > self::ODM_IMPORT_LIMIT) {
+            return $this->projectsPage($this->i18n->t('admin.projects.import_too_large'), $form, 0, true);
+        }
+        $document = file_get_contents($upload['tmp_name']);
+        if ($document === false) {
+            return $this->projectsPage($this->i18n->t('admin.projects.import_upload_failed'), $form, 0, true);
+        }
+
+        $query = [];
+        foreach (array_merge(self::PROJECT_REQUIRED, self::PROJECT_OPTIONAL) as $attribute) {
+            $query[$attribute] = $form[$attribute];
+        }
+        try {
+            $report = $this->api->postXml('/api/v1/projects/import/odm', $document, $query);
+        } catch (ApiException $e) {
+            $this->logger->info('ODM project import rejected', ['code' => $e->code(), 'status' => $e->status()]);
+
+            return $this->projectsPage($this->apiFailureMessage($e), $form, 0, true);
+        }
+
+        $projectId = (int) ($report['project_id'] ?? 0);
+        if ($projectId <= 0) {
+            $this->logger->error('ODM import response did not include a project id');
+
+            return $this->projectsPage($this->i18n->t('admin.projects.import_response_invalid'), $form, 0, true);
+        }
+        $name = (string) ($report['project_name'] ?? $form['project_name']);
+        $problemCount = is_array($report['problems'] ?? null) ? count($report['problems']) : 0;
+        $this->flashSuccess($this->i18n->t('admin.projects.imported', [
+            'name' => $name,
+            'added' => (string) (int) ($report['records_added'] ?? 0),
+            'updated' => (string) (int) ($report['records_updated'] ?? 0),
+            'failed' => (string) (int) ($report['records_failed'] ?? 0),
+            'issues' => (string) $problemCount,
+        ]));
+
+        return $this->toSection('projects', '&created=' . $projectId);
     }
 
     public function updateProject(): Response

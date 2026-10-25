@@ -47,7 +47,7 @@ foreach ($projects as $project) {
     <div class="alert alert-danger py-2" role="alert"><?= View::e($error) ?></div>
 <?php endif; ?>
 
-<details class="mb-3 clara-create"<?= ($editId !== 0 || ($error ?? '') !== '') ? ' open' : '' ?>>
+<details class="mb-3 clara-create"<?= ($editId !== 0 || (($error ?? '') !== '' && empty($importOpen))) ? ' open' : '' ?>>
     <summary class="btn btn-sm btn-primary"><?= View::e($view->t($editId !== 0 ? 'admin.projects.edit_title' : 'admin.projects.create')) ?></summary>
     <form method="post" action="/admin?section=projects&amp;action=<?= $editId !== 0 ? 'update_project' : 'create_project' ?>"
           class="card card-body mt-2" autocomplete="off">
@@ -86,6 +86,47 @@ foreach ($projects as $project) {
         </div>
     </form>
 </details>
+
+<?php if ($editId === 0): ?>
+    <details class="mb-3 clara-project-import"<?= !empty($importOpen) ? ' open' : '' ?>>
+        <summary class="btn btn-sm btn-outline-primary"><?= View::e($view->t('admin.projects.import')) ?></summary>
+        <form method="post" action="/admin?section=projects&amp;action=import_project"
+              class="card card-body mt-2" enctype="multipart/form-data" autocomplete="off">
+            <?= $view->csrfField() ?>
+            <p class="text-body-secondary small"><?= View::e($view->t('admin.projects.import_intro')) ?></p>
+            <div class="row g-2">
+                <?php foreach ($fields as [$key, $type, $required]): ?>
+                    <div class="col-md-6">
+                        <label class="form-label" for="import-project-<?= $key ?>"><?= View::e($view->t('admin.projects.field.' . $key)) ?><?= $required ? ' *' : '' ?></label>
+                        <input class="form-control form-control-sm" type="<?= $type ?>" id="import-project-<?= $key ?>" name="<?= $key ?>"
+                               value="<?= $value($key) ?>"<?= $required ? ' required' : '' ?>>
+                    </div>
+                    <?php if ($key === 'project_name'): ?>
+                        <div class="col-md-6">
+                            <label class="form-label" for="import-project-organization"><?= View::e($view->t('admin.projects.field.organization')) ?> *</label>
+                            <select class="form-select form-select-sm" id="import-project-organization" name="organization" required>
+                                <option value=""></option>
+                                <?php foreach ($organizations as $code => $text): ?>
+                                    <?php $code = (string) $code; ?>
+                                    <option value="<?= View::e($code) ?>"<?= $storedOrganization === $code ? ' selected' : '' ?>><?= View::e($text !== '' ? $text : $view->t('admin.projects.organization.' . strtolower($code))) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    <?php endif; ?>
+                <?php endforeach; ?>
+            </div>
+            <input type="hidden" name="participant_names" value="<?= $value('participant_names') ?>">
+            <div class="mt-3">
+                <label class="form-label" for="project-odm-file"><?= View::e($view->t('admin.projects.import_file')) ?> *</label>
+                <input class="form-control form-control-sm" type="file" id="project-odm-file" name="odm_file"
+                       accept=".xml,application/xml,text/xml" required>
+            </div>
+            <div class="mt-3">
+                <button class="btn btn-sm btn-primary" type="submit"><?= View::e($view->t('admin.projects.import_submit')) ?></button>
+            </div>
+        </form>
+    </details>
+<?php endif; ?>
 
 <div class="table-responsive">
     <table class="table table-sm align-middle clara-admin-projects">
