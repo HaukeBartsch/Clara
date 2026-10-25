@@ -115,3 +115,71 @@ func TestExportODMGating(t *testing.T) {
 		t.Errorf("refused exports wrote %d audit rows", n)
 	}
 }
+
+func TestExportODM20RoundTrip(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("odm-v20@example.org")
+	sourceID := e.seedInterchange()
+
+	exported := e.do("GET", "/api/v1/projects/"+itoa(sourceID)+"/export/odm?odm_version=2.0", nil, admin)
+	if exported.Code != http.StatusOK {
+		t.Fatalf("export status = %d: %s", exported.Code, exported.Body.String())
+	}
+	var envelope struct {
+		Namespace  string `xml:"xmlns,attr"`
+		ODMVersion string `xml:"ODMVersion,attr"`
+	}
+	if err := xml.Unmarshal(exported.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal v2.0 envelope: %v", err)
+	}
+	if envelope.Namespace != odm20Namespace || envelope.ODMVersion != odm20Version {
+		t.Fatalf("v2.0 envelope = namespace %q, version %q", envelope.Namespace, envelope.ODMVersion)
+	}
+	if disposition := exported.Header().Get("Content-Disposition"); !strings.Contains(disposition, "_odm_v2.0_") {
+		t.Errorf("v2.0 Content-Disposition = %q", disposition)
+	}
+
+	rec := e.do("POST", "/api/v1/projects/import/odm?project_name=ODM%202%20Copy", exported.Body.String(), admin)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("import status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var report odmImportReport
+	e.decode(rec, &report)
+	if len(report.Problems) != 0 || report.RecordsAdded != 2 || report.RecordsFailed != 0 {
+		t.Fatalf("v2.0 import report = %+v", report)
+	}
+
+	wantDesign, gotDesign := e.designDump(sourceID), e.designDump(report.ProjectID)
+	if strings.Join(wantDesign, "\n") != strings.Join(gotDesign, "\n") {
+		t.Errorf("v2.0 round-trip design differs:\n source: %v\n copy:   %v", wantDesign, gotDesign)
+	}
+	wantValues, gotValues := e.valueDump(sourceID), e.valueDump(report.ProjectID)
+	if strings.Join(wantValues, "\n") != strings.Join(gotValues, "\n") {
+		t.Errorf("v2.0 round-trip values differ:\n source: %v\n copy:   %v", wantValues, gotValues)
+	}
+	var exportDetails []map[string]any
+	for i := 0; i < 50 && len(exportDetails) == 0; i++ {
+		time.Sleep(20 * time.Millisecond)
+		exportDetails = e.auditDetails(audit.ODMExport, sourceID)
+	}
+	if len(exportDetails) != 1 || exportDetails[0]["odm_version"] != "2.0" {
+		t.Errorf("v2.0 export audit details = %+v", exportDetails)
+	}
+	if details := e.auditDetails(audit.ODMImport, report.ProjectID); len(details) != 1 || details[0]["odm_version"] != "2.0" {
+		t.Errorf("v2.0 import audit details = %+v", details)
+	}
+}
+
+func TestExportODMRejectsUnknownVersion(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("odm-invalid-version@example.org")
+	projectID := e.mustProject("Invalid ODM version")
+
+	rec := e.do("GET", "/api/v1/projects/"+itoa(projectID)+"/export/odm?odm_version=3.0", nil, admin)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+	if n := e.auditCount(audit.ODMExport, projectID); n != 0 {
+		t.Errorf("invalid export wrote %d audit rows", n)
+	}
+}

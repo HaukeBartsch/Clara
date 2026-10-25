@@ -139,10 +139,18 @@ $multiArm = count($arms) > 1;
     <div class="card card-body mt-4 clara-odm-export">
         <h2 class="h6 mb-1"><?= View::e($view->t('export.odm_title')) ?></h2>
         <p class="text-body-secondary small mb-3"><?= View::e($view->t('export.odm_intro')) ?></p>
-        <div>
-            <a class="btn btn-sm btn-outline-primary" data-clara-odm-download
-               href="<?= View::e($exportUrl . '?download=odm') ?>"><?= View::e($view->t('export.odm_download')) ?></a>
-        </div>
+        <form method="get" action="<?= View::e($exportUrl) ?>" class="d-flex flex-wrap align-items-end gap-2">
+            <input type="hidden" name="download" value="odm">
+            <div>
+                <label class="form-label small mb-1" for="export-odm-version"><?= View::e($view->t('export.odm_version')) ?></label>
+                <select class="form-select form-select-sm" id="export-odm-version" name="odm_version">
+                    <?php foreach ($odmVersions as $version): ?>
+                        <option value="<?= View::e($version) ?>"<?= $version === $odmVersion ? ' selected' : '' ?>><?= View::e($view->t('export.odm_version.' . str_replace('.', '_', $version))) ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <button class="btn btn-sm btn-outline-primary" type="submit" data-clara-odm-download><?= View::e($view->t('export.odm_download')) ?></button>
+        </form>
     </div>
 <?php endif; ?>
 

@@ -35,6 +35,7 @@ use Clara\StreamSink;
 final class ExportController extends ProjectPageController
 {
     public const FORMATS = ['csv', 'json'];
+    public const ODM_VERSIONS = ['1.3', '2.0'];
     public const VALUES = ['raw', 'label'];
     public const HEADERS = ['raw', 'label', 'both'];
 
@@ -71,12 +72,20 @@ final class ExportController extends ProjectPageController
         $projectId = $this->projectIdOf($detail);
         $arms = self::exportableArms($detail, $permissions);
 
+        $requestedODMVersion = $this->request->query('odm_version');
+        $selectedODMVersion = in_array($requestedODMVersion, self::ODM_VERSIONS, true)
+            ? $requestedODMVersion
+            : '1.3';
         if ($this->request->query('download') === 'odm') {
             if (!Session::isAdmin()) {
                 throw new ApiException('forbidden', '', 403);
             }
 
-            return $this->downloadODM($projectId, $this->projectName($detail));
+            return $this->downloadODM(
+                $projectId,
+                $this->projectName($detail),
+                $requestedODMVersion === '' ? '1.3' : $requestedODMVersion
+            );
         }
         if ($this->request->query('download') === '1') {
             return $this->download($projectId, $this->projectName($detail), $arms);
@@ -88,6 +97,8 @@ final class ExportController extends ProjectPageController
         return $this->renderSection($detail, 'project/export', 'export.title', [
             'exportUrl' => '/projects/' . $projectId . '/export',
             'isAdmin' => Session::isAdmin(),
+            'odmVersions' => self::ODM_VERSIONS,
+            'odmVersion' => $selectedODMVersion,
             'arms' => $arms,
             'level' => self::appliedLevel($arms),
             // Pairs the member may not export: stated on the card rather than hidden
@@ -328,14 +339,15 @@ final class ExportController extends ProjectPageController
     }
 
     /** The installation-admin-only project interchange download (REQ-ODM-005). */
-    private function downloadODM(int $projectId, string $projectName): Response
+    private function downloadODM(int $projectId, string $projectName, string $version): Response
     {
         $back = '/projects/' . $projectId . '/export';
         $path = '/api/v1/projects/' . $projectId . '/export/odm';
+        $query = ['odm_version' => $version];
 
-        return Response::stream(function (StreamSink $sink) use ($path, $back, $projectName): void {
+        return Response::stream(function (StreamSink $sink) use ($path, $query, $back, $projectName): void {
             try {
-                $this->api->stream($path, [],
+                $this->api->stream($path, $query,
                     static function (int $status, array $upstream) use ($sink, $projectName): void {
                         Session::close();
                         $sink->begin(200, [

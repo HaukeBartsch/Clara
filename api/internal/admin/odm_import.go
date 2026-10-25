@@ -1,7 +1,7 @@
 package admin
 
 // POST /api/v1/projects/import/odm (REQ-API-170, Design/ODM_Interchange_Design.md
-// §6.2, §7): an ODM 1.3 document becomes a **new** project — its structure in one
+// §6.2, §7): an ODM 1.3 or 2.0 document becomes a **new** project — its structure in one
 // transaction, its records one transaction each afterwards.
 //
 // The importer orchestrates; it decides nothing that another component owns. The
@@ -40,6 +40,7 @@ import (
 type odmImportReport struct {
 	ProjectID      int64        `json:"project_id"`
 	ProjectName    string       `json:"project_name"`
+	ODMVersion     string       `json:"-"`
 	DryRun         bool         `json:"dry_run"`
 	Arms           int          `json:"arms"`
 	Events         int          `json:"events"`
@@ -161,6 +162,7 @@ func (h *Handler) importODM(w http.ResponseWriter, r *http.Request) {
 
 	report := &odmImportReport{
 		ProjectName: name,
+		ODMVersion:  doc.version,
 		DryRun:      dryRun,
 		Arms:        len(plan.design.Arms),
 		Events:      plan.design.totalEvents(),
@@ -1182,6 +1184,7 @@ func (h *Handler) auditODMImport(ctx context.Context, u *db.User, report *odmImp
 		ProjectID: report.ProjectID, // 0 for a dry run: there is no project to name
 		Details: map[string]any{
 			"project_id":     report.ProjectID,
+			"odm_version":    report.ODMVersion,
 			"dry_run":        report.DryRun,
 			"arms":           report.Arms,
 			"events":         report.Events,

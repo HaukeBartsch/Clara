@@ -8,7 +8,7 @@
 
 Fixes the element-level mapping between CLARA's project structure / record data and CDISC ODM XML in both directions, the CLARA extension namespace, the way this format reaches the sensitivity pipeline without re-implementing it, and the import build order. It is normative for the mapping tables (§3, §4), the extension vocabulary (§5), the integration points (§6), the problem codes (§7) and the loss list (§8).
 
-Element and attribute spellings below follow **CDISC ODM 1.3.2** (`ODM1-3-2-foundation.xsd`, namespace `http://www.cdisc.org/ns/odm/v1.3`) as published, notably where later editions or common paraphrase differ: the root carries `FileOID` (not `ODID`), an item is referenced by `ItemData/@ItemOID` (not `@Name`), a codelist attaches through the child `CodeListRef` (there is no `codelistOID` attribute on `ItemDef`), 1.3.2 has no `NullFlavor`, and a method's body is `FormalExpression` (not `Formulation`). A deviation from this document is a requirements-level change (AGENTS.md).
+Element and attribute spellings below follow **CDISC ODM 1.3.2** (`ODM1-3-2-foundation.xsd`, namespace `http://www.cdisc.org/ns/odm/v1.3`) for the 1.3 dialect, notably where later editions or common paraphrase differ: the root carries `FileOID` (not `ODID`), an item is referenced by `ItemData/@ItemOID` (not `@Name`), a codelist attaches through the child `CodeListRef` (there is no `codelistOID` attribute on `ItemDef`), 1.3.2 has no `NullFlavor`, and a method's body is `FormalExpression` (not `Formulation`). The same mapped content is emitted in the ODM 2.0 namespace with `ODMVersion="2.0"`; import chooses the dialect from the root namespace. A deviation from this document is a requirements-level change (AGENTS.md).
 
 ## 2. Document Envelope
 
@@ -39,7 +39,7 @@ Element and attribute spellings below follow **CDISC ODM 1.3.2** (`ODM1-3-2-foun
 
 Rules:
 
-- **Attribute values.** `FileOID` = `CLARA-<project_id>-<UTC creation stamp>` (unique per download, not reused); `CreationDateTime` UTC with the `Z` suffix (GD-7); `FileType="Snapshot"` always (ASM-ODM-1); `ODMVersion="1.3.2"`; `SourceSystem="CLARA"`. No `Granularity`, `Archival` or `PriorFileOID` is written.
+- **Attribute values.** `FileOID` = `CLARA-<project_id>-<UTC creation stamp>` (unique per download, not reused); `CreationDateTime` UTC with the `Z` suffix (GD-7); `FileType="Snapshot"` always (ASM-ODM-1); `ODMVersion="1.3.2"` in the v1.3 namespace or `"2.0"` in the v2.0 namespace; `SourceSystem="CLARA"`. No `Granularity`, `Archival` or `PriorFileOID` is written. The export choice defaults to 1.3; `odm_version=1.3|2.0` selects the namespace and matching envelope version. Import accepts both namespaces.
 - **OID scheme (O-1).** Every OID is derived from the CLARA name it stands for, never from a database id, so two exports of the same project agree and a partner's mappings survive a reload:
 
   | Object | OID | Name |
@@ -248,7 +248,7 @@ Report shape (both calls' import answer; mirrors the instrument import's `import
 
 | Code | Level | Meaning |
 |---|---|---|
-| `not_odm` | fatal | root element or namespace is not ODM 1.3 (REQ-ODM-011) |
+| `not_odm` | fatal | root element is not `ODM`, or namespace is neither supported ODM 1.3 nor 2.0 (REQ-ODM-011) |
 | `dtd_forbidden` | fatal | a `DOCTYPE` or entity declaration is present (REQ-ODM-013) |
 | `too_deep`, `too_large` | fatal | structural bound exceeded (§9, REQ-ODM-014) |
 | `duplicate_oid`, `dangling_ref`, `empty_itemgroup`, `no_metadataversion` | fatal | self-contradictory document (REQ-ODM-054) |

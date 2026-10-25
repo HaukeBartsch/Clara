@@ -22,6 +22,9 @@ const (
 	// document (REQ-ODM-010).
 	odmVersion = "1.3.2"
 
+	odm20Namespace = "http://www.cdisc.org/ns/odm/v2.0"
+	odm20Version   = "2.0"
+
 	// claraExtNamespace carries what ODM has no element for — branching logic,
 	// the sensitivity flags, transfer instructions (§5, DEV-ODM-3). A conforming
 	// reader ignores it; a missing one means CLARA's own defaults (REQ-ODM-052).
@@ -36,6 +39,23 @@ const (
 	// long names never collide (O-1).
 	odmOIDLimit = 200
 )
+
+type odmDialect struct {
+	selection string
+	namespace string
+	version   string
+}
+
+func odmDialectForVersion(version string) (odmDialect, bool) {
+	switch version {
+	case "", "1.3":
+		return odmDialect{selection: "1.3", namespace: odmNamespace, version: odmVersion}, true
+	case "2.0":
+		return odmDialect{selection: "2.0", namespace: odm20Namespace, version: odm20Version}, true
+	default:
+		return odmDialect{}, false
+	}
+}
 
 // odmLocalName maps a CLARA name onto the character set an OID accepts. CLARA
 // field names are already lower-case alnum plus underscore, so this is the

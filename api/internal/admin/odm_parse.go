@@ -31,6 +31,7 @@ import (
 // download, not a project (REQ-ODM-011), and the audit line records the request's
 // own counts (§9).
 type odmDoc struct {
+	version      string
 	study        *odmStudy
 	subjects     []*odmSubject
 	subjectOrder []string // SubjectKey in first-appearance order
@@ -169,10 +170,11 @@ type odmItemValue struct {
 // every token the reader hands out — including the ones inside a subtree it is
 // skipping — so an unbounded-depth document is refused rather than walked.
 type odmReader struct {
-	dec      *xml.Decoder
-	depth    int
-	problems *odmProblems
-	oids     map[string]string // every OID the document declared, against its kind
+	dec       *xml.Decoder
+	depth     int
+	problems  *odmProblems
+	oids      map[string]string // every OID the document declared, against its kind
+	namespace string
 
 	// protocolRefs collects Protocol/StudyEventRef targets to check once the event
 	// definitions are all in: a reference may point forward, as ODM allows.
@@ -266,8 +268,14 @@ func odmParseDocument(body []byte, problems *odmProblems) (*odmDoc, error) {
 		}
 		if start.Name.Local != "ODM" || !odmNamespaceAccepted(start.Name.Space) {
 			return doc, r.fatal("not_odm", fmt.Sprintf(
-				"the document's root is %q in namespace %q; CLARA reads ODM 1.3 documents in %s",
-				start.Name.Local, start.Name.Space, odmNamespace))
+				"the document's root is %q in unsupported namespace %q",
+				start.Name.Local, start.Name.Space))
+		}
+		r.namespace = start.Name.Space
+		if r.namespace == odmNamespace {
+			doc.version = "1.3"
+		} else {
+			doc.version = "2.0"
 		}
 		if err := r.enter(); err != nil {
 			return doc, err
@@ -312,11 +320,9 @@ func odmParseDocument(body []byte, problems *odmProblems) (*odmDoc, error) {
 	}
 }
 
-// odmNamespaceAccepted is the dialect test: ODM 1.3's namespace, which 1.3.2
-// documents share (REQ-ODM-010/011). An empty space is accepted only for a child
-// element that inherits the root's declaration — the root itself must state it.
+// odmNamespaceAccepted is the dialect test for the ODM roots CLARA supports.
 func odmNamespaceAccepted(space string) bool {
-	return space == odmNamespace
+	return space == odmNamespace || space == odm20Namespace
 }
 
 // odmLocal is the element name with any namespace prefix resolved away: CLARA
@@ -1111,7 +1117,7 @@ func (r *odmReader) parseItemGroupData(el xml.StartElement) (*odmGroupData, erro
 // as ODM's own unmodelled ones — named, never silently dropped (REQ-ODM-053).
 func (r *odmReader) ignoreElement(el xml.StartElement, where string) error {
 	name := odmLocal(el.Name)
-	if el.Name.Space != "" && el.Name.Space != odmNamespace {
+	if el.Name.Space != "" && el.Name.Space != r.namespace {
 		r.problems.add("", "", "element_ignored",
 			fmt.Sprintf("%s/%s in namespace %s is not read (REQ-ODM-053)", where, name, el.Name.Space))
 	} else {

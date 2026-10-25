@@ -1117,6 +1117,29 @@ A project on this platform should be exportable to, and importable from, CDISC O
 
 The file carries both halves ODM defines for this: the metadata (the study, its events, its instruments and fields with their choice lists) and the clinical data (each record's values, grouped by event and by repeat instance). Import creates a new project from such a file; it never rewrites an existing one.
 
-This is an administrator's function, not an ordinary member's: a whole-study interchange file is a bulk copy of everything a study holds, in or out. On the project's Export page, installation administrators can export the project and data as CDISC ODM XML; project members do not see that control. In the Control Panel's New Project flow, an administrator can import an ODM XML file as a new project. The administrator supplies the new project's name, supporting institution, investigator, and other project metadata on the page; those entries take precedence over metadata in the file. The two tabular export formats above (CSV raw, CSV labels) are unchanged and stay what every REDCap-compatible caller sees.
+This is an administrator's function, not an ordinary member's: a whole-study interchange file is a bulk copy of everything a study holds, in or out. On the project's Export page, installation administrators can select ODM 1.3 or 2.0 and export the project and data as CDISC ODM XML; ODM 1.3 remains available and is selected by default. Project members do not see that control. In the Control Panel's New Project flow, an administrator can import an ODM 1.3 or 2.0 XML file as a new project; the importer detects the version from the document. The administrator supplies the new project's name, supporting institution, investigator, and other project metadata on the page; those entries take precedence over metadata in the file. The two tabular export formats above (CSV raw, CSV labels) are unchanged and stay what every REDCap-compatible caller sees.
 
-**Status:** Implemented on the administration API and administrator-only web UI — `GET /api/v1/projects/{id}/export/odm` and `POST /api/v1/projects/import/odm`, both restricted to an installation administrator (REQ-ODM-001/002, routes in `Design/API_Endpoints_Design.md` §4.29). The Export page provides ODM download, and the Control Panel's New Project flow provides ODM import and project metadata entry (REQ-ODM-005/006). Mapping, dialect and losses are normative in `Design/ODM_Interchange_Design.md`; the format's own requirements are `Requirements/ODM_Interchange_Requirements.md`. Import creates a new project rather than updating one through the staging set (DEV-ODM-4). DEV-ODM-1 records that ODM is a third format beside the two named above; DEV-ODM-3 that CLARA-only design attributes (branching logic, the sensitivity flags, transfer instructions) travel in a private extension namespace because ODM has no element for them.
+**Status:** Implemented on the administration API and administrator-only web UI — `GET /api/v1/projects/{id}/export/odm` and `POST /api/v1/projects/import/odm`, both restricted to an installation administrator (REQ-ODM-001/002, routes in `Design/API_Endpoints_Design.md` §4.29). The Export page provides ODM 1.3 and 2.0 selection, and the Control Panel's New Project flow imports either version and provides project metadata entry (REQ-ODM-005/006/064). Mapping, dialect and losses are normative in `Design/ODM_Interchange_Design.md`; the format's own requirements are `Requirements/ODM_Interchange_Requirements.md`. Import creates a new project rather than updating one through the staging set (DEV-ODM-4). DEV-ODM-1 records that ODM is a third format beside the two named above; DEV-ODM-3 that CLARA-only design attributes (branching logic, the sensitivity flags, transfer instructions) travel in a private extension namespace because ODM has no element for them.
+
+
+## LOINC, HL7 messages and BioPortal - integration with ontologies
+
+Additional identifiers either on the level of instrument or field. Consist of a i) code, ii) a human readable sentence and iii) the ontology this code comes from (like LN for LOINC).
+
+A field and its value (observation) can therefor be represented in HL7 as (local representation and LOINC code equivalents):
+
+```
+OBX||age^Age inside this project^OUS|21612-7^Age^LN||42||
+```
+
+Clara should assume a 2-stage process. First a study defines its internal, hospital specific codes, collect data etc.. As an addon Clara should allow users to enrich their projects data model by identifying external codes (e.g. from LOINC on BioPortal) that are sufficiently similar to the internal codes. Assume that such a mapping of internal to external codes may need qualifiers, document these as a commentary (notes specific to a mapping with author and date).
+
+Make this information exportable as an accessory project file.
+
+## FHIR
+
+Clara should be able to work as a FHIR server (sending content to recipients) and as a FHIR client (receiving data through FHIR connections).
+
+## Stress test button in Monitoring
+
+The stress test should be able to run several times. In successive runs the already setup projects should be used and new records should be added only.

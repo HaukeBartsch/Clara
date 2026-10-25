@@ -564,7 +564,7 @@ return [
     'admin.projects.create' => 'New project',
     'admin.projects.create_submit' => 'Create project',
     'admin.projects.import' => 'Import project',
-    'admin.projects.import_intro' => 'Create a new project from a CDISC ODM XML file up to 31 MiB. The entries below will be used for the imported project metadata.',
+    'admin.projects.import_intro' => 'Create a new project from a CDISC ODM 1.3 or 2.0 XML file up to 31 MiB. The entries below will be used for the imported project metadata.',
     'admin.projects.import_file' => 'CDISC ODM XML file',
     'admin.projects.import_submit' => 'Import project',
     'admin.projects.imported' => 'Project {name} imported: {added} records added, {updated} updated, {failed} failed; {issues} import notes.',
@@ -1263,6 +1263,9 @@ return [
     'export.dictionary_download' => 'Download data dictionary',
     'export.odm_title' => 'CDISC project interchange',
     'export.odm_intro' => 'Export the project structure and data as a CDISC ODM XML file. The export is recorded in the audit log.',
+    'export.odm_version' => 'ODM version',
+    'export.odm_version.1_3' => 'ODM 1.3',
+    'export.odm_version.2_0' => 'ODM 2.0',
     'export.odm_download' => 'Export project as CDISC ODM',
     'export.none_here' => 'None of this project\'s instruments at their events are open to you for export. Ask a project administrator for an export.',
     // Stated on the card rather than hidden (§6.4, REQ-UI-020): a partly permitted

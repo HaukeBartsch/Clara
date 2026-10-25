@@ -1,7 +1,7 @@
 package admin
 
 // GET /api/v1/projects/{id}/export/odm (REQ-API-169, Design/ODM_Interchange_Design.md):
-// the project as one CDISC ODM 1.3 document — Study + MetaDataVersion describing
+// the project as one CDISC ODM document — Study + MetaDataVersion describing
 // the current design, then ClinicalData carrying the records — streamed, an
 // installation administrator's route (REQ-ODM-002).
 //
@@ -46,6 +46,11 @@ const (
 func (h *Handler) exportODM(w http.ResponseWriter, r *http.Request) {
 	u, ok := requireAdmin(w, r) // REQ-ODM-002: above project_admin, a whole study in one file
 	if !ok {
+		return
+	}
+	dialect, ok := odmDialectForVersion(r.URL.Query().Get("odm_version"))
+	if !ok {
+		errBadRequest(w, "odm_version must be 1.3 or 2.0")
 		return
 	}
 	projectID, ok := pathID(r, "id")
@@ -152,7 +157,7 @@ func (h *Handler) exportODM(w http.ResponseWriter, r *http.Request) {
 	if !plan.identifierDelivered {
 		w.Header().Set("X-CLARA-ODM-Key", "surrogate")
 	}
-	counts := newODMCounts()
+	counts := newODMCounts(dialect.selection)
 
 	status, rows, err := h.Data.RunExportRows(ctx, dataapi.ExportSpec{
 		ProjectID:      projectID,
@@ -195,12 +200,12 @@ func (h *Handler) exportODM(w http.ResponseWriter, r *http.Request) {
 	schemaVersion := strconv.Itoa(schema)
 	now := time.Now().UTC()
 	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
-	w.Header().Set("Content-Disposition", `attachment; filename="`+odmFilename(project.ProjectName, now)+`"`)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+odmFilename(project.ProjectName, now, dialect.selection)+`"`)
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 
 	enc := odmWriter{enc: xml.NewEncoder(w)}
-	if err := writeODMRoot(enc, plan, now, schemaVersion); err != nil {
+	if err := writeODMRoot(enc, plan, now, schemaVersion, dialect); err != nil {
 		return // a broken pipe is the client leaving; there is nothing to answer
 	}
 	if err := plan.writeMetadata(enc); err != nil {
@@ -222,12 +227,15 @@ func (h *Handler) exportODM(w http.ResponseWriter, r *http.Request) {
 // read by the audit hook once the row stream has settled.
 type odmCounts struct {
 	mu      sync.Mutex
+	version string
 	records int
 	items   int
 	skipped map[string]bool
 }
 
-func newODMCounts() *odmCounts { return &odmCounts{skipped: map[string]bool{}} }
+func newODMCounts(version string) *odmCounts {
+	return &odmCounts{version: version, skipped: map[string]bool{}}
+}
 
 func (c *odmCounts) addRecord() { c.mu.Lock(); c.records++; c.mu.Unlock() }
 func (c *odmCounts) addItem(n int) {
@@ -248,6 +256,7 @@ func (c *odmCounts) details() map[string]any {
 	defer c.mu.Unlock()
 	return map[string]any{
 		"surface":         "api", // the administration surface, as §3.5 spells it
+		"odm_version":     c.version,
 		"records":         c.records,
 		"items":           c.items,
 		"skipped_columns": len(c.skipped),
@@ -258,17 +267,17 @@ func (c *odmCounts) details() map[string]any {
 // the envelope attributes of §2. The namespace is declared here once, so every
 // element below it inherits it, and the XML declaration carries no byte-order
 // mark (REQ-EXP-016 keeps that to the browser's CSV download).
-func writeODMRoot(w odmWriter, plan *odmPlan, now time.Time, schemaVersion string) error {
+func writeODMRoot(w odmWriter, plan *odmPlan, now time.Time, schemaVersion string, dialect odmDialect) error {
 	if err := w.enc.EncodeToken(xml.ProcInst{Target: "xml", Inst: []byte(`version="1.0" encoding="UTF-8"`)}); err != nil {
 		return err
 	}
 	return w.start("ODM",
-		kv{"xmlns", odmNamespace},
+		kv{"xmlns", dialect.namespace},
 		kv{"xmlns:clara", claraExtNamespace},
 		kv{"FileOID", plan.fileOID(now)},
 		kv{"CreationDateTime", now.Format(time.RFC3339)},
 		kv{"FileType", "Snapshot"}, // CLARA writes snapshots (REQ-ODM-010, ASM-ODM-1)
-		kv{"ODMVersion", odmVersion},
+		kv{"ODMVersion", dialect.version},
 		kv{"SourceSystem", "CLARA"},
 		kv{"SourceSystemVersion", schemaVersion}) // the installation's data-format revision
 }
@@ -395,7 +404,7 @@ func (h *Handler) writeODMClinicalData(w odmWriter, plan *odmPlan, rows *dataapi
 
 // odmFilename is the download name: <project>_odm_<YYYY-MM-DD>.xml, built with the
 // data dictionary's sanitizer so a project name cannot smuggle a path (REQ-ODM-026).
-func odmFilename(projectName string, now time.Time) string {
+func odmFilename(projectName string, now time.Time, version string) string {
 	base := strings.Trim(unsafeFilename.ReplaceAllString(projectName, "_"), "._-")
 	if base == "" {
 		base = "project"
@@ -403,7 +412,11 @@ func odmFilename(projectName string, now time.Time) string {
 	if len(base) > 80 {
 		base = base[:80]
 	}
-	return base + "_odm_" + now.Format("2006-01-02") + ".xml"
+	versionLabel := ""
+	if version == "2.0" {
+		versionLabel = "v2.0_"
+	}
+	return base + "_odm_" + versionLabel + now.Format("2006-01-02") + ".xml"
 }
 
 func odmStart(name string, attrs ...kv) xml.StartElement {

@@ -343,6 +343,30 @@ describe('data dictionary download (REQ-UI-020, REQ-API-153)', function (): void
             assert_same($xml, $sink->body());
         });
 
+        it('offers both versions and forwards a v2.0 selection', function (): void {
+            sign_in(['is_admin' => 1]);
+            $xml = '<ODM xmlns="http://www.cdisc.org/ns/odm/v2.0" ODMVersion="2.0"/>';
+            api_route('/api/v1/projects/3/export/odm', $xml, 200, [
+                'Content-Type' => 'application/xml; charset=utf-8',
+                'Content-Disposition' => 'attachment; filename="8DISC_study_2026_odm_v2.0_2026-10-24.xml"',
+            ]);
+            m6_queue(m6_detail([1 => ['view_edit', 'export_full']]));
+
+            $body = m6_get('/projects/3/export')->body();
+            assert_contains('value="1.3" selected', $body);
+            assert_contains('value="2.0"', $body);
+
+            $sink = m6_stream(m6_get('/projects/3/export', ['download' => 'odm', 'odm_version' => '2.0']));
+            assert_same($xml, $sink->body());
+            assert_same('attachment; filename="8DISC_study_2026_odm_v2.0_2026-10-24.xml"', $sink->headers['Content-Disposition']);
+            $odmCalls = array_values(array_filter(
+                $GLOBALS['api_calls'],
+                static fn (array $call): bool => str_contains($call['url'], '/export/odm')
+            ));
+            assert_same(1, count($odmCalls));
+            assert_contains('odm_version=2.0', $odmCalls[0]['url']);
+        });
+
         it('refuses a direct ODM download by a non-administrator', function (): void {
             sign_in();
             m6_queue(m6_detail([1 => ['view_edit', 'export_full']]));
