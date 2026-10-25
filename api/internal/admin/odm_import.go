@@ -352,15 +352,16 @@ func (h *Handler) odmResolve(ctx context.Context, doc *odmDoc, name string, prob
 	// Instruments, from the forms (§3.3).
 	instrumentsByFormOID := map[string]*stagedInstrument{}
 	for i, def := range mdv.forms {
-		instName, renamed := odmSanitizeName(def.name, "instrument", i+1)
-		if renamed {
-			problems.add("", "", "name_renamed", fmt.Sprintf("the form %q is imported as %q", def.name, instName))
-		}
+		baseName, _ := importedInstrumentName(def.name, i+1)
+		instName := baseName
 		for n := 2; ; n++ {
 			if _, taken := d.instrumentByName(instName); !taken {
 				break
 			}
-			instName = fmt.Sprintf("%s_%d", odmBaseName(instName), n)
+			instName = numberedInstrumentName(baseName, n)
+		}
+		if instName != def.name {
+			problems.add("", "", "name_renamed", fmt.Sprintf("the form %q is imported as %q", def.name, instName))
 		}
 		inst := d.putInstrument(db.Instrument{
 			Name:           instName,
@@ -1257,10 +1258,12 @@ func applyProjectExtension(p *db.Project, attrs map[string]string) {
 	}
 }
 
-// odmSanitizeName repairs a name CLARA cannot store: field names are lower-case
-// alphanumerics and underscores, instrument names likewise, and an empty one is
-// invented rather than refused (the file came from somewhere else).
+// odmSanitizeName repairs field names the file came with. Instrument names use
+// the more permissive REQ-DB-011 contract shared with the dictionary importer.
 func odmSanitizeName(name, kind string, position int) (string, bool) {
+	if kind == "instrument" {
+		return importedInstrumentName(name, position)
+	}
 	original := strings.TrimSpace(name)
 	candidate := strings.ToLower(odmLocalName.ReplaceAllString(original, "_"))
 	candidate = strings.Trim(candidate, "_")
@@ -1271,10 +1274,6 @@ func odmSanitizeName(name, kind string, position int) (string, bool) {
 		candidate = candidate[:64]
 	}
 	return candidate, candidate != original
-}
-
-func odmBaseName(name string) string {
-	return strings.TrimSuffix(name, "_2")
 }
 
 // nullStrExt and nullIntExt read the extension's optional attributes.

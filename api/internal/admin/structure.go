@@ -1929,8 +1929,8 @@ func (h *Handler) createInstrument(w http.ResponseWriter, r *http.Request) {
 		Name *string `json:"name"`
 	}
 	raw, _ := json.Marshal(supplied)
-	if err := json.Unmarshal(raw, &body); err != nil || body.Name == nil || *body.Name == "" {
-		errBadRequest(w, "name is required")
+	if err := json.Unmarshal(raw, &body); err != nil || body.Name == nil || !validInstrumentName(*body.Name) {
+		errBadRequest(w, "name must contain 1 to 255 letters, digits, spaces or underscores")
 		return
 	}
 	name := *body.Name
@@ -2223,8 +2223,8 @@ func (h *Handler) updateInstrument(w http.ResponseWriter, r *http.Request) {
 		}
 		if raw, present := supplied["name"]; present {
 			var name string
-			if err := json.Unmarshal(raw, &name); err != nil || name == "" {
-				return validationf("name must be a non-empty string")
+			if err := json.Unmarshal(raw, &name); err != nil || !validInstrumentName(name) {
+				return validationf("name must contain 1 to 255 letters, digits, spaces or underscores")
 			}
 			if other, dup := d.instrumentByName(name); dup && other.ID != instID {
 				return conflictf("instrument '%s' already exists in this project", name)
@@ -2283,8 +2283,8 @@ func (h *Handler) updateInstrument(w http.ResponseWriter, r *http.Request) {
 	changes := map[string]any{}
 	if raw, present := supplied["name"]; present {
 		var name string
-		if err := json.Unmarshal(raw, &name); err != nil || name == "" {
-			errBadRequest(w, "name must be a non-empty string")
+		if err := json.Unmarshal(raw, &name); err != nil || !validInstrumentName(name) {
+			errBadRequest(w, "name must contain 1 to 255 letters, digits, spaces or underscores")
 			return
 		}
 		if name != inst.Name {

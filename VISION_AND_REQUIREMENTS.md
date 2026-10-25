@@ -537,6 +537,8 @@ The "record instrument" web view shows all fields for an instrument with values 
 
 In all projects there should always be at least one arm ("arm_1"), event ("baseline") and instrument ("instrument"). Adding, deleting and re-ordering of arms, events, and instruments should be possible. Re-ordering should not change the arm, instrument, or events {id}. If the user deletes the last instrument, only the fields in that instrument should be deleted. The instrument should be renamed to "instrument". It should not be possible to delete the last remaining arm or event but a) the arm is renamed to "arm_1" and the event is renamed to "baseline" and b) the events offset days are reset to 0 +-0.
 
+Instrument names may contain ASCII letters, digits, spaces and underscores, up to 255 characters.
+
 A new project should display only two fields in its first "instrument". The record_id field (always first field in first instrument) and the complete (instrument level) dropdown field, which is always the last field. Deleting the last remaining instrument should result in the same setup.
 
 ## Web interface generals
@@ -1121,6 +1123,8 @@ This is an administrator's function, not an ordinary member's: a whole-study int
 
 **Status:** Implemented on the administration API and administrator-only web UI — `GET /api/v1/projects/{id}/export/odm` and `POST /api/v1/projects/import/odm`, both restricted to an installation administrator (REQ-ODM-001/002, routes in `Design/API_Endpoints_Design.md` §4.29). The Export page provides ODM 1.3 and 2.0 selection, and the Control Panel's New Project flow imports either version and provides project metadata entry (REQ-ODM-005/006/064). Mapping, dialect and losses are normative in `Design/ODM_Interchange_Design.md`; the format's own requirements are `Requirements/ODM_Interchange_Requirements.md`. Import creates a new project rather than updating one through the staging set (DEV-ODM-4). DEV-ODM-1 records that ODM is a third format beside the two named above; DEV-ODM-3 that CLARA-only design attributes (branching logic, the sensitivity flags, transfer instructions) travel in a private extension namespace because ODM has no element for them.
 
+Feature: ODM supports versions 1.3 and 2.0. Allow the user to export a project without exporting the already collected records.
+
 
 ## LOINC, HL7 messages and BioPortal - integration with ontologies
 
@@ -1143,3 +1147,7 @@ Clara should be able to work as a FHIR server (sending content to recipients) an
 ## Stress test button in Monitoring
 
 The stress test should be able to run several times. In successive runs the already setup projects should be used and new records should be added only.
+
+## Micro-Animations
+
+Subtle hover effects, smooth scroll transitions, and gentle feedback on buttons make the experience feel tactile and alive

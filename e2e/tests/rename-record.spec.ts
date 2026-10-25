@@ -1,9 +1,9 @@
 import { expect, test, type Page } from "@playwright/test"
 
-// An imported instrument renamed to uppercase, end to end: a REDCap instrument export (.zip with
+// An imported instrument renamed with spaces and mixed case, end to end: a REDCap instrument export (.zip with
 // instrument.csv + OriginID.txt) is imported into a fresh project, the record identifier moves
 // back out of the empty first instrument into the imported one (REQ-UI-056), `instrument` goes
-// empty and is removed, the surviving instrument is renamed by uppercasing its name (§7.1), the
+// empty and is removed, the surviving instrument keeps spaces and mixed case (§7.1), the
 // acting user gets permissions, the instrument maps to baseline and a first record is entered on
 // it — which works whatever the case of the instrument name: neither event nor instrument names
 // carry a case rule (REQ-DB-011); lower-case belongs to field names (REQ-DB-013). This last save
@@ -18,11 +18,12 @@ const HEADER =
 
 const SERIES =
   HEADER +
-  'series_uid,series,,text,"Series Instance UID",,,,,,,,,,,,,\n' +
-  'series_title,series,,text,"Series title",,,,,,,,,,,,,\n' +
-  'series_kind,series,,dropdown,"Modality","MR, Magnetic resonance | CT, Computed tomography",,,,,,,,,,,,\n'
+  'series_uid,"Series Data",,text,"Series Instance UID",,,,,,,,,,,,,\n' +
+  'series_title,"Series Data",,text,"Series title",,,,,,,,,,,,,\n' +
+  'series_kind,"Series Data",,dropdown,"Modality","MR, Magnetic resonance | CT, Computed tomography",,,,,,,,,,,,\n'
 
-const FORM = "series" // the dictionary's one Form Name; renamed to FORM.toUpperCase() below
+const FORM = "Series Data" // the dictionary's one Form Name; renamed again below
+const RENAMED = "Series Data_2026"
 
 // A minimal ZIP writer: STORED entries only — an uncompressed instrument.csv keeps the fixture
 // readable here, and archive/zip accepts stored entries like any other.
@@ -94,7 +95,7 @@ async function signInAsAdmin(page: Page): Promise<void> {
 const success = (page: Page) => page.locator(".alert-success").last()
 const fieldOrder = (page: Page) => page.locator("table.clara-fields tbody tr[data-field]")
 
-test.describe("an imported instrument renamed to uppercase (REQ-UI-053, REQ-UI-056)", () => {
+test.describe("an imported instrument with spaces in its name (REQ-UI-053, REQ-UI-056)", () => {
   test.skip(!process.env.CLARA_WEB_URL, "CLARA_WEB_URL not set — no running web/ application to drive")
 
   test("import a .zip, move the identifier back, drop `instrument`, rename, map and enter a record", async ({ page }) => {
@@ -160,13 +161,12 @@ test.describe("an imported instrument renamed to uppercase (REQ-UI-053, REQ-UI-0
     // The imported instrument is the first instrument now — its first field holds GD-8.
     await expect(page.locator("table[data-instrument], tr[data-instrument]")).toHaveCount(1)
 
-    // --- rename by switching the name to uppercase (§7.1, REQ-API-128) ---
-    const upper = FORM.toUpperCase()
+    // --- rename with spaces, mixed case and an underscore (§7.1, REQ-API-130) ---
     await page.locator(`tr[data-instrument="${FORM}"]`).getByRole("link", { name: "Edit" }).click()
-    await page.fill("#instrument-edit-name", upper)
+    await page.fill("#instrument-edit-name", RENAMED)
     await page.locator("#instrument-edit button[type=submit]").click()
-    await expect(success(page)).toContainText(`Instrument "${upper}" updated.`)
-    await expect(page.locator(`tr[data-instrument="${upper}"]`)).toHaveCount(1)
+    await expect(success(page)).toContainText(`Instrument "${RENAMED}" updated.`)
+    await expect(page.locator(`tr[data-instrument="${RENAMED}"]`)).toHaveCount(1)
 
     // --- permissions for the acting user (§8.6, REQ-AUTH-022): a member with no role holds full
     //     permissions; membership is also what issues the token data entry needs (REQ-API-102) ---
@@ -179,18 +179,18 @@ test.describe("an imported instrument renamed to uppercase (REQ-UI-053, REQ-UI-0
     // --- assign the renamed instrument to baseline (§6.2 block D) ---
     await page.locator("#clara-nav").getByRole("link", { name: "Setup" }).click()
     const matrix = page.locator('form.clara-mapping[data-arm="1"]')
-    const pair = matrix.locator(`input[data-pair="${upper}|baseline_arm_1"]`)
+    const pair = matrix.locator(`input[data-pair="${RENAMED}|baseline_arm_1"]`)
     if (!(await pair.isChecked())) await pair.check()
     await matrix.locator("button[type=submit]").click()
     await expect(success(page)).toContainText("Instrument assignment of arm 1 saved.")
 
     // --- the first record (REQ-UI-052 manual naming): opened on the renamed instrument, filled
-    //     and saved — the save posts instrument=SERIES and stores like any other name ---
+    //     and saved — the save posts the instrument name with spaces and stores it ---
     await page.locator("#clara-nav").getByRole("link", { name: "Record Status Dashboard" }).click()
     await page.fill("#new-record-id", "UP001")
     await page.getByRole("button", { name: "Create" }).click()
     await expect(page).toHaveURL(/\/records\/UP001/)
-    await page.locator(`.clara-instrument-nav [data-clara-instrument="${upper}"] a.nav-link`).click()
+    await page.locator(`.clara-instrument-nav [data-clara-instrument="${RENAMED}"] a.nav-link`).click()
 
     const form = page.locator("form[data-clara-record-form]")
     // The identifier is shown, never edited (GD-8): the record's own name in a read-only input.

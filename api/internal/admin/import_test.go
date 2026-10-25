@@ -249,6 +249,55 @@ project_contact_email,projects,,text,"Email",,,email,,,y,,,,,,,
 project_phone,projects,,text,"Phone",,,phone,,,,,,,,,,
 `
 
+func TestImportInstrumentNames(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("instrument-names@example.org")
+	pathFor := func(name string) string {
+		return "/api/v1/projects/" + itoa(e.createProjectViaAPI(admin, "Instrument name "+name[:min(len(name), 12)])) + "/instruments/import"
+	}
+	importCSV := func(path, form string) importResult {
+		t.Helper()
+		csv := redcapHeader +
+			"record_id," + form + ",,text,Record ID,,,,,,,,,,,,,\n" +
+			"age," + form + ",,text,Age,,,,,,,,,,,,,\n"
+		rec := e.do("POST", path, importRequest(false, importFile{"names.csv", []byte(csv)}), admin)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("import instrument %q: %d %s", form, rec.Code, rec.Body.String())
+		}
+		var result importResult
+		e.decode(rec, &result)
+		return result
+	}
+
+	paddedName := " Incoming Studies_2026 "
+	result := importCSV(pathFor("Padded Name"), paddedName)
+	if len(result.Instruments) != 2 || result.Instruments[1].Name != paddedName || result.Instruments[1].RenamedFrom != nil {
+		t.Fatalf("valid instrument name with spaces was changed: %+v", result.Instruments)
+	}
+
+	maxName := "Mixed Name_2026 " + strings.Repeat("A", 255-len("Mixed Name_2026 "))
+	result = importCSV(pathFor(maxName), maxName)
+	if len(result.Instruments) != 2 || result.Instruments[1].Name != maxName || result.Instruments[1].RenamedFrom != nil {
+		t.Fatalf("255-character instrument name changed: %+v", result.Instruments)
+	}
+
+	overlong := strings.Repeat("B", 256)
+	result = importCSV(pathFor(overlong), overlong)
+	if len(result.Instruments) != 2 || result.Instruments[1].Name != strings.Repeat("B", 255) {
+		t.Fatalf("overlong instrument name was not bounded to 255 characters: %+v", result.Instruments)
+	}
+	if result.Instruments[1].RenamedFrom == nil || *result.Instruments[1].RenamedFrom != overlong {
+		t.Fatalf("overlong instrument name has no source name in result: %+v", result.Instruments[1])
+	}
+	var warned bool
+	for _, warning := range result.Warnings {
+		warned = warned || warning.Code == "renamed"
+	}
+	if !warned {
+		t.Fatalf("overlong instrument name has no rename warning: %+v", result.Warnings)
+	}
+}
+
 func TestImportConversion(t *testing.T) {
 	e := newEnv(t)
 	admin := e.mustAdmin("admin@example.org")

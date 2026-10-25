@@ -23,6 +23,7 @@ This document outlines how a CLARA **project** — one study's structure and rec
 - Structure first, atomically: project row, arms, events, instruments, fields, mapping, repeat flags in one transaction — no half-built project (REQ-ODM-040).
 - Records second, one transaction per record, each keeping or failing on its own, exactly as the data import path behaves (REQ-ODM-041).
 - The importer selects the dialect from the root namespace and accepts both 1.3 and 2.0; the same project structure/value round trip applies to either (REQ-ODM-011/050/064, DEV-ODM-7).
+- Instrument names matching REQ-DB-011 are preserved; invalid or overlong ODM form names are normalized to that contract, with a `name_renamed` warning (REQ-ODM-050).
 - Nothing is trusted because it arrived in an ODM document: type and choice validation, date canonicalization, content policy and length bounds all run as on any other write (REQ-ODM-042), and no expression in the file is ever executed (REQ-ODM-047).
 - The new project's name comes from the request or `StudyName`; a collision is 409, never a rename of an existing project (REQ-ODM-044). Values entered in the import form override matching project metadata from the ODM extension; optional blanks clear those values (REQ-ODM-006).
 

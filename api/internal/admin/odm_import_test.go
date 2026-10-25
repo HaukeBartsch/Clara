@@ -286,6 +286,53 @@ func tinyRecords(key, age string) string {
 </ClinicalData>`
 }
 
+func TestImportODMInstrumentNames(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("odm-instrument-names@example.org")
+	tests := []struct {
+		name    string
+		want    string
+		renamed bool
+	}{
+		{
+			name: "Mixed Name_2026 " + strings.Repeat("A", 255-len("Mixed Name_2026 ")),
+			want: "Mixed Name_2026 " + strings.Repeat("A", 255-len("Mixed Name_2026 ")),
+		},
+		{
+			name:    strings.Repeat("B", 256),
+			want:    strings.Repeat("B", 255),
+			renamed: true,
+		},
+	}
+	for i, tt := range tests {
+		doc := strings.Replace(
+			tinyODM(tinyRecords("S1", "40")),
+			`<FormDef OID="FRM_form" Name="form">`,
+			`<FormDef OID="FRM_form" Name="`+tt.name+`">`,
+			1,
+		)
+		rec := e.do("POST", "/api/v1/projects/import/odm?project_name=Instrument+name+"+itoa(int64(i+1)), doc, admin)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("import instrument name %q: %d %s", tt.name, rec.Code, rec.Body.String())
+		}
+		var report odmImportReport
+		e.decode(rec, &report)
+		instruments := e.do("GET", "/api/v1/projects/"+itoa(report.ProjectID)+"/instruments", nil, admin)
+		var got []instrumentObject
+		e.decode(instruments, &got)
+		if len(got) != 1 || got[0].Name != tt.want {
+			t.Fatalf("imported instrument = %+v, want %q", got, tt.want)
+		}
+		renamed := false
+		for _, problem := range report.Problems {
+			renamed = renamed || problem.Code == "name_renamed"
+		}
+		if renamed != tt.renamed {
+			t.Fatalf("name_renamed warning = %v, want %v: %+v", renamed, tt.renamed, report.Problems)
+		}
+	}
+}
+
 // A document that states nothing in the CLARA extension still imports, with CLARA's
 // own creation defaults where it is silent (REQ-ODM-052).
 func TestImportODMWithoutExtension(t *testing.T) {

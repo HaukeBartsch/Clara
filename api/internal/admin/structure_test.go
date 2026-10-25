@@ -759,6 +759,13 @@ func TestInstrumentsAndBranching(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("dup instrument: %d, want 409", rec.Code)
 	}
+	rec = e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/instruments", map[string]any{"name": "Incoming Studies_2026"}, admin)
+	if rec.Code != http.StatusCreated || !contains(rec.Body.String(), `"name":"Incoming Studies_2026"`) {
+		t.Fatalf("create instrument with spaces: %d %s", rec.Code, rec.Body.String())
+	}
+	if code := e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/instruments", map[string]any{"name": strings.Repeat("A", 256)}, admin).Code; code != http.StatusBadRequest {
+		t.Fatalf("create overlong instrument name: %d, want 400", code)
+	}
 
 	// A field on the instrument so a branching reference can resolve.
 	rec = e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/instruments/"+itoa(inst.ID)+"/fields", map[string]any{
@@ -795,7 +802,7 @@ func TestInstrumentsAndBranching(t *testing.T) {
 	rec = e.do("GET", "/api/v1/projects/"+itoa(projectID)+"/instruments", nil, admin)
 	var list []instrumentObject
 	e.decode(rec, &list)
-	if len(list) != 1 || list[0].FieldCount != 1 {
+	if len(list) != 2 || list[0].FieldCount != 1 {
 		t.Fatalf("listing: %s", rec.Body.String())
 	}
 }
@@ -832,12 +839,18 @@ func TestInstrumentRename(t *testing.T) {
 		return n
 	}
 
-	// Empty or non-string name → 400; a collision with another instrument → 409.
+	// Empty, non-string, overlong or unsupported names → 400; a collision → 409.
 	if code := e.do("PUT", instURL, map[string]any{"name": ""}, admin).Code; code != http.StatusBadRequest {
 		t.Fatalf("empty name: %d, want 400", code)
 	}
 	if code := e.do("PUT", instURL, map[string]any{"name": 7}, admin).Code; code != http.StatusBadRequest {
 		t.Fatalf("non-string name: %d, want 400", code)
+	}
+	if code := e.do("PUT", instURL, map[string]any{"name": strings.Repeat("A", 256)}, admin).Code; code != http.StatusBadRequest {
+		t.Fatalf("overlong name: %d, want 400", code)
+	}
+	if code := e.do("PUT", instURL, map[string]any{"name": "not-valid!"}, admin).Code; code != http.StatusBadRequest {
+		t.Fatalf("unsupported name: %d, want 400", code)
 	}
 	if code := e.do("PUT", instURL, map[string]any{"name": "labs"}, admin).Code; code != http.StatusConflict {
 		t.Fatalf("colliding name: %d, want 409", code)
@@ -853,14 +866,15 @@ func TestInstrumentRename(t *testing.T) {
 		t.Fatalf("same-name rename wrote an audit entry (%d → %d)", before, n)
 	}
 
-	// Rename together with the survey flag in one PUT.
-	rec = e.do("PUT", instURL, map[string]any{"name": "follow_up", "is_survey": true}, admin)
+	// Spaces, case, underscores and the 255-character limit survive a rename.
+	newName := "Mixed Name_2026 " + strings.Repeat("A", 255-len("Mixed Name_2026 "))
+	rec = e.do("PUT", instURL, map[string]any{"name": newName, "is_survey": true}, admin)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("rename: %d %s", rec.Code, rec.Body.String())
 	}
 	var obj instrumentObject
 	e.decode(rec, &obj)
-	if obj.Name != "follow_up" || !obj.IsSurvey || obj.ID != instID {
+	if obj.Name != newName || !obj.IsSurvey || obj.ID != instID {
 		t.Fatalf("renamed object: %+v", obj)
 	}
 
@@ -883,7 +897,7 @@ func TestInstrumentRename(t *testing.T) {
 	if err := json.Unmarshal([]byte(details), &entry); err != nil {
 		t.Fatalf("audit details: %s (%v)", details, err)
 	}
-	if entry.Changes.Name.Old != "intake" || entry.Changes.Name.New != "follow_up" {
+	if entry.Changes.Name.Old != "intake" || entry.Changes.Name.New != newName {
 		t.Fatalf("audit name change: %s", details)
 	}
 
@@ -891,13 +905,13 @@ func TestInstrumentRename(t *testing.T) {
 	rec = e.do("GET", base+"/instruments", nil, admin)
 	var list []instrumentObject
 	e.decode(rec, &list)
-	if len(list) != 2 || list[0].Name != "follow_up" || list[0].Position != 1 {
+	if len(list) != 2 || list[0].Name != newName || list[0].Position != 1 {
 		t.Fatalf("listing after rename: %s", rec.Body.String())
 	}
 	rec = e.do("GET", base+"/instrument-event-mapping", nil, admin)
 	var mapping []armMappingObject
 	e.decode(rec, &mapping)
-	if len(mapping[0].Mapping["follow_up"]) != 1 || len(mapping[0].Mapping["intake"]) != 0 {
+	if len(mapping[0].Mapping[newName]) != 1 || len(mapping[0].Mapping["intake"]) != 0 {
 		t.Fatalf("mapping after rename: %s", rec.Body.String())
 	}
 }

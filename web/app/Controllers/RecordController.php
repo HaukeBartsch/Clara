@@ -181,10 +181,10 @@ final class RecordController extends DataEntryController
         $instance = self::postedInstance($this->request->field('repeating'), $this->request->field('instance'));
         $back = Response::redirect(self::recordUrl($projectId, $record, $event, $instrument, $instance));
 
-        if (!self::isName($event) || !self::isName($instrument)) {
+        if (!self::isEventName($event) || !self::isInstrumentName($instrument)) {
             $this->flashDanger($this->invalidRequest(
-                ...(self::isName($event) ? [] : ['event']),
-                ...(self::isName($instrument) ? [] : ['instrument'])
+                ...(self::isEventName($event) ? [] : ['event']),
+                ...(self::isInstrumentName($instrument) ? [] : ['instrument'])
             ));
 
             return $back;
@@ -272,11 +272,11 @@ final class RecordController extends DataEntryController
 
         $instance = self::postedInstance($this->request->field('repeating'), $this->request->field('instance'));
         if (!in_array($scope, ['record', 'event', 'instrument', 'instance'], true)
-            || ($scope !== 'record' && !self::isName($event))
+            || ($scope !== 'record' && !self::isEventName($event))
             || ($scope === 'instance' && $instance === 0)) {
             $this->flashDanger($this->invalidRequest(
                 ...(in_array($scope, ['record', 'event', 'instrument', 'instance'], true) ? [] : ['scope']),
-                ...($scope !== 'record' && !self::isName($event) ? ['event'] : []),
+                ...($scope !== 'record' && !self::isEventName($event) ? ['event'] : []),
                 ...($scope === 'instance' && $instance === 0 ? ['instance'] : [])
             ));
 
@@ -401,11 +401,12 @@ final class RecordController extends DataEntryController
         $back = Response::redirect(self::recordUrl($projectId, $record, $event, $instrument));
 
         // The source event may be empty only for an event-less project; the names must be real.
-        if (!self::isName($instrument) || !self::isName($field) || ($event !== '' && !self::isName($event))) {
+        if (!self::isInstrumentName($instrument) || !self::isFieldName($field)
+            || ($event !== '' && !self::isEventName($event))) {
             $this->flashDanger($this->invalidRequest(
-                ...(!self::isName($instrument) ? ['instrument'] : []),
-                ...($event !== '' && !self::isName($event) ? ['event'] : []),
-                ...(!self::isName($field) ? ['field'] : [])
+                ...(!self::isInstrumentName($instrument) ? ['instrument'] : []),
+                ...($event !== '' && !self::isEventName($event) ? ['event'] : []),
+                ...(!self::isFieldName($field) ? ['field'] : [])
             ));
 
             return $back;
@@ -1016,10 +1017,10 @@ final class RecordController extends DataEntryController
         $instrument = $this->request->field('instrument');
         $back = Response::redirect(self::recordUrl($projectId, $record, $event, $instrument));
 
-        if (!self::isName($event) || !self::isName($instrument)) {
+        if (!self::isEventName($event) || !self::isInstrumentName($instrument)) {
             $this->flashDanger($this->invalidRequest(
-                ...(self::isName($event) ? [] : ['event']),
-                ...(self::isName($instrument) ? [] : ['instrument'])
+                ...(self::isEventName($event) ? [] : ['event']),
+                ...(self::isInstrumentName($instrument) ? [] : ['instrument'])
             ));
 
             return $back;
@@ -1077,13 +1078,24 @@ final class RecordController extends DataEntryController
     }
 
     /**
-     * An event or instrument name as the forms carry it: up to 100 characters of `[A-Za-z0-9_]`.
-     * Neither name carries a case rule (REQ-DB-011 — uniqueness in the project is the API's only
-     * constraint); the lower-case restriction belongs to field names (REQ-DB-013), so an
-     * instrument renamed to capitals must still reach data entry.
+     * An event's unique name as the forms carry it: up to 100 characters of `[A-Za-z0-9_]`.
      */
-    private static function isName(string $value): bool
+    private static function isEventName(string $value): bool
     {
         return preg_match('/^[A-Za-z0-9_]{1,100}$/', $value) === 1;
+    }
+
+    /** An instrument name follows the designer/import contract (REQ-DB-011). */
+    private static function isInstrumentName(string $value): bool
+    {
+        return strlen($value) <= 255
+            && trim($value) !== ''
+            && preg_match('/^[A-Za-z0-9_ ]+$/', $value) === 1;
+    }
+
+    /** Field names retain the data-dictionary syntax (REQ-DB-013). */
+    private static function isFieldName(string $value): bool
+    {
+        return preg_match('/^[a-z0-9_]{1,100}$/', $value) === 1;
     }
 }

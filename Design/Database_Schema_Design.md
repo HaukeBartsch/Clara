@@ -186,6 +186,8 @@ CREATE TABLE IF NOT EXISTS instrument_events (   -- REQ-DB-012
     UNIQUE (instrument_id, event_id)
 );
 
+Instrument names are limited to 255 ASCII letters, digits, spaces and underscores (REQ-DB-011). The API validates this contract on creation and rename; importers preserve valid names and normalize external names that do not satisfy it.
+
 CREATE TABLE IF NOT EXISTS fields (              -- REQ-DB-013, REQ-DB-014
     id                  INTEGER PRIMARY KEY,
     project_id          INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

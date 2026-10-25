@@ -429,13 +429,18 @@ func (h *Handler) applyImport(ctx context.Context, projectID int64, d *stagedDes
 		}
 		name := form.name
 		for i := 2; instTaken[name]; i++ {
-			name = form.name + "_" + strconv.Itoa(i)
+			name = numberedInstrumentName(form.name, i)
 		}
 		instTaken[name] = true
 		out := importInstrumentOut{Name: name, File: form.file, Origin: form.origin}
-		if name != form.name {
-			from := form.name
+		if name != form.name || form.sourceName != form.name {
+			from := form.sourceName
+			if from == "" {
+				from = form.name
+			}
 			out.RenamedFrom = &from
+		}
+		if name != form.name {
 			res.Warnings = append(res.Warnings, importNote{File: form.file, Row: form.firstRow, Code: "renamed",
 				Message: fmt.Sprintf("instrument %q is already in use and is imported as %q", form.name, name)})
 		}

@@ -51,11 +51,12 @@ type redcapField struct {
 
 // redcapForm is one instrument of a file: its Form Name and its fields in row order.
 type redcapForm struct {
-	name     string
-	file     string
-	origin   string
-	firstRow int
-	fields   []redcapField
+	name       string
+	sourceName string
+	file       string
+	origin     string
+	firstRow   int
+	fields     []redcapField
 }
 
 // importReader accumulates the forms, warnings and failures of every file.
@@ -241,22 +242,26 @@ func (rd *importReader) readCSV(file, origin string, data []byte) {
 			continue
 		}
 		name := strings.TrimSpace(cols["name"])
-		form := strings.TrimSpace(cols["form"])
-		if form == "" {
+		sourceForm := cols["form"]
+		if strings.TrimSpace(sourceForm) == "" {
 			rd.fail(file, row, name, "validation_error", "the row names no form")
 			continue
 		}
-		at, seen := formAt[form]
+		at, seen := formAt[sourceForm]
 		if !seen {
-			rd.forms = append(rd.forms, redcapForm{name: form, file: file, origin: origin, firstRow: row})
+			form, renamed := importedInstrumentName(sourceForm, len(rd.forms)+1)
+			if renamed {
+				rd.warn(file, row, "", "renamed", "instrument %q is imported as %q", sourceForm, form)
+			}
+			rd.forms = append(rd.forms, redcapForm{name: form, sourceName: sourceForm, file: file, origin: origin, firstRow: row})
 			at = len(rd.forms) - 1
-			formAt[form] = at
-		} else if form != current {
+			formAt[sourceForm] = at
+		} else if sourceForm != current {
 			rd.fail(file, row, name, "form_not_contiguous",
 				"form %q, which started at row %d, continues here after form %q at row %d — the rows of a form must stand together",
-				form, rd.forms[at].firstRow, current, rd.forms[formAt[current]].firstRow)
+				sourceForm, rd.forms[at].firstRow, current, rd.forms[formAt[current]].firstRow)
 		}
-		current = form
+		current = sourceForm
 		f, kept := rd.convertRow(file, row, name, cols)
 		if !rd.first.seen {
 			rd.first.seen = true
