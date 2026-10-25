@@ -185,7 +185,13 @@
   grid-column: 1 / -1;
 }
 
+/* The card is the containing block of the name's `.stretched-link::after`, which Bootstrap positions
+   absolutely over its nearest positioned ancestor. Without `relative` here every box's overlay resolves
+   against the page instead — all of them covering it at the same z-index, so the last box in the grid
+   alone takes every click and every hover on the page. Bootstrap's `.card` carries this for the Training
+   cards (§2.7); a plain element has to say it itself. */
 .clara-project {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
