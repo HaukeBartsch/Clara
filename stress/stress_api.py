@@ -8,14 +8,19 @@ keep-alive connection).
 Phases (timed individually):
 
 1. setup   — create N projects via POST /api/v1/projects, each with a random
-             1..200 events, 1..100 instruments and up to 10,000 fields spread
-             over the instruments, created in one bulk call per instrument
-             (POST .../fields/bulk, REQ-API-132), plus an
-             all-instruments-to-all-events mapping. The data dictionary is
-             mixed: plain text, validated text (integer, floating point,
-             date, datetime) and choice fields (dropdown, radio with numeric
-             codes). One full-permission project API token per project comes
-             from PUT /api/v1/projects/{id}/users/{uid} (role-less member).
+             1..200 events and 1..20 instruments carrying 10..100 fields each,
+             created in one bulk call per instrument (POST .../fields/bulk,
+             REQ-API-132), plus an all-instruments-to-all-events mapping. An
+             instrument's dictionary covers every kind the §1 vocabulary offers
+             — text, notes, validated text (integer, floating point, date,
+             datetime), choice fields (dropdown, radio, checkbox, yesno,
+             matrix), display rows (description, header), a calculated field
+             and a transfer field — as far as its field count reaches, and fills
+             up on a weighted mix. Transfer fields are designed in a second pass
+             over the finished projects, since their copy instructions resolve
+             against another project's dictionary. One full-permission project
+             API token per project comes from
+             PUT /api/v1/projects/{id}/users/{uid} (role-less member).
 2. import  — generate random record rows for every project, shuffle them into
              one globally random order and bulk-import them through the data
              API (POST /api/ content=record action=import) as batches of
@@ -178,20 +183,43 @@ class API:
 LETTERS = string.ascii_lowercase
 ALNUM = string.ascii_lowercase + string.digits
 
-# Weighted mix of dictionary field kinds (sums to 100). Plain text keeps the
-# bulk of a realistic dictionary; the validated and choice kinds exercise the
-# validation pipeline on import and label rendering on export.
+# Every field kind of the §1 dictionary vocabulary (sums to 100), weighted
+# towards what a real dictionary looks like: plain text keeps the bulk, the
+# validated kinds exercise the validation pipeline on import, the choice kinds
+# add label rendering on export. A kind is a field_type — or, for validated
+# text, its validation_type. instrument_kinds() puts one of each at the head of
+# an instrument's field list, so even a short instrument reaches every
+# validator, and fills the rest on these weights. `transfer` is not here: it is
+# designed in a second pass, once the project it copies into exists.
 FIELD_MIX = [
-    ("text", 30),
-    ("integer", 15),
-    ("floating point", 10),
-    ("date", 10),
+    ("text", 24),
+    ("notes", 8),
+    ("integer", 13),
+    ("floating point", 9),
+    ("date", 8),
     ("datetime", 5),
-    ("dropdown", 15),
-    ("radio", 15),
+    ("dropdown", 10),
+    ("radio", 9),
+    ("checkbox", 7),
+    ("yesno", 5),
+    ("matrix", 5),
+    ("description", 3),   # display row: no value on import
+    ("header", 2),        # display row: no value on import
+    ("calculated", 2),    # read-only, computed from a numeric sibling
 ]
 MIX_KINDS = [k for k, _ in FIELD_MIX]
 MIX_WEIGHTS = [w for _, w in FIELD_MIX]
+
+# Kinds an imported record carries no value for: display rows and transfer
+# fields refuse values outright and a calculated field is read-only
+# (validate.go's ValidateValue). A checkbox parent stores nothing under its own
+# name either — its values live in the `<field>___<code>` choice columns.
+NO_VALUE_KINDS = ("description", "header", "transfer", "calculated")
+
+# A yesno field carries the API's fixed 1$Yes##0$No coding, so its values are
+# exactly those codes; a checkbox column is only ever "1" (checked) or empty.
+YESNO_CODES = ("1", "0")
+BOX_CODES = ("1", "")
 
 # Canonical storage grammars the import pipeline accepts (record.go):
 # date Y-m-d, datetime "Y-m-d H:i"; integer/floating point per validate.go.
@@ -199,18 +227,51 @@ EPOCH = datetime.date(2018, 1, 1)
 DATE_SPAN = 3200  # days from EPOCH — stays well inside the calendar
 
 
-def make_field_spec(rnd, name):
-    """One bulk-creatable field dictionary entry of a random kind. Only keys
-    the §4.11 field body accepts are emitted (unknown attributes are rejected
-    by the API)."""
-    kind = rnd.choices(MIX_KINDS, weights=MIX_WEIGHTS)[0]
+def instrument_kinds(rnd, n):
+    """The kind of each of one instrument's n fields: every mixed kind once in
+    random order, then weighted-random fill. A calculated field moves to the
+    end, because its expression names a sibling and a bulk call validates its
+    entries in order; the numeric that expression reads is guaranteed alongside
+    it."""
+    head = MIX_KINDS[:]
+    rnd.shuffle(head)
+    if n <= len(head):
+        kinds = head[:n]
+    else:
+        fill = [rnd.choices(MIX_KINDS, weights=MIX_WEIGHTS)[0]
+                for _ in range(n - len(head))]
+        kinds = head + fill
+    if "calculated" in kinds and not any(k in ("integer", "floating point") for k in kinds):
+        kinds[0] = "integer"  # the expression needs a number to read
+    return [k for k in kinds if k != "calculated"] + ["calculated"] * kinds.count("calculated")
+
+
+def make_field_spec(rnd, name, kind=None):
+    """One bulk-creatable field dictionary entry of a random kind. Only keys the
+    §4.11 field body accepts are emitted (unknown attributes are rejected
+    by the API); a yesno field needs no choices, as the API stores its fixed
+    1$Yes##0$No coding itself."""
+    kind = kind or rnd.choices(MIX_KINDS, weights=MIX_WEIGHTS)[0]
     spec = {"field_name": name}
     if kind in ("dropdown", "radio"):
         codes = list(range(1, rnd.randint(3, 9)))  # 2..8 numeric codes
         spec["field_type"] = kind
         spec["choices"] = "##".join(f"{c}$Option {c}" for c in codes)
-    elif kind == "text":
-        spec["field_type"] = "text"
+    elif kind == "checkbox":
+        codes = list(range(1, rnd.randint(2, 6)))  # 1..5 boxes
+        spec["field_type"] = "checkbox"
+        spec["choices"] = "##".join(f"{c}$Box {c}" for c in codes)
+    elif kind == "matrix":
+        codes = list(range(1, rnd.randint(3, 6)))  # 2..5 response levels
+        spec["field_type"] = "matrix"
+        spec["matrix_group"] = f"group_{name}"
+        spec["choices"] = "##".join(f"{c}$Level {c}" for c in codes)
+    elif kind in ("description", "header"):
+        spec["field_type"] = kind  # display rows carry no value
+    elif kind == "calculated":
+        spec["field_type"] = "calculated"  # the caller fills in the expression
+    elif kind in ("text", "notes", "yesno"):
+        spec["field_type"] = kind
     else:  # validated text
         spec["field_type"] = "text"
         spec["validation_type"] = kind
@@ -223,8 +284,10 @@ def random_value(rnd, spec):
     5..20 alphanumeric characters starting with a letter, so no cell can trip
     the CSV formula guard."""
     kind = spec.get("validation_type") or ""
-    if spec["field_type"] in ("dropdown", "radio"):
+    if spec["field_type"] in ("dropdown", "radio", "matrix"):
         return rnd.choice(spec["choices"].split("##")).split("$")[0]
+    if spec["field_type"] == "yesno":
+        return rnd.choice(YESNO_CODES)
     if kind == "integer":
         return str(rnd.randint(-1_000_000, 1_000_000))
     if kind == "floating point":
@@ -237,12 +300,43 @@ def random_value(rnd, spec):
     return rnd.choice(LETTERS) + "".join(rnd.choice(ALNUM) for _ in range(rnd.randrange(4, 20)))
 
 
+def record_cells(rnd, spec):
+    """The (name, value) pairs one dictionary entry contributes to an imported
+    record — nothing for the kinds that carry no value, and one cell per box of
+    a checkbox, left empty when unchecked (REQ-DB-042)."""
+    if spec["field_type"] in NO_VALUE_KINDS:
+        return
+    if spec["field_type"] == "checkbox":
+        for pair in spec["choices"].split("##"):
+            code = pair.split("$")[0]
+            yield f"{spec['field_name']}___{code}", rnd.choice(BOX_CODES)
+        return
+    yield spec["field_name"], random_value(rnd, spec)
+
+
+def value_specs(p, instr):
+    """The entries of `instr` a transfer may read or receive: value-carrying and
+    not a checkbox parent, whose own name stores nothing (REQ-VAL-046)."""
+    return [spec for spec in p["fields_by_instr"][instr]
+            if spec["field_type"] not in NO_VALUE_KINDS and spec["field_type"] != "checkbox"]
+
+
+def first_value_spec(p, instr):
+    """The first of those that a copy may receive — never the record identifier,
+    whose value the create_record operation supplies itself. None when the
+    instrument carries nothing else."""
+    return next((s for s in value_specs(p, instr) if s["field_name"] != "record_id"), None)
+
+
 def setup_projects(api, cfg, rnd):
     """Create every project's structure; returns per-project plans carrying
     the token, unique event names and field names per instrument."""
     projects = []
     totals = {"events": 0, "instruments": 0, "fields": 0}
     mix = {}  # created-field kinds → count, for the report
+    # One transfer field per instrument needs a second project to copy into; a
+    # single-project run has no target and fills those slots with plain fields.
+    xfer_slots = 1 if cfg.projects > 1 else 0
     names = [
         f"{cfg.project_prefix}{i + 1:02d}" if cfg.project_prefix else f"stress_p{i:03d}"
         for i in range(cfg.projects)
@@ -291,16 +385,17 @@ def setup_projects(api, cfg, rnd):
             instruments.append(f"instr_{j:03d}")
             instr_ids.append(created_instr["id"])
 
-        # Fields: one per instrument to start, the rest thrown at random
-        # instruments. The total is square-skewed inside [n_instr, max_fields]
-        # so "up to 10000" holds without every project paying the cap.
-        total = n_instr
-        if cfg.max_fields > n_instr:
-            u = rnd.random()
-            total = n_instr + int(u * u * (cfg.max_fields - n_instr))
-        counts = [1] * n_instr  # every instrument needs ≥1 field (record_id below)
-        for _ in range(total - n_instr):
-            counts[rnd.randrange(n_instr)] += 1
+        # Mapping before the fields: a calculated field's expression has to name
+        # a field that is active at some event, and "active" is decided here.
+        write_status(phase="setup", detail=f"{name}: mapping instruments to events")
+        api.admin("PUT", f"/api/v1/projects/{created['id']}/instrument-event-mapping",
+                  {"arm_num": 1, "mapping": {instr: events for instr in instruments}})
+
+        # Fields per instrument: between --min-fields and --max-fields, every
+        # kind once as far as the count reaches (instrument_kinds). With more
+        # than one project the last slot belongs to a transfer field, which only
+        # the pass below can design — its copy instructions name another project.
+        counts = [rnd.randint(cfg.min_fields, cfg.max_fields) for _ in instruments]
 
         fields_by_instr = {}
         for j, instr in enumerate(instruments):
@@ -311,30 +406,66 @@ def setup_projects(api, cfg, rnd):
             if j == 0:
                 # The record identifier stays a plain text field.
                 specs.append({"field_name": "record_id", "field_type": "text"})
-            specs += [make_field_spec(rnd, f"{instr}_f{k:05d}")
-                      for k in range(len(specs), counts[j])]
+            numeric = ""   # the numeric sibling a calculated field reads
+            for kind in instrument_kinds(rnd, max(counts[j] - len(specs) - xfer_slots, 0)):
+                spec = make_field_spec(rnd, f"{instr}_f{len(specs):05d}", kind)
+                if kind == "calculated":
+                    spec["calculation"] = f"[baseline_arm_1][{numeric}] * 2"
+                specs.append(spec)
+                if kind in ("integer", "floating point"):
+                    numeric = spec["field_name"]
             create_fields_bulk(api, created["id"], instr_ids[j], specs)
             fields_by_instr[instr] = specs
             for spec in specs:
                 kind = spec.get("validation_type") or spec["field_type"]
                 mix[kind] = mix.get(kind, 0) + 1
 
-        # Mapping: every instrument active in every event of arm 1.
-        write_status(phase="setup", detail=f"{name}: mapping instruments to events")
-        api.admin("PUT", f"/api/v1/projects/{created['id']}/instrument-event-mapping",
-                  {"arm_num": 1, "mapping": {instr: events for instr in instruments}})
-
         totals["events"] += len(events)
         totals["instruments"] += len(instruments)
-        totals["fields"] += total
+        totals["fields"] += sum(len(s) for s in fields_by_instr.values())
         projects.append({"id": created["id"], "name": name, "token": member["token"],
                          "events": events, "instruments": instruments,
+                         "instr_ids": instr_ids,
                          "fields_by_instr": fields_by_instr})
         if (i + 1) % 20 == 0 or i + 1 == cfg.projects:
             print(f"setup: {i + 1}/{cfg.projects} projects "
                   f"({time.perf_counter() - start:.0f}s elapsed)", flush=True)
+    if xfer_slots:
+        add_transfer_fields(api, projects, totals, mix)
     write_status(phase="setup", progress=40, detail="Project setup complete")
     return projects, totals, mix, time.perf_counter() - start
+
+
+def add_transfer_fields(api, projects, totals, mix):
+    """One transfer field per instrument, copying into the next stress project.
+    Its instructions resolve against that project's live dictionary — the create
+    has to name its record identifier field, every copy one of its events and a
+    value-carrying field, and both source fields have to belong to the instrument
+    carrying the transfer field (REQ-VAL-046) — which is why this runs only once
+    every project stands. Nothing is ever executed here: the load is the
+    dictionary rows and their design-time checks."""
+    for i, p in enumerate(projects):
+        tgt = projects[(i + 1) % len(projects)]
+        tgt_field = first_value_spec(tgt, tgt["instruments"][0])
+        if tgt_field is None:
+            continue
+        for j, instr in enumerate(p["instruments"]):
+            sources = value_specs(p, instr)
+            if not sources:
+                continue
+            write_status(phase="setup", progress=37 + int(3 * i / max(len(projects), 1)),
+                         detail=f"{p['name']}: designing transfer fields "
+                                f"{j + 1}/{len(p['instruments'])}")
+            named = sources[0]["field_name"]
+            copied = sources[-1]["field_name"]
+            spec = {"field_name": f"{instr}_xfer", "field_type": "transfer",
+                    "choices": (f"create_record [{tgt['name']}][record_id] {named}\n"
+                                f"copy {copied} "
+                                f"[{tgt['name']}][{tgt['events'][0]}][{tgt_field['field_name']}]")}
+            create_fields_bulk(api, p["id"], p["instr_ids"][j], [spec])
+            p["fields_by_instr"][instr].append(spec)
+            mix["transfer"] = mix.get("transfer", 0) + 1
+            totals["fields"] += 1
 
 
 def create_fields_bulk(api, project_id, instrument_id, field_specs):
@@ -384,8 +515,9 @@ def import_rows(api, specs, cfg, rnd):
             for spec in p["fields_by_instr"][instr]:
                 if spec["field_name"] == "record_id":
                     continue  # the identifier value travels above
-                form[f"{base}[{spec['field_name']}]"] = random_value(rnd, spec)
-                values += 1
+                for name, value in record_cells(rnd, spec):
+                    form[f"{base}[{name}]"] = value
+                    values += 1
         results = json.loads(api.data_api(form))
         for r in results:
             if r["import_record_id"] == 0:
@@ -757,13 +889,15 @@ def main():
                     help="name projects as <prefix>01, <prefix>02, …")
     ap.add_argument("--status-file", default="",
                     help="atomically write phase progress for a supervising UI")
-    ap.add_argument("--projects", type=int, default=200)
+    ap.add_argument("--projects", type=int, default=5)
     ap.add_argument("--min-events", type=int, default=1)
     ap.add_argument("--max-events", type=int, default=200)
     ap.add_argument("--min-instruments", type=int, default=1)
-    ap.add_argument("--max-instruments", type=int, default=100)
-    ap.add_argument("--max-fields", type=int, default=10000,
-                    help="upper bound of fields per project (square-skewed)")
+    ap.add_argument("--max-instruments", type=int, default=20)
+    ap.add_argument("--min-fields", type=int, default=10,
+                    help="lower bound of fields per instrument")
+    ap.add_argument("--max-fields", type=int, default=100,
+                    help="upper bound of fields per instrument, transfer field included")
     ap.add_argument("--min-records", type=int, default=10)
     ap.add_argument("--max-records", type=int, default=60)
     ap.add_argument("--batch", type=int, default=25, help="rows per import call")
