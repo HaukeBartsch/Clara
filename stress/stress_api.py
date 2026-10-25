@@ -10,7 +10,14 @@ Phases (timed individually):
 1. setup   — create N projects via POST /api/v1/projects, each with a random
              1..200 events and 1..20 instruments carrying 10..100 fields each,
              created in one bulk call per instrument (POST .../fields/bulk,
-             REQ-API-132), plus an all-instruments-to-all-events mapping. An
+             REQ-API-132), plus an all-instruments-to-all-events mapping. A
+             target name that already exists is adopted rather than an error:
+             the project's events, instruments and field dictionary are read
+             back over §4.5–§4.11 and used as they stand, so repeating the run
+             adds data to the structure the first run built instead of starting
+             over (REQ-UI-068). A project that carries the name but no
+             instruments yet — an earlier run that died mid-setup — is completed
+             where it stopped. An
              instrument's dictionary covers every kind the §1 vocabulary offers
              — text, notes, validated text (integer, floating point, date,
              datetime), choice fields (dropdown, radio, checkbox, yesno,
@@ -26,7 +33,10 @@ Phases (timed individually):
              API (POST /api/ content=record action=import) as batches of
              data[i][…] rows. Values are generated per field type so every
              row passes validation (choice codes, integer/float grammar,
-             canonical dates).
+             canonical dates). Numbering continues above the highest record
+             number each project already holds, so a repeat run only ever adds:
+             an identifier an earlier run used would otherwise update that
+             project's stored row instead of growing it.
 3. export  — export every project twice as CSV through the data API
              (content=record returnFormat=csv): once raw (choice codes) and
              once with rawOrLabel=label (choice labels), both streamed to
@@ -69,6 +79,7 @@ import http.client
 import json
 import os
 import random
+import re
 import statistics
 import string
 import sys
@@ -328,116 +339,225 @@ def first_value_spec(p, instr):
     return next((s for s in value_specs(p, instr) if s["field_name"] != "record_id"), None)
 
 
-def setup_projects(api, cfg, rnd):
-    """Create every project's structure; returns per-project plans carrying
-    the token, unique event names and field names per instrument."""
-    projects = []
-    totals = {"events": 0, "instruments": 0, "fields": 0}
-    mix = {}  # created-field kinds → count, for the report
-    # One transfer field per instrument needs a second project to copy into; a
-    # single-project run has no target and fills those slots with plain fields.
-    xfer_slots = 1 if cfg.projects > 1 else 0
-    names = [
-        f"{cfg.project_prefix}{i + 1:02d}" if cfg.project_prefix else f"stress_p{i:03d}"
-        for i in range(cfg.projects)
-    ]
-    existing = api.admin("GET", "/api/v1/projects")
-    existing_names = {project.get("project_name") for project in existing}
-    collisions = [name for name in names if name in existing_names]
-    if collisions:
-        raise RuntimeError("project names already exist: " + ", ".join(collisions))
+def target_names(cfg):
+    """The projects this run works on: `<prefix>01`, `<prefix>02`, …"""
+    return [f"{cfg.project_prefix}{i + 1:02d}" if cfg.project_prefix else f"stress_p{i:03d}"
+            for i in range(cfg.projects)]
 
-    start = time.perf_counter()
-    for i in range(cfg.projects):
-        name = names[i]
-        write_status(phase="setup", progress=5 + int(35 * i / cfg.projects),
-                     detail=f"Creating project {i + 1}/{cfg.projects}: {name}")
 
-        # Project — arm 1 and its first event "baseline" come with creation.
+EVENT_INDEX = re.compile(r"^visit_(\d+)_arm_1$")
+INSTRUMENT_INDEX = re.compile(r"^instr_(\d+)$")
+
+
+def highest_index(names, pattern):
+    """The largest `NNN` among the names matching `pattern`, -1 when none does.
+    Continuing a build above what is already there is what keeps a repeat run out
+    of a duplicate-name error."""
+    return max((int(match.group(1)) for name in names if (match := pattern.match(name))), default=-1)
+
+
+def find_existing_projects(api, names):
+    """name → project summary (§4.5) for every target that is already there. An
+    existing target is the normal case on a repeat run, not a collision: what it
+    holds decides what this run adds to."""
+    wanted = set(names)
+    return {project["project_name"]: project
+            for project in api.admin("GET", "/api/v1/projects") or []
+            if project.get("project_name") in wanted}
+
+
+def project_token(api, project_id):
+    """An API token of the acting administrator for an existing project. Only a
+    freshly issued token is ever answered (REQ-API-005), so this reads back the
+    membership's own value over §4.6 — and where the run did not create the
+    project, one role-less membership comes first, which answers with its token."""
+    try:
+        token = (api.admin("GET", f"/api/v1/projects/{project_id}/users/{api.user_id}/token")
+                 or {}).get("token")
+    except RuntimeError:
+        token = None  # not a member of this project yet
+    if not token:
+        member = api.admin("PUT", f"/api/v1/projects/{project_id}/users/{api.user_id}", {},
+                           want=(200, 201))
+        token = (member or {}).get("token")
+    if not token:
+        raise RuntimeError(f"no API token for user {api.user_id} on project {project_id}")
+    return token
+
+
+def read_events(api, project_id):
+    """The project's events as unique event names, canonical order (§4.9)."""
+    return [event["unique_event_name"]
+            for event in api.admin("GET", f"/api/v1/projects/{project_id}/events") or []]
+
+
+def read_instruments(api, project_id):
+    """The project's instruments as (names, database ids), position order (§4.10)."""
+    listed = api.admin("GET", f"/api/v1/projects/{project_id}/instruments") or []
+    return [i["name"] for i in listed], [i["id"] for i in listed]
+
+
+def adopt_project(api, summary):
+    """Read an existing project back into a run plan, or None when it holds no
+    dictionary to add records to. Its field entries come from §4.11 and carry the
+    same keys the value generator reads on a freshly built one — field_name,
+    field_type, validation_type, choices — so importing into an adopted project is
+    importing into a created one. An earlier run that stopped after creating the
+    project but before filling it yields None, and build_project completes it."""
+    if summary is None:
+        return None
+    project_id = summary["id"]
+    events = read_events(api, project_id)
+    names, ids = read_instruments(api, project_id)
+    fields_by_instr, instruments, instr_ids = {}, [], []
+    for name, instrument_id in zip(names, ids):
+        specs = api.admin("GET", f"/api/v1/projects/{project_id}/instruments/{instrument_id}/fields") or []
+        if not specs:
+            continue  # an instrument without a dictionary carries no values to add
+        instruments.append(name)
+        instr_ids.append(instrument_id)
+        fields_by_instr[name] = specs
+    if not events or not instruments:
+        return None
+    return {"id": project_id, "name": summary["project_name"],
+            "token": project_token(api, project_id), "events": events,
+            "instruments": instruments, "instr_ids": instr_ids,
+            "fields_by_instr": fields_by_instr, "reused": True}
+
+
+def build_project(api, cfg, rnd, i, name, existing, xfer_slots):
+    """Create one project's structure and return its run plan. `existing` is a
+    project already carrying the target name — an earlier run that stopped before
+    it had fields — whose id, membership, events and instruments are taken over and
+    topped up rather than duplicated."""
+    if existing is not None:
+        project_id = existing["id"]
+        token = project_token(api, project_id)
+        events = read_events(api, project_id) or ["baseline_arm_1"]
+        instruments, instr_ids = read_instruments(api, project_id)
+        first_visit = 1 + max(0, highest_index(events, EVENT_INDEX))
+    else:
+        # Arm 1 and its first event "baseline" come with creation.
         created = api.admin("POST", "/api/v1/projects",
                             {"project_name": name, "organization": "CLARA Stress"},
                             want=(201,))
-
+        project_id = created["id"]
         # Role-less membership of the acting administrator → full permissions;
         # the response carries the project's API token (REQ-API-055).
-        member = api.admin("PUT", f"/api/v1/projects/{created['id']}/users/{api.user_id}",
+        member = api.admin("PUT", f"/api/v1/projects/{project_id}/users/{api.user_id}",
                            {}, want=(201,))
+        token, events, instruments, instr_ids = member["token"], ["baseline_arm_1"], [], []
+        first_visit = 1
 
-        # Events 2..n on arm 1; unique name is <label>_arm_1 by rule.
-        n_events = rnd.randint(cfg.min_events, cfg.max_events)
-        events = ["baseline_arm_1"]
-        for j in range(1, n_events):
-            label = f"visit_{j:03d}"
-            api.admin("POST", f"/api/v1/projects/{created['id']}/events",
-                      {"arm_num": 1, "event_name": label}, want=(201,))
-            events.append(f"{label}_arm_1")
+    # Events up to n on arm 1; unique name is <label>_arm_1 by rule.
+    n_events = rnd.randint(cfg.min_events, cfg.max_events)
+    for j in range(first_visit, n_events):
+        label = f"visit_{j:03d}"
+        api.admin("POST", f"/api/v1/projects/{project_id}/events",
+                  {"arm_num": 1, "event_name": label}, want=(201,))
+        events.append(f"{label}_arm_1")
 
-        # Instruments in position order; the first one hosts record_id.
-        n_instr = rnd.randint(cfg.min_instruments, cfg.max_instruments)
-        instruments = []   # names, position order
-        instr_ids = []     # database ids, same order
-        for j in range(n_instr):
-            write_status(phase="setup",
-                         progress=5 + int(35 * (i + 0.4 * j / max(n_instr, 1)) / cfg.projects),
-                         detail=f"{name}: creating instrument {j + 1}/{n_instr}")
-            created_instr = api.admin("POST", f"/api/v1/projects/{created['id']}/instruments",
-                                      {"name": f"instr_{j:03d}"}, want=(201,))
-            instruments.append(f"instr_{j:03d}")
-            instr_ids.append(created_instr["id"])
+    # Instruments up to n in position order; the first one hosts record_id. Numbering
+    # continues above the highest index already taken, so completing a project that an
+    # interrupted run left half-built cannot recreate one of its instruments.
+    n_instr = rnd.randint(cfg.min_instruments, cfg.max_instruments)
+    first_instr = max(len(instruments), 1 + highest_index(instruments, INSTRUMENT_INDEX))
+    for j in range(first_instr, n_instr):
+        write_status(phase="setup",
+                     progress=5 + int(35 * (i + 0.4 * j / max(n_instr, 1)) / cfg.projects),
+                     detail=f"{name}: creating instrument {j + 1}/{n_instr}")
+        created_instr = api.admin("POST", f"/api/v1/projects/{project_id}/instruments",
+                                  {"name": f"instr_{j:03d}"}, want=(201,))
+        instruments.append(f"instr_{j:03d}")
+        instr_ids.append(created_instr["id"])
 
-        # Mapping before the fields: a calculated field's expression has to name
-        # a field that is active at some event, and "active" is decided here.
-        write_status(phase="setup", detail=f"{name}: mapping instruments to events")
-        api.admin("PUT", f"/api/v1/projects/{created['id']}/instrument-event-mapping",
-                  {"arm_num": 1, "mapping": {instr: events for instr in instruments}})
+    # Mapping before the fields: a calculated field's expression has to name
+    # a field that is active at some event, and "active" is decided here.
+    write_status(phase="setup", detail=f"{name}: mapping instruments to events")
+    api.admin("PUT", f"/api/v1/projects/{project_id}/instrument-event-mapping",
+              {"arm_num": 1, "mapping": {instr: events for instr in instruments}})
 
-        # Fields per instrument: between --min-fields and --max-fields, every
-        # kind once as far as the count reaches (instrument_kinds). With more
-        # than one project the last slot belongs to a transfer field, which only
-        # the pass below can design — its copy instructions name another project.
-        counts = [rnd.randint(cfg.min_fields, cfg.max_fields) for _ in instruments]
+    # Fields per instrument: between --min-fields and --max-fields, every
+    # kind once as far as the count reaches (instrument_kinds). With more
+    # than one project the last slot belongs to a transfer field, which only
+    # the pass below can design — its copy instructions name another project.
+    counts = [rnd.randint(cfg.min_fields, cfg.max_fields) for _ in instruments]
 
-        fields_by_instr = {}
-        for j, instr in enumerate(instruments):
-            write_status(phase="setup",
-                         progress=5 + int(35 * (i + 0.4 + 0.55 * (j + 1) / max(n_instr, 1)) / cfg.projects),
-                         detail=f"{name}: adding fields to instrument {j + 1}/{n_instr}")
-            specs = []
-            if j == 0:
-                # The record identifier stays a plain text field.
-                specs.append({"field_name": "record_id", "field_type": "text"})
-            numeric = ""   # the numeric sibling a calculated field reads
-            for kind in instrument_kinds(rnd, max(counts[j] - len(specs) - xfer_slots, 0)):
-                spec = make_field_spec(rnd, f"{instr}_f{len(specs):05d}", kind)
-                if kind == "calculated":
-                    spec["calculation"] = f"[baseline_arm_1][{numeric}] * 2"
-                specs.append(spec)
-                if kind in ("integer", "floating point"):
-                    numeric = spec["field_name"]
-            create_fields_bulk(api, created["id"], instr_ids[j], specs)
-            fields_by_instr[instr] = specs
+    fields_by_instr = {}
+    for j, instr in enumerate(instruments):
+        write_status(phase="setup",
+                     progress=5 + int(35 * (i + 0.4 + 0.55 * (j + 1) / max(n_instr, 1)) / cfg.projects),
+                     detail=f"{name}: adding fields to instrument {j + 1}/{n_instr}")
+        specs = []
+        if j == 0:
+            # The record identifier stays a plain text field.
+            specs.append({"field_name": "record_id", "field_type": "text"})
+        numeric = ""   # the numeric sibling a calculated field reads
+        for kind in instrument_kinds(rnd, max(counts[j] - len(specs) - xfer_slots, 0)):
+            spec = make_field_spec(rnd, f"{instr}_f{len(specs):05d}", kind)
+            if kind == "calculated":
+                spec["calculation"] = f"[baseline_arm_1][{numeric}] * 2"
+            specs.append(spec)
+            if kind in ("integer", "floating point"):
+                numeric = spec["field_name"]
+        create_fields_bulk(api, project_id, instr_ids[j], specs)
+        fields_by_instr[instr] = specs
+
+    return {"id": project_id, "name": name, "token": token, "events": events,
+            "instruments": instruments, "instr_ids": instr_ids,
+            "fields_by_instr": fields_by_instr, "reused": False}
+
+
+def setup_projects(api, cfg, rnd):
+    """Create or adopt every project's structure; returns per-project plans carrying
+    the token, unique event names and field specs per instrument. Repeating a run is
+    the intended use: the first run builds the targets and their dictionaries, every
+    later run reads them back and only adds records (REQ-UI-068)."""
+    projects = []
+    totals = {"events": 0, "instruments": 0, "fields": 0}
+    mix = {}  # field kinds → count, for the report
+    # One transfer field per instrument needs a second project to copy into; a
+    # single-project run has no target and fills those slots with plain fields.
+    xfer_slots = 1 if cfg.projects > 1 else 0
+    names = target_names(cfg)
+    existing = find_existing_projects(api, names)
+
+    start = time.perf_counter()
+    for i, name in enumerate(names):
+        write_status(phase="setup", progress=5 + int(35 * i / cfg.projects),
+                     detail=f"Preparing project {i + 1}/{cfg.projects}: {name}")
+        plan = adopt_project(api, existing.get(name))
+        if plan is None:
+            plan = build_project(api, cfg, rnd, i, name, existing.get(name), xfer_slots)
+        projects.append(plan)
+        if (i + 1) % 20 == 0 or i + 1 == cfg.projects:
+            print(f"setup: {i + 1}/{cfg.projects} projects "
+                  f"({time.perf_counter() - start:.0f}s elapsed)", flush=True)
+
+    built = [p for p in projects if not p["reused"]]
+    if xfer_slots and built:
+        add_transfer_fields(api, projects)
+    for plan in projects:
+        totals["events"] += len(plan["events"])
+        totals["instruments"] += len(plan["instruments"])
+        totals["fields"] += sum(len(s) for s in plan["fields_by_instr"].values())
+        for specs in plan["fields_by_instr"].values():
             for spec in specs:
                 kind = spec.get("validation_type") or spec["field_type"]
                 mix[kind] = mix.get(kind, 0) + 1
 
-        totals["events"] += len(events)
-        totals["instruments"] += len(instruments)
-        totals["fields"] += sum(len(s) for s in fields_by_instr.values())
-        projects.append({"id": created["id"], "name": name, "token": member["token"],
-                         "events": events, "instruments": instruments,
-                         "instr_ids": instr_ids,
-                         "fields_by_instr": fields_by_instr})
-        if (i + 1) % 20 == 0 or i + 1 == cfg.projects:
-            print(f"setup: {i + 1}/{cfg.projects} projects "
-                  f"({time.perf_counter() - start:.0f}s elapsed)", flush=True)
-    if xfer_slots:
-        add_transfer_fields(api, projects, totals, mix)
-    write_status(phase="setup", progress=40, detail="Project setup complete")
+    reused = len(projects) - len(built)
+    if reused:
+        print(f"setup: reused {reused}/{len(projects)} existing project(s)", flush=True)
+    write_status(phase="setup", progress=40,
+                 detail=f"Project setup complete ({reused} reused, {len(built)} built)")
     return projects, totals, mix, time.perf_counter() - start
 
 
-def add_transfer_fields(api, projects, totals, mix):
-    """One transfer field per instrument, copying into the next stress project.
+def add_transfer_fields(api, projects):
+    """One transfer field per instrument of every project this run built, copying
+    into the next stress project. Adopted projects already carry theirs — designing
+    a second one would only collide with the name the first run chose.
     Its instructions resolve against that project's live dictionary — the create
     has to name its record identifier field, every copy one of its events and a
     value-carrying field, and both source fields have to belong to the instrument
@@ -445,6 +565,8 @@ def add_transfer_fields(api, projects, totals, mix):
     every project stands. Nothing is ever executed here: the load is the
     dictionary rows and their design-time checks."""
     for i, p in enumerate(projects):
+        if p["reused"]:
+            continue
         tgt = projects[(i + 1) % len(projects)]
         tgt_field = first_value_spec(tgt, tgt["instruments"][0])
         if tgt_field is None:
@@ -464,8 +586,6 @@ def add_transfer_fields(api, projects, totals, mix):
                                 f"[{tgt['name']}][{tgt['events'][0]}][{tgt_field['field_name']}]")}
             create_fields_bulk(api, p["id"], p["instr_ids"][j], [spec])
             p["fields_by_instr"][instr].append(spec)
-            mix["transfer"] = mix.get("transfer", 0) + 1
-            totals["fields"] += 1
 
 
 def create_fields_bulk(api, project_id, instrument_id, field_specs):
@@ -478,12 +598,44 @@ def create_fields_bulk(api, project_id, instrument_id, field_specs):
               body, want=(201,))
 
 
-def generate_rows(projects, cfg, rnd):
+RECORD_TRAILING_NUMBER = re.compile(r"(\d+)$")
+
+# The §3.7.2 answer per row: 1 added, 2 updated, 0 rejected with the reason in
+# import_form_name. "updated" says the record already existed — which its own
+# second form does too, so only a record this run writes for the first time tells
+# the difference between adding and colliding with an earlier run's data.
+IMPORT_ADDED, IMPORT_UPDATED = 1, 2
+
+
+def next_record_number(api, projects):
+    """The first record number none of these projects holds yet.
+
+    Every run numbers its records REC0000001 upward, so continuing above the
+    highest number still stored keeps a repeat run adding rows: an identifier an
+    earlier run used would otherwise land on the same (record, event, instrument)
+    and update it (REQ-API-012). Only the identifier column is read — `fields[0]`
+    filters the export down to that one column per project.
+    """
+    highest = 0
+    for p in projects:
+        rows = json.loads(api.data_api({"token": p["token"], "content": "record",
+                                        "action": "export", "returnFormat": "json",
+                                        "fields[0]": "record_id"})) or []
+        for row in rows:
+            match = RECORD_TRAILING_NUMBER.search(str(row.get("record_id", "")))
+            if match:
+                highest = max(highest, int(match.group(1)))
+        write_status(phase="import", detail=f"{p['name']}: {len(rows)} stored records")
+    return highest + 1
+
+
+def generate_rows(projects, cfg, rnd, first=1):
     """Compact row specs (record, form, event) for every project — the values
     themselves are generated at send time. Each record fills 1..4 random
-    instruments, each at a random event."""
+    instruments, each at a random event. Numbering starts at `first`, above what
+    an earlier run left in these projects."""
     specs = []
-    seq = 0
+    seq = first - 1
     for p in projects:
         for _ in range(rnd.randint(cfg.min_records, cfg.max_records)):
             seq += 1
@@ -501,6 +653,8 @@ def import_rows(api, specs, cfg, rnd):
     call); every row must pass validation — a rejected row fails the test."""
     values = 0
     rows_done = 0
+    written = set()   # records this run has written, so a record's own second form
+                      # is not mistaken for a collision with an earlier run's data
 
     def flush(batch):
         nonlocal values, rows_done
@@ -518,9 +672,18 @@ def import_rows(api, specs, cfg, rnd):
                 for name, value in record_cells(rnd, spec):
                     form[f"{base}[{name}]"] = value
                     values += 1
-        results = json.loads(api.data_api(form))
+        results = json.loads(api.data_api(form))   # one row per submitted row, in order
         for r in results:
-            if r["import_record_id"] == 0:
+            key = (p["name"], r["record_id"])
+            first_write = key not in written
+            written.add(key)
+            if r["import_record_id"] == IMPORT_ADDED:
+                continue
+            if r["import_record_id"] == IMPORT_UPDATED and first_write:
+                raise RuntimeError(f"import collided with stored data at "
+                                   f"{p['name']}/{r['record_id']}/{r['form_name']} — "
+                                   f"a stress run only adds records")
+            if r["import_record_id"] != IMPORT_UPDATED:
                 raise RuntimeError(f"import rejected {p['name']}/{r['record_id']}"
                                    f"/{r['form_name']}: {r['import_form_name']}")
         rows_done += len(batch)
@@ -936,9 +1099,11 @@ def main():
     try:
         set_phase("setup")
         projects, totals, mix, setup_s = setup_projects(api, cfg, rnd)
+        reused = sum(1 for p in projects if p["reused"])
         set_phase("import")
         write_status(phase="import", progress=40, detail="Preparing test records")
-        specs = generate_rows(projects, cfg, rnd)
+        first_record = next_record_number(api, projects)
+        specs = generate_rows(projects, cfg, rnd, first_record)
         values, import_s = import_rows(api, specs, cfg, rnd)
         set_phase("export")
         write_status(phase="export", progress=80, detail="Exporting project data")
@@ -954,11 +1119,12 @@ def main():
     report = f"""CLARA API stress report (external client)
 base url:             {cfg.base_url}
 seed:                 {cfg.seed}
-projects:             {len(projects)}
+projects:             {len(projects)} ({reused} reused, {len(projects) - reused} built)
 events total:         {totals['events']}
 instruments total:    {totals['instruments']}
 fields total:         {totals['fields']}
 field mix:            {mix_line}
+record numbers:       from REC{first_record:07d} ({first_record - 1} already stored)
 imported rows:        {len(specs)} (values: {values})
 
 setup time:           {setup_s:.1f}s  ({cfg.projects / max(setup_s, 1e-9) * 60:.1f} projects/min)
@@ -994,7 +1160,7 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        error = "project_names_exist" if str(e).startswith("project names already exist:") else "worker_failed"
-        write_status(status="failed", phase="failed", detail=str(e) or type(e).__name__, error=error)
+        write_status(status="failed", phase="failed", detail=str(e) or type(e).__name__,
+                     error="worker_failed")
         print(f"stress test failed: {e}", file=sys.stderr)
         sys.exit(1)

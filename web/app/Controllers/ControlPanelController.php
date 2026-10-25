@@ -890,7 +890,6 @@ final class ControlPanelController extends Controller
                 'admin.monitoring.stress.phase.complete', 'admin.monitoring.stress.phase.failed',
                 'admin.monitoring.stress.progress',
                 'admin.monitoring.stress.progress_percent',
-                'admin.monitoring.stress.error.project_names_exist',
                 'admin.monitoring.stress.error.status_unavailable', 'admin.monitoring.stress.error.worker_failed',
             ],
         ]);

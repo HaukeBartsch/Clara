@@ -340,7 +340,7 @@ function renderStressTest(stressTest) {
     if (stressTest) {
       const phaseText = t(`admin.monitoring.stress.phase.${phase}`)
       const percent = String(Math.round(progress ? progress.value : 0))
-      const knownErrors = ["project_names_exist", "status_unavailable", "worker_failed"]
+      const knownErrors = ["status_unavailable", "worker_failed"]
       const errorCode = knownErrors.includes(stressTest.error) ? stressTest.error : "worker_failed"
       const error = status === "failed" ? t(`admin.monitoring.stress.error.${errorCode}`) : ""
       message.textContent = [phaseText, t("admin.monitoring.stress.progress_percent", { percent }), error]

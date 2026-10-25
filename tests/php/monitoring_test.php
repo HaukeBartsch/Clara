@@ -88,6 +88,9 @@ describe('Monitoring section (§5.11, REQ-UI-064)', function (): void {
         assert_contains('data-clara-mon-stress-button', $body);
         assert_contains('action="/admin?section=monitoring&amp;action=monitoring_stress_test"', $body);
         assert_contains('StressTest01', $body);
+        // REQ-UI-068: the section says a target that exists is reused, so the run can
+        // be started again — there is nothing to clean up first.
+        assert_contains('is reused', $body);
         assert_contains('data-clara-mon-stress-progress', $body);
 
         // The eight small multiples; the blocked table shows its one row, and the settings line
