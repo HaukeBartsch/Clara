@@ -171,7 +171,7 @@ $fieldAttrs = static function (array $field, ?string $staticValue = null) use ($
         <?php continue; ?>
     <?php endif; ?>
 
-    <?php $static = !$editable || $isIdentifier || $type === 'calculated' ? ($isIdentifier && $value === '' ? $record : $value) : null; ?>
+    <?php $static = !$editable || $isIdentifier || $type === 'calculated' ? ($isIdentifier ? $record : $value) : null; ?>
     <div class="mb-3 clara-field<?= $error !== '' ? ' clara-field-invalid' : '' ?>"<?= $fieldAttrs($field, $static) ?>>
         <div class="d-flex align-items-start gap-2">
             <div class="flex-grow-1">
@@ -186,10 +186,10 @@ $fieldAttrs = static function (array $field, ?string $staticValue = null) use ($
                     <?php if (($recordNaming ?? 'manual') === 'auto'): ?>
                         <!-- The record identifier (GD-8) in auto naming mode (REQ-UI-052): the
                              number is the record — text on the page, not a field. -->
-                        <div class="form-control-plaintext py-0 clara-value" id="<?= View::e($id) ?>"><?= View::e($value !== '' ? $value : $record) ?></div>
+                        <div class="form-control-plaintext py-0 clara-value" id="<?= View::e($id) ?>"><?= View::e($record) ?></div>
                     <?php else: ?>
                         <!-- The record identifier (GD-8): the record's name, never edited here. -->
-                        <input class="form-control form-control-sm" type="text" id="<?= View::e($id) ?>" value="<?= View::e($value !== '' ? $value : $record) ?>" readonly>
+                        <input class="form-control form-control-sm" type="text" id="<?= View::e($id) ?>" value="<?= View::e($record) ?>" readonly>
                     <?php endif; ?>
                 <?php elseif ($type === 'calculated'): ?>
                     <!-- Calculated (REQ-VAL-036): a read-only value, recomputed by the API on import. -->

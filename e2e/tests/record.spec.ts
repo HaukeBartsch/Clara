@@ -66,9 +66,16 @@ test.describe("data entry and the record view (M5)", () => {
       await expect(success(page)).toContainText("Instrument assignment of arm 1 saved.")
     }
 
-    // --- the instrument (§7.2): identifier, a required integer, a radio, a branched dropdown, free text ---
+    // Put an empty instrument first so identifier discovery must skip it (GD-8).
     await page.locator("#clara-nav").getByRole("link", { name: "Design" }).click()
-    await page.locator("table.clara-design-instruments").getByRole("link", { name: "instrument", exact: true }).click()
+    const instruments = page.locator("table.clara-design-instruments")
+    await page.fill("#instrument-name", "empty_first")
+    await page.locator('form[action*="action=add_instrument"] button[type="submit"]').click()
+    await expect(success(page)).toContainText('Instrument "empty_first" added.')
+    await instruments.locator('tr[data-instrument="empty_first"] button[aria-label="Move up"]').click()
+    await expect(success(page)).toContainText("Order saved.")
+    // --- the populated instrument: identifier, required integer, radio, branching dropdown, free text ---
+    await instruments.getByRole("link", { name: "instrument", exact: true }).click()
     await addField(page, async () => page.fill("#field-label", "Record ID"), "record_id")
     await addField(page, async () => {
       await page.fill("#field-label", "Age")
@@ -127,6 +134,11 @@ test.describe("data entry and the record view (M5)", () => {
     const form = page.locator("form[data-clara-record-form]")
     const field = (name: string) => form.locator(`[data-clara-field="${name}"]`)
 
+    // The record identifier is displayed as the record name and is not an editable form value.
+    await expect(page.locator("#f-record_id")).toHaveValue("M5001")
+    await expect(page.locator("#f-record_id")).toHaveAttribute("readonly", "")
+    await expect(page.locator("#f-record_id")).not.toHaveAttribute("name", /.+/)
+
     // Advisory validation (REQ-VAL-002): a hint, never a block.
     await page.fill("#f-age", "abc")
     await expect(field("age").locator("[data-clara-hint]")).toHaveText("Expected a whole number.")
@@ -151,6 +163,17 @@ test.describe("data entry and the record view (M5)", () => {
     await page.fill("#f-age", "42")
     await form.locator("[data-clara-save]").click()
     await expect(success(page)).toContainText("Record M5001 created")
+
+    // Even a posted identifier value cannot rename a record through ordinary form submission.
+    await page.locator("#f-record_id").evaluate((element) => {
+      element.removeAttribute("readonly")
+      element.setAttribute("name", "value[record_id]")
+    })
+    await page.fill("#f-record_id", "RENAMED")
+    await form.locator("[data-clara-save]").click()
+    await expect(success(page)).toContainText("Record M5001")
+    await expect(page).toHaveURL(/\/records\/M5001/)
+    await expect(page.locator("#f-record_id")).toHaveValue("M5001")
 
     // --- read back: the form opens with the stored values (§8.3) ---
     await page.reload()

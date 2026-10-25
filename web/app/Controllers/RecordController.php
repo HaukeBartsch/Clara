@@ -491,15 +491,15 @@ final class RecordController extends DataEntryController
         }
 
         $fields = [];
-        $identifier = '';
         if ($instrument !== null) {
             $fields = self::listOf($this->api->get($base . '/instruments/' . (int) $instrument['id'] . '/fields'));
-            // The record identifier is the first field of the first instrument (GD-8): shown,
-            // never edited — the record's name is what every import row carries anyway.
-            if ((int) ($instrument['id'] ?? 0) === (int) ($instruments[0]['id'] ?? 0)) {
-                $identifier = (string) ($fields[0]['field_name'] ?? '');
-            }
         }
+        // The record identifier is the first field of the earliest instrument with fields
+        // (GD-8): show the record's name in that field, but never accept it as an edit here.
+        [$identifierName, $identifierInstrument] = $this->identifierDetails($projectId, $instruments,
+            $instrument === null ? [] : [(int) $instrument['id'] => $fields]);
+        $identifier = $identifierInstrument !== 0 && $identifierInstrument === (int) ($instrument['id'] ?? 0)
+            ? $identifierName : '';
 
         // A reason keyed on a name this render has no input for — a framing key the API names
         // (`event_name`, `form_name`, or the record identifier away from its own field), or a field of
@@ -949,20 +949,40 @@ final class RecordController extends DataEntryController
     }
 
     /**
-     * The record identifier's field name — the first field of the first instrument (GD-8) —
-     * under which an import row carries the record name (§3.7.1); '' while the project has no
-     * field yet.
+     * The record identifier's name and instrument (GD-8), using fields already fetched for the
+     * selected instrument where possible. An empty earlier instrument is skipped.
+     *
+     * @param list<array<string, mixed>> $instruments
+     * @param array<int, list<array<string, mixed>>> $knownFields
+     * @return array{string, int}
+     */
+    private function identifierDetails(int $projectId, array $instruments, array $knownFields = []): array
+    {
+        $base = '/api/v1/projects/' . $projectId;
+        foreach (self::byPosition($instruments) as $instrument) {
+            $iid = (int) ($instrument['id'] ?? 0);
+            if ($iid === 0) {
+                continue;
+            }
+            $fields = $knownFields[$iid] ?? self::listOf($this->api->get($base . '/instruments/' . $iid . '/fields'));
+            if (isset($fields[0]['field_name'])) {
+                return [(string) $fields[0]['field_name'], $iid];
+            }
+        }
+
+        return ['', 0];
+    }
+
+    /**
+     * The record identifier's field name under which an import row carries the record name
+     * (§3.7.1); '' while the project has no fields yet.
      */
     private function identifierName(int $projectId): string
     {
         $base = '/api/v1/projects/' . $projectId;
-        $first = (int) (self::byPosition(self::listOf($this->api->get($base . '/instruments')))[0]['id'] ?? 0);
-        if ($first === 0) {
-            return '';
-        }
-        $fields = self::listOf($this->api->get($base . '/instruments/' . $first . '/fields'));
+        [$name] = $this->identifierDetails($projectId, self::listOf($this->api->get($base . '/instruments')));
 
-        return (string) ($fields[0]['field_name'] ?? '');
+        return $name;
     }
 
     /**
