@@ -890,6 +890,8 @@ final class ControlPanelController extends Controller
                 'admin.monitoring.stress.phase.complete', 'admin.monitoring.stress.phase.failed',
                 'admin.monitoring.stress.progress',
                 'admin.monitoring.stress.progress_percent',
+                // The start button posts in place, so the line it would have flashed is rendered here.
+                'admin.monitoring.stress.start_failed',
                 'admin.monitoring.stress.error.status_unavailable', 'admin.monitoring.stress.error.worker_failed',
             ],
         ]);

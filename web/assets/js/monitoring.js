@@ -7,12 +7,22 @@
 // default (REQ-CFG-034). The endpoint carries counters as of now, not a series: rates are the
 // difference between consecutive samples, and a counter that went backwards (an API restart)
 // reads as a gap rather than a spike. A tick never overlaps its predecessor, and polling
-// pauses while the tab is hidden. No UI string lives here (REQ-UI-045); d3 arrives as the
-// UMD global from the script tag before this module (Design/Technology_Stack_Design.md §3).
+// pauses while the tab is hidden — so does the line: a stretch with no sample in it ends the curve
+// and the next sample starts a new one, because nothing was observed across it. No UI string lives
+// here (REQ-UI-045); d3 arrives as the UMD global from the script tag before this module
+// (Design/Technology_Stack_Design.md §3).
 
 import { ready, t, fetchJson, el, td, fill } from "../app.js"
 
 const POLL_MS = 1000
+/**
+ * How far apart two samples may be and still count as one uninterrupted stretch of monitoring.
+ * `generated_at` carries second resolution, so a healthy 1 Hz poll lands 1–2 s apart; anything
+ * wider than this is not jitter but the page having stopped watching — the tab hidden, the machine
+ * asleep, the API unreachable for a few seconds — and no sample speaks for the time in between. The
+ * chart says so out loud: the line ends at the last value observed and starts again at the next.
+ */
+const GAP_TOLERANCE_MS = 4 * POLL_MS
 const MIN_SPAN_MS = 60 * 1000 // a freshly opened page still gets a legible x axis
 const DEFAULT_PERIOD_MINUTES = 10 // what the page asks for when it says nothing (REQ-CFG-034)
 const MAX_PERIOD_MINUTES = 1440 // Config's ceiling: one day of 1 Hz samples is the useful end
@@ -62,14 +72,17 @@ function humanBytesPerSecond(v) {
   if (v >= 1024) return (v / 1024).toFixed(1) + " KiB/s"
   return Math.round(v) + " B/s"
 }
-/** Compact seconds → "45s" / "3:07" / "2d 04:12", mirroring the PHP first paint. */
+/** Compact seconds → "45s" / "3:07:41" / "2d 4:12:09", mirroring the PHP first paint. Seconds are
+ * part of the format because the card is rewritten once a second: minute resolution would leave it
+ * showing the same text for sixty ticks and read as a page that stopped polling. */
 function fmtUptime(seconds) {
   const whole = Math.floor(num(seconds))
   if (whole < 60) return whole + "s"
   const d = Math.floor(whole / 86400)
   const h = Math.floor((whole % 86400) / 3600)
   const m = Math.floor((whole % 3600) / 60)
-  return d > 0 ? d + "d " + h + ":" + String(m).padStart(2, "0") : h + ":" + String(m).padStart(2, "0")
+  const clock = h + ":" + String(m).padStart(2, "0") + ":" + String(whole % 60).padStart(2, "0")
+  return d > 0 ? d + "d " + clock : clock
 }
 
 // --- the chart table: one entry per small multiple -----------------------------------------
@@ -88,7 +101,7 @@ const CHARTS = [
 
 // --- the sample buffer ----------------------------------------------------------------------
 
-const samples = [] // { t, rps, latencyMs, goroutines, heapMiB, poolInUse, poolMax, waitsPerS, gcMs, bytesPerS }
+const samples = [] // { t, gap, rps, latencyMs, goroutines, heapMiB, poolInUse, poolMax, waitsPerS, gcMs, bytesPerS }
 let prev = null // raw counters of the previous accepted snapshot
 
 /**
@@ -96,13 +109,22 @@ let prev = null // raw counters of the previous accepted snapshot
  * previous snapshot's clock (`generated_at`, so both ends of a delta are the API's own time);
  * any counter that went backwards means the API restarted — the rate series break at a gap,
  * the gauges stay valid, and the baseline resets to this snapshot.
+ *
+ * A sample that arrives too late to be the next poll (`GAP_TOLERANCE_MS`) is flagged `gap`: it does
+ * not continue the curve its predecessor left off, because the interval between them went
+ * unsampled — while the tab was hidden nothing was read at all. Its rates are null for the same
+ * reason: a rate measured across a stretch nobody watched is not a measurement of this interval, so
+ * it stays out of the chart and out of the axis extrema alike. Its gauges are still true at their
+ * own timestamp, which is why they are kept and simply start a new line.
  */
 function pushSample(metrics) {
   const totals = routeTotals(metrics)
   const pool = (metrics && metrics.db && metrics.db.pool) || {}
   const now = parseUtc(metrics.generated_at)
+  const gap = prev !== null && now - prev.t > GAP_TOLERANCE_MS
   const gauge = {
     t: now,
+    gap,
     rps: null,
     latencyMs: null,
     goroutines: num(metrics.process.goroutines),
@@ -125,7 +147,7 @@ function pushSample(metrics) {
       totals.respBytes < prev.respBytes ||
       num(pool.wait_count) < prev.waitCount)
 
-  if (!restarted && prev !== null && now > prev.t) {
+  if (!restarted && !gap && prev !== null && now > prev.t) {
     const seconds = (now - prev.t) / 1000
     gauge.rps = Math.max(0, totals.count - prev.count) / seconds
     const countDelta = totals.count - prev.count
@@ -196,6 +218,37 @@ function chartNodes(figure) {
   return nodes
 }
 
+/**
+ * One path out of the points in view: a subpath per contiguous run, so an unsampled stretch reads as
+ * the line ending and starting again instead of a straight segment drawn across time nobody
+ * observed. A point flagged `gap` opens a new run; a null value is not a point at all and closes the
+ * run before it — which is how an API restart reads on the rate charts. A run of one point still
+ * contributes its moveto: invisible, but the attribute keeps its shape while the buffer holds a
+ * single sample. d3's own `defined` filter stays on the generator as the backstop that no path ever
+ * receives a coordinate for a value it does not have.
+ */
+function linePath(line, points) {
+  const runs = []
+  let run = null
+  for (const point of points) {
+    const drawable = point.value !== null && point.value !== undefined
+    if (run !== null && (!drawable || point.gap)) {
+      runs.push(run)
+      run = null
+    }
+    if (!drawable) {
+      continue
+    }
+    if (run === null) {
+      run = []
+    }
+    run.push(point)
+  }
+  if (run !== null) runs.push(run)
+
+  return runs.map((each) => line(each)).join("")
+}
+
 function drawCharts() {
   if (samples.length === 0) return
   const end = samples[samples.length - 1].t
@@ -235,8 +288,8 @@ function drawCharts() {
       .x((d) => PLOT_LEFT + (x(d.t) / W) * (PLOT_RIGHT - PLOT_LEFT))
       .y((d) => y(d.value))
 
-    const points = visible.map((s) => ({ t: s.t, value: chart.pick(s) }))
-    nodes.line.attr("d", line(points))
+    const points = visible.map((s) => ({ t: s.t, value: chart.pick(s), gap: s.gap === true }))
+    nodes.line.attr("d", linePath(line, points))
 
     const format = chart.axisFormat || chart.format || chart.statFormat || String
     const unit = chart.unit || ""
@@ -266,21 +319,32 @@ function drawCharts() {
 
 // --- the rest of the section: stat cards, freshness line, blocked table ----------------------
 
+const EM_DASH = "—"
+
 function currentValues() {
   const last = samples.length > 0 ? samples[samples.length - 1] : {}
+  // A rate the newest sample does not carry — its interval went unsampled (a gap, REQ-UI-064), or this
+  // is the first snapshot after the page opened — renders as an em dash, not as the number that was
+  // there a minute ago: a card that never changes is indistinguishable from one that is live. The four
+  // gauges always carry a value, so they never fall back to the dash.
+  const measured = (value, format) => (value === null || value === undefined ? EM_DASH : format(value))
   const byKey = {
-    rps: last.rps === null || last.rps === undefined ? null : fixed(1)(last.rps),
-    latency: last.latencyMs === null || last.latencyMs === undefined ? null : fixed(1)(last.latencyMs) + " ms",
+    rps: measured(last.rps, fixed(1)),
+    latency: measured(last.latencyMs, (v) => fixed(1)(v) + " ms"),
     goroutines: String(Math.round(last.goroutines || 0)),
     heap: fixed(1)(last.heapMiB || 0) + " MiB",
     pool: (last.poolInUse === undefined ? "0" : String(last.poolInUse)) + " / " + String(last.poolMax || 0),
-    waits: last.waitsPerS === null || last.waitsPerS === undefined ? null : fixed(2)(last.waitsPerS),
-    throughput: last.bytesPerS === null || last.bytesPerS === undefined ? null : humanBytesPerSecond(last.bytesPerS),
+    waits: measured(last.waitsPerS, fixed(2)),
+    throughput: measured(last.bytesPerS, humanBytesPerSecond),
     uptime: fmtUptime(last.uptimeSeconds),
   }
   for (const node of document.querySelectorAll("[data-clara-mon-stat]")) {
     const value = byKey[node.dataset.claraMonStat]
-    if (value !== null && value !== undefined) node.textContent = value
+    if (value === undefined) {
+      continue // a card this function does not own — `blocked` belongs to the rate-limiter render
+    }
+    node.textContent = value
+    node.classList.toggle("text-body-secondary", value === EM_DASH) // the first paint's muted dash
   }
 }
 
@@ -319,6 +383,21 @@ function showFailed(errorCode) {
   line.hidden = !errorCode
 }
 
+const isRunning = (stressTest) => Boolean(stressTest) && stressTest.status === "running"
+
+/** The last **Start Stress Test** press came back without a running worker; this is where the page says so. */
+let startFailed = false
+
+/** When the page asked for a run that has not shown up yet (`null` = nothing pending). */
+let startingSince = null
+
+/**
+ * How long to wait for a requested run to appear in the polled status before calling the start
+ * failed. The action writes its `running` status before it launches the worker, so the very next
+ * tick would see it; five covers a poll lost on the way.
+ */
+const START_GRACE_MS = 5 * POLL_MS
+
 function renderStressTest(stressTest) {
   const section = document.querySelector("[data-clara-mon-stress]")
   if (!section) return
@@ -330,6 +409,13 @@ function renderStressTest(stressTest) {
   const phases = ["startup", "setup", "import", "export", "complete", "failed"]
   const phase = stressTest && phases.includes(stressTest.phase) ? stressTest.phase : "failed"
   section.dataset.status = status
+  if (isRunning(stressTest)) {
+    startFailed = false // a worker is up: an earlier press that did not take has been overtaken
+    startingSince = null
+  } else if (startingSince !== null && Date.now() - startingSince > START_GRACE_MS) {
+    startFailed = true // asked for a run, and after a grace of several ticks nothing is running
+    startingSince = null
+  }
   if (button) button.disabled = status === "running"
   if (progress) {
     progress.hidden = !stressTest
@@ -337,7 +423,11 @@ function renderStressTest(stressTest) {
   }
   if (message) {
     message.hidden = !stressTest
-    if (stressTest) {
+    if (startFailed && status !== "running") {
+      // Nothing reloaded the page to carry the server's flash line, so this is where it lives.
+      message.hidden = false
+      message.textContent = t("admin.monitoring.stress.start_failed")
+    } else if (stressTest) {
       const phaseText = t(`admin.monitoring.stress.phase.${phase}`)
       const percent = String(Math.round(progress ? progress.value : 0))
       const knownErrors = ["status_unavailable", "worker_failed"]
@@ -362,6 +452,11 @@ function whenVisible() {
 
 let lastSuccessAt = null
 
+/**
+ * One poll: read this section's data region and render everything it carries. This is the loop's own
+ * rhythm — an action taken on the page never fires a poll of its own, so a tick never overlaps its
+ * predecessor; it waits for the next one, which is at most a second away.
+ */
 async function tick() {
   try {
     const facts = await fetchJson("/admin?section=monitoring")
@@ -376,7 +471,6 @@ async function tick() {
     if (facts.metrics) lastSuccessAt = Date.now()
   } catch (error) {
     showFailed(error.message || "internal") // includes "forbidden": the session guard decides on the next navigation
-    return
   }
 
   const updated = document.querySelector("[data-clara-mon-updated]")
@@ -394,8 +488,50 @@ async function loop() {
   }
 }
 
+// --- starting the stress test without leaving the page ---------------------------------------------
+
+/**
+ * **Start Stress Test** posts its form in place of navigating. The charts are what a stress test
+ * exists to watch, and a page load drops the sample buffer — the curve would begin again at empty at
+ * the moment the load starts, which is the one stretch worth seeing. So the click posts and stays
+ * put: same `?action=`, same CSRF field, and deliberately no `Accept: application/json` (this
+ * mutation has no data region, REQ-UI-044), so the server answers with the redirect it already
+ * answers a navigation with. Following that redirect is what spends the flash message the action
+ * sets — nothing turns up later on whatever page the administrator opens next — and its HTML is
+ * discarded; whether a worker came up arrives with the loop's own next read, like everything else on
+ * this section. With scripting off the form posts as it always did, reload included.
+ */
+function watchStressTestForm() {
+  const form = document.querySelector("[data-clara-mon-stress-form]")
+  if (!form) return
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault()
+    const button = form.querySelector("[data-clara-mon-stress-button]")
+    if (button) button.disabled = true
+    startFailed = false
+    startingSince = Date.now()
+    try {
+      // The form holds the CSRF token and nothing else, so urlencoded is what the browser would have
+      // sent; following the redirect is deliberate — see this function's comment.
+      const response = await fetch(form.action, {
+        method: "POST",
+        body: new URLSearchParams(new FormData(form)),
+        credentials: "same-origin",
+      })
+      if (!response.ok) {
+        startFailed = true // refused before the action ran: there is no worker to wait for
+        startingSince = null
+      }
+    } catch {
+      startFailed = true
+      startingSince = null
+    }
+  })
+}
+
 ready(() => {
   if (!document.querySelector("[data-clara-mon-chart]")) return
   periodMs = periodMinutes() * 60 * 1000 // the configured window, taken before the first sample
+  watchStressTestForm() // starting a run leaves the polling loop, and its history, alone
   loop()
 })

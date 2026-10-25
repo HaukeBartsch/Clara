@@ -8,7 +8,11 @@
  * visible, filling the stat cards, the eight d3 line charts of the configured period —
  * MONITORING_PERIOD_MINUTES, ten minutes by default (REQ-CFG-034) — as observed since the page
  * was opened, and the blocked-IP table below. The charts row's `data-clara-mon-period-minutes`
- * is how the script learns that period, and it drops every timepoint older than it.
+ * is how the script learns that period, and it drops every timepoint older than it. A stretch with no
+ * sample in it — this tab hidden, the API unreachable — breaks a line rather than joining the value
+ * before it to the value after it (REQ-UI-064). `data-clara-mon-stress-form` is how the script takes
+ * the Stress Test button over: the run starts without reloading the section, so the charts keep the
+ * history the test is there to be seen against.
  * A plain table-sm re-render is
  * enough here — the list is bounded by the number of addresses in a blockout (the Tabulator
  * rule in AGENTS.md is for tables that need it).
@@ -16,17 +20,21 @@
 
 use Clara\View;
 
-/** Compact seconds → "2d 04:12" / "4:12:05" style uptime, mirroring monitoring.js. */
+/** Compact seconds → "45s" / "3:07:41" / "2d 4:12:09" style uptime, mirroring monitoring.js —
+ * seconds included, because the script rewrites this card once a second and minute resolution would
+ * leave it holding one string for sixty ticks, which reads as a page that stopped polling. */
 $fmtUptime = static function (float $seconds): string {
-    $seconds = (int) floor($seconds);
-    if ($seconds < 60) {
-        return $seconds . 's';
+    $whole = (int) floor($seconds);
+    if ($whole < 60) {
+        return $whole . 's';
     }
-    $d = intdiv($seconds, 86400);
-    $h = intdiv($seconds % 86400, 3600);
-    $m = intdiv($seconds % 3600, 60);
-    return $d > 0 ? $d . 'd ' . $h . ':' . str_pad((string) $m, 2, '0', STR_PAD_LEFT)
-        : $h . ':' . str_pad((string) $m, 2, '0', STR_PAD_LEFT);
+    $d = intdiv($whole, 86400);
+    $h = intdiv($whole % 86400, 3600);
+    $m = intdiv($whole % 3600, 60);
+    $clock = $h . ':' . str_pad((string) $m, 2, '0', STR_PAD_LEFT)
+        . ':' . str_pad((string) ($whole % 60), 2, '0', STR_PAD_LEFT);
+
+    return $d > 0 ? $d . 'd ' . $clock : $clock;
 };
 
 $stat = static function (string $key, string $labelKey, string $value): string {
@@ -87,7 +95,8 @@ $stressPhase = in_array($stressStatus['phase'] ?? '', ['startup', 'setup', 'impo
 <section class="mb-4" data-clara-mon-stress data-status="<?= View::e($stressState) ?>" aria-labelledby="clara-mon-stress-heading">
     <h2 class="h6" id="clara-mon-stress-heading"><?= View::e($view->t('admin.monitoring.stress.title')) ?></h2>
     <p class="text-body-secondary small"><?= View::e($view->t('admin.monitoring.stress.description')) ?></p>
-    <form method="post" action="/admin?section=monitoring&amp;action=monitoring_stress_test" class="mb-2">
+    <form method="post" action="/admin?section=monitoring&amp;action=monitoring_stress_test" class="mb-2"
+        data-clara-mon-stress-form>
         <?= $view->csrfField() ?>
         <button class="btn btn-sm btn-warning" type="submit" data-clara-mon-stress-button
             <?= $stressState === 'running' ? 'disabled' : '' ?>>

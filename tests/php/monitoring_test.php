@@ -83,10 +83,15 @@ describe('Monitoring section (§5.11, REQ-UI-064)', function (): void {
         assert_contains('data-clara-mon-stat="goroutines">7<', $body);
         assert_contains('data-clara-mon-stat="heap">2.0 MiB<', $body);
         assert_contains('data-clara-mon-stat="pool">3 / 25<', $body);
-        assert_contains('data-clara-mon-stat="uptime">0:02<', $body);
+        // Uptime carries its seconds: the script rewrites this card every second, and a format that
+        // only moved each minute would read as a page that stopped polling.
+        assert_contains('data-clara-mon-stat="uptime">0:02:03<', $body);
         assert_contains('data-clara-mon-stat="blocked">1<', $body);
         assert_contains('data-clara-mon-stress-button', $body);
         assert_contains('action="/admin?section=monitoring&amp;action=monitoring_stress_test"', $body);
+        // DEV-UI-24: the form is the one monitoring.js posts in place of navigating, so starting a run
+        // keeps the chart history it is measured against.
+        assert_contains('data-clara-mon-stress-form', $body);
         assert_contains('StressTest01', $body);
         // REQ-UI-068: the section says a target that exists is reused, so the run can
         // be started again — there is nothing to clean up first.
@@ -106,6 +111,9 @@ describe('Monitoring section (§5.11, REQ-UI-064)', function (): void {
         // among the injected JS keys, or the script would print raw keys over the first paint.
         assert_contains('"admin.monitoring.blocked.on"', $body);
         assert_contains('"admin.monitoring.blocked.off"', $body);
+        // …and the line monitoring.js renders when a start produced no worker: nothing reloads the page
+        // to carry the action's flash any more, so its string has to be injected (DEV-UI-24).
+        assert_contains('"admin.monitoring.stress.start_failed"', $body);
     });
 
     it('renders the configured chart period, ten minutes by default (REQ-CFG-034)', function (): void {
