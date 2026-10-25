@@ -293,7 +293,7 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 	p Params, row map[string]string) (importRow, error) {
 
 	// The record id travels under the record identifier's own field name —
-	// the first field of the first instrument (GD-8) — exactly as an export
+	// the first field of the earliest instrument with fields (GD-8) — exactly as an export
 	// writes it, so `record_id` is only the key when the project names its
 	// first field that way.
 	idKey := d.identifier

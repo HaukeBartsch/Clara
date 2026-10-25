@@ -92,7 +92,7 @@ type odmPlan struct {
 	codelists   []odmCodeListPlan
 	methods     []odmMethodPlan
 
-	identifier          string // GD-8: first field of the first instrument
+	identifier          string // GD-8: first field of the earliest instrument with fields
 	identifierDelivered bool   // the applied level delivers that column (REQ-ODM-030)
 }
 
@@ -218,7 +218,7 @@ func newODMPlan(project *db.Project, arms []db.Arm, eventsByArm map[int][]EventO
 		p.groups = append(p.groups, g)
 		for _, f := range byInstr[instr.ID] {
 			if p.identifier == "" {
-				p.identifier = f.FieldName // GD-8, the first field of the first instrument
+				p.identifier = f.FieldName // GD-8, the first field of the earliest instrument with fields
 			}
 			kept := dataapi.ExportFieldKeptAt(f, p.identifier, ranks[instr.ID])
 			if !kept {

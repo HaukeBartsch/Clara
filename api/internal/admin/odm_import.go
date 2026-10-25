@@ -749,9 +749,8 @@ func odmValidationType(item *odmItemDef) sql.NullString {
 }
 
 // odmRestoreIdentifier puts GD-8 back: the field the document marks with
-// KeySequence="1", or the first field of the first instrument where it marks
-// nothing, moved to the front so CLARA's rule — the identifier is that first
-// field — holds for the imported project too (§6.2 step 2).
+// KeySequence="1", or the first field of the earliest non-empty instrument
+// where it marks nothing, is placed first in that instrument (§6.2 step 2).
 func (h *Handler) odmRestoreIdentifier(d *stagedDesign, mdv *odmMetaDataVersion, problems *odmProblems) error {
 	marked := ""
 	for _, def := range mdv.groups {
@@ -767,20 +766,29 @@ func (h *Handler) odmRestoreIdentifier(d *stagedDesign, mdv *odmMetaDataVersion,
 	if len(instruments) == 0 {
 		return problems.fatalRow("", "", "no_metadataversion", "the document describes no instrument")
 	}
-	first := instruments[0]
-	ordered := sortedFields(first.Fields)
-	if len(ordered) == 0 {
+	var first *stagedInstrument
+	var ordered []stagedField
+	for i := range instruments {
+		fields := sortedFields(instruments[i].Fields)
+		if len(fields) > 0 {
+			first = &instruments[i]
+			ordered = fields
+			break
+		}
+	}
+	if first == nil {
 		return nil // nothing to identify a record with; the project holds an empty form
 	}
 	target := ordered[0].FieldName
 	if marked != "" {
-		for _, inst := range d.Instruments {
+		for i := range d.Instruments {
+			inst := &d.Instruments[i]
 			for _, f := range inst.Fields {
 				if f.FieldName == marked {
 					target = marked
 					if inst.ID != first.ID {
 						return problems.fatalRow("", marked, "dangling_ref", fmt.Sprintf(
-							"the record identifier %q is keyed in the instrument %q, not in the first one", marked, inst.Name))
+							"the record identifier %q is keyed in the instrument %q, not in the earliest instrument with fields", marked, inst.Name))
 					}
 				}
 			}

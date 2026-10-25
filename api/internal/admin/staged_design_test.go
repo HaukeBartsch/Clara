@@ -79,6 +79,22 @@ type designFixture struct {
 	calcField                int64
 }
 
+func TestStagedDesignIdentifierSkipsEmptyEarliestInstrument(t *testing.T) {
+	d := &stagedDesign{Instruments: []stagedInstrument{
+		{ID: 1, Position: 1},
+		{ID: 2, Position: 2, Fields: []stagedField{
+			{ID: 21, Position: 1, FieldName: "study_key"},
+		}},
+		{ID: 3, Position: 3, Fields: []stagedField{
+			{ID: 31, Position: 1, FieldName: "other_key"},
+		}},
+	}}
+
+	if got := d.firstFieldID(); got != 21 {
+		t.Fatalf("firstFieldID = %d, want 21", got)
+	}
+}
+
 // TestStagedDesignRoundTrip asserts the snapshot carries the live design
 // faithfully: encode, parse, and compare every flattened view against the
 // store listing it was taken from (REQ-DB-035).

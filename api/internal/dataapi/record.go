@@ -90,7 +90,7 @@ type projectDict struct {
 	events      []eventRow       // canonical per-arm order (GD-15)
 	eventArm    map[string]int
 	hasEvents   bool
-	identifier  string             // GD-8: first field of the first instrument
+	identifier  string             // GD-8: first field of the earliest instrument with fields
 	instrEvents map[int64][]string // instrument id -> mapped unique event names
 	// repeating holds the pairs designated repeating (REQ-DB-047), unique event
 	// name -> instrument name.

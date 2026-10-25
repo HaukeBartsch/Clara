@@ -61,6 +61,47 @@ func TestImportKeysOnIdentifierFieldName(t *testing.T) {
 	}
 }
 
+func TestImportUsesIdentifierAfterEmptyEarliestInstrument(t *testing.T) {
+	f := renamedIdentifierFixture(t)
+	ctx := context.Background()
+	emptyID, err := f.s.AddInstrument(ctx, &db.Instrument{
+		ProjectID: f.pid, Name: "empty", Position: 3,
+	})
+	if err != nil {
+		t.Fatalf("AddInstrument(empty): %v", err)
+	}
+	if _, err := f.s.DB.ExecContext(ctx,
+		`UPDATE instruments SET position = 0 WHERE project_id = ? AND name = 'demo'`, f.pid); err != nil {
+		t.Fatalf("temporarily move demo instrument: %v", err)
+	}
+	if _, err := f.s.DB.ExecContext(ctx,
+		`UPDATE instruments SET position = 4 WHERE project_id = ? AND name = 'calc'`, f.pid); err != nil {
+		t.Fatalf("move calc instrument: %v", err)
+	}
+	if _, err := f.s.DB.ExecContext(ctx,
+		`UPDATE instruments SET position = 1 WHERE id = ?`, emptyID); err != nil {
+		t.Fatalf("move empty instrument first: %v", err)
+	}
+	if _, err := f.s.DB.ExecContext(ctx,
+		`UPDATE instruments SET position = 2 WHERE project_id = ? AND name = 'demo'`, f.pid); err != nil {
+		t.Fatalf("move demo instrument: %v", err)
+	}
+	if _, err := f.s.DB.ExecContext(ctx,
+		`UPDATE instruments SET position = 3 WHERE project_id = ? AND name = 'calc'`, f.pid); err != nil {
+		t.Fatalf("move calc instrument: %v", err)
+	}
+
+	res := f.importRows(t, importForm("tok-edit", map[string]string{
+		"study_instance_uid": "8DISC021", "form_name": "demo", "event_name": "baseline_arm_1", "age": "42",
+	}))
+	if len(res) != 1 || res[0].ImportRecordID != importAdded || res[0].RecordID != "8DISC021" {
+		t.Fatalf("add result = %v, want 8DISC021 added", res)
+	}
+	if got := storedValue(t, f, "8DISC021", "baseline_arm_1", "study_instance_uid"); got != "8DISC021" {
+		t.Errorf("identifier value = %q, want record id stored under the first field of the earliest non-empty instrument", got)
+	}
+}
+
 // An export imports back unchanged: the identifier column it writes is the
 // key the import reads (REQ-API-028/031).
 func TestImportRoundTripsExportWithRenamedIdentifier(t *testing.T) {

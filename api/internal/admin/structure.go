@@ -1730,8 +1730,8 @@ func repeatingOrEmpty(events []string) []string {
 // {"events": [unique event names]} replaces the instrument's whole set, so []
 // turns repeating off everywhere. Every named event must be one the instrument
 // is mapped to (400), and a survey instrument cannot repeat (409, GD-9: one link
-// fills one form), nor can the first instrument, whose first field is the record
-// identifier (GD-8). Turning repeating off never deletes anything: the values of
+// fills one form), nor can the instrument holding the record identifier (GD-8).
+// Turning repeating off never deletes anything: the values of
 // further instances stay stored, hidden until the pair repeats again
 // (REQ-DB-048) — so the change is never breaking. project_admin; production
 // stages it like every structure change (§4.21).
@@ -1788,10 +1788,10 @@ func (h *Handler) putRepeating(w http.ResponseWriter, r *http.Request) {
 		if si.IsSurvey && len(events) > 0 {
 			return conflictf("a survey instrument cannot be repeating")
 		}
-		if d.isFirstInstrument(instID) && len(events) > 0 {
+		if (d.isFirstInstrument(instID) || d.identifierInstrumentID() == instID) && len(events) > 0 {
 			// The record identifier is its first field (GD-8) and belongs to the
 			// record, never to one of several instances.
-			return conflictf("the first instrument holds the record identifier and cannot be repeating")
+			return conflictf("the instrument holding the record identifier cannot be repeating")
 		}
 		d.setRepeating(si.Name, events)
 		return nil
@@ -2017,9 +2017,12 @@ func (h *Handler) orderInstruments(w http.ResponseWriter, r *http.Request) {
 			return nil
 		}
 		if first, ok := d.instrument(body.Order[0]); ok && len(d.repeatingEvents(first.Name)) > 0 {
-			// The first instrument holds the record identifier (GD-8), which never
-			// belongs to one of several instances (REQ-API-154).
 			return conflictf("a repeating instrument cannot be the first instrument")
+		}
+		if idInstrument := d.identifierInstrumentID(); idInstrument != 0 {
+			if identifierInstrument, ok := d.instrument(idInstrument); ok && len(d.repeatingEvents(identifierInstrument.Name)) > 0 {
+				return conflictf("the instrument holding the record identifier cannot be repeating")
+			}
 		}
 		return nil
 	}
@@ -2030,16 +2033,7 @@ func (h *Handler) orderInstruments(w http.ResponseWriter, r *http.Request) {
 	if target == writeStaged {
 		// GD-8 is about stored records, so the live check applies unchanged.
 		if len(body.Order) > 0 {
-			first, found := staged.instrument(body.Order[0])
-			if !found {
-				errBadRequest(w, "order must list every instrument of the project exactly once")
-				return
-			}
-			var newFirst int64
-			if fields := sortedFields(first.Fields); len(fields) > 0 {
-				newFirst = fields[0].ID
-			}
-			if bad, err := h.gd8Violation(ctx, projectID, newFirst); err != nil {
+			if bad, err := h.gd8Violation(ctx, projectID, staged.firstFieldID()); err != nil {
 				errInternal(w)
 				return
 			} else if bad {
@@ -2085,17 +2079,20 @@ func (h *Handler) orderInstruments(w http.ResponseWriter, r *http.Request) {
 		errBadRequest(w, "order must list every instrument of the project exactly once")
 		return
 	}
-	// GD-8: the first field of the first instrument is the record
-	// identifier; with records present the identifier may not move.
+	// GD-8: the first field in the earliest instrument with fields is the
+	// record identifier; with records present the identifier may not move.
 	if len(body.Order) > 0 {
-		firstFields, err := h.Store.ListFieldsByInstrument(ctx, projectID, body.Order[0])
-		if err != nil {
-			errInternal(w)
-			return
-		}
 		var newFirst int64
-		if len(firstFields) > 0 {
-			newFirst = firstFields[0].ID
+		for _, instrumentID := range body.Order {
+			fields, err := h.Store.ListFieldsByInstrument(ctx, projectID, instrumentID)
+			if err != nil {
+				errInternal(w)
+				return
+			}
+			if len(fields) > 0 {
+				newFirst = fields[0].ID
+				break
+			}
 		}
 		if bad, err := h.gd8Violation(ctx, projectID, newFirst); err != nil {
 			errInternal(w)
@@ -2159,14 +2156,10 @@ func (h *Handler) gd8Violation(ctx context.Context, projectID int64, newFirstFie
 	return newFirstFieldID != current, nil
 }
 
-// recordIdentifierField returns the id of the GD-8 record-identifier field
-// (position 1 of the instrument at position 1); 0 when none exists.
+// recordIdentifierField returns the id of the first field in the earliest
+// instrument that has fields; 0 when the project has no fields (GD-8).
 func (h *Handler) recordIdentifierField(ctx context.Context, projectID int64) (int64, error) {
-	instruments, err := h.Store.ListInstruments(ctx, projectID)
-	if err != nil || len(instruments) == 0 {
-		return 0, err
-	}
-	fields, err := h.Store.ListFieldsByInstrument(ctx, projectID, instruments[0].ID)
+	fields, err := h.Store.ListFields(ctx, projectID)
 	if err != nil || len(fields) == 0 {
 		return 0, err
 	}
@@ -4446,8 +4439,8 @@ func (h *Handler) orderFields(w http.ResponseWriter, r *http.Request) {
 	if target == writeStaged {
 		// GD-8 is about stored records, so the live check applies unchanged — and it
 		// applies when the instrument being ordered is itself staged.
-		if set.isFirstInstrument(instID) && len(body.Order) > 0 {
-			if bad, err := h.gd8Violation(ctx, projectID, body.Order[0]); err != nil {
+		if len(body.Order) > 0 {
+			if bad, err := h.gd8Violation(ctx, projectID, set.firstFieldID()); err != nil {
 				errInternal(w)
 				return
 			} else if bad {
@@ -4492,14 +4485,18 @@ func (h *Handler) orderFields(w http.ResponseWriter, r *http.Request) {
 		errBadRequest(w, "order must list every field of the instrument exactly once")
 		return
 	}
-	// GD-8 applies when this is the first instrument.
-	instruments, err := h.Store.ListInstruments(ctx, projectID)
+	// Compare the identifier after reordering fields anywhere in the design.
+	design, err := h.stagedDesignOf(ctx, projectID)
 	if err != nil {
 		errInternal(w)
 		return
 	}
-	if len(instruments) > 0 && instruments[0].ID == instID && len(body.Order) > 0 {
-		if bad, err := h.gd8Violation(ctx, projectID, body.Order[0]); err != nil {
+	if !design.orderFields(instID, body.Order) {
+		errBadRequest(w, "order must list every field of the instrument exactly once")
+		return
+	}
+	if len(body.Order) > 0 {
+		if bad, err := h.gd8Violation(ctx, projectID, design.firstFieldID()); err != nil {
 			errInternal(w)
 			return
 		} else if bad {

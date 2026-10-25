@@ -20,6 +20,29 @@ import (
 	"csms/api/internal/db"
 )
 
+func TestODMRestoreIdentifierAllowsEmptyEarlierInstrument(t *testing.T) {
+	d := &stagedDesign{Instruments: []stagedInstrument{
+		{ID: 1, Name: "empty", Position: 1},
+		{ID: 2, Name: "data", Position: 2, Fields: []stagedField{
+			{ID: 21, InstrumentID: 2, FieldName: "other", Position: 1},
+			{ID: 22, InstrumentID: 2, FieldName: "study_key", Position: 2},
+		}},
+	}}
+	mdv := &odmMetaDataVersion{
+		groups: []*odmGroupDef{{itemRefs: []odmItemRef{{oid: "key", keySequence: true}}}},
+		items:  []*odmItemDef{{oid: "key", name: "study_key"}},
+	}
+	problems := &odmProblems{}
+
+	if err := (&Handler{}).odmRestoreIdentifier(d, mdv, problems); err != nil {
+		t.Fatalf("odmRestoreIdentifier: %v", err)
+	}
+	got := d.firstFieldID()
+	if got != 22 {
+		t.Fatalf("identifier field id = %d, want 22", got)
+	}
+}
+
 // seedInterchange builds a project that exercises the parts of the design an ODM
 // document has to carry: two arms with events, a coded dropdown, a checkbox, a matrix
 // group, an instrument repeating at one event, and records whose values include the

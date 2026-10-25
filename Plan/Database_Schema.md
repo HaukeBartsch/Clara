@@ -95,7 +95,7 @@ Maps users to projects, roles, and API tokens.
 - id (Primary Key)
 - project_id (Foreign Key)
 - name (String, Unique per project)
-- position (Integer, order of the instrument in the project; the record field of the first instrument becomes the record_id field for the project)
+- position (Integer, order of the instrument in the project; the first field of the earliest instrument with fields becomes the record_id field for the project)
 - is_survey (Boolean - only survey-marked instruments may be filled out through a public survey link; GD-9)
 - An instrument becomes active in the project once it is mapped to an event.
 
@@ -141,7 +141,7 @@ Maps users to projects, roles, and API tokens.
 The checkbox table (instrument x event pairs) that defines the design of a project arm.
 - instrument_id (Foreign Key)
 - event_id (Foreign Key)
-- is_repeating (Boolean - the pair is a repeating instrument: its form can be filled out more than once per record at that event, never for a survey or the first instrument; unmapping the pair drops it - REQ-DB-047)
+- is_repeating (Boolean - the pair is a repeating instrument: its form can be filled out more than once per record at that event, never for a survey or the record-identifier instrument; unmapping the pair drops it - REQ-DB-047)
 - UNIQUE (instrument_id, event_id)
 
 ### 10. Project Staging (production mode only)

@@ -241,8 +241,8 @@ func (h *Handler) moveField(w http.ResponseWriter, r *http.Request) {
 }
 
 // moveChangesIdentifier applies the move to a copy of d and reports whether it
-// would put another field in the record identifier's place — position 1 of the
-// first instrument — while records exist (GD-8). A move the apply itself
+// would put another field in the record identifier's place — the first field
+// of the earliest instrument with fields — while records exist (GD-8). A move the apply itself
 // refuses reports false; the caller's apply answers it.
 func (h *Handler) moveChangesIdentifier(ctx context.Context, projectID int64, d *stagedDesign, apply applyFunc) (bool, error) {
 	next, err := d.clone()

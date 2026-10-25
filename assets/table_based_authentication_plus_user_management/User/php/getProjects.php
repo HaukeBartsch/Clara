@@ -47,7 +47,7 @@ $d = json_decode($output,true);
 $projects = array();
 foreach($d as $dd) {
   if ($dd['project_active'] == "1") {
-    $projects[] = array( "record_id" => $dd['record_id']);
+    $projects[] = array( "record_id" => $dd['project_name']);
   }
 }
 curl_close($ch);
@@ -57,4 +57,3 @@ echo json_encode($projects);
 
 
 ?>
-

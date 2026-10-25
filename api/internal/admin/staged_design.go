@@ -541,14 +541,22 @@ func (d *stagedDesign) renameMappedEvent(armNum int, from, to string) {
 	}
 }
 
-// identifierFieldID is the record identifier: the first field of the first
-// instrument by position (GD-8). 0 when the design has no fields yet.
+// identifierFieldID is the first field of the earliest instrument with fields
+// (GD-8). 0 when the design has no fields yet.
 func (d *stagedDesign) identifierFieldID() int64 {
 	for _, i := range sortedInstruments(d.Instruments) {
 		fields := sortedFields(i.Fields)
 		if len(fields) > 0 {
 			return fields[0].ID
 		}
+	}
+	return 0
+}
+
+func (d *stagedDesign) identifierInstrumentID() int64 {
+	fieldID := d.identifierFieldID()
+	if home, ok := d.fieldHome(fieldID); ok {
+		return home.ID
 	}
 	return 0
 }
@@ -1027,18 +1035,10 @@ func (d *stagedDesign) moveField(fieldID, instID, beforeID int64) bool {
 	return true
 }
 
-// firstFieldID is the field at position 1 of the instrument at position 1 —
-// what becomes the record identifier (GD-8); 0 while that instrument has none.
+// firstFieldID is the first field in the earliest instrument that has fields,
+// what becomes the record identifier (GD-8); 0 while the design has none.
 func (d *stagedDesign) firstFieldID() int64 {
-	instruments := sortedInstruments(d.Instruments)
-	if len(instruments) == 0 {
-		return 0
-	}
-	fields := sortedFields(instruments[0].Fields)
-	if len(fields) == 0 {
-		return 0
-	}
-	return fields[0].ID
+	return d.identifierFieldID()
 }
 
 // deleteField removes one field from its instrument.

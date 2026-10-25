@@ -78,7 +78,7 @@ Given the data dictionary of `Database_Schema_Design.md` §5 (REQ-DB-013), the p
 
 | Category | Definition |
 |---|------|
-| **direct identifier field** | the record identifier field (GD-8 — first field of the instrument at position 1) **or** a field whose user-set `direct_identifier` flag is set (REQ-DB-013, REQ-EXP-020; preset by the API for `email`, `MRN`, `international phone` and `national phone` validation types — DEV-EXP-5) |
+| **direct identifier field** | the record identifier field (GD-8 — first field of the earliest instrument with fields) **or** a field whose user-set `direct_identifier` flag is set (REQ-DB-013, REQ-EXP-020; preset by the API for `email`, `MRN`, `international phone` and `national phone` validation types — DEV-EXP-5) |
 | **personal field** | `personal_information = 1` (REQ-DB-013) and not a direct identifier field (removal wins over hashing) |
 | **free text field** | `field_type = text` or `notes` (REQ-DB-013, REQ-DB-044) and neither of the above; its export approval is `export_approved` (DEV-DB-2) |
 | **structured field** | everything else (dropdown, radio, yesno, matrix rows, calculated, numeric, non-text) |

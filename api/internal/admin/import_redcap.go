@@ -65,8 +65,8 @@ type importReader struct {
 	forms    []redcapForm
 	warnings []importNote
 	problems []importNote
-	// first is the import's first dictionary row — the field that moves into an
-	// empty first instrument and becomes the record identifier (GD-8).
+	// first is the import's first dictionary row — the field that establishes
+	// the record identifier when the project has no fields yet (GD-8).
 	first struct {
 		seen             bool
 		file, name, kind string

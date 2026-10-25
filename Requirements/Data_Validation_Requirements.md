@@ -98,7 +98,7 @@ Defines the validation requirements that apply to all data written into the syst
 
 | ID | Requirement |
 |---|------|
-| REQ-VAL-025 | The record identifier is the field at position 1 of the instrument at position 1 of the project (GD-8); its value is the record name (`record_id`, REQ-DB-020). |
+| REQ-VAL-025 | The record identifier is the first field by position in the earliest instrument by position that has fields (GD-8); empty earlier instruments are skipped. Its value is the record name (`record_id`, REQ-DB-020). A project with no fields has no record identifier yet. |
 | REQ-VAL-026 | On import, the identifier field's value for a row MUST be non-empty (this overrides the no-value semantics of REQ-VAL-024 for the identifier field); it determines the record's identity for the upsert (REQ-API-033) and the EAV key (REQ-DB-015). |
 | REQ-VAL-027 | In phase 1, the identifier value of an existing record MUST NOT be changed; an import attempting to change it MUST be rejected with a validation error (DEV-VAL-3). Correction of a wrong identifier is available through delete + re-import (GD-3, REQ-API-036). |
 

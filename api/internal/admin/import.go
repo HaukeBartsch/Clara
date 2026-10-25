@@ -45,7 +45,7 @@ type importFieldOut struct {
 }
 
 // importInstrumentOut is one instrument of the result. Existing marks the
-// project's empty first instrument, which receives the import's first field
+// project's first instrument when it receives the initial identifier field
 // (GD-8) rather than being created.
 type importInstrumentOut struct {
 	ID          *int64           `json:"id"`
@@ -259,7 +259,7 @@ func (h *Handler) importInstruments(w http.ResponseWriter, r *http.Request) {
 }
 
 // applyImport applies the read dictionaries to one design (§4.10 steps 2–5):
-// the empty-first-instrument rule, name allocation with `_2`, reference
+// the initial-identifier rule, name allocation with `_2`, reference
 // rewriting, and the design-time rules of a designer write. It fills a fresh
 // result each call — the structure write may run it more than once.
 func (h *Handler) applyImport(ctx context.Context, projectID int64, d *stagedDesign, rd *importReader) *importResult {
@@ -365,13 +365,12 @@ func (h *Handler) applyImport(ctx context.Context, projectID int64, d *stagedDes
 		return f
 	}
 
-	// Step 2: an empty first instrument receives the import's first field,
-	// which becomes the record identifier (GD-8). A first field that cannot be
-	// the identifier is a failure; nothing moves then, but every instrument is
-	// still placed so the preview shows the whole import with its problems.
+	// Step 2: when no identifier exists yet, the first imported field establishes
+	// it on the first instrument. Existing identifiers stay with the first field
+	// of the earliest instrument that has fields (GD-8).
 	instruments := sortedInstruments(d.Instruments)
 	firstInst := instruments[0]
-	moved := len(firstInst.Fields) == 0
+	moved := d.identifierFieldID() == 0
 	if moved {
 		first := rd.first
 		switch {
@@ -384,8 +383,12 @@ func (h *Handler) applyImport(ctx context.Context, projectID int64, d *stagedDes
 				Message: fmt.Sprintf("field %q would become the record identifier, but a %s field carries no value of its own — import another file first", first.name, first.kind)})
 			moved = false
 		}
-	} else if fields := sortedFields(firstInst.Fields); len(fields) > 0 {
-		res.RecordIdentifier = &importIdentifierOut{Field: fields[0].FieldName, Instrument: firstInst.Name}
+	} else if id := d.identifierFieldID(); id != 0 {
+		if field, found := d.field(id); found {
+			if home, found := d.fieldHome(id); found {
+				res.RecordIdentifier = &importIdentifierOut{Field: field.FieldName, Instrument: home.Name}
+			}
+		}
 	}
 
 	type placement struct {

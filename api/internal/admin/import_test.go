@@ -298,6 +298,41 @@ func TestImportInstrumentNames(t *testing.T) {
 	}
 }
 
+func TestImportKeepsIdentifierWhenEarliestInstrumentIsEmpty(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	ctx := context.Background()
+	projectID := e.createProjectViaAPI(admin, "Existing Identifier")
+	instruments, err := e.Store.ListInstruments(ctx, projectID)
+	if err != nil || len(instruments) != 1 {
+		t.Fatalf("ListInstruments: %v, got %d", err, len(instruments))
+	}
+	dataID, err := e.Store.AddInstrument(ctx, &db.Instrument{
+		ProjectID: projectID, Name: "data", Position: 2,
+	})
+	if err != nil {
+		t.Fatalf("AddInstrument(data): %v", err)
+	}
+	e.mustField(projectID, dataID, "study_key", "text", 1)
+
+	csv := redcapHeader + "new_value,incoming,,text,New value,,,,,,,,,,,,,\n"
+	path := "/api/v1/projects/" + itoa(projectID) + "/instruments/import"
+	rec := e.do("POST", path, importRequest(false, importFile{"incoming.csv", []byte(csv)}), admin)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("import: %d %s", rec.Code, rec.Body.String())
+	}
+	var result importResult
+	e.decode(rec, &result)
+	if result.RecordIdentifier == nil ||
+		*result.RecordIdentifier != (importIdentifierOut{Field: "study_key", Instrument: "data"}) {
+		t.Fatalf("record identifier = %+v, want study_key on data", result.RecordIdentifier)
+	}
+	fields, err := e.Store.ListFields(ctx, projectID)
+	if err != nil || len(fields) != 2 || fields[0].FieldName != "study_key" {
+		t.Fatalf("fields after import = %+v, err %v; want existing identifier first", fields, err)
+	}
+}
+
 func TestImportConversion(t *testing.T) {
 	e := newEnv(t)
 	admin := e.mustAdmin("admin@example.org")

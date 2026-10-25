@@ -51,7 +51,7 @@ A left panel appears only where it switches between sections. The **project over
 - Purpose: Edit an instrument's data dictionary.
 - Components: Select an instrument; edit, add, and change its fields; reorder the fields; field properties (name with a warning after 26 characters, label, type, choices, validation, required, personal-information flag).
 - A `transfer` field's instructions are edited as raw text in a textarea mirroring the calculated-field editor; unparseable instructions, unresolved record-transfer targets, or an unresolved project template are rejected on save with the reason shown (REQ-VAL-046/047).
-- The instrument list of a project can be reordered; the record field of the first instrument automatically becomes the record_id field for the project.
+- The instrument list of a project can be reordered; the first field of the earliest instrument with fields automatically becomes the record_id field for the project.
 - A mapping page shows the instrument-by-event mapping (table with checkboxes) for each arm. A single arm is assumed to start with.
 
 ### 5. Data Entry Form

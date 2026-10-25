@@ -29,6 +29,43 @@ func repeatingURL(projectID, instrumentID int64) string {
 	return "/api/v1/projects/" + itoa(projectID) + "/instruments/" + itoa(instrumentID) + "/repeating"
 }
 
+func TestRepeatingIdentifierInstrumentRefusedAfterEmptyInstrument(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	ctx := context.Background()
+	projectID := e.createProjectViaAPI(admin, "Repeating Identifier")
+	instruments, err := e.Store.ListInstruments(ctx, projectID)
+	if err != nil || len(instruments) != 1 {
+		t.Fatalf("ListInstruments: %v, got %d", err, len(instruments))
+	}
+	arms, err := e.Store.ListArms(ctx, projectID)
+	if err != nil || len(arms) != 1 {
+		t.Fatalf("ListArms: %v, got %d", err, len(arms))
+	}
+	events, err := e.Store.ListEvents(ctx, projectID)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("ListEvents: %v, got %d", err, len(events))
+	}
+	dataID, err := e.Store.AddInstrument(ctx, &db.Instrument{
+		ProjectID: projectID, Name: "data", Position: 2,
+	})
+	if err != nil {
+		t.Fatalf("AddInstrument(data): %v", err)
+	}
+	e.mustField(projectID, dataID, "study_key", "text", 1)
+	if err := e.Store.SetInstrumentEventsForArm(ctx, projectID, arms[0].ID, []db.InstrumentEvent{
+		{InstrumentID: dataID, EventID: events[0].ID},
+	}); err != nil {
+		t.Fatalf("SetInstrumentEventsForArm: %v", err)
+	}
+
+	if rec := e.do("PUT", repeatingURL(projectID, dataID), map[string]any{
+		"events": []string{events[0].UniqueEventName},
+	}, admin); rec.Code != http.StatusConflict {
+		t.Fatalf("repeat identifier instrument: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 // instrumentByID reads one instrument object from the listing.
 func (e *env) instrumentObjectOf(t *testing.T, projectID, instrumentID int64, actor *db.User) instrumentObject {
 	t.Helper()

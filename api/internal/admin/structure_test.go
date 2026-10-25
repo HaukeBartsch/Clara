@@ -82,6 +82,62 @@ func TestStructureArms(t *testing.T) {
 	}
 }
 
+func TestRecordIdentifierFieldSkipsEmptyEarliestInstrument(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	projectID := e.mustProject("Identifier Study")
+	first := e.mustInstrument(projectID, "empty")
+	second := e.mustInstrument(projectID, "data")
+	want := e.mustField(projectID, second, "study_key", "text", 1)
+
+	got, err := e.Handler.recordIdentifierField(ctx, projectID)
+	if err != nil {
+		t.Fatalf("recordIdentifierField: %v", err)
+	}
+	if got != want {
+		t.Fatalf("identifier field id = %d, want %d", got, want)
+	}
+	fields, err := e.Store.ListFieldsByInstrument(ctx, projectID, first)
+	if err != nil {
+		t.Fatalf("ListFieldsByInstrument(empty): %v", err)
+	}
+	if len(fields) != 0 {
+		t.Fatalf("empty instrument acquired fields: %v", fields)
+	}
+}
+
+func TestIdentifierInvariantSkipsEmptyEarliestInstrument(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	projectID := e.mustProject("Identifier Ordering")
+	empty := e.mustInstrument(projectID, "empty")
+	data := e.mustInstrument(projectID, "data")
+	other := e.mustInstrument(projectID, "other")
+	identifier := e.mustField(projectID, data, "study_key", "text", 1)
+	answer := e.mustField(projectID, data, "answer", "text", 2)
+	e.mustField(projectID, other, "other_key", "text", 1)
+	e.mustRecord(projectID, "R1")
+	base := "/api/v1/projects/" + itoa(projectID)
+
+	rec := e.do("PUT", base+"/instruments/"+itoa(data)+"/fields/order",
+		map[string]any{"order": []int64{answer, identifier}}, admin)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("reorder identifier field: %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = e.do("PUT", base+"/instruments/order",
+		map[string]any{"order": []int64{empty, other, data}}, admin)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("reorder identifier instrument: %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = e.do("PUT", base+"/instruments/order",
+		map[string]any{"order": []int64{data, empty, other}}, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("preserve identifier while moving empty instrument: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestDeleteArm(t *testing.T) {
 	e := newEnv(t)
 	admin := e.mustAdmin("admin@example.org")

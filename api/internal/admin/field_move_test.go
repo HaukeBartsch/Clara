@@ -142,7 +142,7 @@ func TestMoveField(t *testing.T) {
 }
 
 // TestMoveFieldKeepsIdentifier: while records exist the record identifier —
-// the first field of the first instrument — stays where it is (GD-8); a
+// the first field of the earliest instrument with fields — stays where it is (GD-8); a
 // project without records may move it.
 func TestMoveFieldKeepsIdentifier(t *testing.T) {
 	e := newEnv(t)
