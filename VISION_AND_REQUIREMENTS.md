@@ -1136,9 +1136,14 @@ A field and its value (observation) can therefor be represented in HL7 as (local
 OBX||age^Age inside this project^OUS|21612-7^Age^LN||42||
 ```
 
-Clara should assume a 2-stage process. First a study defines its internal, hospital specific codes, collect data etc.. As an addon Clara should allow users to enrich their projects data model by identifying external codes (e.g. from LOINC on BioPortal) that are sufficiently similar to the internal codes. Assume that such a mapping of internal to external codes may need qualifiers, document these as a commentary (notes specific to a mapping with author and date).
+## Commentary
 
-Make this information exportable as an accessory project file.
+A study defines its internal, hospital specific codes (fields), collect data using these fields etc.. As a new project page Clara should allow project admin users to enrich their projects data model by linking each field with an external code (e.g. from LOINC on BioPortal). Assume that such a mapping of internal to external codes may need qualifiers (Exegesis over summary). Document this in the format of a commentary, an analytical study and line-by-line exposition of the internal fields name and label text (add author and date for each commentary entry automatically as smaller font footnote to the comment). If a user edits the commentary add that user as a new line footnote.
+
+Style the internal field texts using font league_gothic (web/assets/vendor/fonts/league_gothic/). Use Geist for the commentary the user enters. Use contenteditable="true" to make the comment field directly editable.
+
+Make the commentary information exportable as an accessory project file.
+
 
 ## FHIR
 
