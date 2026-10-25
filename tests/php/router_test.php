@@ -96,6 +96,48 @@ describe('router — guard and dispatch', function (): void {
         assert_not_contains('pi_email', $response->body());
     });
 
+    it('renders the overview as a bento grid rather than a table (REQ-UI-070)', function (): void {
+        sign_in();
+        queue_shell();
+        api_route('/api/v1/projects', [['id' => 1, 'project_name' => '8DISC', 'organization' => 'NAT EU',
+            'record_count' => 42, 'instrument_count' => 5, 'field_count' => 128]]);
+
+        $response = router_for(http_request('GET', '/', browser_headers()))->dispatch();
+
+        // The boxes are the client's work; what the server owes is the grid they land in and one
+        // loading cell inside it — no column headers survive to be filled by nothing.
+        assert_contains('<ul class="clara-projects"', $response->body());
+        assert_contains('clara-project-cell', $response->body());
+        assert_not_contains('<thead>', $response->body());
+    });
+
+    it('carries the acting user\'s last-used time into the data region (REQ-UI-071)', function (): void {
+        sign_in();
+        queue_shell();
+        api_route('/api/v1/projects', [['id' => 1, 'project_name' => '8DISC', 'organization' => 'NAT EU',
+            'record_count' => 42, 'instrument_count' => 5, 'field_count' => 128,
+            'last_accessed_at' => '2026-10-20 08:00:00']]);
+
+        $response = router_for(http_request('GET', '/', json_headers()))->dispatch();
+        $payload = json_decode($response->body(), true);
+
+        // The API's UTC text, unchanged: the box decides how to say it.
+        assert_same('2026-10-20 08:00:00', $payload[0]['last_accessed_at']);
+    });
+
+    it('says never rather than an empty date for a project the user has not opened (REQ-UI-071)', function (): void {
+        sign_in();
+        queue_shell();
+        // An older API, or a project this account has never generated an event in.
+        api_route('/api/v1/projects', [['id' => 1, 'project_name' => '8DISC', 'organization' => '',
+            'record_count' => 0, 'instrument_count' => 1, 'field_count' => 4]]);
+
+        $response = router_for(http_request('GET', '/', json_headers()))->dispatch();
+        $payload = json_decode($response->body(), true);
+
+        assert_same(null, $payload[0]['last_accessed_at']);
+    });
+
     it('answers an unauthenticated data request with the failure envelope, not HTML', function (): void {
         $response = router_for(http_request('GET', '/', json_headers()))->dispatch();
 

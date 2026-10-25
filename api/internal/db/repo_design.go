@@ -1827,6 +1827,39 @@ func (s *Store) ListAuditEventsByUser(ctx context.Context, userID int64) ([]Audi
 	return out, rows.Err()
 }
 
+// LatestProjectActivityByUser maps each project the user has generated an audit event in
+// to that project's newest event time — "when did this account last work here" for the
+// project overview (REQ-UI-071). Times come back in the stored `YYYY-MM-DD HH:MM:SS` UTC
+// layout, which sorts as written, so MAX() is the newest and no parsing happens here.
+// A project the user never touched is absent from the map rather than zero-valued, and a
+// project-less event (a login) groups under nothing; the caller renders an absent project
+// as "never". One read for the whole overview, never one per project: the
+// covering index of migration 0017 answers it, on SQLite through the audit view — where
+// each yearly shard contributes its own index descent.
+func (s *Store) LatestProjectActivityByUser(ctx context.Context, userID int64) (map[int64]string, error) {
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT project_id, MAX(created_at) FROM audit_events
+		 WHERE user_id = ? AND project_id IS NOT NULL GROUP BY project_id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]string{}
+	for rows.Next() {
+		var (
+			projectID int64
+			latest    any
+		)
+		if err := rows.Scan(&projectID, &latest); err != nil {
+			return nil, err
+		}
+		if v, ok := datetimeString(latest); ok {
+			out[projectID] = v
+		}
+	}
+	return out, rows.Err()
+}
+
 // ListAuditEventsByRecord returns audit events for a specific record (REQ-DB-021).
 func (s *Store) ListAuditEventsByRecord(ctx context.Context, projectID int64, targetRecord string) ([]AuditEvent, error) {
 	rows, err := s.DB.QueryContext(ctx,

@@ -320,6 +320,9 @@ CREATE TABLE IF NOT EXISTS audit_events (        -- REQ-DB-021 (see Audit_Loggin
 );
 CREATE INDEX IF NOT EXISTS idx_audit_events_project ON audit_events (project_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_events_user    ON audit_events (user_id, created_at);
+-- the acting user's newest event per project, for the project overview's ordering
+-- (REQ-UI-071, migration 0017; read shape and rationale in Audit_Logging_Design.md §6.5)
+CREATE INDEX IF NOT EXISTS idx_audit_events_user_project ON audit_events (user_id, project_id, created_at);
 
 CREATE TABLE IF NOT EXISTS audit_record_views (  -- REQ-DB-021: record pulls via the API only
     id          INTEGER PRIMARY KEY,

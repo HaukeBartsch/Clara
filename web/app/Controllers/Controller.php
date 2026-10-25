@@ -105,8 +105,8 @@ abstract class Controller
      * renders what comes back and filters nothing
      * (`User_Interface_Design.md` §4, REQ-AUTH-026).
      *
-     * The project overview's table is its only caller (§2.4 A): one call per render, and
-     * rows are never enriched per row (Plan/Web_Implementation.md §7 rule 13). The page
+     * The project overview's grid is its only caller (§2.4 A): one call per render, and
+     * boxes are never enriched per box (Plan/Web_Implementation.md §7 rule 13). The page
      * that needs one project's permissions asks for that project, which is why entering a
      * project resolves there rather than here (REQ-UI-017).
      *
@@ -131,6 +131,12 @@ abstract class Controller
                 'record_count' => (int) ($project['record_count'] ?? 0),
                 'instrument_count' => (int) ($project['instrument_count'] ?? 0),
                 'field_count' => (int) ($project['field_count'] ?? 0),
+                // When this user last worked in the project, or null when they never have (REQ-UI-071).
+                // The API's UTC text passes through as it stands: a date formatted or defaulted here
+                // would be a second answer to when something happened.
+                'last_accessed_at' => isset($project['last_accessed_at'])
+                    ? (string) $project['last_accessed_at']
+                    : null,
             ];
         }
 

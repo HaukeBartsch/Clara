@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
+	"csms/api/internal/audit"
 	"csms/api/internal/db"
 )
 
@@ -172,6 +174,87 @@ func TestProjectsListVisibility(t *testing.T) {
 	if len(none) != 0 {
 		t.Errorf("outsider listing = %+v, want empty (REQ-API-007)", none)
 	}
+}
+
+// TestProjectsListCarriesLastAccessedAt: each summary carries the acting user's own last
+// audited activity in that project (REQ-UI-071) — its newest event rather than its first,
+// null where they have none, and never another member's. The list stays alphabetical.
+func TestProjectsListCarriesLastAccessedAt(t *testing.T) {
+	e := newEnv(t)
+	first := e.mustUser("first@example.org")
+	second := e.mustUser("second@example.org")
+
+	ctx := context.Background()
+	alpha := e.mustProject("Alpha")
+	beta := e.mustProject("Beta")
+	mustMember(t, e, first.ID, alpha)
+	mustMember(t, e, first.ID, beta)
+	mustMember(t, e, second.ID, alpha)
+
+	// Audit rows go through the writer, because that is how production appends them: on
+	// SQLite audit_events stops being a table once the first write rolls the year over
+	// (Audit_Logging_Design.md §6.2), so only the writer knows where a row belongs. Its
+	// clock is turned back to give the projects an order worth reporting.
+	at := func(daysAgo int) time.Time { return time.Now().UTC().AddDate(0, 0, -daysAgo) }
+	auditAs := func(userID, projectID int64, when time.Time) {
+		e.t.Helper()
+		e.Audit.Now = func() time.Time { return when }
+		if err := e.Audit.Insert(ctx, audit.Entry{
+			EventType: audit.RecordUpdated, Source: audit.SourceAPI,
+			UserID: userID, ProjectID: projectID,
+		}); err != nil {
+			e.t.Fatalf("audit insert: %v", err)
+		}
+	}
+	older, newer := at(23), at(5)
+	secondAt := at(1)
+	auditAs(first.ID, alpha, older)
+	auditAs(first.ID, alpha, newer)     // the newer of first's two events is what reads back
+	auditAs(second.ID, alpha, secondAt) // second's own history, invisible to first
+	auditAs(first.ID, 0, at(0))         // no project (a login): belongs to none of them
+
+	lastOf := func(user *db.User) map[string]*string {
+		e.t.Helper()
+		rec := e.do("GET", "/api/v1/projects", nil, user)
+		if rec.Code != http.StatusOK {
+			e.t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		var out []projectSummary
+		e.decode(rec, &out)
+		byName := map[string]*string{}
+		for _, s := range out {
+			byName[s.ProjectName] = s.LastAccessedAt
+		}
+
+		return byName
+	}
+
+	mine := lastOf(first)
+	if len(mine) != 2 {
+		t.Fatalf("first's listing = %v, want both projects", mine)
+	}
+	if got, want := mine["Alpha"], newer.Format(auditLayout); got == nil || *got != want {
+		t.Errorf("Alpha last_accessed_at = %s, want the newer event %s", deref(got), want)
+	}
+	if got := mine["Beta"]; got != nil {
+		t.Errorf("Beta last_accessed_at = %s, want null — first never worked there", deref(got))
+	}
+	if other := lastOf(second); other["Alpha"] == nil || *other["Alpha"] != secondAt.Format(auditLayout) {
+		t.Errorf("second sees Alpha at %s, want their own event's time", deref(other["Alpha"]))
+	}
+}
+
+// auditLayout is the stored timestamp layout (db.datetimeLayout) that
+// last_accessed_at carries verbatim (REQ-UI-071).
+const auditLayout = "2006-01-02 15:04:05"
+
+// deref renders an optional string for a failure message.
+func deref(v *string) string {
+	if v == nil {
+		return "<null>"
+	}
+
+	return *v
 }
 
 // TestProjectGetDetail: a role-less member gets full metadata plus arms with

@@ -137,16 +137,200 @@
   color: var(--bs-secondary-color);
 }
 
-/* --- project rows on the dashboard (User_Interface_Design.md §4) --- */
-
-.clara-project-row td {
-  vertical-align: middle;
-}
-
+/* A numeric table cell: figures in a column line up without a monospace font, and a count never
+ * wraps onto a second line to widen its column (the Control Panel's projects table). */
 .clara-stat {
   color: var(--bs-secondary-color);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+/* --- project boxes on the dashboard (User_Interface_Design.md §4, REQ-UI-070/071) --- */
+
+/* The bento grid: as many tracks of at least 15rem as fit, one per box and two for a recently used
+ * project. Packing stays in order — no `dense` — because the page promises that the most recently used
+ * project appears first: a dense grid would pull an older box up into the gap a wide one leaves and
+ * break that promise for the sake of tidiness. A short row at the end is the honest outcome. */
+.clara-projects {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(15rem, 100%), 1fr));
+  gap: 0.75rem;
+  align-items: stretch;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Every cell is the query container of its own card, which is what lets a box arrange its facts by
+ * its own width rather than by the viewport's: on a phone there is one track, so even the smallest
+ * tier is a wide box and reads across like the featured ones. A browser without container queries
+ * keeps the stacked arrangement below — complete, just less fitted. */
+.clara-project-cell {
+  container-type: inline-size;
+  display: flex; /* so the card fills its row band and boxes beside it share one height */
+  min-width: 0;
+}
+
+/* The recent tier spans two tracks — that is the "more space" of REQ-UI-071 — but only where a second
+ * track exists. `minmax(min(15rem, 100%), 1fr)` alone would let one wide box force a horizontal
+ * scrollbar on a narrow screen. */
+@media (min-width: 576px) {
+  .clara-project-cell--recent {
+    grid-column: span 2;
+  }
+}
+
+/* One line, not a box, stands in for the whole region while it loads or when it failed. */
+.clara-project-cell--message {
+  grid-column: 1 / -1;
+}
+
+.clara-project {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.75rem 0.875rem;
+  border: var(--bs-border-width) solid var(--bs-border-color);
+  border-radius: var(--bs-border-radius-lg);
+  background-color: var(--bs-body-bg);
+}
+
+/* Size and weight follow the tier; the information does not. Every box carries the name, the
+ * organization, when it was last used and all three counts (REQ-UI-070). */
+.clara-project-cell--recent .clara-project {
+  min-height: 12rem;
+  padding: 1rem 1.125rem;
+}
+
+.clara-project-cell--active .clara-project {
+  min-height: 9rem;
+}
+
+.clara-project-name {
+  margin: 0;
+  font-weight: 600;
+  font-size: 0.9375rem;
+  overflow-wrap: anywhere;
+}
+
+.clara-project-cell--recent .clara-project-name {
+  font-size: 1.125rem;
+}
+
+.clara-project-cell--active .clara-project-name {
+  font-size: 1rem;
+}
+
+/* The whole box opens the project (the name carries the stretched link), so the frame reads as one
+ * control — the same affordance the Training cards use (§2.7). */
+.clara-project-open {
+  color: inherit;
+  text-decoration: none;
+}
+
+.clara-project:hover,
+.clara-project:focus-within {
+  border-color: var(--bs-primary);
+}
+
+.clara-project:hover .clara-project-open {
+  text-decoration: underline;
+}
+
+.clara-project-org,
+.clara-project-used {
+  margin: 0;
+  color: var(--bs-secondary-color);
+  font-size: 0.8125rem;
+}
+
+/* Tall by default — the shape of a one-column box: the counts read as a key/value list under the
+ * name, each row's figure held to the right edge so the column of numbers lines up. */
+.clara-project-tail {
+  margin-top: auto; /* the counts sit on the bottom edge of the box, whatever the name cost above */
+}
+
+.clara-project-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.clara-project-stat {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+/* The figure is what the eye lands on in a box, so it keeps the body colour and takes the weight while
+ * its label stays quiet — unlike `.clara-stat`, where a whole column of counts is equally secondary.
+ * Tabular figures either way, so a stacked box's numbers line up without a monospace font. */
+.clara-project-stat-value {
+  color: var(--bs-body-color);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.clara-project-stat-label {
+  color: var(--bs-secondary-color);
+  font-size: 0.75rem;
+}
+
+/* The wide box has room for the counts beside the name instead of under it, and for naming what the
+ * link does; both appear at this width alone, which is the point — the arrangement follows the shape
+ * (REQ-UI-070), not the project. */
+.clara-project-go {
+  display: none;
+}
+
+@container (min-width: 26rem) {
+  .clara-project {
+    flex-direction: row;
+    align-items: stretch;
+    justify-content: space-between;
+    gap: 1.5rem;
+  }
+
+  /* Diagonal, not centred: the name leads from the top-left corner and the counts sit on the bottom
+     edge at the far one, so a wide box reads as one object instead of two bands of text floating in
+     the middle of it. */
+  .clara-project-head {
+    flex: 1 1 auto;
+    min-width: 0;
+    align-self: flex-start;
+  }
+
+  .clara-project-tail {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0.25rem;
+    margin-top: 0;
+    align-self: flex-end;
+  }
+
+  .clara-project-stats {
+    flex-direction: row;
+    gap: 1.25rem;
+  }
+
+  /* Each count becomes a figure with its label under it, right-aligned against the box edge. */
+  .clara-project-stat {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0;
+  }
+
+  .clara-project-go {
+    display: block;
+    color: var(--bs-primary);
+    font-size: 0.8125rem;
+  }
 }
 
 /* --- the centred panel for login and the public password pages (DEV-UI-1) --- */

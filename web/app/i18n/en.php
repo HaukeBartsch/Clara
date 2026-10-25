@@ -120,6 +120,12 @@ return [
     'dashboard.project.instruments' => 'Instruments',
     'dashboard.project.fields' => 'Fields',
     'dashboard.project.open' => 'Open project',
+    // The last-used line of a project box (REQ-UI-071): relative while the answer is two days long,
+    // dated beyond that — {when} carries either word, or the date in the browser's own format.
+    'dashboard.project.last_used' => 'Last used {when}',
+    'dashboard.project.last_used.today' => 'today',
+    'dashboard.project.last_used.yesterday' => 'yesterday',
+    'dashboard.project.never_used' => 'Never opened',
     // The overview's table body when an administrator's installation has no projects yet (§4).
     'dashboard.empty' => 'No projects yet. Create one in the Control Panel.',
 

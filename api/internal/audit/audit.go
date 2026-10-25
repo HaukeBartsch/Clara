@@ -496,6 +496,7 @@ func (w *Writer) createEventsObjects(ctx context.Context, ex execer, table strin
 	for _, idx := range []struct{ name, cols string }{
 		{"project", "project_id, created_at"},
 		{"user", "user_id, created_at"},
+		{"user_project", "user_id, project_id, created_at"}, // the overview's per-project recency (REQ-UI-071)
 		{"type", "project_id, event_type, created_at"},
 		{"record", "project_id, target_record, created_at"},
 	} {

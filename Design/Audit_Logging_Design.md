@@ -279,6 +279,18 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_record ON audit_events (project_id, 
 
 `target_record` is set for record-scoped events — `record_created`, `record_updated`, `record_deleted`, `calculated_recomputed`, `survey_submitted`, `dag_record_assigned`, `transfer_executed` — and `NULL` otherwise. The pre-existing `idx_audit_events_project (project_id, created_at)` and `idx_audit_events_user (user_id, created_at)` (`Database_Schema_Design.md` §7) cover the time-range, project, and user patterns; the two indexes above cover event type and record (REQ-AUD-020, DEV-AUD-2). `audit_record_views` keeps `idx_audit_views_project`.
 
+### 6.5 DDL supplement — per-project recency index (migration `0017_project_recency_index.sql`)
+
+The project overview orders its boxes by when the acting user last worked in each project (REQ-UI-071), and it asks **the trail** that question rather than keeping a "last visited" counter of its own — one more index, not a second account of what happened:
+
+```sql
+CREATE INDEX idx_audit_events_user_project ON audit_events (user_id, project_id, created_at);   -- SQLite: CREATE INDEX IF NOT EXISTS
+```
+
+`GET /api/v1/projects` reads it as `SELECT project_id, MAX(created_at) FROM audit_events WHERE user_id = ? AND project_id IS NOT NULL GROUP BY project_id` — one read for the whole list, whatever its length (`API_Endpoints_Design.md` §4.5). `idx_audit_events_user` cannot answer that cheaply: it is ordered by time *within* a user, so grouping it by project reads every row the account ever produced. Leading with `(user_id, project_id)` lets the read cost one descent per project instead — on MariaDB as a local index across the yearly partitions (§6.1), and on SQLite through the stable view, where each yearly table contributes its own descent (§6.2). The rollover therefore creates this index with the other four for every new year table (`audit.createEventsObjects`), or a fresh year would silently lose it.
+
+The read adds no disclosure: an account's own audit history is already its own to read (§7), and `project_id IS NOT NULL` keeps project-less events (a login) out of every project's answer.
+
 ## 7. Read Access
 
 Reads go through the three endpoints below — the two of REQ-AUD-019 plus the export path REQ-AUD-031 adds (full contracts in `API_Endpoints_Design.md`):

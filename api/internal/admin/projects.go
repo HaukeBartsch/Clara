@@ -235,6 +235,12 @@ type projectSummary struct {
 	RecordCount     int    `json:"record_count"`
 	InstrumentCount int    `json:"instrument_count"`
 	FieldCount      int    `json:"field_count"`
+	// LastAccessedAt is when the acting user last generated an audit event in this
+	// project, in the stored `YYYY-MM-DD HH:MM:SS` UTC layout, or null when they never
+	// have (REQ-UI-071). It is the actor's own history, so two members listing the same
+	// project see different values. The list itself stays alphabetical: ordering by this
+	// field is the overview's presentation decision, not the endpoint's.
+	LastAccessedAt *string `json:"last_accessed_at"`
 }
 
 // listProjects returns the projects within the acting user's visibility —
@@ -264,6 +270,13 @@ func (h *Handler) listProjects(w http.ResponseWriter, r *http.Request) {
 		errInternal(w)
 		return
 	}
+	// The acting user's own recency, read once for the whole list (REQ-UI-071). It is a
+	// property of the actor rather than of a project, so it is never fetched per project.
+	recency, err := h.Store.LatestProjectActivityByUser(ctx, u.ID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
 	out := make([]projectSummary, 0, len(projects))
 	for _, p := range projects {
 		if visible != nil && !visible[p.ID] {
@@ -284,10 +297,15 @@ func (h *Handler) listProjects(w http.ResponseWriter, r *http.Request) {
 			errInternal(w)
 			return
 		}
+		// null for a project this user has never generated an event in (REQ-UI-071).
+		var lastAccessed *string
+		if at, ok := recency[p.ID]; ok {
+			lastAccessed = &at
+		}
 		out = append(out, projectSummary{
 			ID: p.ID, ProjectName: p.ProjectName, Organization: p.Organization,
 			RecordCount: len(records), InstrumentCount: len(instruments),
-			FieldCount: len(fields),
+			FieldCount: len(fields), LastAccessedAt: lastAccessed,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

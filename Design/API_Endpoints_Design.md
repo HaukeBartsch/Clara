@@ -491,8 +491,11 @@ Administrator (requires `is_admin`), REQ-API-116: `POST /api/v1/users/{id}/tfa/r
 **`GET /api/v1/projects`** — project visibility only (`is_admin` or member, REQ-AUTH-026); projects outside the acting user's visibility do not appear (REQ-API-007). 200 — dashboard summaries:
 
 ```json
-[ { "id": 33, "project_name": "MOBA", "organization": "NAT EU", "record_count": 42, "instrument_count": 5, "field_count": 128 } ]
+[ { "id": 33, "project_name": "MOBA", "organization": "NAT EU", "record_count": 42, "instrument_count": 5, "field_count": 128,
+    "last_accessed_at": "2026-10-20 08:00:00" } ]
 ```
+
+`last_accessed_at` is the **acting user's** newest audit event in that project — `SELECT project_id, MAX(created_at) FROM audit_events WHERE user_id = ? AND project_id IS NOT NULL GROUP BY project_id`, one read for the whole list (never one per project), served by `idx_audit_events_user_project` (`Audit_Logging_Design.md` §6.4). The stored UTC text passes through unformatted, and `null` means this account has never generated an event in that project — a project-less event (a login) belongs to no project (REQ-UI-071). It is what the overview orders its boxes by; this endpoint stays in name order, because recency is one page's presentation rather than a property of the list.
 
 **`POST /api/v1/projects`** — `is_admin` (master spec: administrator users create projects). Body — the creation fields of the simplified `projects` (GD-17, REQ-DB-006):
 

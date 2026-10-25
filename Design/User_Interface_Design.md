@@ -81,7 +81,7 @@ There are no other browser-reachable routes. State-changing browser requests are
 A user who is neither an administrator nor a member of any project MUST be shown an information page, not an empty dashboard (REQ-UI-006, REQ-AUTH-028). Presentation:
 
 - Title: "No projects yet" (translated); a short explanation that access is granted when an administrator adds them to a project (or grants the administrator flag).
-- `is_admin` users never see this page: they see every project (REQ-API-049), so an empty list only means the installation has no projects yet, and the project overview (§4) renders with its empty table; the header's Control Panel button is the way to create one (§2.4, §5.2). Owner decision 2026-10-03.
+- `is_admin` users never see this page: they see every project (REQ-API-049), so an empty list only means the installation has no projects yet, and the project overview (§4) renders with its empty grid; the header's Control Panel button is the way to create one (§2.4, §5.2). Owner decision 2026-10-03.
 - The page renders as the single content panel of the project-overview shell (§2.4 A) — no left panel.
 
 ### 2.4 Application layout — the shells (master spec, "User interface details"; DEV-UI-14, DEV-UI-18)
@@ -96,8 +96,8 @@ Every authenticated page renders in one of the shells below, and **a left panel 
 │  A · project overview (`/`)      B · project page, Control Panel, account │
 │  ┌────────────────────────────┐  ┌────────────┬───────────────────────┐   │
 │  │  single content panel      │  │ left panel │    content panel      │   │
-│  │  projects table with the   │  │ Overview   │   the selected        │   │
-│  │  statistics in columns     │  │ Setup      │   section's page —    │   │
+│  │  boxes sized by recent use  │  │ Overview   │   the selected        │   │
+│  │  first + largest (§70/71)   │  │ Setup      │   section's page —    │   │
 │  │                            │  │ Record …   │   its own headings,   │   │
 │  │  no left panel             │  │ Export …   │   forms, tables       │   │
 │  └────────────────────────────┘  └────────────┴───────────────────────┘   │
@@ -246,29 +246,38 @@ The reference application's interfacing style (master spec, "Details"; `assets/t
 
 ## 4. Project overview (`GET /`)
 
-The start page after login (REQ-UI-009): **one content panel below the header, no left panel** (§2.4 A). Data: `GET /api/v1/projects` (visible projects only — REQ-API-049, REQ-API-007).
+The start page after login (REQ-UI-009): **one content panel below the header, no left panel** (§2.4 A). Data: `GET /api/v1/projects` (visible projects only — REQ-API-049, REQ-API-007), read once per render; the grid is this route's data region and the client binds it from the same URL (§3.7, REQ-UI-044).
 
 ```
-┌───────────────────────────────────────────────────────────────────────────┐
-│  CLARA                [ Training ] [ Control Panel ] [ Hauke Bartsch ▾ ]  │  header
+│                                                                           │
+│  CLARA                [ Training ] [ Control Panel ] [ Hauke Bartsch ▾ ]  │
 ├───────────────────────────────────────────────────────────────────────────┤
 │  Hauke Bartsch                                                            │
-│  Projects (2)                                                             │
-│  ┌──────────────────────────┬─────────┬─────────────┬──────────┐          │
-│  │ Project                  │ Records │ Instruments │ Fields   │          │
-│  ├──────────────────────────┼─────────┼─────────────┼──────────┤          │
-│  │ 8DISC                    │      42 │           5 │     128  │          │
-│  │ NAT EU                   │         │             │          │          │
-│  │ EMIT-23                  │     128 │           1 │     146  │          │
-│  │ OTHER                    │         │             │          │          │
-│  └──────────────────────────┴─────────┴─────────────┴──────────┘          │
-└───────────────────────────────────────────────────────────────────────────┘
+│  Projects (3)                                                             │
+│  ┌──────────────────────────────────────┐┌───────────────────────────────┐│
+│  │ 8DISC                                ││ PARKIN-PLUS                   ││
+│  │ NAT EU                               ││ Last used Oct 13              ││
+│  │                                      ││                               ││
+│  │      42    5    128  Open project →  ││    1204 Records               ││
+│  │                                      ││       8 Instruments           ││
+│  └──────────────────────────────────────┘└───────────────────────────────┘│
+│  ┌──────────────────────┐┌──────────────────────┐                         │
+│  │ EMIT-23              ││ STROKEREG            │                         │
+│  │ OTHER                ││ Norrland Registry    │                         │
+│  │ Last used yesterday  ││ Never opened         │                         │
+│  │ 128 Records          ││ 3 Records            │                         │
+│  │ 1 Instruments        ││ 1 Instruments        │                         │
+│  └──────────────────────┘└──────────────────────┘                         │
 ```
 
-- One **table row** per visible project — `table-sm` (REQ-UI-032) — with the project name (its organization on a second line of the same cell) and the quick statistics **in columns**, exactly as returned (`record_count`, `instrument_count`, `field_count` — REQ-UI-009, REQ-API-049). The **project name is the link**: it opens that project's page (`/projects/{id}`, §6.1), which lands on its first available section.
+- **A bento grid of boxes, one per visible project** (REQ-UI-070): `.clara-projects` is a CSS grid of `auto-fill` tracks of at least 15rem, so the panel's own width decides how many columns there are and a phone gets one. Packing stays in order — deliberately **not** `dense`, because the page promises that the most recently used project appears first and dense packing would buy tidiness by pulling an older box up beside it; a row that cannot host the next wide box simply ends short.
+- **Every box carries the same five facts**: project name, organization where there is one, when the acting user last used the project, and all three counts as returned by the endpoint (`record_count`, `instrument_count`, `field_count` — REQ-UI-009, REQ-API-049). What changes with size is their **arrangement**, and it follows the shape of the box rather than a per-tier template: `.clara-project-cell` is a query container and at 26rem and above the box lays the identity down one side and the statistics across the other (name top-left, counts on the bottom edge at the far corner), while a narrower box stacks them — name, organization, last used, then the counts as a key/value list with the figures in a column. The same project therefore reads across on a desktop and down on a phone without losing or duplicating a fact (REQ-UI-070). A browser without container queries keeps the stacked arrangement: complete, only less fitted.
+- **Tier is size and weight, never information** (REQ-UI-071): used within a week → the wide box (two tracks) with the largest type; within a month → one track; older or never opened → one track, lighter. The span applies from 576px up, where a second track exists to span.
+- **Last used** is `last_accessed_at` — the acting user's own newest audit event in that project (REQ-API-049) — rendered relative while the answer is two days long ("today", "yesterday") and dated beyond them, with the year once it is no longer this year; `null` renders as a translated "never opened" line rather than an empty date. The API's UTC text is parsed as UTC (the stamp carries no offset) and formatted in the browser's locale, while the words around it stay the application's language (REQ-UI-008). Ordering happens here, in `dashboard.js`, over the endpoint's alphabetical list: newest first, never-used last, name order within a day.
+- **The project name is the link** and the whole box takes its click (the stretched link of the name), so one box is one tab stop; [Open project] appears as text in a wide box only, where there is room to name what the box already does. Hover and focus mark the frame — the same affordance the Training cards use (§2.7). Markup stays theme-neutral, so every installed theme renders the same grid (REQ-UI-040, §3.8).
 - **The header carries the [Control Panel] button for `is_admin` only** (REQ-UI-003/009) — the single entry point to §5, replacing the former dashboard `[Administration]` link and the Administration sidebar section.
-- **Data access groups** (REQ-UI-010): for a member with one or more assigned groups, the row shows the **currently active group** and a switch control listing the member's assigned groups. Switching `POST`s to the PHP route → `PUT /api/v1/projects/{id}/active-data-access-group` (REQ-API-090); the switch takes effect on the **next** data page load (the current page's data was already scoped). A member without any assignment sees no group control — they see all records of the project (GD-10).
-- No projects and not `is_admin` → the no-access page (§2.3). An `is_admin` user sees every project; with none in the installation the table shows one line saying so (§2.3).
+- **Data access groups** (REQ-UI-010): for a member with one or more assigned groups, the box shows the **currently active group** and a switch control listing the member's assigned groups. Switching `POST`s to the PHP route → `PUT /api/v1/projects/{id}/active-data-access-group` (REQ-API-090); the switch takes effect on the **next** data page load (the current page's data was already scoped). A member without any assignment sees no group control — they see all records of the project (GD-10).
+- No projects and not `is_admin` → the no-access page (§2.3). An `is_admin` user sees every project; with none in the installation the grid shows one line saying so (§2.3), and a failed load replaces the grid with that line and a retry — the region's loading, empty and failure states all occupy the grid rather than a table cell (REQ-UI-032).
 
 ## 5. Administration Interface — the Control Panel (`GET /admin`)
 

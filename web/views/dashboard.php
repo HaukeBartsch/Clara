@@ -1,12 +1,14 @@
 <?php
 /**
- * The dashboard (§4, REQ-UI-009): the signed-in user's name, then one row per
- * visible project with the quick statistics exactly as the API returned them.
+ * The dashboard (§4, REQ-UI-009): the signed-in user's name, then the projects they may see as a
+ * bento grid — three tiers of box, most recently used first and largest (REQ-UI-070/071). Each box
+ * carries the facts this page's former table split into columns (name, organization, and the record,
+ * instrument and field counts) plus when the acting user last worked there; which way round they sit
+ * follows the shape of the box, so the markup here and in dashboard.js makes no layout choice.
  *
- * The rows are a data region: the server renders the table and its loading
- * placeholder, and assets/js/dashboard.js fills the body from this same route's
- * JSON (REQ-UI-032, REQ-UI-044). Navigation stays a plain GET — binding fills
- * targets inside the page, it never switches pages (§3.7).
+ * The grid is a data region: the server renders the container and its loading line, and
+ * assets/js/dashboard.js fills it from this same route's JSON (REQ-UI-032, REQ-UI-044). Navigation
+ * stays a plain GET — binding fills targets inside the page, it never switches pages (§3.7).
  */
 
 use Clara\View;
@@ -17,19 +19,11 @@ use Clara\View;
     <h2 class="h6 mb-0"><?= View::e($view->t('nav.projects')) ?> (<?= count($projects) ?>)</h2>
 </div>
 
-<table class="table table-sm clara-projects align-middle">
-    <thead>
-        <tr>
-            <th scope="col"><?= View::e($view->t('nav.project_list')) ?></th>
-            <th scope="col" class="clara-stat"><?= View::e($view->t('dashboard.project.records')) ?></th>
-            <th scope="col" class="clara-stat"><?= View::e($view->t('dashboard.project.instruments')) ?></th>
-            <th scope="col" class="clara-stat"><?= View::e($view->t('dashboard.project.fields')) ?></th>
-        </tr>
-    </thead>
-    <!-- Populated by assets/js/dashboard.js from GET / with Accept: application/json. -->
-    <tbody data-region="projects">
-        <tr>
-            <td colspan="4" class="clara-region-empty"><?= View::e($view->t('js.loading')) ?></td>
-        </tr>
-    </tbody>
-</table>
+<!-- Populated by assets/js/dashboard.js from GET / with Accept: application/json. The role stays on
+     the list because app.css removes its bullets, and Safari drops the list semantics of a bulleted
+     list once it has none — the count of projects is what a listener is there to hear. -->
+<ul class="clara-projects" role="list" data-region="projects">
+    <li class="clara-project-cell clara-project-cell--message">
+        <p class="clara-region-empty mb-0"><?= View::e($view->t('js.loading')) ?></p>
+    </li>
+</ul>
