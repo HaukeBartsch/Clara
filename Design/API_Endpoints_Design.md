@@ -91,7 +91,9 @@ HTTP status mapping (REQ-API-039):
 | rate limit exceeded (when enabled) | 429 | `Rate limit exceeded` (with `Retry-After`, §3.9) |
 | import with per-record validation failures | 200 | — (per-record result codes, §3.7.2) |
 
-Error text never leaks internal implementation details (REQ-API-039, REQ-API-006).
+Error text never leaks internal implementation details (REQ-API-039, REQ-API-006). Keeping the detail out of the *response* does not mean throwing it away: every 500 logs the error behind it and the code site that produced it — a 500 that leaves no log line is undiagnosable, and one cost a per-statement-metrics hunt rather than a grep in October 2026. Tokens, parameters and record values never reach the log (REQ-API-005).
+
+The uniform 401 `Invalid token` describes **credential states** — unknown, revoked, spent-by-account, or an inactive account — and stays indistinguishable across them (REQ-AUTH-032). A storage failure while resolving a token is not a statement about the token: it answers 500 like any other store failure, logged, and denies access just as firmly. Reporting it as `Invalid token` would tell an operator that someone used a bad credential while the database was down.
 
 ### 3.3 `content=project` (REQ-API-018)
 

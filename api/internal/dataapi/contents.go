@@ -76,7 +76,7 @@ func (h *Handler) contentProject(ctx context.Context, w http.ResponseWriter, enc
 		DisplayTodayNowButton: "1",
 	}
 	if ins, err := h.Store.ListInstruments(ctx, pr.ID); err != nil {
-		h.storeError(w, enc)
+		h.storeError(w, enc, err)
 		return
 	} else {
 		for _, i := range ins {
@@ -87,7 +87,7 @@ func (h *Handler) contentProject(ctx context.Context, w http.ResponseWriter, enc
 		}
 	}
 	if evs, err := h.Store.ListEvents(ctx, pr.ID); err != nil {
-		h.storeError(w, enc)
+		h.storeError(w, enc, err)
 		return
 	} else if len(evs) > 0 {
 		info.IsLongitudinal = "1"
@@ -95,7 +95,7 @@ func (h *Handler) contentProject(ctx context.Context, w http.ResponseWriter, enc
 	// REDCap's flag for projects with repeating instruments (REQ-API-155); the
 	// neutral value otherwise, as before.
 	if pairs, err := h.Store.ListInstrumentEvents(ctx, pr.ID); err != nil {
-		h.storeError(w, enc)
+		h.storeError(w, enc, err)
 		return
 	} else {
 		for _, pair := range pairs {
@@ -156,7 +156,7 @@ type eventOut struct {
 func (h *Handler) contentEvent(ctx context.Context, w http.ResponseWriter, enc string, sub *subject, p Params) {
 	rows, err := h.eventRows(ctx, sub.Project.ID)
 	if err != nil {
-		h.storeError(w, enc)
+		h.storeError(w, enc, err)
 		return
 	}
 	out := make([]eventOut, 0, len(rows))
@@ -201,7 +201,7 @@ func (h *Handler) contentMetadata(ctx context.Context, w http.ResponseWriter, en
 	pid := sub.Project.ID
 	ins, err := h.Store.ListInstruments(ctx, pid)
 	if err != nil {
-		h.storeError(w, enc)
+		h.storeError(w, enc, err)
 		return
 	}
 	form := map[int64]string{}
@@ -214,7 +214,7 @@ func (h *Handler) contentMetadata(ctx context.Context, w http.ResponseWriter, en
 	wantForms := toSet(p.Forms)
 	fields, err := h.Store.ListFields(ctx, pid)
 	if err != nil {
-		h.storeError(w, enc)
+		h.storeError(w, enc, err)
 		return
 	}
 	rows := make([]metaRow, 0, len(fields))
@@ -312,7 +312,7 @@ func (h *Handler) contentRepeatingFormsEvents(ctx context.Context, w http.Respon
 	}
 	d, err := h.loadDict(ctx, sub.Project.ID)
 	if err != nil {
-		h.storeError(w, enc)
+		h.storeError(w, enc, err)
 		return
 	}
 	rows := make([]repeatingRow, 0)
@@ -342,14 +342,14 @@ func (h *Handler) contentFormEventMapping(ctx context.Context, w http.ResponseWr
 	// unique name line up with content=event (eventRows is in that order).
 	events, err := h.eventRows(ctx, pid)
 	if err != nil {
-		h.storeError(w, enc)
+		h.storeError(w, enc, err)
 		return
 	}
 
 	// Mapped (form, event) pairs, keyed for O(1) lookup.
 	pairs, err := h.Store.ListInstrumentEvents(ctx, pid)
 	if err != nil {
-		h.storeError(w, enc)
+		h.storeError(w, enc, err)
 		return
 	}
 	mapped := make(map[int64]map[int64]bool)
@@ -364,7 +364,7 @@ func (h *Handler) contentFormEventMapping(ctx context.Context, w http.ResponseWr
 	// per-arm order (GD-15). Only mapped pairs are emitted; the flag is "1".
 	ins, err := h.Store.ListInstruments(ctx, pid)
 	if err != nil {
-		h.storeError(w, enc)
+		h.storeError(w, enc, err)
 		return
 	}
 	rows := make([]mappingRow, 0, len(pairs))
@@ -399,7 +399,7 @@ func (h *Handler) contentExportFieldNames(ctx context.Context, w http.ResponseWr
 	pid := sub.Project.ID
 	ins, err := h.Store.ListInstruments(ctx, pid)
 	if err != nil {
-		h.storeError(w, enc)
+		h.storeError(w, enc, err)
 		return
 	}
 	form := make(map[int64]string, len(ins))
@@ -419,7 +419,7 @@ func (h *Handler) contentExportFieldNames(ctx context.Context, w http.ResponseWr
 
 	fields, err := h.Store.ListFields(ctx, pid)
 	if err != nil {
-		h.storeError(w, enc)
+		h.storeError(w, enc, err)
 		return
 	}
 	rows := make([]fieldNameRow, 0, len(fields))
@@ -446,7 +446,7 @@ func (h *Handler) contentGenerateNextRecordName(ctx context.Context, w http.Resp
 	if sub.Project.RecordNaming == db.RecordNamingAuto {
 		maxNum, err := h.Store.MaxNumericRecordID(ctx, sub.Project.ID)
 		if err != nil {
-			h.storeError(w, enc)
+			h.storeError(w, enc, err)
 			return
 		}
 		render(w, enc, p.Delimiter(), []nextNameRow{{NextRecordName: strconv.FormatInt(maxNum+1, 10)}})
@@ -454,7 +454,7 @@ func (h *Handler) contentGenerateNextRecordName(ctx context.Context, w http.Resp
 	}
 	maxID, _, err := h.Store.MaxRecordID(ctx, sub.Project.ID)
 	if err != nil {
-		h.storeError(w, enc)
+		h.storeError(w, enc, err)
 		return
 	}
 	render(w, enc, p.Delimiter(), []nextNameRow{{NextRecordName: nextRecordName(sub.Project.ParticipantNames, maxID)}})

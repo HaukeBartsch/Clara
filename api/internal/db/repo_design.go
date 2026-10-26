@@ -1574,6 +1574,30 @@ func (s *Store) ListDAGMembershipsByAssignment(ctx context.Context, assignmentID
 	return out, rows.Err()
 }
 
+// ListDAGMembershipsByAssignmentTx returns the same rows as
+// ListDAGMembershipsByAssignment, read inside tx (REQ-DB-028). A caller that
+// already holds a transaction must use this: reading through the pool takes a
+// second connection, which sees the state before the transaction began and can
+// wait on — and with SQLite's busy timeout, fail against — the locks that same
+// transaction holds.
+func (s *Store) ListDAGMembershipsByAssignmentTx(ctx context.Context, tx *sql.Tx, assignmentID int64) ([]DagMembership, error) {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT `+dagMembershipColumns+` FROM dag_memberships WHERE assignment_id = ? ORDER BY group_id`, assignmentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []DagMembership
+	for rows.Next() {
+		dm, err := scanDagMembership(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, dm)
+	}
+	return out, rows.Err()
+}
+
 // SetDAGMembershipActive activates a DAG membership (REQ-DB-028, REQ-AUTH-044).
 func (s *Store) SetDAGMembershipActive(ctx context.Context, assignmentID, groupID int64, active bool) error {
 	_, err := s.DB.ExecContext(ctx,

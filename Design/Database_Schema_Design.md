@@ -12,7 +12,7 @@ This document contains the **normative** logical schema and DDL. MariaDB is the 
 - All primary keys `id INTEGER` auto-generated (REQ-DB-004); SQLite: `INTEGER PRIMARY KEY` (rowid alias); MariaDB: append `AUTO_INCREMENT`
 - Booleans: `INTEGER` 0/1 on both dialects (ASM-DB-2)
 - All timestamps UTC (REQ-DB-005, GD-7): MariaDB `DATETIME`, SQLite `TEXT` (`YYYY-MM-DD HH:MM:SS`, UTC) — see §2
-- Foreign keys declared everywhere (REQ-DB-004); MariaDB `ENGINE=InnoDB`, SQLite `PRAGMA foreign_keys=ON` per connection
+- Foreign keys declared everywhere (REQ-DB-004); MariaDB `ENGINE=InnoDB`, SQLite `PRAGMA foreign_keys=ON` on **every** connection — set through the driver DSN, never with a one-off statement after opening the pool, which enables it only on whichever connection answered (§10)
 - Identifiers: `snake_case`; string identifiers `VARCHAR(255)`; email `VARCHAR(254)`; UUIDs `CHAR(36)`
 - **Canonical value formats** (resolves ASM-VAL-1; GD-16, REQ-VAL-041): dates `YYYY-MM-DD±HH:MM`; date-times `YYYY-MM-DD HH:MM±HH:MM` — no seconds, **with the timezone of collection** (`±HH:MM`, UTC = `+00:00`); values are stored as collected, never converted to UTC (clinical data, not system timestamps — system timestamps remain UTC per REQ-DB-005/GD-7); choice lists use the REDCap encoding `code$label##code$label`; free-form text has **no application length cap** beyond the storage type (REQ-VAL-021), `LONGTEXT`/`TEXT`
 - **Migrations** (REQ-DB-003): a `schema_version` table records applied versions; migrations are numbered `NNN_name.up.sql`, applied in order, idempotent (`CREATE TABLE IF NOT EXISTS`, guarded `ALTER`); the API applies them at startup (the project modes of GD-20 arrive as one such migration: `projects.mode` + `project_staging`)
@@ -440,9 +440,14 @@ Reference scale (REQ-DB-025): 100 projects × 10,000 records × 200 fields × 10
 | `IF NOT EXISTS` on indexes | not supported — create in a temp check or `CREATE INDEX` guarded by migration state | supported |
 | yearly audit rollover | per-year tables + `VIEW` (no partitions) | `PARTITION BY RANGE (YEAR(created_at))` |
 | append-only enforcement | application-level (no such operation exposed) | grant `INSERT, SELECT` only to the app account |
-| foreign keys | `PRAGMA foreign_keys=ON` per connection | enforced (InnoDB) |
+| foreign keys | `PRAGMA foreign_keys=ON` on every connection (DSN pragma, verified at startup — see the note below) | enforced (InnoDB) |
 | upsert | `INSERT … ON CONFLICT DO UPDATE` | `INSERT … ON DUPLICATE KEY UPDATE` |
 | `ENUM`/`CHECK` as constraint | not portable — API allowlists | API allowlists (same) |
+| journal mode | **WAL** (decided 2026-10-25; SQLite is development and test only, REQ-TECH-005) — readers and one writer coexist, as on InnoDB | row-level locking with MVCC; nothing to set |
+
+**Connection pragmas are per connection, so they belong in the DSN** (`api/internal/db/db.go`): `foreign_keys(1)`, `journal_mode(WAL)`, `busy_timeout(5000)`. Two defects came from ignoring that. A single `ExecContext("PRAGMA foreign_keys = ON")` after opening the pool enabled enforcement on whichever connection answered and left the other nine unenforced — the settings are now read back at startup, foreign keys fatally (correctness) and journal mode as a warning (a filesystem without shared memory silently keeps the rollback journal, which degrades speed, not correctness). And WAL-less SQLite excluded readers from a writer's window entirely, so any concurrency the pool allowed surfaced as `SQLITE_BUSY`; that is what turned one bad read into intermittent 500s under bulk import.
+
+**WAL does not relax the transaction rule.** Reading on a second pooled connection while a transaction is open still sees the state from before that transaction began, whatever the journal mode — and production (MariaDB) never had WAL's forgiveness. Code inside a transaction uses the `*Tx` store methods (§10, and `dataapi.activeGroupIDTx` as the pattern); `dataapi.TestRecordImportExistingRowReadsInsideTransaction` enforces it by capping the pool at one connection, so a read that leaves the transaction cannot be served at all.
 
 ## 11. Resolved Deferred Items
 

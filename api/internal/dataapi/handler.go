@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -123,7 +126,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if rerr != nil {
-		writeError(w, enc, http.StatusInternalServerError, "Internal error")
+		h.storeError(w, enc, rerr)
 		return
 	}
 
@@ -176,10 +179,32 @@ func (h *Handler) requireData(w http.ResponseWriter, enc string, sub *subject, m
 	fn()
 }
 
-// storeError renders a data-store failure: 500, no internal detail
-// (REQ-API-006).
-func (h *Handler) storeError(w http.ResponseWriter, enc string) {
+// storeError logs a data-store failure and renders 500 with no internal detail
+// (REQ-API-006). Keeping the cause out of the *response* never meant throwing it
+// away: a 500 that leaves no log line gives an operator nothing to chase, so
+// every site hands its error here. Only the error and the site that produced it
+// are recorded — never tokens, parameters or values (REQ-API-005).
+func (h *Handler) storeError(w http.ResponseWriter, enc string, err error) {
+	slog.Error("data api: data store failure", "err", err, "at", callerSite(1))
 	writeError(w, enc, http.StatusInternalServerError, "Internal error")
+}
+
+// failStore is the export counterpart of storeError: log the cause, then answer
+// 500 through the surface's own error renderer (ExportSpec.Error), which is how
+// §4.14 keeps its JSON shape while §3.2 keeps its text.
+func (s ExportSpec) failStore(w http.ResponseWriter, err error) {
+	slog.Error("data api: data store failure", "err", err, "at", callerSite(1))
+	s.fail(w, http.StatusInternalServerError, "Internal error")
+}
+
+// callerSite names the file:line of the caller's caller — the place a failure
+// originated, without anyone at a call site having to write it down.
+func callerSite(skip int) string {
+	_, file, line, ok := runtime.Caller(skip + 1)
+	if !ok {
+		return "unknown"
+	}
+	return fmt.Sprintf("%s:%d", filepath.Base(file), line)
 }
 
 // --- response rendering (REQ-API-013: the requested format wins) ---

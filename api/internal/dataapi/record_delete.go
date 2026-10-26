@@ -64,18 +64,18 @@ func (h *Handler) contentRecordDelete(w http.ResponseWriter, r *http.Request, en
 	}
 	d, err := h.loadDict(ctx, sub.Project.ID)
 	if err != nil {
-		h.storeError(w, enc)
+		h.storeError(w, enc, err)
 		return
 	}
 	groupID, err := h.activeGroupID(ctx, sub)
 	if err != nil {
-		h.storeError(w, enc)
+		h.storeError(w, enc, err)
 		return
 	}
 	visible := map[string]bool{}
 	ids, err := h.Store.ListRecordIDs(ctx, sub.Project.ID, groupID)
 	if err != nil {
-		h.storeError(w, enc)
+		h.storeError(w, enc, err)
 		return
 	}
 	for _, id := range ids {
@@ -98,7 +98,7 @@ func (h *Handler) contentRecordDelete(w http.ResponseWriter, r *http.Request, en
 
 		tx, err := h.Store.DB.BeginTx(ctx, nil)
 		if err != nil {
-			h.storeError(w, enc)
+			h.storeError(w, enc, err)
 			return
 		}
 		// Pair gate: every (instrument, event) pair holding this record's data
@@ -107,7 +107,7 @@ func (h *Handler) contentRecordDelete(w http.ResponseWriter, r *http.Request, en
 		dvs, err := h.Store.ListDataValuesByRecordTx(ctx, tx, sub.Project.ID, recordID)
 		if err != nil {
 			tx.Rollback()
-			h.storeError(w, enc)
+			h.storeError(w, enc, err)
 			return
 		}
 		gated := false
@@ -125,21 +125,21 @@ func (h *Handler) contentRecordDelete(w http.ResponseWriter, r *http.Request, en
 		removed, err := h.Store.DeleteRecordValuesTx(ctx, tx, sub.Project.ID, recordID, p.Events, fields, instance)
 		if err != nil {
 			tx.Rollback()
-			h.storeError(w, enc)
+			h.storeError(w, enc, err)
 			return
 		}
 		if len(removed) > 0 {
 			anyLeft, err := h.Store.RecordHasAnyDataTx(ctx, tx, sub.Project.ID, recordID)
 			if err != nil {
 				tx.Rollback()
-				h.storeError(w, enc)
+				h.storeError(w, enc, err)
 				return
 			}
 			if !anyLeft {
 				// The record itself goes with its last value (REQ-API-036).
 				if err := h.Store.DeleteRecordTx(ctx, tx, sub.Project.ID, recordID); err != nil {
 					tx.Rollback()
-					h.storeError(w, enc)
+					h.storeError(w, enc, err)
 					return
 				}
 			}
@@ -157,14 +157,14 @@ func (h *Handler) contentRecordDelete(w http.ResponseWriter, r *http.Request, en
 					Details:      details,
 				}); err != nil {
 					tx.Rollback()
-					h.storeError(w, enc)
+					h.storeError(w, enc, err)
 					return
 				}
 			}
 			row.Deleted = 1
 		}
 		if err := tx.Commit(); err != nil {
-			h.storeError(w, enc)
+			h.storeError(w, enc, err)
 			return
 		}
 		results = append(results, row)

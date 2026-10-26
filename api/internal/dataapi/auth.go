@@ -132,22 +132,32 @@ func (h *Handler) resolveToken(ctx context.Context, token string) (*subject, err
 	if token == "" {
 		return nil, errInvalidToken
 	}
+	// A store failure is returned as it is, not folded into the uniform 401:
+	// an unreachable database answering "Invalid token" hides an incident behind
+	// a credential error and leaves nothing logged. The caller renders it as a
+	// logged 500 (handler.go), which denies access just as firmly.
 	a, err := h.Store.GetAssignmentByToken(ctx, token)
 	if err != nil {
-		return nil, errInvalidToken
+		return nil, err
 	}
 	if a == nil {
 		return h.resolveSurveyLink(ctx, token)
 	}
 	u, err := h.Store.GetUser(ctx, a.UserID)
-	if err != nil || u == nil || !u.Enabled {
+	if err != nil {
+		return nil, err
+	}
+	if u == nil || !u.Enabled {
 		return nil, errInvalidToken
 	}
 	if !accountActive(u, h.Cfg.AuthInactivityLimitDays) {
 		return nil, errInvalidToken
 	}
 	p, err := h.Store.GetProject(ctx, a.ProjectID)
-	if err != nil || p == nil {
+	if err != nil {
+		return nil, err
+	}
+	if p == nil {
 		return nil, errInvalidToken
 	}
 	// Effective levels from the assignment this lookup already produced — one
@@ -176,7 +186,10 @@ func (h *Handler) resolveToken(ctx context.Context, token string) (*subject, err
 // REQ-AUTH-039).
 func (h *Handler) resolveSurveyLink(ctx context.Context, token string) (*subject, error) {
 	link, err := h.Store.GetSurveyLinkByToken(ctx, token)
-	if err != nil || link == nil || link.Revoked {
+	if err != nil {
+		return nil, err // store failure, not an invalid token (see resolveToken)
+	}
+	if link == nil || link.Revoked {
 		return nil, errInvalidToken
 	}
 	if link.CollectedAt.Valid {
@@ -187,11 +200,17 @@ func (h *Handler) resolveSurveyLink(ctx context.Context, token string) (*subject
 		return nil, errSurveySubmitted
 	}
 	p, err := h.Store.GetProject(ctx, link.ProjectID)
-	if err != nil || p == nil {
+	if err != nil {
+		return nil, err
+	}
+	if p == nil {
 		return nil, errInvalidToken
 	}
 	ins, err := h.Store.GetInstrument(ctx, link.InstrumentID)
-	if err != nil || ins == nil || ins.ProjectID != p.ID {
+	if err != nil {
+		return nil, err
+	}
+	if ins == nil || ins.ProjectID != p.ID {
 		return nil, errInvalidToken
 	}
 	return &subject{

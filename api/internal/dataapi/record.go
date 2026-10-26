@@ -347,7 +347,24 @@ func (h *Handler) activeGroupID(ctx context.Context, sub *subject) (*int64, erro
 	if sub.isLink() {
 		return nil, nil
 	}
-	ms, err := h.Store.ListDAGMembershipsByAssignment(ctx, sub.Assignment.ID)
+	return dagScope(h.Store.ListDAGMembershipsByAssignment(ctx, sub.Assignment.ID))
+}
+
+// activeGroupIDTx is activeGroupID read inside tx. Code that already holds a
+// transaction must not use the plain form: it would read on a second pooled
+// connection, which cannot see the transaction's own writes and — with SQLite
+// at busy_timeout(5000) and no WAL — can fail with SQLITE_BUSY against locks
+// that same transaction takes (observed as transient 500s on record import).
+func (h *Handler) activeGroupIDTx(ctx context.Context, tx *sql.Tx, sub *subject) (*int64, error) {
+	if sub.isLink() {
+		return nil, nil
+	}
+	return dagScope(h.Store.ListDAGMembershipsByAssignmentTx(ctx, tx, sub.Assignment.ID))
+}
+
+// dagScope picks the active membership out of a membership list: its group id,
+// or nil when no active membership exists (groupless holder → all records).
+func dagScope(ms []db.DagMembership, err error) (*int64, error) {
 	if err != nil {
 		return nil, err
 	}

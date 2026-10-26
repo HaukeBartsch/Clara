@@ -266,15 +266,15 @@ func transferPairGate(d *projectDict, sub *subject, plan *transferPlan) bool {
 	return true
 }
 
-// transferActiveGroup is the target-side data-access-group scope of the actor:
+// transferActiveGroupTx is the target-side data-access-group scope of the actor:
 // their active membership on the target project, or none. An organization
 // administrator without a membership row has no group to join — like an import
 // by a groupless holder, the new record lands in no group (REQ-API-093).
-func (h *Handler) transferActiveGroup(ctx context.Context, sub *subject) (*int64, error) {
+func (h *Handler) transferActiveGroupTx(ctx context.Context, tx *sql.Tx, sub *subject) (*int64, error) {
 	if sub.Assignment == nil {
 		return nil, nil
 	}
-	return h.activeGroupID(ctx, sub)
+	return h.activeGroupIDTx(ctx, tx, sub)
 }
 
 // ExecuteTransfer runs one transfer field's button for one record (REQ-API-165).
@@ -665,7 +665,7 @@ func (h *Handler) executeRecordTransfer(ctx context.Context, actor *db.User, src
 	if err != nil {
 		return nil, err
 	}
-	groupID, err := h.transferActiveGroup(ctx, sub)
+	groupID, err := h.transferActiveGroupTx(ctx, tx, sub)
 	if err != nil {
 		return nil, err
 	}

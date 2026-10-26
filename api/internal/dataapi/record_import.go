@@ -175,12 +175,12 @@ func (h *Handler) contentRecordImport(w http.ResponseWriter, r *http.Request, en
 	}
 	d, err := h.loadDict(ctx, sub.Project.ID)
 	if err != nil {
-		h.storeError(w, enc)
+		h.storeError(w, enc, err)
 		return
 	}
 	reg, err := h.validationRegistry(ctx)
 	if err != nil {
-		h.storeError(w, enc)
+		h.storeError(w, enc, err)
 		return
 	}
 	rows := parseImportRows(r, p)
@@ -215,7 +215,7 @@ func (h *Handler) contentRecordImport(w http.ResponseWriter, r *http.Request, en
 				// nothing of this row was stored.
 				writeError(w, enc, http.StatusGone, "Survey already submitted")
 			default:
-				h.storeError(w, enc) // a store failure fails the call (500)
+				h.storeError(w, enc, err) // a store failure fails the call (500)
 			}
 			return
 		}
@@ -621,7 +621,7 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 	// record joins the holder's group below. A survey link has no group and
 	// stays pinned to its own record by the check in the preamble.
 	if entity != nil {
-		groupID, err := h.activeGroupID(ctx, sub)
+		groupID, err := h.activeGroupIDTx(ctx, tx, sub)
 		if err != nil {
 			return importRow{}, err
 		}
@@ -683,7 +683,7 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 	// New records join the holder's active data access group — or none;
 	// an import never changes an existing record's group (REQ-API-093).
 	if entity == nil {
-		groupID, err := h.activeGroupID(ctx, sub)
+		groupID, err := h.activeGroupIDTx(ctx, tx, sub)
 		if err != nil {
 			return importRow{}, err
 		}

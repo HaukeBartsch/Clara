@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -78,12 +80,26 @@ func Open(cfg *config.Config, reg *metrics.Registry) (*Store, error) {
 	case "sqlite":
 		driver = "sqlite"
 		d = DialectSQLite
-		// busy_timeout on every pooled connection: SQLite serializes its
-		// writers, and without a timeout a write that meets a concurrent
-		// reader fails immediately with SQLITE_BUSY (observed as transient
-		// 500s under load). The driver applies _pragma parameters per
-		// connection it opens.
-		dsn = cfg.DBDatabase + "?_pragma=busy_timeout(5000)"
+		// Per-connection settings, applied by the driver to every connection it
+		// opens (Design/Database_Schema_Design.md §10):
+		//
+		//   foreign_keys  enforcement, as on InnoDB. It used to be set with one
+		//                 ExecContext after opening the pool, which enabled it on
+		//                 whichever connection answered and left the rest of the
+		//                 pool without it.
+		//   journal_mode  WAL (decision 2026-10-25): SQLite is development and
+		//                 test only (REQ-TECH-005), and in rollback-journal mode a
+		//                 writer excludes readers entirely, so any concurrency the
+		//                 pool allows surfaces as SQLITE_BUSY instead of behaving
+		//                 like production. WAL makes readers and a single writer
+		//                 coexist — it does NOT make reading on a second connection
+		//                 inside a transaction correct: that still sees the state
+		//                 from before the transaction began (see the regression
+		//                 guard dataapi.TestRecordImportExistingRowReadsInsideTransaction).
+		//   busy_timeout  SQLite serializes writers; without a timeout a write that
+		//                 meets a concurrent reader fails immediately (transient
+		//                 500s under load before WAL).
+		dsn = cfg.DBDatabase + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
 	case "mariadb":
 		// No parseTime: DATE/DATETIME then scan as text in the same canonical
 		// layout SQLite returns ("2006-01-02 15:04:05", REQ-DB-005), instead of
@@ -112,9 +128,29 @@ func Open(cfg *config.Config, reg *metrics.Registry) (*Store, error) {
 	}
 
 	if d == DialectSQLite {
-		if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
+		// Confirm the per-connection pragmas landed (§10). Foreign keys are a
+		// correctness property, so a pool without them fails startup. WAL is not:
+		// a filesystem with no shared memory (NFS and similar) silently keeps the
+		// rollback journal, which deserves a warning rather than a refused start.
+		var (
+			fk   int
+			mode string
+		)
+		if err := db.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&fk); err != nil {
 			db.Close()
-			return nil, fmt.Errorf("enable foreign keys: %w", err)
+			return nil, fmt.Errorf("read foreign_keys pragma: %w", err)
+		}
+		if fk != 1 {
+			db.Close()
+			return nil, fmt.Errorf("foreign_keys = %d, want 1 — the DSN pragma was not applied", fk)
+		}
+		if err := db.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&mode); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("read journal_mode pragma: %w", err)
+		}
+		if !strings.EqualFold(mode, "wal") {
+			slog.Warn("SQLite is not running in WAL mode; readers and a writer will exclude each other",
+				"journal_mode", mode)
 		}
 	}
 

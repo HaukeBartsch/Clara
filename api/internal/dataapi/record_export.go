@@ -122,7 +122,7 @@ func (s ExportSpec) fail(w http.ResponseWriter, status int, message string) {
 func (h *Handler) RunExport(w http.ResponseWriter, r *http.Request, s ExportSpec) {
 	d, err := h.loadDict(r.Context(), s.ProjectID)
 	if err != nil {
-		s.fail(w, http.StatusInternalServerError, "Internal error")
+		s.failStore(w, err)
 		return
 	}
 	h.streamExport(w, r, d, s)
@@ -132,7 +132,7 @@ func (h *Handler) contentRecordExport(w http.ResponseWriter, r *http.Request, en
 	ctx := r.Context()
 	d, err := h.loadDict(ctx, sub.Project.ID)
 	if err != nil {
-		h.storeError(w, enc)
+		h.storeError(w, enc, err)
 		return
 	}
 
@@ -158,7 +158,7 @@ func (h *Handler) contentRecordExport(w http.ResponseWriter, r *http.Request, en
 
 	groupID, err := h.activeGroupID(ctx, sub)
 	if err != nil {
-		h.storeError(w, enc)
+		h.storeError(w, enc, err)
 		return
 	}
 
@@ -526,7 +526,7 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 	if withComplete && d.hasEvents {
 		comps, err := h.Store.ListInstrumentCompletions(ctx, s.ProjectID)
 		if err != nil {
-			s.fail(w, http.StatusInternalServerError, "Internal error")
+			s.failStore(w, err)
 			return
 		}
 		for _, c := range comps {
@@ -546,7 +546,7 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 	// records[] (filters combine — REQ-API-024).
 	ids, err := h.Store.ListRecordIDs(ctx, s.ProjectID, s.GroupID)
 	if err != nil {
-		s.fail(w, http.StatusInternalServerError, "Internal error")
+		s.failStore(w, err)
 		return
 	}
 	wantRecords := toSet(s.Records)
@@ -581,7 +581,7 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 	if labelValues && d.hasEvents {
 		arms, err := h.Store.ListArms(ctx, s.ProjectID)
 		if err != nil {
-			s.fail(w, http.StatusInternalServerError, "Internal error")
+			s.failStore(w, err)
 			return
 		}
 		armName := make(map[int]string, len(arms))
@@ -664,7 +664,7 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 			 FROM data WHERE project_id = ? AND repeating_instrument <> ''
 			 GROUP BY record_id, repeating_instrument, unique_event_name`, s.ProjectID)
 		if err != nil {
-			s.fail(w, http.StatusInternalServerError, "Internal error")
+			s.failStore(w, err)
 			return
 		}
 		for rows.Next() {
@@ -672,7 +672,7 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 			var n int
 			if err := rows.Scan(&record, &instrument, &event, &n); err != nil {
 				rows.Close()
-				s.fail(w, http.StatusInternalServerError, "Internal error")
+				s.failStore(w, err)
 				return
 			}
 			if candidates[record] && d.repeats(event, instrument) && n > maxInstance[instrument+"|"+event] {
@@ -681,7 +681,7 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
-			s.fail(w, http.StatusInternalServerError, "Internal error")
+			s.failStore(w, err)
 			return
 		}
 	}
@@ -892,7 +892,7 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		}
 		dvs, err := h.Store.ListDataValuesByRecord(ctx, s.ProjectID, id)
 		if err != nil {
-			s.fail(w, http.StatusInternalServerError, "Internal error") // header may already be out; nothing better to do
+			s.failStore(w, err) // header may already be out; nothing better to do
 			return
 		}
 		rv := valuesIndex(dvs)
@@ -913,7 +913,7 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 			off, err := db.EnsureAnonOffset(ctx, h.Store, s.ProjectID, id,
 				h.Cfg.AnonSalt, h.Cfg.AnonDateShiftMin, h.Cfg.AnonDateShiftMax)
 			if err != nil {
-				s.fail(w, http.StatusInternalServerError, "Internal error")
+				s.failStore(w, err)
 				return
 			}
 			offsetDays, offsetReady = off, true
