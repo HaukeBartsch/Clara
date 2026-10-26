@@ -120,13 +120,19 @@ type eventRow struct {
 // (GD-15, REQ-API-020): arms by arm_num, then within each arm the
 // timepoint events by period and the no-timepoint events by position.
 func (h *Handler) eventRows(ctx context.Context, projectID int64) ([]eventRow, error) {
-	arms, err := h.Store.ListArms(ctx, projectID)
+	return h.eventRowsOn(ctx, poolSource{h.Store}, projectID)
+}
+
+// eventRowsOn is eventRows read through src: the pool, or a caller's open
+// transaction (see structureSource in record.go).
+func (h *Handler) eventRowsOn(ctx context.Context, src structureSource, projectID int64) ([]eventRow, error) {
+	arms, err := src.ListArms(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
 	rows := make([]eventRow, 0)
 	for _, a := range arms {
-		evs, err := h.Store.ListEventsByArm(ctx, projectID, a.ID)
+		evs, err := src.ListEventsByArm(ctx, projectID, a.ID)
 		if err != nil {
 			return nil, err
 		}

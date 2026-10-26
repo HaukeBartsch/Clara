@@ -384,6 +384,12 @@ func (h *Handler) executeCreateProjectTransfer(ctx context.Context, actor *db.Us
 		}
 	}
 
+	// Resolved before the transaction opens — see executeRecordTransfer (§10).
+	reg, err := h.validationRegistry(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	tx, err := h.Store.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -402,7 +408,7 @@ func (h *Handler) executeCreateProjectTransfer(ctx context.Context, actor *db.Us
 	if projectName == "" || len(projectName) > 255 || strings.ContainsFunc(projectName, func(r rune) bool { return r < 0x20 }) {
 		return nil, &TransferConfigError{Msg: fmt.Sprintf("the value of '%s' is not a usable project name", op.SourceField)}
 	}
-	existing, err := h.Store.GetProjectByName(ctx, projectName)
+	existing, err := h.Store.GetProjectByNameTx(ctx, tx, projectName)
 	if err != nil {
 		return nil, err
 	}
@@ -441,10 +447,6 @@ func (h *Handler) executeCreateProjectTransfer(ctx context.Context, actor *db.Us
 	}
 	if op.IDField != "" {
 		outputs[op.IDField] = fmt.Sprint(projectID)
-	}
-	reg, err := h.validationRegistry(ctx)
-	if err != nil {
-		return nil, err
 	}
 	for fieldName, value := range outputs {
 		target := srcDict.byName[fieldName]
@@ -511,8 +513,14 @@ func (h *Handler) executeCreateProjectTransfer(ctx context.Context, actor *db.Us
 	return &TransferResult{TargetProject: projectName, Created: true, Copied: []string{}, SkippedEmpty: []string{}}, nil
 }
 
+// cloneProjectStructureTx copies a template project's structure into the new
+// project. Every read is on tx, including the template's own rows: the clone is
+// then one consistent snapshot of the template, so a concurrent structure edit
+// cannot map a field to an instrument this transaction never copied (the id maps
+// below are built from separate reads). A pool read here would also wait on the
+// connection this transaction holds when the pool runs empty (§10).
 func (h *Handler) cloneProjectStructureTx(ctx context.Context, tx *sql.Tx, templateID, projectID int64) error {
-	arms, err := h.Store.ListArms(ctx, templateID)
+	arms, err := h.Store.ListArmsTx(ctx, tx, templateID)
 	if err != nil {
 		return err
 	}
@@ -524,7 +532,7 @@ func (h *Handler) cloneProjectStructureTx(ctx context.Context, tx *sql.Tx, templ
 		if err != nil {
 			return err
 		}
-		events, err := h.Store.ListEventsByArm(ctx, templateID, arm.ID)
+		events, err := h.Store.ListEventsByArmTx(ctx, tx, templateID, arm.ID)
 		if err != nil {
 			return err
 		}
@@ -538,7 +546,7 @@ func (h *Handler) cloneProjectStructureTx(ctx context.Context, tx *sql.Tx, templ
 			eventIDs[event.ID] = eventID
 		}
 	}
-	instruments, err := h.Store.ListInstruments(ctx, templateID)
+	instruments, err := h.Store.ListInstrumentsTx(ctx, tx, templateID)
 	if err != nil {
 		return err
 	}
@@ -552,7 +560,7 @@ func (h *Handler) cloneProjectStructureTx(ctx context.Context, tx *sql.Tx, templ
 		}
 		instrumentIDs[instrument.ID] = instrumentID
 	}
-	fields, err := h.Store.ListFields(ctx, templateID)
+	fields, err := h.Store.ListFieldsTx(ctx, tx, templateID)
 	if err != nil {
 		return err
 	}
@@ -566,7 +574,7 @@ func (h *Handler) cloneProjectStructureTx(ctx context.Context, tx *sql.Tx, templ
 		}
 		fieldIDs[field.ID] = fieldID
 	}
-	pairs, err := h.Store.ListInstrumentEvents(ctx, templateID)
+	pairs, err := h.Store.ListInstrumentEventsTx(ctx, tx, templateID)
 	if err != nil {
 		return err
 	}
@@ -631,6 +639,16 @@ func (h *Handler) executeRecordTransfer(ctx context.Context, actor *db.User, src
 		}
 	}
 
+	// The validation registry is global configuration behind a process-wide
+	// cache, so it is resolved before the transaction opens: a cache miss inside
+	// the transaction would read the pool from a second connection — invisible to
+	// this transaction and, on SQLite before WAL, able to wait on its locks
+	// (Design/Database_Schema_Design.md §10).
+	reg, err := h.validationRegistry(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	tx, err := h.Store.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -679,10 +697,6 @@ func (h *Handler) executeRecordTransfer(ctx context.Context, actor *db.User, src
 	rvTgt := valuesIndex(tgtValues)
 	riTgt := plan.dict.instancesIndex(tgtValues)
 
-	reg, err := h.validationRegistry(ctx)
-	if err != nil {
-		return nil, err
-	}
 	offsetFor := h.collectionOffsetFor("") // no caller timezone: the canonical stored form (REQ-VAL-025)
 
 	copied := []string{}
@@ -795,7 +809,7 @@ func (h *Handler) executeRecordTransfer(ctx context.Context, actor *db.User, src
 	if existed {
 		action, eventType = "update", audit.RecordUpdated
 	}
-	srcProj, err := h.Store.GetProject(ctx, srcProjectID)
+	srcProj, err := h.Store.GetProjectTx(ctx, tx, srcProjectID)
 	if err != nil {
 		return nil, err
 	}

@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -799,5 +800,80 @@ func TestTransferDAGGroups(t *testing.T) {
 	}
 	if n := e.countSQL(t, `SELECT count(*) FROM audit_events WHERE event_type = 'transfer_executed'`); n != 1 {
 		t.Errorf("transfer_executed rows = %d, want only the successful one", n)
+	}
+}
+
+// TestTransferRecordStaysInsideItsTransaction executes a record transfer with
+// the pool capped at one connection, so any read that leaves the transaction
+// cannot be served at all. That is the shape audit finding D2 had: the source
+// project was fetched through the pool after the transfer had already written,
+// which on MariaDB reads another snapshot and on SQLite could wait behind the
+// locks of its own request (Design/Database_Schema_Design.md §10).
+func TestTransferRecordStaysInsideItsTransaction(t *testing.T) {
+	e, f := newTransferFixture(t)
+	e.mustCreateTransferField(t, f, "xfer", xferConfig)
+
+	singleConnPool(t, e.Store)
+
+	rec := mustComplete(t, "transfer execute", func() *httptest.ResponseRecorder {
+		return e.do("POST", f.execPath("R1")+"?event=baseline_arm_1&instrument=intake&field=xfer", nil, f.mem)
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("execute with a one-connection pool = %d %s — the transfer reads outside its transaction",
+			rec.Code, rec.Body.String())
+	}
+	if got, ok := e.valueSQL(t, f.tgt, "P-001", "visit_arm_1", "city_in"); !ok || got != "Oslo" {
+		t.Errorf("target city_in = %q (%v), want Oslo", got, ok)
+	}
+}
+
+// TestTransferCreateProjectStaysInsideItsTransaction runs the
+// create-project-from-template branch with the pool capped at one connection.
+// Cloning a template read the template's arms, events, instruments, fields and
+// instrument-event mapping through the pool while this very transaction was
+// already writing into the new project (audit finding D1): on SQLite that second
+// connection is not there to be taken, and on MariaDB it answers from a snapshot
+// that cannot see the rows being written. The structure assertions matter as much
+// as the status code — a transaction that quietly gave up halfway would otherwise
+// still return 200 here only if it committed, and asserting the clone keeps the
+// guard honest about what "no pool read" has to leave behind.
+func TestTransferCreateProjectStaysInsideItsTransaction(t *testing.T) {
+	e, f := newTransferFixture(t)
+	for i, field := range []string{"project_token", "project_id"} {
+		e.mustField(f.src, f.srcInstrID, field, "text", 10+i)
+	}
+	e.mustCreateTransferField(t, f, "create_project",
+		"create_project record_name [Target Study] project_token project_id")
+	if _, err := e.Store.DB.Exec(
+		`UPDATE data SET value = ? WHERE project_id = ? AND record_id = ? AND unique_event_name = ? AND field_name = ?`,
+		"Guarded Study", f.src, "R1", "baseline_arm_1", "record_name"); err != nil {
+		t.Fatalf("set project name: %v", err)
+	}
+
+	singleConnPool(t, e.Store)
+
+	rec := mustComplete(t, "create_project transfer", func() *httptest.ResponseRecorder {
+		return e.do("POST", f.execPath("R1")+"?event=baseline_arm_1&instrument=intake&field=create_project",
+			nil, f.mem)
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create from template with a one-connection pool = %d %s — the clone reads outside its transaction",
+			rec.Code, rec.Body.String())
+	}
+
+	ctx := context.Background()
+	project, err := e.Store.GetProjectByName(ctx, "Guarded Study")
+	if err != nil || project == nil {
+		t.Fatalf("new project = %v (%v), want the cloned one", project, err)
+	}
+	instruments, err := e.Store.ListInstruments(ctx, project.ID)
+	if err != nil || len(instruments) != 1 || instruments[0].Name != "enroll" {
+		t.Fatalf("cloned instruments = %+v (%v), want the template's enroll", instruments, err)
+	}
+	if fields, err := e.Store.ListFields(ctx, project.ID); err != nil || len(fields) != 3 {
+		t.Fatalf("cloned fields = %d (%v), want the template's 3", len(fields), err)
+	}
+	if pairs, err := e.Store.ListInstrumentEvents(ctx, project.ID); err != nil || len(pairs) != 1 {
+		t.Fatalf("cloned instrument-event mapping = %+v (%v), want the template's single pair", pairs, err)
 	}
 }

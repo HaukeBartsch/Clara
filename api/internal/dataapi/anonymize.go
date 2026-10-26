@@ -20,7 +20,10 @@ import (
 // computed and persisted first). Values that already carry the target form
 // are left alone. Returns (recordsAffected, valuesAffected).
 func (h *Handler) AnonymizeProjectTx(ctx context.Context, tx *sql.Tx, projectID int64) (int64, int64, error) {
-	d, err := h.loadDict(ctx, projectID)
+	// The dictionary is read on tx, not through loadDict: this runs inside the
+	// end-provision transaction, and a dictionary cache miss there would take a
+	// second connection to read the structure — the §10 bug class.
+	d, err := h.dictForTx(ctx, tx, projectID)
 	if err != nil {
 		return 0, 0, err
 	}

@@ -310,3 +310,62 @@ func TestDeleteProjectCascades(t *testing.T) {
 		t.Errorf("project %d survived DeleteProject", pid)
 	}
 }
+
+// TestProjectGettersInsideTransaction covers the Tx variants of the project
+// getters, and states why they exist: a transaction sees its own writes, and the
+// pool does not — so code inside a transaction that calls the pool version is
+// reading a different database state than the one it is changing (audit finding
+// D2/D5, 2026-10-25; Design/Database_Schema_Design.md §10).
+func TestProjectGettersInsideTransaction(t *testing.T) {
+	s := migrateTestStore(t)
+	ctx := context.Background()
+
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // rolled back or already committed below
+
+	name := "TX-SCOPE-" + t.Name()
+	id, err := s.CreateProjectTx(ctx, tx, &Project{ProjectName: name})
+	if err != nil {
+		t.Fatalf("CreateProjectTx: %v", err)
+	}
+
+	// Through the transaction: its own row is there.
+	if p, err := s.GetProjectTx(ctx, tx, id); err != nil || p == nil {
+		t.Fatalf("GetProjectTx = %v (%v), want the row this transaction just created", p, err)
+	} else if p.ProjectName != name {
+		t.Errorf("GetProjectTx name = %q, want %q", p.ProjectName, name)
+	}
+	if p, err := s.GetProjectByNameTx(ctx, tx, name); err != nil || p == nil {
+		t.Fatalf("GetProjectByNameTx = %v (%v), want the row this transaction just created", p, err)
+	} else if p.ID != id {
+		t.Errorf("GetProjectByNameTx id = %d, want %d", p.ID, id)
+	}
+
+	// Through the pool: not there yet. If this ever stops holding, the database
+	// is sharing snapshots more loosely than assumed and every in-transaction
+	// pool read becomes wrong in a new and more interesting way.
+	if p, err := s.GetProject(ctx, id); err != nil {
+		t.Fatalf("GetProject on the pool: %v", err)
+	} else if p != nil {
+		t.Errorf("GetProject on the pool already sees an uncommitted project")
+	}
+	if p, err := s.GetProjectByName(ctx, name); err != nil {
+		t.Fatalf("GetProjectByName on the pool: %v", err)
+	} else if p != nil {
+		t.Errorf("GetProjectByName on the pool already sees an uncommitted project")
+	}
+
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	// Committed: both readings agree.
+	if p, err := s.GetProject(ctx, id); err != nil || p == nil {
+		t.Errorf("GetProject after commit = %v (%v), want the row", p, err)
+	}
+	if p, err := s.GetProjectByName(ctx, name); err != nil || p == nil {
+		t.Errorf("GetProjectByName after commit = %v (%v), want the row", p, err)
+	}
+}

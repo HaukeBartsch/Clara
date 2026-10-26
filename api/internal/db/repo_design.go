@@ -34,6 +34,7 @@ func (s *Store) withCommit(ctx context.Context, fn func(tx *sql.Tx) error) error
 type dbOrTx interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
 // nextPosition returns the next available position value for rows within
@@ -142,7 +143,17 @@ func (s *Store) GetArmByNum(ctx context.Context, projectID int64, armNum int) (*
 }
 
 func (s *Store) ListArms(ctx context.Context, projectID int64) ([]Arm, error) {
-	rows, err := s.DB.QueryContext(ctx,
+	return listArms(ctx, s.DB, projectID)
+}
+
+// ListArmsTx is ListArms read inside tx: a transaction must not reach for the
+// pool (see GetProjectTx in repo_projects.go).
+func (s *Store) ListArmsTx(ctx context.Context, tx *sql.Tx, projectID int64) ([]Arm, error) {
+	return listArms(ctx, tx, projectID)
+}
+
+func listArms(ctx context.Context, q dbOrTx, projectID int64) ([]Arm, error) {
+	rows, err := q.QueryContext(ctx,
 		`SELECT `+armColumns+` FROM arms WHERE project_id = ? ORDER BY position, arm_num`, projectID)
 	if err != nil {
 		return nil, err
@@ -335,7 +346,16 @@ func (s *Store) ListEvents(ctx context.Context, projectID int64) ([]Event, error
 }
 
 func (s *Store) ListEventsByArm(ctx context.Context, projectID, armID int64) ([]Event, error) {
-	rows, err := s.DB.QueryContext(ctx,
+	return listEventsByArm(ctx, s.DB, projectID, armID)
+}
+
+// ListEventsByArmTx is ListEventsByArm read inside tx (see GetProjectTx).
+func (s *Store) ListEventsByArmTx(ctx context.Context, tx *sql.Tx, projectID, armID int64) ([]Event, error) {
+	return listEventsByArm(ctx, tx, projectID, armID)
+}
+
+func listEventsByArm(ctx context.Context, q dbOrTx, projectID, armID int64) ([]Event, error) {
+	rows, err := q.QueryContext(ctx,
 		`SELECT `+eventColumns+` FROM events WHERE project_id = ? AND arm_id = ? `+eventOrderClause,
 		projectID, armID)
 	if err != nil {
@@ -474,7 +494,16 @@ func (s *Store) GetInstrumentByName(ctx context.Context, projectID int64, name s
 }
 
 func (s *Store) ListInstruments(ctx context.Context, projectID int64) ([]Instrument, error) {
-	rows, err := s.DB.QueryContext(ctx,
+	return listInstruments(ctx, s.DB, projectID)
+}
+
+// ListInstrumentsTx is ListInstruments read inside tx (see GetProjectTx).
+func (s *Store) ListInstrumentsTx(ctx context.Context, tx *sql.Tx, projectID int64) ([]Instrument, error) {
+	return listInstruments(ctx, tx, projectID)
+}
+
+func listInstruments(ctx context.Context, q dbOrTx, projectID int64) ([]Instrument, error) {
+	rows, err := q.QueryContext(ctx,
 		`SELECT `+instrumentColumns+` FROM instruments WHERE project_id = ? ORDER BY position, name`, projectID)
 	if err != nil {
 		return nil, err
@@ -532,7 +561,16 @@ func (s *Store) DeleteInstrument(ctx context.Context, id int64) error {
 // position — the shape the per-arm instrument × event matrix is rendered
 // from (REQ-API-072).
 func (s *Store) ListInstrumentEvents(ctx context.Context, projectID int64) ([]InstrumentEvent, error) {
-	rows, err := s.DB.QueryContext(ctx,
+	return listInstrumentEvents(ctx, s.DB, projectID)
+}
+
+// ListInstrumentEventsTx is ListInstrumentEvents read inside tx (see GetProjectTx).
+func (s *Store) ListInstrumentEventsTx(ctx context.Context, tx *sql.Tx, projectID int64) ([]InstrumentEvent, error) {
+	return listInstrumentEvents(ctx, tx, projectID)
+}
+
+func listInstrumentEvents(ctx context.Context, q dbOrTx, projectID int64) ([]InstrumentEvent, error) {
+	rows, err := q.QueryContext(ctx,
 		`SELECT ie.instrument_id, ie.event_id, ie.is_repeating
 		 FROM instrument_events ie
 		 JOIN events e ON e.id = ie.event_id
@@ -979,11 +1017,20 @@ func (s *Store) ListFieldsByInstrument(ctx context.Context, projectID, instrumen
 // field position — the order the data dictionary is rendered
 // (REQ-API-019, REQ-DB-013).
 func (s *Store) ListFields(ctx context.Context, projectID int64) ([]Field, error) {
+	return listFields(ctx, s.DB, projectID)
+}
+
+// ListFieldsTx is ListFields read inside tx (see GetProjectTx).
+func (s *Store) ListFieldsTx(ctx context.Context, tx *sql.Tx, projectID int64) ([]Field, error) {
+	return listFields(ctx, tx, projectID)
+}
+
+func listFields(ctx context.Context, q dbOrTx, projectID int64) ([]Field, error) {
 	// Order by instrument position then field position. The instrument
 	// position is read via a correlated subquery rather than a join, so the
 	// bare columns in fieldColumns are never ambiguous with instruments'
 	// own id/project_id/position.
-	rows, err := s.DB.QueryContext(ctx,
+	rows, err := q.QueryContext(ctx,
 		`SELECT `+fieldColumns+`
 		 FROM fields
 		 WHERE project_id = ?

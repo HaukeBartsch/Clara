@@ -58,11 +58,16 @@ func (h *Handler) endProvision(w http.ResponseWriter, r *http.Request) {
 
 	// One-shot: the project_ended audit event is the idempotency state (§7.2)
 	// — a second execution conflicts. The stable name covers every year
-	// partition (audit design §6); the latch makes sure it exists.
-	if err := h.Audit.EnsureYear(ctx); err != nil {
-		errInternal(w)
-		return
-	}
+	// partition (audit design §6).
+	//
+	// No EnsureYear call here, and none may be added: provisioning the audit year
+	// belongs before every handler transaction (httpapi.rolloverGuard), because on
+	// MariaDB that check is `ALTER TABLE … ADD PARTITION` and DDL commits
+	// implicitly — issued from inside this transaction it would end it midway and
+	// silently break the all-or-nothing rule of §7.2 (REQ-AUD-003). The year
+	// exists because the guard provisioned it on this very request; if a year were
+	// somehow missing, the query below fails and names the rollover, which is what
+	// the guard's contract promises instead of a half-applied provision.
 	var done int
 	if err := tx.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM audit_events WHERE project_id = ? AND event_type = ?`,

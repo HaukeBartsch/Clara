@@ -7,6 +7,7 @@ package admin
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -160,5 +161,48 @@ func TestEndProvisionGating(t *testing.T) {
 	}
 	if err := f.e.Store.DB.QueryRow(`SELECT COUNT(*) FROM data`).Scan(&n); err != nil || n == 0 {
 		t.Errorf("data rows = %d (err %v), want the project untouched", n, err)
+	}
+}
+
+// TestEndProvisionDeleteStaysInsideItsTransaction runs the delete branch with
+// the pool capped at one connection: every read it makes must be on its own
+// transaction. It pins the property, not the history — the removed
+// Audit.EnsureYear call (finding D3) usually short-circuits on the writer's year
+// latch and so would not be caught this way, but any future pool read issued
+// from inside this transaction is.
+func TestEndProvisionDeleteStaysInsideItsTransaction(t *testing.T) {
+	f := newExportFixture(t)
+	admin := f.e.mustAdmin("admin@example.org")
+	singleConnPool(t, f.e.Store)
+
+	rec := mustComplete(t, "end-provision delete", func() *httptest.ResponseRecorder {
+		return f.e.do(http.MethodPost, "/api/v1/projects/"+itoa(f.pid)+"/end-provision",
+			map[string]string{"provision": "delete"}, admin)
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete with a one-connection pool = %d %s — the provision reads outside its transaction",
+			rec.Code, rec.Body.String())
+	}
+}
+
+// TestEndProvisionAnonymizeStaysInsideItsTransaction runs the anonymize branch
+// under the same one-connection cap, with the dictionary cache invalidated
+// first. That branch loads the project dictionary to classify every stored value,
+// and a cache miss there read the structure through the pool inside this very
+// transaction (finding D4). Forcing the miss is what makes the guard bite: on a
+// warm cache no query leaves the handler at all, so any implementation passes.
+func TestEndProvisionAnonymizeStaysInsideItsTransaction(t *testing.T) {
+	f := newExportFixture(t)
+	admin := f.e.mustAdmin("admin@example.org")
+	singleConnPool(t, f.e.Store)
+	f.e.Store.BumpStructureCache()
+
+	rec := mustComplete(t, "end-provision anonymize", func() *httptest.ResponseRecorder {
+		return f.e.do(http.MethodPost, "/api/v1/projects/"+itoa(f.pid)+"/end-provision",
+			map[string]string{"provision": "anonymize"}, admin)
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("anonymize with a one-connection pool = %d %s — the provision reads outside its transaction",
+			rec.Code, rec.Body.String())
 	}
 }

@@ -249,16 +249,60 @@ func (d *projectDict) eventsForInstrument(instrumentID int64, candidates []event
 	return out
 }
 
+// structureSource is the project-structure read set the dictionary is built
+// from. poolSource serves it from the connection pool; txSource serves it from a
+// transaction's own connection. Code holding a transaction must use the second:
+// a pooled connection cannot see the transaction's own writes, and when the pool
+// runs empty its read waits for a connection that nothing releases — the bug
+// class of Design/Database_Schema_Design.md §10.
+type structureSource interface {
+	ListArms(context.Context, int64) ([]db.Arm, error)
+	ListEventsByArm(context.Context, int64, int64) ([]db.Event, error)
+	ListInstruments(context.Context, int64) ([]db.Instrument, error)
+	ListFields(context.Context, int64) ([]db.Field, error)
+	ListInstrumentEvents(context.Context, int64) ([]db.InstrumentEvent, error)
+}
+
+// poolSource is the structure read on the pool; embedding *db.Store brings the
+// five pool methods as its own.
+type poolSource struct{ *db.Store }
+
+// txSource is the same read bound to a caller's transaction.
+type txSource struct {
+	s  *db.Store
+	tx *sql.Tx
+}
+
+func (t txSource) ListArms(ctx context.Context, projectID int64) ([]db.Arm, error) {
+	return t.s.ListArmsTx(ctx, t.tx, projectID)
+}
+
+func (t txSource) ListEventsByArm(ctx context.Context, projectID, armID int64) ([]db.Event, error) {
+	return t.s.ListEventsByArmTx(ctx, t.tx, projectID, armID)
+}
+
+func (t txSource) ListInstruments(ctx context.Context, projectID int64) ([]db.Instrument, error) {
+	return t.s.ListInstrumentsTx(ctx, t.tx, projectID)
+}
+
+func (t txSource) ListFields(ctx context.Context, projectID int64) ([]db.Field, error) {
+	return t.s.ListFieldsTx(ctx, t.tx, projectID)
+}
+
+func (t txSource) ListInstrumentEvents(ctx context.Context, projectID int64) ([]db.InstrumentEvent, error) {
+	return t.s.ListInstrumentEventsTx(ctx, t.tx, projectID)
+}
+
 // loadDict returns the project's structure view, reusing the cached
 // dictionary while the store's structure generation is unchanged (see
 // dictcache.go). The returned value is shared across requests and must not
-// be mutated.
+// be mutated. Code holding a transaction uses dictForTx instead.
 func (h *Handler) loadDict(ctx context.Context, projectID int64) (*projectDict, error) {
 	gen := h.Store.StructureGeneration()
 	if d, ok := h.dicts.get(projectID, gen); ok {
 		return d, nil
 	}
-	d, err := h.buildDict(ctx, projectID)
+	d, err := h.buildDictOn(ctx, poolSource{h.Store}, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -266,15 +310,33 @@ func (h *Handler) loadDict(ctx context.Context, projectID int64) (*projectDict, 
 	return d, nil
 }
 
+// dictForTx is loadDict for a caller holding a transaction. A cached
+// dictionary answers with no query at all; a miss is built on tx, so the read
+// never touches the pool while the transaction holds a connection. The
+// transaction-built dictionary is deliberately not cached: it reflects this
+// transaction's snapshot, which can carry structure its own writes introduced
+// and that never commits, and the shared cache must only ever hold committed
+// structure.
+func (h *Handler) dictForTx(ctx context.Context, tx *sql.Tx, projectID int64) (*projectDict, error) {
+	if d, ok := h.dicts.get(projectID, h.Store.StructureGeneration()); ok {
+		return d, nil
+	}
+	return h.buildDictOn(ctx, txSource{h.Store, tx}, projectID)
+}
+
 // buildDict reads the dictionary from the store; it is tagged into the
 // cache by loadDict with the generation read before this call started.
 func (h *Handler) buildDict(ctx context.Context, projectID int64) (*projectDict, error) {
+	return h.buildDictOn(ctx, poolSource{h.Store}, projectID)
+}
+
+func (h *Handler) buildDictOn(ctx context.Context, src structureSource, projectID int64) (*projectDict, error) {
 	d := &projectDict{byName: map[string]recField{}, eventArm: map[string]int{}}
-	fields, err := h.Store.ListFields(ctx, projectID)
+	fields, err := src.ListFields(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
-	instruments, err := h.Store.ListInstruments(ctx, projectID)
+	instruments, err := src.ListInstruments(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -301,7 +363,7 @@ func (h *Handler) buildDict(ctx context.Context, projectID int64) (*projectDict,
 	if len(d.fields) > 0 {
 		d.identifier = d.fields[0].FieldName
 	}
-	events, err := h.eventRows(ctx, projectID)
+	events, err := h.eventRowsOn(ctx, src, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -312,7 +374,7 @@ func (h *Handler) buildDict(ctx context.Context, projectID int64) (*projectDict,
 	}
 	// Instrument-event mapping as unique event names per instrument, in the
 	// canonical order (used by the wide layout and import form checks).
-	pairs, err := h.Store.ListInstrumentEvents(ctx, projectID)
+	pairs, err := src.ListInstrumentEvents(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}

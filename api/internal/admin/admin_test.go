@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"csms/api/internal/audit"
 	"csms/api/internal/authz"
@@ -145,4 +146,39 @@ func (e *env) auditTypes() []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+// mustComplete calls an admin handler for a transaction-scope guard test and
+// fails the test if it does not return within 30 seconds. The one-connection-pool
+// guards need this: a request that reaches for the pool while its transaction
+// holds the only available connection does not fail, it waits forever — so
+// without a watchdog a regression would burn the whole package timeout instead of
+// naming itself.
+func mustComplete(t *testing.T, what string, call func() *httptest.ResponseRecorder) *httptest.ResponseRecorder {
+	t.Helper()
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- call() }()
+	select {
+	case rec := <-done:
+		return rec
+	case <-time.After(30 * time.Second):
+		t.Fatalf("%s never returned — a read inside the transaction is waiting on the single pooled connection", what)
+		return nil
+	}
+}
+
+// singleConnPool caps the pool at one connection for the rest of the test, so a
+// read that leaves an open transaction has no connection left to run on, and
+// restores the setting through t.Cleanup. The previous limit is read back from
+// Stats() rather than hardcoded: configurePool picks 10 for SQLite and 25 for
+// MariaDB, and a test that restored a literal would quietly retune the pool for
+// whichever dialect it did not name.
+func singleConnPool(t *testing.T, store *db.Store) {
+	t.Helper()
+	prev := store.DB.Stats().MaxOpenConnections
+	if prev < 1 {
+		t.Fatalf("pool reports MaxOpenConnections = %d, want a real limit to restore", prev)
+	}
+	store.DB.SetMaxOpenConns(1)
+	t.Cleanup(func() { store.DB.SetMaxOpenConns(prev) })
 }

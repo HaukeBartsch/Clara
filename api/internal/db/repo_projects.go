@@ -142,28 +142,46 @@ func (s *Store) CreateProject(ctx context.Context, p *Project) (int64, error) {
 	return id, nil
 }
 
+// GetProject resolves a project by id; nil when there is no such row. Code
+// holding an open transaction uses GetProjectTx instead (see §10 of
+// Design/Database_Schema_Design.md).
 func (s *Store) GetProject(ctx context.Context, id int64) (*Project, error) {
-	row := s.DB.QueryRowContext(ctx, `SELECT `+projectColumns+` FROM projects WHERE id = ?`, id)
-	p, err := scanProject(row)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return &p, nil
+	return projectOrNil(s.DB.QueryRowContext(ctx, `SELECT `+projectColumns+` FROM projects WHERE id = ?`, id))
+}
+
+// GetProjectTx is GetProject read inside tx. A transaction must not read
+// through the pool: a second connection cannot see this transaction's own
+// writes and answers from its own snapshot, so the value can disagree with what
+// the transaction is building — and on SQLite before WAL it could wait behind
+// the locks that same transaction holds.
+func (s *Store) GetProjectTx(ctx context.Context, tx *sql.Tx, id int64) (*Project, error) {
+	return projectOrNil(tx.QueryRowContext(ctx, `SELECT `+projectColumns+` FROM projects WHERE id = ?`, id))
 }
 
 // GetProjectByName resolves the unique project name (REQ-DB-006). nil when
 // no such project exists.
 func (s *Store) GetProjectByName(ctx context.Context, name string) (*Project, error) {
-	row := s.DB.QueryRowContext(ctx,
-		`SELECT `+projectColumns+` FROM projects WHERE project_name = ?`, name)
+	return projectOrNil(s.DB.QueryRowContext(ctx,
+		`SELECT `+projectColumns+` FROM projects WHERE project_name = ?`, name))
+}
+
+// GetProjectByNameTx is GetProjectByName read inside tx. A uniqueness check
+// that will be settled by an insert in this transaction has to be made against
+// the transaction's own snapshot, or another request can take the name between
+// the check and the write it guards.
+func (s *Store) GetProjectByNameTx(ctx context.Context, tx *sql.Tx, name string) (*Project, error) {
+	return projectOrNil(tx.QueryRowContext(ctx,
+		`SELECT `+projectColumns+` FROM projects WHERE project_name = ?`, name))
+}
+
+// projectOrNil renders a one-row project query: no rows means "no such
+// project", not an error (REQ-DB-006).
+func projectOrNil(row interface{ Scan(dest ...any) error }) (*Project, error) {
 	p, err := scanProject(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
 		return nil, err
 	}
 	return &p, nil

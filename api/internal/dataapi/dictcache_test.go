@@ -199,3 +199,60 @@ func TestDictCacheEvictsLeastRecentlyUsed(t *testing.T) {
 		t.Errorf("entry survived the stale lookup; want it dropped")
 	}
 }
+
+// TestDictForTxReadsItsTransactionAndStaysUncached pins both halves of
+// dictForTx: it reads the structure on the caller's transaction, so a field this
+// transaction added is there (a pooled read could not see it), and what it read
+// never enters the shared cache, because a transaction's snapshot can carry
+// structure that never commits. An "optimise this with a put" edit to dictForTx
+// would leak an aborted project's field names into the dictionary every later
+// request is served from; that fails here instead.
+func TestDictForTxReadsItsTransactionAndStaysUncached(t *testing.T) {
+	h, _, _ := testHandler(t)
+	ctx := context.Background()
+
+	pid, err := h.Store.CreateProject(ctx, &db.Project{ProjectName: "txdict-" + t.Name()})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	iid, err := h.Store.AddInstrument(ctx, &db.Instrument{ProjectID: pid, Name: "form1"})
+	if err != nil {
+		t.Fatalf("AddInstrument: %v", err)
+	}
+	if _, err := h.Store.AddField(ctx, &db.Field{
+		ProjectID: pid, InstrumentID: iid, FieldName: "record_id", FieldType: "text",
+	}); err != nil {
+		t.Fatalf("AddField: %v", err)
+	}
+
+	tx, err := h.Store.DB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // nothing here commits, by design
+
+	if _, err := h.Store.AddFieldTx(ctx, tx, &db.Field{
+		ProjectID: pid, InstrumentID: iid, FieldName: "uncommitted_field", FieldType: "text",
+	}); err != nil {
+		t.Fatalf("AddFieldTx: %v", err)
+	}
+
+	d, err := h.dictForTx(ctx, tx, pid)
+	if err != nil {
+		t.Fatalf("dictForTx: %v", err)
+	}
+	if _, ok := d.byName["uncommitted_field"]; !ok {
+		t.Errorf("dictForTx misses the field its own transaction added (fields: %d); want the transaction's snapshot",
+			len(d.fields))
+	}
+
+	// The generation has not moved, so a dictionary dictForTx had cached would
+	// be served here. The pool must still report committed structure only.
+	pool, err := h.loadDict(ctx, pid)
+	if err != nil {
+		t.Fatalf("loadDict: %v", err)
+	}
+	if _, ok := pool.byName["uncommitted_field"]; ok {
+		t.Errorf("dictForTx cached an uncommitted field; every later request now sees it")
+	}
+}
