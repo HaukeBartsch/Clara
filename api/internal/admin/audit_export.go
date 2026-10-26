@@ -60,7 +60,7 @@ func auditColumns(table string) (header []string, selectSQL string) {
 			`SELECT id, created_at, user_id, email, token, project_id, record_ids, instruments FROM audit_record_views`
 	}
 	return []string{"id", "created_at", "source", "user_id", "email", "token", "project_id", "arm_num", "role", "target_record", "event_type", "details"},
-		 `SELECT id, created_at, source, user_id, email, token, project_id, arm_num, role, target_record, event_type, details FROM audit_events`
+		`SELECT id, created_at, source, user_id, email, token, project_id, arm_num, role, target_record, event_type, details FROM audit_events`
 }
 
 // scanAuditCells renders one row into its CSV cells. Every cell passes formula

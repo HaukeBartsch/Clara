@@ -17,11 +17,11 @@ import (
 // permission check is the whole story for anonymous and non-admin callers.
 
 type blockedIpsBody struct {
-	GeneratedAt  string               `json:"generated_at"`
-	Enabled      bool                 `json:"enabled"`
-	RPM          int                  `json:"rpm"`
-	BlockMinutes int                  `json:"block_minutes"`
-	Blocked      []dataapi.BlockedIP  `json:"blocked"`
+	GeneratedAt  string              `json:"generated_at"`
+	Enabled      bool                `json:"enabled"`
+	RPM          int                 `json:"rpm"`
+	BlockMinutes int                 `json:"block_minutes"`
+	Blocked      []dataapi.BlockedIP `json:"blocked"`
 }
 
 func TestBlockedIpsRequiresAdmin(t *testing.T) {
@@ -50,9 +50,9 @@ func TestBlockedIpsEchoesSettings(t *testing.T) {
 	adminUser := e.mustAdmin("admin@example.org")
 	ctx := context.Background()
 	for k, v := range map[string]string{
-		"rate_limit_enabled":        "true",
-		"rate_limit_rpm":            "42",
-		"rate_limit_block_minutes":  "3",
+		"rate_limit_enabled":       "true",
+		"rate_limit_rpm":           "42",
+		"rate_limit_block_minutes": "3",
 	} {
 		if err := e.Store.SetSystemSetting(ctx, k, v); err != nil {
 			t.Fatalf("SetSystemSetting %s: %v", k, err)
@@ -92,9 +92,9 @@ func TestBlockedIpsListsBlockouts(t *testing.T) {
 	// exactly how the httpapi middleware would at request time.
 	now := time.Now()
 	lim := dataapi.Limit{RPM: 1, Block: 10 * time.Minute}
-	e.Handler.Limiter.Allow("10.9.9.9", lim, now)     // admits, spends the budget
-	e.Handler.Limiter.Allow("10.9.9.9", lim, now)     // over budget → blocked
-	e.Handler.Limiter.Allow("10.9.9.8", lim, now)     // admitted, never exceeded
+	e.Handler.Limiter.Allow("10.9.9.9", lim, now) // admits, spends the budget
+	e.Handler.Limiter.Allow("10.9.9.9", lim, now) // over budget → blocked
+	e.Handler.Limiter.Allow("10.9.9.8", lim, now) // admitted, never exceeded
 
 	rec := e.do("GET", "/api/v1/system/blocked-ips", nil, adminUser)
 	if rec.Code != http.StatusOK {

@@ -81,7 +81,7 @@ type transferPlan struct {
 	project       *db.Project
 	dict          *projectDict
 	createProject bool
-	template      *db.Project // create_project: the design to clone; nil is an empty project
+	template      *db.Project     // create_project: the design to clone; nil is an empty project
 	identifier    string          // the target project's record identifier field
 	createSource  string          // the source field whose value names the target record
 	writes        []transferWrite // create rows first (config order), then copies

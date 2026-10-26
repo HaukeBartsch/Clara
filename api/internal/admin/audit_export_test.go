@@ -242,8 +242,10 @@ func TestAuditExportIgnoresPagination(t *testing.T) {
 	ids := mustProbes(t, e, p1, 60)
 
 	var page struct {
-		Entries    []struct{ ID int64 `json:"id"` } `json:"entries"`
-		NextCursor *string                          `json:"next_cursor"`
+		Entries []struct {
+			ID int64 `json:"id"`
+		} `json:"entries"`
+		NextCursor *string `json:"next_cursor"`
 	}
 	rec := e.do("GET", "/api/v1/audit?event_type="+probeType, nil, admin)
 	e.decode(rec, &page)

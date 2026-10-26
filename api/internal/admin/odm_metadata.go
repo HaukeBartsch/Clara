@@ -501,8 +501,8 @@ func (p *odmPlan) writeItemGroups(w odmWriter) error {
 			return err
 		}
 		for i, it := range g.items {
-			attrs := []kv{{"ItemOID", it.oid}, kv{"Mandatory", boolYN(it.mandatory)},
-				kv{"OrderNumber", strconv.Itoa(i + 1)}}
+			attrs := []kv{{"ItemOID", it.oid}, {"Mandatory", boolYN(it.mandatory)},
+				{"OrderNumber", strconv.Itoa(i + 1)}}
 			if it.keySeq {
 				attrs = append(attrs, kv{"KeySequence", "1"}) // GD-8 restored on import (§6.2)
 			}

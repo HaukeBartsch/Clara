@@ -311,16 +311,18 @@ def random_value(rnd, spec):
     return rnd.choice(LETTERS) + "".join(rnd.choice(ALNUM) for _ in range(rnd.randrange(4, 20)))
 
 
-def record_cells(rnd, spec):
+def record_cells(rnd, spec, fill_all=False):
     """The (name, value) pairs one dictionary entry contributes to an imported
     record — nothing for the kinds that carry no value, and one cell per box of
-    a checkbox, left empty when unchecked (REQ-DB-042)."""
+    a checkbox, left empty when unchecked (REQ-DB-042). `fill_all` checks every
+    box instead, so no cell that can hold a value arrives blank."""
     if spec["field_type"] in NO_VALUE_KINDS:
         return
     if spec["field_type"] == "checkbox":
         for pair in spec["choices"].split("##"):
             code = pair.split("$")[0]
-            yield f"{spec['field_name']}___{code}", rnd.choice(BOX_CODES)
+            box = "1" if fill_all else rnd.choice(BOX_CODES)
+            yield f"{spec['field_name']}___{code}", box
         return
     yield spec["field_name"], random_value(rnd, spec)
 
@@ -632,7 +634,8 @@ def next_record_number(api, projects):
 def generate_rows(projects, cfg, rnd, first=1):
     """Compact row specs (record, form, event) for every project — the values
     themselves are generated at send time. Each record fills 1..4 random
-    instruments, each at a random event. Numbering starts at `first`, above what
+    instruments, each at a random event, or every instrument of its project when
+    `--fill-all` asks for complete records. Numbering starts at `first`, above what
     an earlier run left in these projects."""
     specs = []
     seq = first - 1
@@ -640,7 +643,8 @@ def generate_rows(projects, cfg, rnd, first=1):
         for _ in range(rnd.randint(cfg.min_records, cfg.max_records)):
             seq += 1
             record = f"REC{seq:07d}"
-            n_forms = rnd.randint(1, min(4, len(p["instruments"])))
+            n_forms = (len(p["instruments"]) if cfg.fill_all
+                       else rnd.randint(1, min(4, len(p["instruments"]))))
             for fi in rnd.sample(range(len(p["instruments"])), n_forms):
                 specs.append((p, record, p["instruments"][fi], rnd.choice(p["events"])))
     # The globally random import order: one shuffled stream over all projects.
@@ -669,7 +673,7 @@ def import_rows(api, specs, cfg, rnd):
             for spec in p["fields_by_instr"][instr]:
                 if spec["field_name"] == "record_id":
                     continue  # the identifier value travels above
-                for name, value in record_cells(rnd, spec):
+                for name, value in record_cells(rnd, spec, cfg.fill_all):
                     form[f"{base}[{name}]"] = value
                     values += 1
         results = json.loads(api.data_api(form))   # one row per submitted row, in order
@@ -1063,6 +1067,11 @@ def main():
                     help="upper bound of fields per instrument, transfer field included")
     ap.add_argument("--min-records", type=int, default=10)
     ap.add_argument("--max-records", type=int, default=60)
+    ap.add_argument("--fill-all", action="store_true",
+                    help="complete records: every instrument of the project in every "
+                         "record, and every checkbox box checked (the kinds that carry "
+                         "no value — description, header, transfer, calculated — are "
+                         "still contributed by the dictionary, not by the row)")
     ap.add_argument("--batch", type=int, default=25, help="rows per import call")
     ap.add_argument("--seed", type=int, default=20261001, help="0 = time-seeded")
     ap.add_argument("--metrics-interval", type=float, default=5.0,
@@ -1116,6 +1125,8 @@ def main():
     last_error = sampler.last_error if sampler else None
     stopped_early = bool(sampler and sampler.gave_up)
     mix_line = ", ".join(f"{kind}: {n}" for kind, n in sorted(mix.items()))
+    fill_mode = ("every instrument per record, every box checked" if cfg.fill_all
+                 else "1..4 instruments per record, unchecked boxes blank")
     report = f"""CLARA API stress report (external client)
 base url:             {cfg.base_url}
 seed:                 {cfg.seed}
@@ -1126,6 +1137,7 @@ fields total:         {totals['fields']}
 field mix:            {mix_line}
 record numbers:       from REC{first_record:07d} ({first_record - 1} already stored)
 imported rows:        {len(specs)} (values: {values})
+fill mode:            {fill_mode}
 
 setup time:           {setup_s:.1f}s  ({cfg.projects / max(setup_s, 1e-9) * 60:.1f} projects/min)
 import time:          {import_s:.1f}s  ({len(specs) / max(import_s, 1e-9):.0f} rows/s, \
