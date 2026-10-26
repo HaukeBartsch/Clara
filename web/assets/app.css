@@ -339,6 +339,39 @@
   }
 }
 
+/* A clicked box acknowledges the tap before the page changes (User_Interface_Design.md §4): it
+ * springs once, then flies out to twice its size while dissolving — fully gone at double, so the new
+ * page lands on empty space, not on a half-visible card. The box is lifted above its neighbours while
+ * it grows and takes no further input; dashboard.js holds the navigation until the animation ends, so
+ * the link stays a plain GET. The transform scales the already-laid-out box, so the container-query
+ * arrangement of its facts does not reflow mid-animation. */
+.clara-project-cell--opening {
+  position: relative; /* still a grid item, but now a positioned box that can sit above its siblings */
+  z-index: 100;
+  pointer-events: none;
+  transform-origin: center;
+  animation: clara-project-open 480ms both;
+}
+
+/* The first ~200 ms is the bounce, then the zoom-away: the scale runs to double while the opacity
+ * runs to zero, so the card is exactly invisible the moment it reaches twice its size — the point the
+ * reader asked it to disappear. Each leg has its own curve: the pop overshoots a touch (a spring, not a
+ * linear enlarge), the settle eases back into rest, and the zoom accelerates off as it dissolves. */
+@keyframes clara-project-open {
+  0%   { transform: scale(1);    opacity: 1; animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); }
+  25%  { transform: scale(1.12); opacity: 1; animation-timing-function: cubic-bezier(0.5, 0, 0.68, 0.2); }
+  42%  { transform: scale(1);    opacity: 1; animation-timing-function: cubic-bezier(0.55, 0, 0.85, 0.5); }
+  100% { transform: scale(2);    opacity: 0; }
+}
+
+/* A user who asked for less motion gets no spring or zoom: dashboard.js detects this and navigates
+ * immediately, and this rule keeps the box static if the class is present regardless. */
+@media (prefers-reduced-motion: reduce) {
+  .clara-project-cell--opening {
+    animation: none;
+  }
+}
+
 /* --- the centred panel for login and the public password pages (DEV-UI-1) --- */
 
 .clara-standalone {

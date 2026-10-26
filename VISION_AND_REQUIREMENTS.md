@@ -1147,12 +1147,12 @@ Make the commentary information exportable as an accessory project file.
 
 ## FHIR
 
-Clara should be able to work as a FHIR server (sending content to recipients) and as a FHIR client (receiving data through FHIR connections).
-
-## Stress test button in Monitoring
-
-The stress test should be able to run several times. In successive runs the already setup projects should be used and new records should be added only.
+Clara should be able to work as a FHIR server (sending participant data to recipients) and as a FHIR client (receiving data through a FHIR connections).
 
 ## Micro-Animations
 
-Subtle hover effects, smooth scroll transitions, and gentle feedback on buttons make the experience feel tactile and alive
+Subtle hover effects, smooth scroll transitions, and gentle feedback on buttons make the experience feel tactile and alive.
+
+Example: If we have a placeholder for a form field and the user starts typing the placeholder disappears. Add a smaller font top left aligned span. As the placeholder blends out the same text blends in into the top left aligned span. As the user types that text displays now the fields placeholder text.
+
+If we select a project on the first page the project should grow slightly (bounce and afterwards grow and become transparent) before the page displays the project.

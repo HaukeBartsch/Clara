@@ -180,8 +180,74 @@ async function loadProjects() {
   }
 }
 
+/**
+ * A tapped project box plays a short bounce, then zooms out to double its size while fading away,
+ * and only then does the browser follow the link (User_Interface_Design.md §4). The animation is a
+ * presentation concern, so it lives here with the grid; the link itself stays a plain GET. Delegation
+ * on the region — not a listener per box — means a retry re-render (which replaces the boxes) keeps
+ * working without re-binding.
+ */
+function bindProjectOpen() {
+  // If the dashboard is restored from the back/forward cache, any box still carrying the opening
+  // state would be frozen at the animation's fully-transparent end — clear it so it is visible again.
+  window.addEventListener("pageshow", (event) => {
+    if (!event.persisted) {
+      return
+    }
+    document.querySelectorAll(".clara-project-cell--opening").forEach((box) => box.classList.remove("clara-project-cell--opening"))
+  })
+
+  const grid = document.querySelector("[data-region='projects']")
+  if (!grid) {
+    return
+  }
+
+  grid.addEventListener("click", (event) => {
+    const link = event.target.closest(".clara-project-open")
+    if (!link) {
+      return
+    }
+    const cell = link.closest(".clara-project-cell")
+    const href = link.getAttribute("href")
+    if (!cell || !href || cell.classList.contains("clara-project-cell--opening")) {
+      return
+    }
+    event.preventDefault()
+
+    // A user who asked for less motion is taken straight to the project — no spring, no zoom.
+    const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    if (reduce) {
+      window.location.assign(href)
+      return
+    }
+
+    cell.classList.add("clara-project-cell--opening")
+
+    // Open when the zoom finishes; a browser that drops the animation (hidden tab, unsupported
+    // keyframes) still opens via the fallback, and the flag keeps the two paths from racing.
+    let opened = false
+    const open = () => {
+      if (opened) {
+        return
+      }
+      opened = true
+      // Drop the transient opening styles before leaving, so a later back/forward restore (bfcache)
+      // shows the box in its normal place, not frozen at the animation's fully-transparent end.
+      cell.classList.remove("clara-project-cell--opening")
+      window.location.assign(href)
+    }
+    cell.addEventListener("animationend", (ended) => {
+      if (ended.animationName === "clara-project-open") {
+        open()
+      }
+    })
+    window.setTimeout(open, 650)
+  })
+}
+
 ready(() => {
   // The server-rendered placeholder says "loading"; the region is filled from the JSON the same
   // route serves, and navigation stays a plain GET (§3.7).
   loadProjects()
+  bindProjectOpen()
 })
