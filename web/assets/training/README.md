@@ -40,4 +40,4 @@ The first paragraph is the card's short text, and starts the dialog's text.
 **bold** for the names of buttons and links, `code` for field names and patterns.
 ```
 
-The example plans' pictures are screenshots of the development stack (`e2e/dev-stack.sh`), 1280 × 760 pixels, with the control to use outlined.
+The example plans' pictures are screenshots of the development stack (`e2e/dev-stack.sh`), 1280 × 860 pixels, with the control to use outlined. `e2e/capture-training.mjs` re-captures plans 01–04 and `e2e/capture-training-05.mjs` plan 05; each wants a stack with a database of its own, so restart `dev-stack.sh` between the two runs.
