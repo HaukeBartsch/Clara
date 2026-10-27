@@ -126,6 +126,7 @@ final class LoginController extends Controller
         // The error the provider reports (access_denied and friends) is its own words and
         // never a reason to log anybody in: one line, back to the form.
         if ($this->request->query('error') !== '') {
+            $this->auth->cancelOauth($this->request->query('state'));
             $this->logger->info('oauth provider reported an error', [
                 'error' => substr($this->request->query('error'), 0, 64),
             ]);

@@ -37,7 +37,7 @@ final class Auth
     ) {
         // Injectable rather than constructed inline so the redirect and the directory
         // race can be exercised against a fixture (Plan/Web_Implementation.md §8).
-        $this->oauth = $oauth ?? new Oauth($config, $logger);
+        $this->oauth = $oauth ?? new Oauth($api, $config, $logger);
         $this->ldap = $ldap ?? new LdapRace($config, $logger);
     }
 
@@ -625,19 +625,13 @@ final class Auth
      */
     public function completeOauthLogin(string $code, string $state): array
     {
-        $identity = $this->oauth->complete($code, $state);
+        return $this->oauth->complete($code, $state);
+    }
 
-        $user = $this->finalize([
-            'email' => $identity['email'],
-            'source' => 'oauth2',
-            'provider' => $identity['provider'],
-            'source_name' => $identity['source_name'],
-            'first_factor' => '',
-        ], $this->loginBody($identity['email'], 'oauth2', $identity['source_name'], [
-            'provider' => $identity['provider'],
-        ]));
-
-        return ['user' => $user, 'source_name' => $identity['source_name']];
+    /** Consume a provider error callback without contacting the API. */
+    public function cancelOauth(string $state): void
+    {
+        $this->oauth->cancel($state);
     }
 
     /** @return list<array{kind: string, name: string}> */

@@ -378,9 +378,9 @@ function router_for(Request $request, ?Config $config = null, ?Auth $auth = null
         $api,
         $i18n,
         new View($config, $i18n, $request),
-        // The same transport answers the API and any identity provider, exactly as the
-        // front controller shares one between them.
-        $auth ?? new Auth($api, $logger, $config, new Oauth($config, $logger, $transport)),
+        // OAuth2 traffic goes through the Go API; this fake transport therefore
+        // answers both ordinary API calls and the OAuth API endpoints.
+        $auth ?? new Auth($api, $logger, $config, new Oauth($api, $config, $logger)),
         $logger
     );
 }

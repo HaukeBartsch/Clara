@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"golang.org/x/oauth2"
 
 	"csms/api/internal/config"
 )
@@ -138,20 +139,28 @@ const (
 // attempt without a restart (REQ-AUTH-082).
 type providerVerifiers struct {
 	mu       sync.Mutex
-	byIssuer map[string]*oidc.IDTokenVerifier
+	byIssuer map[string]*providerRuntime
+}
+
+type providerRuntime struct {
+	provider *oidc.Provider
+	verifier *oidc.IDTokenVerifier
+	oauth    *oauth2.Config
+	jwksURI  string
+	userinfo string
 }
 
 func newProviderVerifiers() *providerVerifiers {
-	return &providerVerifiers{byIssuer: map[string]*oidc.IDTokenVerifier{}}
+	return &providerVerifiers{byIssuer: map[string]*providerRuntime{}}
 }
 
-// verifierFor returns a verifier pinned to one provider's issuer, client id and
-// signing algorithm, running discovery through go-oidc on first use.
-func (c *providerVerifiers) verifierFor(ctx context.Context, p config.OAuth2Provider, jwksReuse time.Duration) (*oidc.IDTokenVerifier, error) {
+// runtimeFor resolves discovery once and shares the resulting endpoints, key source,
+// and verifier between authorization-code exchange and assertion verification.
+func (c *providerVerifiers) runtimeFor(ctx context.Context, p config.OAuth2Provider, jwksReuse time.Duration) (*providerRuntime, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if v, ok := c.byIssuer[p.Issuer]; ok {
-		return v, nil
+	if runtime, ok := c.byIssuer[p.Issuer]; ok {
+		return runtime, nil
 	}
 
 	provider, err := oidc.NewProvider(ctx, p.Issuer)
@@ -164,10 +173,15 @@ func (c *providerVerifiers) verifierFor(ctx context.Context, p config.OAuth2Prov
 	// error that reads like a bad token; failing here names the provider instead,
 	// which is exactly what withdrawing the conventional-path fallback was for.
 	var discovered struct {
-		JWKSURI string `json:"jwks_uri"`
+		JWKSURI     string `json:"jwks_uri"`
+		UserInfoURL string `json:"userinfo_endpoint"`
 	}
 	if err := provider.Claims(&discovered); err != nil || strings.TrimSpace(discovered.JWKSURI) == "" {
 		return nil, fmt.Errorf("discovery document for %s names no jwks_uri (REQ-AUTH-082)", p.Issuer)
+	}
+	endpoint := provider.Endpoint()
+	if strings.TrimSpace(endpoint.AuthURL) == "" || strings.TrimSpace(endpoint.TokenURL) == "" {
+		return nil, fmt.Errorf("discovery document for %s names no authorization or token endpoint", p.Issuer)
 	}
 
 	cfg := &oidc.Config{
@@ -183,9 +197,31 @@ func (c *providerVerifiers) verifierFor(ctx context.Context, p config.OAuth2Prov
 	// go-oidc's own key set caches until it sees an unknown kid and never on a timer,
 	// so OAUTH2_JWKS_TTL is honoured by rebuilding it when its reuse window closes.
 	keySet := newReuseBoundedKeySet(ctx, discovered.JWKSURI, jwksReuse)
-	v := oidc.NewVerifier(p.Issuer, keySet, cfg)
-	c.byIssuer[p.Issuer] = v
-	return v, nil
+	runtime := &providerRuntime{
+		provider: provider,
+		verifier: oidc.NewVerifier(p.Issuer, keySet, cfg),
+		oauth: &oauth2.Config{
+			ClientID:     p.ClientID,
+			ClientSecret: p.ClientSecret,
+			Endpoint:     endpoint,
+			RedirectURL:  p.RedirectURI,
+			Scopes:       []string{"openid", "email", "profile"},
+		},
+		jwksURI:  discovered.JWKSURI,
+		userinfo: discovered.UserInfoURL,
+	}
+	c.byIssuer[p.Issuer] = runtime
+	return runtime, nil
+}
+
+// verifierFor returns a verifier pinned to one provider's issuer, client id and
+// signing algorithm.
+func (c *providerVerifiers) verifierFor(ctx context.Context, p config.OAuth2Provider, jwksReuse time.Duration) (*oidc.IDTokenVerifier, error) {
+	runtime, err := c.runtimeFor(ctx, p, jwksReuse)
+	if err != nil {
+		return nil, err
+	}
+	return runtime.verifier, nil
 }
 
 // forget drops a cached verifier so the next attempt rediscovers. Called when a

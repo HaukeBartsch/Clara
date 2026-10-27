@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -32,12 +33,14 @@ import (
 // testIdP is an OpenID Connect provider: one RSA key, a discovery document, a JWKS
 // endpoint, and a mint that produces tokens with whatever claims a case asks for.
 type testIdP struct {
-	t        *testing.T
-	srv      *httptest.Server
-	key      *rsa.PrivateKey
-	kid      string
-	alg      string // signature algorithm the mint uses by default
-	jwksReqs int32
+	t                *testing.T
+	srv              *httptest.Server
+	key              *rsa.PrivateKey
+	kid              string
+	alg              string // signature algorithm the mint uses by default
+	jwksReqs         int32
+	tokenClaims      map[string]any
+	expectedVerifier string
 }
 
 func newTestIdP(t *testing.T) *testIdP {
@@ -62,6 +65,21 @@ func newTestIdP(t *testing.T) *testIdP {
 	mux.HandleFunc("/certs", func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&p.jwksReqs, 1)
 		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []any{p.jwk()}})
+	})
+	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil || r.Form.Get("code") == "" ||
+			r.Form.Get("code_verifier") == "" ||
+			(p.expectedVerifier != "" && r.Form.Get("code_verifier") != p.expectedVerifier) {
+			p.t.Logf("unexpected token exchange: parse_error=%v code=%q verifier=%q expected=%q", err, r.Form.Get("code"), r.Form.Get("code_verifier"), p.expectedVerifier)
+			http.Error(w, "invalid authorization code or PKCE verifier", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		idToken := p.mint(p.tokenClaims)
+		if strings.Count(r.Form.Get("code"), ".") == 2 {
+			idToken = r.Form.Get("code")
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "test-access-token", "token_type": "Bearer", "id_token": idToken})
 	})
 	p.srv = httptest.NewServer(mux)
 	t.Cleanup(p.srv.Close)
@@ -102,6 +120,75 @@ func (p *testIdP) withProvider(mutate func(*config.OAuth2Provider)) config.OAuth
 	provider := p.provider()
 	mutate(&provider)
 	return provider
+}
+
+func TestOAuthStartBuildsOIDCAuthorizationRequest(t *testing.T) {
+	e := newEnv(t)
+	idp, _ := e.useIdP(t)
+	rec := e.do("POST", "/api/v1/auth/oauth/start", map[string]any{"provider": 1}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	var got map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	authorizeURL := got["authorize_url"]
+	if !strings.HasPrefix(authorizeURL, idp.issuer()+"/authorize?") {
+		t.Fatalf("authorization URL = %q, want discovered authorization endpoint", authorizeURL)
+	}
+	values, err := url.Parse(authorizeURL)
+	if err != nil {
+		t.Fatalf("parse authorization URL: %v", err)
+	}
+	query := values.Query()
+	if query.Get("response_type") != "code" || query.Get("client_id") != "clara-test-client" ||
+		query.Get("redirect_uri") != "https://csms.example.org/auth/callback" ||
+		query.Get("code_challenge_method") != "S256" || query.Get("nonce") != got["nonce"] {
+		t.Fatalf("authorization parameters = %v", query)
+	}
+	if got["state"] == "" || got["nonce"] == "" || got["code_verifier"] == "" {
+		t.Fatalf("missing transaction values: %#v", got)
+	}
+	if query.Get("code_challenge") == "" {
+		t.Fatal("authorization request has no PKCE challenge")
+	}
+}
+
+func TestOAuthLoginExchangesCodeWithPKCEAndVerifiesIDToken(t *testing.T) {
+	e := newEnv(t)
+	idp, provider := e.useIdP(t)
+	user := e.mustUser("oauth@example.org")
+	start := e.do("POST", "/api/v1/auth/oauth/start", map[string]any{"provider": 1}, nil)
+	if start.Code != http.StatusOK {
+		t.Fatalf("start status = %d, body = %s", start.Code, start.Body.String())
+	}
+	var flow map[string]string
+	if err := json.Unmarshal(start.Body.Bytes(), &flow); err != nil {
+		t.Fatalf("decode start response: %v", err)
+	}
+	idp.expectedVerifier = flow["code_verifier"]
+	idp.tokenClaims = map[string]any{
+		"email": "oauth@example.org", "email_verified": true, "nonce": flow["nonce"],
+	}
+
+	rec := e.do("POST", "/api/v1/auth/login", map[string]any{
+		"source": "oauth2", "provider": provider.Issuer, "source_name": "Hospital 1",
+		"authorization_code": "test-code", "code_verifier": flow["code_verifier"],
+		"assertion_nonce": flow["nonce"],
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var got UserObject
+	e.decode(rec, &got)
+	if got.ID != user.ID || got.Email != user.Email {
+		t.Errorf("user = %+v, want id %d and email %s", got, user.ID, user.Email)
+	}
+	if !hasType(e.auditTypes(), "login_success") {
+		t.Errorf("audit types = %v, want login_success", e.auditTypes())
+	}
 }
 
 // mint signs one ID token. Claims given here override the defaults, so a case can set
@@ -191,7 +278,8 @@ func (e *env) useIdP(t *testing.T) (*testIdP, config.OAuth2Provider) {
 
 func loginArgs(email, assertion, nonce string) map[string]any {
 	return map[string]any{
-		"email": email, "source": "oauth2", "provider": "", "assertion": assertion, "assertion_nonce": nonce,
+		"email": email, "source": "oauth2", "provider": "", "authorization_code": assertion,
+		"code_verifier": "test-code-verifier", "assertion_nonce": nonce,
 	}
 }
 

@@ -26,6 +26,8 @@ func (h *Handler) registerAuth(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/verify-password", h.verifyPassword)
 	mux.HandleFunc("POST /api/v1/auth/logout", h.logout)
 	mux.HandleFunc("POST /api/v1/auth/session-replay", h.sessionReplay)
+	mux.HandleFunc("POST /api/v1/auth/oauth/start", h.oauthStart)
+	mux.HandleFunc("POST /api/v1/auth/oauth/test", h.oauthTest)
 }
 
 // loginRequest is the §4.3 body: provider only for oauth2/ldap, password
@@ -50,13 +52,11 @@ type loginRequest struct {
 	SourceName  string            `json:"source_name"`
 	Attempts    map[string]string `json:"attempts"`
 	FirstFactor string            `json:"first_factor"`
-	// Assertion is the provider's signed ID token on the `oauth2` leg, and
-	// AssertionNonce the nonce PHP generated alongside `state` and the PKCE verifier
-	// (Sequence J, REQ-AUTH-076/079, DEV-AUTH-18). The nonce is forwarded because only
-	// that browser's session knows it; the token is what the API verifies instead of
-	// taking PHP's word for. Both are unused on the local and LDAP legs.
-	Assertion      string `json:"assertion"`
-	AssertionNonce string `json:"assertion_nonce"`
+	// AssertionNonce is the nonce PHP stored with the state and PKCE verifier.
+	// The API exchanges the code and verifies the returned ID token itself.
+	AssertionNonce    string `json:"assertion_nonce"`
+	AuthorizationCode string `json:"authorization_code"`
+	CodeVerifier      string `json:"code_verifier"`
 }
 
 // login implements POST /api/v1/auth/login with the processing order of
@@ -73,15 +73,17 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		errBadRequest(w, "source must be one of oauth2, ldap, local")
 		return
 	}
-	if strings.TrimSpace(body.Email) == "" {
+	if body.Source != "oauth2" && strings.TrimSpace(body.Email) == "" {
 		errBadRequest(w, "email is required")
 		return
 	}
 	ctx := r.Context()
 
-	// Sequence E (REQ-AUTH-035): a locked address is rejected before any
-	// credential probing — no IdP/LDAP contact, no hash comparison.
-	if h.lockouts.locked(body.Email, time.Now()) {
+	// A browser login knows its email before credential verification on local and
+	// LDAP paths. For OIDC, only the verified ID token supplies the identity, so its
+	// address lockout check follows provider verification rather than trusting a
+	// caller-supplied email.
+	if body.Source != "oauth2" && body.Email != "" && h.lockouts.locked(body.Email, time.Now()) {
 		h.loginFailure(ctx, &body, "rate_limited")
 		APIError(w, http.StatusTooManyRequests, "rate_limited",
 			"too many failed attempts for this address — try again later")
@@ -94,13 +96,26 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	// which is what "PHP vouches for it" used to mean (finding F8).
 	var assertion *verifiedAssertion
 	if body.Source == "oauth2" {
-		a, af := h.verifyAssertion(ctx, body.Provider, body.Assertion, body.AssertionNonce)
+		idToken, failure := h.exchangeOAuthCode(r, body.Provider, body.AuthorizationCode, body.CodeVerifier)
+		if failure != nil {
+			h.loginFailureExtra(ctx, &body, failure.reason, nil)
+			APIError(w, failure.status, failure.reason, failure.message)
+			return
+		}
+		a, af := h.verifyAssertion(ctx, body.Provider, idToken, body.AssertionNonce)
 		if af != nil {
 			h.loginFailureExtra(ctx, &body, af.reason, af.observed.auditDetails())
 			APIError(w, af.status, af.reason, af.message)
 			return
 		}
 		assertion = a
+		body.Email = assertion.Email
+	}
+	if body.Email != "" && h.lockouts.locked(body.Email, time.Now()) {
+		h.loginFailure(ctx, &body, "rate_limited")
+		APIError(w, http.StatusTooManyRequests, "rate_limited",
+			"too many failed attempts for this address — try again later")
+		return
 	}
 
 	// The address a provider login is judged by is the one its assertion verified, not

@@ -70,14 +70,13 @@ if (Router::needsSession($request)) {
 $i18n = null;
 
 try {
-    // One transport for the process's outbound HTTP: the API client and the identity
-    // providers an OAuth2 login talks to share it, so a deployment that needs a
-    // different transport changes it in one place (and a test can replace both).
+    // One transport for the process's calls to the Go API. OAuth2 discovery and
+    // provider traffic are deliberately handled by the Go API.
     $transport = new CurlTransport();
     $api = new ApiClient($config, $logger, $request, $transport);
     $i18n = new I18n($api, $logger, $config->isDevelopment);
     $view = new View($config, $i18n, $request);
-    $auth = new Auth($api, $logger, $config, new Oauth($config, $logger, $transport));
+    $auth = new Auth($api, $logger, $config, new Oauth($api, $config, $logger));
 
     $router = new Router($config, $request, $api, $i18n, $view, $auth, $logger);
     $response = $router->dispatch();

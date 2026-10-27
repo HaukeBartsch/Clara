@@ -119,18 +119,12 @@ final class Config
     public array $authSources = [];
 
     /**
-     * The OAuth2 providers configured for this installation (REQ-CFG-011). PHP
-     * owns the redirect (Authentication_Authorization_Design.md §2.1), so it needs
-     * the client credentials and the claim that names the user; the secret is a
-     * secret — never logged, never rendered (REQ-CFG-021, REQ-AUTH-036).
+     * The OAuth2 providers configured for this installation (REQ-CFG-011). The Go API
+     * owns discovery, authorization-code exchange and assertion verification. PHP keeps
+     * only the provider metadata needed to route the callback and render the Control
+     * Panel; it does not load or retain the client secret.
      *
-     * The last five entries are what a provider's assertion has to satisfy (Sequence J,
-     * REQ-CFG-035): PHP does not verify the signature — the API does (REQ-AUTH-076) — but it
-     * sends the `nonce` whose absence `nonce_required` makes fatal, and every one of them is
-     * configuration the administrator has to be able to read back rather than infer
-     * (REQ-AUTH-081). Defaults match `config.OAuth2Provider` in the Go loader.
-     *
-     * @var list<array{index: int, issuer: string, client_id: string, client_secret: string, redirect_uri: string, email_attr: string, names: list<string>, subject_attr: string, require_email_verified: bool, min_acr: list<string>, nonce_required: bool, id_token_alg: string}>
+     * @var list<array{index: int, issuer: string, client_id: string, redirect_uri: string, email_attr: string, names: list<string>}>
      */
     public array $oauthProviders = [];
 
@@ -465,11 +459,9 @@ final class Config
 
     /**
      * Collects the configured authentication sources and their display names
-     * (REQ-CFG-032), and validates the variable set each kind needs — PHP runs the
-     * OAuth2 redirect and the LDAP binds itself (`Authentication_Authorization_Design.md`
-     * §2.1/§2.2), so a half-configured source has to fail at startup rather than
-     * vanish: `System_Configuration_Design.md` §4.1 makes the client pair required
-     * once an issuer is set and the search base once a directory URL is set.
+     * (REQ-CFG-032), and validates the PHP-side metadata it needs. The Go API validates
+     * OAuth2 client credentials; PHP performs LDAP binds and therefore checks the
+     * directory search base here.
      *
      * @param callable(string, string=): string $get
      * @param list<string>                      $errors collected problems
@@ -480,8 +472,8 @@ final class Config
         for ($n = 1; $n <= self::SOURCE_INDEX_MAX; $n++) {
             $issuer = rtrim($get("OAUTH2_{$n}_ISSUER"), '/');
             if ($issuer !== '') {
-                if ($get("OAUTH2_{$n}_CLIENT_ID") === '' || $get("OAUTH2_{$n}_CLIENT_SECRET") === '') {
-                    $errors[] = "OAUTH2_{$n}_CLIENT_ID and OAUTH2_{$n}_CLIENT_SECRET are required once "
+                if ($get("OAUTH2_{$n}_CLIENT_ID") === '') {
+                    $errors[] = "OAUTH2_{$n}_CLIENT_ID is required once "
                         . "OAUTH2_{$n}_ISSUER is set (REQ-CFG-011)";
                 }
                 if (preg_match('#^https?://[A-Za-z0-9._\-]+#i', $issuer) !== 1) {
@@ -492,9 +484,8 @@ final class Config
                     'index' => $n,
                     'issuer' => $issuer,
                     'client_id' => $get("OAUTH2_{$n}_CLIENT_ID"),
-                    'client_secret' => $get("OAUTH2_{$n}_CLIENT_SECRET"),
-                    // Unset means the documented default: WEB_PUBLIC_URL + /auth/callback
-                    // (REQ-CFG-011), which Oauth::redirectUri() resolves.
+                    // Mirrored for the Control Panel; the Go API applies the documented
+                    // WEB_PUBLIC_URL + /auth/callback default (REQ-CFG-011).
                     'redirect_uri' => $get("OAUTH2_{$n}_REDIRECT_URI"),
                     'email_attr' => $get("OAUTH2_{$n}_EMAIL_ATTR", 'email'),
                     'names' => self::nameList("OAUTH2_{$n}_NAMES", $get("OAUTH2_{$n}_NAMES"), $errors),

@@ -1,413 +1,162 @@
 <?php
-// Sequence A — the OAuth2 authorization-code round trip
-// (Authentication_Authorization_Design.md §2.1, REQ-AUTH-001/002/066): what PHP puts into
-// the redirect, how it treats the callback, and which failures send the user back to the
-// login page without a session. The identity provider is the fake transport: the tests
-// state what each IdP endpoint answers, exactly as they do for the API.
+// The web layer owns browser-session state; the Go API owns OIDC discovery,
+// authorization URL creation, PKCE exchange and ID-token verification.
 
 declare(strict_types=1);
 
+use Clara\ApiClient;
 use Clara\Config;
 use Clara\Logger;
 use Clara\Oauth;
 use Clara\Session;
 
-/** A configuration with one OAuth2 provider answering to "Hospital 1". */
 function oauth_config(array $overrides = []): Config
 {
     return test_config(array_merge([
         'OAUTH2_1_ISSUER' => 'https://idp.example.org',
         'OAUTH2_1_CLIENT_ID' => 'csms',
-        'OAUTH2_1_CLIENT_SECRET' => 'a-secret',
         'OAUTH2_1_NAMES' => 'Hospital 1',
     ], $overrides));
 }
 
-/** The provider's discovery document, as a Keycloak-style issuer would answer it. */
-function oauth_provider_endpoints(string $issuer = 'https://idp.example.org', int $status = 200): void
+function oauth_flow_response(array $overrides = []): array
 {
-    // Host-qualified so two issuers in one test answer differently (§2.9).
-    api_route((string) parse_url($issuer, PHP_URL_HOST) . '/.well-known/openid-configuration', [
-        'authorization_endpoint' => $issuer . '/protocol/openid-connect/auth',
-        'token_endpoint' => $issuer . '/protocol/openid-connect/token',
-        'userinfo_endpoint' => $issuer . '/protocol/openid-connect/userinfo',
-    ], $status);
+    return array_merge([
+        'authorize_url' => 'https://idp.example.org/as/authorization.oauth2?response_type=code&state=state-123',
+        'state' => 'state-123',
+        'code_verifier' => str_repeat('v', 64),
+        'nonce' => 'nonce-123',
+    ], $overrides);
 }
 
-/** The OAuth2 client under test: the real one, answering through the fake transport. */
 function oauth_client(Config $config): Oauth
 {
-    return new Oauth($config, new Logger('error', true), new FakeTransport());
+    $logger = new Logger('error', true);
+    $request = http_request('GET', '/login', browser_headers());
+    $api = new ApiClient($config, $logger, $request, new FakeTransport());
+
+    return new Oauth($api, $config, $logger);
 }
 
-/** An unsigned JWT with these claims — the signature is not what these tests are about. */
-function oauth_id_token(array $claims): string
-{
-    $encode = static fn (array $part): string => rtrim(strtr(base64_encode((string) json_encode($part)), '+/', '-_'), '=');
-
-    return $encode(['alg' => 'none']) . '.' . $encode($claims) . '.sig';
-}
-
-describe('oauth2 authorization code (Sequence A, §2.1)', function (): void {
-    it('starts the round trip with state and an S256 PKCE challenge', function (): void {
-        oauth_provider_endpoints();
+describe('OAuth2 authorization code through the Go API (Sequence A)', function (): void {
+    it('asks the API for the provider redirect and stores one browser-bound transaction', function (): void {
+        api_route('/api/v1/auth/oauth/start', oauth_flow_response());
         $config = oauth_config();
         $oauth = oauth_client($config);
 
         $url = $oauth->begin($config->oauthProviders[0], 'Hospital 1');
 
-        parse_str((string) parse_url($url, PHP_URL_QUERY), $params);
-        assert_same('code', $params['response_type']);
-        assert_same('csms', $params['client_id']);
-        assert_same('S256', $params['code_challenge_method']);
-        assert_same(
-            'http://localhost:8000/auth/callback',
-            $params['redirect_uri'],
-            'the documented default: WEB_PUBLIC_URL + /auth/callback (REQ-CFG-011)'
-        );
-
-        // The endpoints come from the discovery document, so a provider whose paths
-        // differ needs no configuration for them (ASM-AUTH-1).
-        assert_true(str_starts_with($url, 'https://idp.example.org/protocol/openid-connect/auth?'), 'discovered authorize endpoint');
-
-        $txn = $_SESSION['_oauth_txn'] ?? [];
-        assert_same(32, strlen((string) ($txn['state'] ?? '')), 'state is 16 random bytes in hex (§2.1 step 1)');
-        assert_true(preg_match('/^[A-Za-z0-9_-]{43,128}$/', (string) $txn['code_verifier']) === 1, 'a verifier RFC 7636 accepts');
-        assert_same(
-            rtrim(strtr(base64_encode(hash('sha256', (string) $txn['code_verifier'], true)), '+/', '-_'), '='),
-            $params['code_challenge'],
-            'the challenge is S256 of the verifier'
-        );
-        assert_same(1, $txn['provider_index']);
-        assert_same('Hospital 1', $txn['source_name']);
+        assert_same(oauth_flow_response()['authorize_url'], $url);
+        assert_same(1, api_request_body('/api/v1/auth/oauth/start')['provider']);
+        assert_same('state-123', $_SESSION['_oauth_txn']['state']);
+        assert_same(str_repeat('v', 64), $_SESSION['_oauth_txn']['code_verifier']);
+        assert_same('nonce-123', $_SESSION['_oauth_txn']['nonce']);
+        assert_same('Hospital 1', $_SESSION['_oauth_txn']['source_name']);
+        assert_same('login', $_SESSION['_oauth_txn']['purpose']);
     });
 
-    it('fetches discovery once per OAuth request and reuses its endpoints', function (): void {
-        oauth_provider_endpoints();
-        api_route('/protocol/openid-connect/token', ['access_token' => 'at-1']);
-        api_route('/protocol/openid-connect/userinfo', ['email' => 'researcher@example.org', 'email_verified' => true]);
-
-        $config = oauth_config();
-        $oauth = oauth_client($config);
-        $oauth->begin($config->oauthProviders[0], 'Hospital 1');
-        $txn = $_SESSION['_oauth_txn'];
-        $oauth->complete('the-code', (string) $txn['state']);
-
-        $discoveryRequests = array_filter(
-            $GLOBALS['api_calls'],
-            static fn (array $call): bool => str_ends_with($call['url'], '/.well-known/openid-configuration')
-        );
-        assert_same(1, count($discoveryRequests), 'authorize, token and userinfo reuse one discovery response');
-    });
-
-    it('falls back to the conventional endpoints when no discovery document exists', function (): void {
-        oauth_provider_endpoints('https://idp.example.org', 404);
-        $config = oauth_config();
-        $oauth = oauth_client($config);
-
-        $url = $oauth->begin($config->oauthProviders[0], 'Hospital 1');
-
-        assert_true(str_starts_with($url, 'https://idp.example.org/authorize?'), 'ASM-AUTH-1 derivation under the issuer');
-    });
-
-    it('exchanges the code with the verifier and reads the address from userinfo', function (): void {
-        oauth_provider_endpoints();
-        api_route('/protocol/openid-connect/token', ['access_token' => 'at-1', 'expires_in' => 300]);
-        api_route('/protocol/openid-connect/userinfo', [
-            'sub' => '42', 'email' => 'Researcher@Example.org', 'email_verified' => true, 'name' => 'Rae Researcher',
-        ]);
-
-        $config = oauth_config();
-        $oauth = oauth_client($config);
-        $oauth->begin($config->oauthProviders[0], 'Hospital 1');
-        $txn = $_SESSION['_oauth_txn'];
-
-        $identity = $oauth->complete('the-code', (string) $txn['state']);
-
-        assert_same('researcher@example.org', $identity['email'], 'the claim the provider vouches for (§2.1 step 5)');
-        assert_same('Rae Researcher', $identity['display_name']);
-        assert_same('https://idp.example.org', $identity['provider'], 'Sequence C names the concrete winning source (§2.3)');
-        assert_same('Hospital 1', $identity['source_name'], 'the name the user selected rides along (REQ-AUTH-067)');
-
-        // The exchange is form-encoded, as RFC 6749 §4.1.3 requires of the client.
-        parse_str(api_request_raw('/protocol/openid-connect/token'), $tokenRequest);
-        assert_same('authorization_code', $tokenRequest['grant_type']);
-        assert_same('the-code', $tokenRequest['code']);
-        assert_same($txn['code_verifier'], $tokenRequest['code_verifier'], 'the verifier proves this is the same browser (PKCE)');
-        assert_same('a-secret', $tokenRequest['client_secret'], 'the client authenticates to its own token endpoint (§2.1 step 4)');
-    });
-
-    it('runs a diagnostic round trip without returning credential material or creating a CLARA login', function (): void {
-        oauth_provider_endpoints();
-        api_route('/protocol/openid-connect/token', [
-            'access_token' => 'must-not-escape',
-            'id_token' => oauth_id_token([
-                'sub' => 'subject-7',
-                'email' => 'researcher@example.org',
-                'roles' => ['member', 'project-admin'],
-                'https://idp.example.org/claims/groups' => ['clinical-research'],
-                'private_data' => 'not-allowlisted',
-            ]),
-        ]);
-        api_route('/protocol/openid-connect/userinfo', [
-            'email' => 'researcher@example.org',
-            'groups' => ['research', 'clinic'],
-        ]);
-
-        $config = oauth_config();
-        $oauth = oauth_client($config);
-        $url = $oauth->begin($config->oauthProviders[0], '', 'auth_test');
-        $state = (string) $_SESSION['_oauth_txn']['state'];
-        $report = $oauth->completeTest('test-code', $state);
-        $encoded = (string) json_encode($report);
-
-        assert_true(str_starts_with($url, 'https://idp.example.org/'));
-        assert_same(true, $report['ok']);
-        assert_same(['research', 'clinic'], $report['userinfo_claims']['groups']);
-        assert_same(['member', 'project-admin'], $report['id_token_claims']['roles']);
-        assert_same(['clinical-research'], $report['id_token_claims']['https://idp.example.org/claims/groups']);
-        assert_not_contains('private_data', $encoded);
-        assert_not_contains('must-not-escape', $encoded);
-        assert_not_contains('a-secret', $encoded);
-        assert_same(0, api_calls_to('/api/v1/auth/login'), 'diagnostics do not resolve or establish a CLARA user');
-        assert_same([], Session::takeOauthTransaction(), 'the test transaction is single-use');
-    });
-
-    it('returns from the diagnostic callback to the admin page without signing in', function (): void {
-        oauth_provider_endpoints();
-        api_route('/protocol/openid-connect/token', ['access_token' => 'hidden-token']);
-        api_route('/protocol/openid-connect/userinfo', ['email' => 'admin-test@example.org']);
-        $config = oauth_config();
-        sign_in(['is_admin' => 1]);
-        $oauth = oauth_client($config);
-        $oauth->begin($config->oauthProviders[0], '', 'auth_test');
-        $state = (string) $_SESSION['_oauth_txn']['state'];
-
-        $response = router_for(http_request(
-            'GET',
-            '/auth/callback',
-            browser_headers(),
-            [],
-            ['code' => 'diagnostic-code', 'state' => $state]
-        ), $config)->dispatch();
-
-        assert_same(302, $response->status());
-        assert_same('/admin?section=auth', $response->headers()['Location']);
-        assert_true(Session::isAdmin(), 'the existing administrator session remains the same');
-        assert_same(true, Session::takeAuthTestReport()['ok']);
-        assert_same(0, api_calls_to('/api/v1/auth/login'));
-    });
-
-    it('reports safe OAuth endpoint statuses when the token exchange fails', function (): void {
-        oauth_provider_endpoints();
-        api_route('/protocol/openid-connect/token', ['error' => 'invalid_client', 'error_description' => 'client secret leaked here'], 401);
-        $config = oauth_config();
-        $oauth = oauth_client($config);
-        $oauth->begin($config->oauthProviders[0], '', 'auth_test');
-
-        $report = $oauth->completeTest('bad-code', (string) $_SESSION['_oauth_txn']['state']);
-        $encoded = (string) json_encode($report);
-
-        assert_same(false, $report['ok']);
-        assert_same('token_exchange', $report['stage']);
-        assert_same(401, $report['token_status']);
-        assert_not_contains('client secret leaked here', $encoded);
-        assert_not_contains('a-secret', $encoded);
-    });
-
-    it('reads a non-default claim, and falls back to the ID token when userinfo withholds it', function (): void {
-        oauth_provider_endpoints();
-        api_route('/protocol/openid-connect/token', ['access_token' => 'at-1', 'id_token' => oauth_id_token([
-            'mail' => 'from@idtoken.example', 'email_verified' => true,
-        ])]);
-        api_route('/protocol/openid-connect/userinfo', ['sub' => '42']);
-
-        $config = oauth_config(['OAUTH2_1_EMAIL_ATTR' => 'mail']);
-        $oauth = oauth_client($config);
-        $oauth->begin($config->oauthProviders[0], '');
-
-        $identity = $oauth->complete('the-code', (string) $_SESSION['_oauth_txn']['state']);
-
-        assert_same('from@idtoken.example', $identity['email'], 'the ID token is the documented alternative (§2.1 step 5)');
-    });
-
-    it('rejects OAuth identities without a boolean-true email_verified claim', function (): void {
-        foreach ([[], ['email_verified' => false], ['email_verified' => 'true'], ['email_verified' => 1]] as $verification) {
-            oauth_provider_endpoints();
-            api_route('/protocol/openid-connect/token', ['access_token' => 'at-1']);
-            api_route('/protocol/openid-connect/userinfo', ['email' => 'researcher@example.org'] + $verification);
-
-            $config = oauth_config();
-            $oauth = oauth_client($config);
-            $oauth->begin($config->oauthProviders[0], '');
-            $error = assert_throws(
-                Clara\ApiException::class,
-                static fn () => $oauth->complete('the-code', (string) $_SESSION['_oauth_txn']['state'])
-            );
-            assert_same('email_unverified', $error->code());
-        }
-    });
-
-    it('does not establish a login when the provider has not verified the email', function (): void {
-        oauth_provider_endpoints();
-        api_route('/protocol/openid-connect/token', ['access_token' => 'at-1']);
-        api_route('/protocol/openid-connect/userinfo', ['email' => 'member@example.org', 'email_verified' => false]);
-        $config = oauth_config();
-        $request = http_request('GET', '/auth/callback', browser_headers(), [], [
-            'code' => 'the-code', 'state' => peek_oauth_state($config),
-        ]);
-
-        $response = router_for($request, $config)->dispatch();
-
-        assert_contains('did not verify your e-mail address', $response->body());
-        assert_true(!Session::isAuthenticated(), 'an unverified email must not establish a CLARA session');
-        assert_same(0, api_calls_to('/api/v1/auth/login'));
-    });
-
-    it('rejects a callback whose state is not this browser\'s, once', function (): void {
-        oauth_provider_endpoints();
-        $config = oauth_config();
-        $oauth = oauth_client($config);
-        $oauth->begin($config->oauthProviders[0], '');
-
-        $state = (string) $_SESSION['_oauth_txn']['state'];
-
-        $error = assert_throws(Clara\ApiException::class, static fn () => $oauth->complete('a-code', 'forged-state'));
-        assert_same('state_mismatch', $error->code());
-
-        // Single use: the state is spent by the attempt, so a captured callback URL
-        // cannot be presented again — not even with the value that was right (§2.1 step 3).
-        $again = assert_throws(Clara\ApiException::class, static fn () => $oauth->complete('a-code', $state));
-        assert_same('state_mismatch', $again->code());
-    });
-
-    it('reports an outage rather than a credential failure when the token endpoint refuses', function (): void {
-        oauth_provider_endpoints();
-        api_route('/protocol/openid-connect/token', ['error' => 'temporarily_unavailable'], 503);
-
-        $config = oauth_config();
-        $oauth = oauth_client($config);
-        $oauth->begin($config->oauthProviders[0], '');
-
-        $error = assert_throws(Clara\ApiException::class, static fn () => $oauth->complete('a-code', (string) $_SESSION['_oauth_txn']['state']));
-        assert_same('provider_unavailable', $error->code());
-    });
-
-    it('completes the login through Sequence C and establishes the session', function (): void {
-        oauth_provider_endpoints();
-        api_route('/protocol/openid-connect/token', ['access_token' => 'at-1']);
-        api_route('/protocol/openid-connect/userinfo', ['email' => 'member@example.org', 'email_verified' => true]);
+    it('passes only the code, PKCE verifier and nonce to the API callback login', function (): void {
+        api_route('/api/v1/auth/oauth/start', oauth_flow_response());
         api_route('/api/v1/auth/login', [
             'id' => 12, 'email' => 'member@example.org', 'display_name' => 'Member',
             'is_admin' => false, 'auth_source' => 'oauth2', 'ui_language' => 'en', 'ui_theme' => null,
         ]);
-
         $config = oauth_config();
-        $request = http_request('GET', '/auth/callback', browser_headers(), [], [
-            'code' => 'the-code', 'state' => peek_oauth_state($config),
+        $oauth = oauth_client($config);
+        $oauth->begin($config->oauthProviders[0], 'Hospital 1');
+
+        $result = $oauth->complete('the-code', 'state-123');
+        $body = api_request_body('/api/v1/auth/login');
+
+        assert_same('member@example.org', $result['user']['email']);
+        assert_same('Hospital 1', $result['source_name']);
+        assert_same('oauth2', $body['source']);
+        assert_same('https://idp.example.org', $body['provider']);
+        assert_same('the-code', $body['authorization_code']);
+        assert_same(str_repeat('v', 64), $body['code_verifier']);
+        assert_same('nonce-123', $body['assertion_nonce']);
+        assert_true(!isset($body['email']), 'PHP does not choose the authenticated email');
+        assert_true(!isset($body['assertion']), 'PHP does not inspect or forward an ID token');
+    });
+
+    it('consumes state before rejecting a forged or replayed callback', function (): void {
+        api_route('/api/v1/auth/oauth/start', oauth_flow_response());
+        $config = oauth_config();
+        $oauth = oauth_client($config);
+        $oauth->begin($config->oauthProviders[0], 'Hospital 1');
+
+        $error = assert_throws(
+            Clara\ApiException::class,
+            static fn () => $oauth->complete('a-code', 'forged-state')
+        );
+        assert_same('state_mismatch', $error->code());
+        $again = assert_throws(
+            Clara\ApiException::class,
+            static fn () => $oauth->complete('a-code', 'state-123')
+        );
+        assert_same('state_mismatch', $again->code());
+        assert_same(0, api_calls_to('/api/v1/auth/login'));
+    });
+
+    it('establishes the PHP session only after the API completes OIDC verification and login', function (): void {
+        api_route('/api/v1/auth/oauth/start', oauth_flow_response());
+        api_route('/api/v1/auth/login', [
+            'id' => 12, 'email' => 'member@example.org', 'display_name' => 'Member',
+            'is_admin' => false, 'auth_source' => 'oauth2', 'ui_language' => 'en', 'ui_theme' => null,
         ]);
-        $response = router_for($request, $config)->dispatch();
+        $config = oauth_config();
+        $oauth = oauth_client($config);
+        $oauth->begin($config->oauthProviders[0], 'Hospital 1');
+
+        $response = router_for(
+            http_request('GET', '/auth/callback', browser_headers(), [], ['code' => 'the-code', 'state' => 'state-123']),
+            $config
+        )->dispatch();
 
         assert_same(302, $response->status());
         assert_same('/', $response->headers()['Location']);
-        assert_true(Session::isAuthenticated(), 'the round trip ends signed in (§2.1 step 7)');
+        assert_true(Session::isAuthenticated());
         assert_same('member@example.org', Session::email());
-
-        $body = api_request_body('/api/v1/auth/login');
-        assert_same('oauth2', $body['source']);
-        assert_same('https://idp.example.org', $body['provider']);
-        assert_same('Hospital 1', $body['source_name']);
+        assert_same('Hospital 1', Session::selectedSourceName());
     });
 
-    it('sends a failed callback back to the login page with one line and no session', function (): void {
-        oauth_provider_endpoints();
+    it('runs Control Panel diagnostics through the API without calling login', function (): void {
+        api_route('/api/v1/auth/oauth/start', oauth_flow_response());
+        api_route('/api/v1/auth/oauth/test', [
+            'ok' => true, 'issuer' => 'https://idp.example.org',
+            'discovery_status' => 200, 'token_status' => 200, 'userinfo_status' => 0,
+            'userinfo_claims' => [], 'id_token_claims' => ['provider_subject' => 'subject-7'],
+        ]);
         $config = oauth_config();
+        $oauth = oauth_client($config);
+        $oauth->begin($config->oauthProviders[0], '', 'auth_test');
 
-        // No transaction was ever started: this callback came from somewhere else.
+        $report = $oauth->completeTest('test-code', 'state-123');
+        $body = api_request_body('/api/v1/auth/oauth/test');
+
+        assert_same(true, $report['ok']);
+        assert_same('test-code', $body['code']);
+        assert_same('nonce-123', $body['nonce']);
+        assert_same(0, api_calls_to('/api/v1/auth/login'));
+    });
+
+    it('consumes the browser transaction when the provider returns an authorization error', function (): void {
+        api_route('/api/v1/auth/oauth/start', oauth_flow_response());
+        api_route('/api/v1/i18n/bundle', ['language' => 'en', 'strings' => []]);
+        $config = oauth_config();
+        $oauth = oauth_client($config);
+        $oauth->begin($config->oauthProviders[0], 'Hospital 1');
+        sign_in(['is_admin' => 1]);
+
         $response = router_for(
-            http_request('GET', '/auth/callback', browser_headers(), [], ['code' => 'x', 'state' => 'nope']),
+            http_request('GET', '/auth/callback', browser_headers(), [], [
+                'error' => 'access_denied', 'state' => 'state-123',
+            ]),
             $config
         )->dispatch();
-
-        assert_contains('interrupted', $response->body());
-        assert_true(!Session::isAuthenticated(), 'a rejected callback must not sign anyone in');
-    });
-
-    it('keeps the local credential path beside a single provider (GD-18)', function (): void {
-        oauth_provider_endpoints();
-        // One provider is configured, and nothing puts the local source under another
-        // name, so it stays in the implicit default set — which is what lets a first
-        // installation sign in with the bootstrap account before the identity provider
-        // holds anybody's address (REQ-AUTH-051). With one distinct name there is no
-        // picker to skip either, so both paths are offered rather than redirecting into
-        // one; §2.2's direct hand-off applies to a name that carries a provider and no
-        // credential source, which the "Google" case below shows.
-        $config = oauth_config();
-
-        $response = router_for(http_request('GET', '/login', browser_headers()), $config)->dispatch();
 
         assert_same(200, $response->status());
-        assert_contains('Sign in with idp.example.org', $response->body());
-        assert_contains('name="password"', $response->body());
-    });
-
-    it('offers several providers individually instead of picking one', function (): void {
-        oauth_provider_endpoints();
-        oauth_provider_endpoints('https://accounts.google.com');
-        // Both answer to the same name, so there is no picker — and no single provider to
-        // redirect to: each gets its own button (REQ-AUTH-066).
-        $config = oauth_config([
-            'OAUTH2_2_ISSUER' => 'https://accounts.google.com',
-            'OAUTH2_2_CLIENT_ID' => 'other-client',
-            'OAUTH2_2_CLIENT_SECRET' => 'another-secret',
-            'OAUTH2_2_NAMES' => 'Hospital 1',
-        ]);
-
-        $response = router_for(http_request('GET', '/login', browser_headers()), $config)->dispatch();
-
-        assert_same(200, $response->status());
-        assert_contains('Sign in with idp.example.org', $response->body());
-        assert_contains('Sign in with accounts.google.com', $response->body());
-    });
-
-    it('offers a provider only under the name that carries it (§2.9)', function (): void {
-        oauth_provider_endpoints();
-        oauth_provider_endpoints('https://accounts.google.com');
-        // Two distinct names: the picker appears, and Google belongs to "Google" alone.
-        $config = oauth_config([
-            'LOCAL_LOGIN_NAMES' => 'Hospital 1',
-            'OAUTH2_2_ISSUER' => 'https://accounts.google.com',
-            'OAUTH2_2_CLIENT_ID' => 'other-client',
-            'OAUTH2_2_CLIENT_SECRET' => 'another-secret',
-            'OAUTH2_2_NAMES' => 'Google',
-        ]);
-
-        $underHospital = router_for(
-            http_request('GET', '/login', browser_headers(), [], ['source' => 'Hospital 1']),
-            $config
-        )->dispatch();
-        assert_not_contains('accounts.google.com', $underHospital->body());
-        assert_contains('name="password"', $underHospital->body(), 'the local source is under this name');
-
-        // Under "Google" the only source is that provider, so the page continues straight
-        // into its flow — and it is Google's flow, not the other provider's (§2.2).
-        $underGoogle = router_for(
-            http_request('GET', '/login', browser_headers(), [], ['source' => 'Google']),
-            $config
-        )->dispatch();
-        assert_same(302, $underGoogle->status());
-        assert_contains('accounts.google.com', (string) $underGoogle->headers()['Location']);
+        assert_true(!isset($_SESSION['_oauth_txn']), 'the callback transaction is single-use');
+        assert_same(0, api_calls_to('/api/v1/auth/login'));
     });
 });
-
-/**
- * Starts a round trip and returns its state, so a callback test can present the value
- * this browser would hold. The session survives into the dispatch below it.
- */
-function peek_oauth_state(Config $config): string
-{
-    $oauth = oauth_client($config);
-    $oauth->begin($config->oauthProviders[0], 'Hospital 1');
-
-    return (string) $_SESSION['_oauth_txn']['state'];
-}

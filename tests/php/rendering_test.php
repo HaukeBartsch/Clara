@@ -347,7 +347,6 @@ describe('configuration validation (REQ-CFG-005)', function (): void {
             'LOCAL_LOGIN_NAMES' => 'Clinic A, Walk-in',
             'OAUTH2_1_ISSUER' => 'https://idp.example.org',
             'OAUTH2_1_CLIENT_ID' => 'csms',
-            'OAUTH2_1_CLIENT_SECRET' => 'a-secret',
             'OAUTH2_1_NAMES' => 'Hospital 1',
         ]);
 
@@ -357,22 +356,26 @@ describe('configuration validation (REQ-CFG-005)', function (): void {
             $config->authSources
         );
 
-        // PHP runs the redirect itself, so it keeps the client pair and the claim
-        // name alongside the names the provider answers to (REQ-CFG-011).
-        assert_same('a-secret', $config->oauthProviders[0]['client_secret']);
+        // PHP keeps only display metadata; the Go API alone loads the client secret.
+        assert_true(!array_key_exists('client_secret', $config->oauthProviders[0]));
         assert_same('email', $config->oauthProviders[0]['email_attr'], 'the documented claim default');
         assert_same(['Hospital 1'], $config->oauthProviders[0]['names']);
     });
 
-    it('refuses a provider configured without its client pair (REQ-CFG-011)', function (): void {
-        // A half-configured source must not read as "no provider configured": the
-        // installation would then offer a login path that cannot complete.
+    it('requires the OAuth client id in PHP and leaves client-secret validation to Go', function (): void {
         $error = assert_throws(Clara\ConfigError::class, static fn () => Config::fromValues([
             'INTERNAL_SERVICE_TOKEN' => 'x',
             'OAUTH2_1_ISSUER' => 'https://idp.example.org',
-            'OAUTH2_1_CLIENT_ID' => 'csms',
         ]));
-        assert_contains('OAUTH2_1_CLIENT_SECRET', $error->getMessage());
+        assert_contains('OAUTH2_1_CLIENT_ID', $error->getMessage());
+
+        $config = Config::fromValues([
+            'INTERNAL_SERVICE_TOKEN' => 'x',
+            'OAUTH2_1_ISSUER' => 'https://idp.example.org',
+            'OAUTH2_1_CLIENT_ID' => 'csms',
+        ]);
+        assert_same('csms', $config->oauthProviders[0]['client_id']);
+        assert_true(!array_key_exists('client_secret', $config->oauthProviders[0]));
 
         // The same posture for a directory that has a URL but no search base.
         $error = assert_throws(Clara\ConfigError::class, static fn () => Config::fromValues([

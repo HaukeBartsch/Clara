@@ -416,7 +416,7 @@ final class Session
      * takeOauthTransaction(), which removes it — because `state` is what stops a
      * forged callback being accepted twice (§2.1 step 3).
      *
-     * @param array{provider_index: int, state: string, code_verifier: string, source_name: string, purpose?: string} $txn
+     * @param array{provider_index: int, state: string, code_verifier: string, nonce: string, source_name: string, purpose?: string} $txn
      */
     public static function beginOauthTransaction(array $txn): void
     {
@@ -443,6 +443,7 @@ final class Session
             'provider_index' => (int) ($txn['provider_index'] ?? 0),
             'state' => (string) ($txn['state'] ?? ''),
             'code_verifier' => (string) ($txn['code_verifier'] ?? ''),
+            'nonce' => (string) ($txn['nonce'] ?? ''),
             'source_name' => (string) ($txn['source_name'] ?? ''),
             'purpose' => (string) ($txn['purpose'] ?? 'login'),
         ];

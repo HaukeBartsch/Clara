@@ -145,7 +145,7 @@ function ldap_login(Request $request, Config $config, LdapLauncher $launcher): R
         $api,
         $logger,
         $config,
-        new Clara\Oauth($config, $logger, $transport),
+        new Clara\Oauth($api, $config, $logger),
         new LdapRace($config, $logger, $launcher)
     ));
 }
