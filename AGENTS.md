@@ -14,7 +14,7 @@ Rules for LLM-assisted development on CLARA — "Clinical Logbook for Automated 
 
 - `api/` — Go API (module `csms/api`). Current packages under `api/internal/`: `config`, `db`, `migrations`, `dataapi`, `validate`.
 - `Design/Technology_Stack_Design.md` §4 defines the normative target layout (`cmd/server`, `httpapi`, `redcap`, `admin`, `authz`, `validation`, `audit`, …). Where the current tree differs, follow the design document and place new code accordingly.
-- `web/` — PHP web application (planned; not yet present in the repository). All data access from PHP goes exclusively through the API.
+- `web/` — PHP web application: `app/` holds the framework-free application code (Router, Auth, the named-source credential race — `LdapRace`, `SubprocessLdap*` — I18n, controllers under `app/Controllers/`), `views/` the rendering templates, `public/` the entry point and `assets/` vendored frontend libraries. All data access from PHP goes exclusively through the API; PHP tests live in `tests/php/`.
 - `deploy/` — reverse-proxy reference configurations for production (`nginx/clara.conf`, `apache2/clara.conf`). They implement the normative routing rules of `Design/Technology_Stack_Design.md` §5; treat them as production code: a change to one lands in both, INSTALL.md §11 documents the same rules, and `e2e/tests/deployment.spec.ts` checks that all three still agree.
 - `assets/` — example data dictionaries and the historic FIONA user-management application (`table_based_authentication_plus_user_management/`); `AC.php` there is the authentication control script every FIONA page used to establish a session. When no requirement says otherwise, follow that example layout for interfacing PHP with the web application: pull JSON from the backend, populate rendering targets on the client.
 
@@ -32,6 +32,7 @@ Pinned versions and the production dependency allowlist are fixed in `Design/Tec
 ## Dev environment tips
 
 - Run Go tooling from `api/`: `go test ./...`, `go vet ./...`.
+- Run PHP tests from the repository root: `php tests/php/run.php` (runs the whole suite; tests live in `tests/php/` with shared helpers in `tests/php/support.php`).
 - For golang place `_test.go` files next to the implementation files.
 - Database migrations live in `api/internal/migrations/{sqlite,mariadb}/` as numbered files (`0001_schema.sql`, …); add a file for both dialects when a change is dialect-specific.
 - Code style for JavaScript is double quotes, no semicolons, use functional patterns where possible.
