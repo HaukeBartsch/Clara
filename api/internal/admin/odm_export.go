@@ -146,6 +146,7 @@ func (h *Handler) exportODM(w http.ResponseWriter, r *http.Request) {
 		ranks[instr.ID] = best
 	}
 	plan := newODMPlan(project, arms, eventsByArm, instruments, fields, pairs, ranks)
+	plan.v13 = dialect.isODM13() // the two dialects differ in vocabulary (REQ-ODM-027/029)
 
 	// The identifier column decides what keys the document can use: where the
 	// applied level removed it, ODM still requires a key per record, so the plan
@@ -297,10 +298,23 @@ func (h *Handler) writeODMClinicalData(w odmWriter, plan *odmPlan, rows *dataapi
 	}
 	var (
 		subject, event string
+		openFormOID    string // the FormData this stream is inside, when 1.3 wrote one
+		openFormInst   int
 		haveSubject    bool
 		haveEvent      bool
+		haveForm       bool
 	)
+	closeForm := func() error {
+		if haveForm {
+			haveForm = false
+			return end("FormData")
+		}
+		return nil
+	}
 	closeEvent := func() error {
+		if err := closeForm(); err != nil {
+			return err
+		}
 		if haveEvent {
 			haveEvent = false
 			return end("StudyEventData")
@@ -366,10 +380,30 @@ func (h *Handler) writeODMClinicalData(w odmWriter, plan *odmPlan, rows *dataapi
 		if n, err := strconv.Atoi(row["redcap_repeat_instance"]); err == nil && n > 0 {
 			instance = n
 		}
+		formInstance := 1 // a form instance exists only for the instrument that repeats
+		if repeatOf != "" {
+			formInstance = instance
+		}
 		for _, name := range plan.undescribed(row) {
 			counts.addSkip(name) // delivered, and no item in this document describes it (§6.1)
 		}
 		for _, group := range plan.groupsForRow(row, repeatOf, instance) {
+			// In 1.3 a clinical ItemGroupData has no parent but FormData, so open one per
+			// (form, instance): an instrument's own group and its matrix groups share it,
+			// and a later instance of a repeating instrument opens the next (REQ-ODM-027).
+			if plan.v13 && (!haveForm || group.formOID != openFormOID || formInstance != openFormInst) {
+				if err := closeForm(); err != nil {
+					return err
+				}
+				fattrs := []kv{{"FormOID", group.formOID}}
+				if formInstance > 1 {
+					fattrs = append(fattrs, kv{"FormRepeatKey", strconv.Itoa(formInstance)})
+				}
+				if err := start("FormData", fattrs...); err != nil {
+					return err
+				}
+				openFormOID, openFormInst, haveForm = group.formOID, formInstance, true
+			}
 			attrs := []kv{{"ItemGroupOID", group.oid}}
 			if group.repeatKey > 1 {
 				attrs = append(attrs, kv{"ItemGroupRepeatKey", strconv.Itoa(group.repeatKey)})

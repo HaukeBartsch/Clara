@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  CLARA extension wrapper for CDISC ODM 1.3.2 (REQ-ODM-055).
+
+  ODM 1.3.2 declares no xs:any anywhere. Its extension points are empty named
+  groups - <group name="ItemDefElementExtension"><sequence/></group> and friends -
+  that the specification expects a consuming site to fill by *redefining* the
+  schema. Until they are filled, any document carrying elements from another
+  namespace (CLARA's urn:x-clara:odm-ext:v1 among them) is invalid against the
+  published schema, however well formed it is.
+
+  This file fills exactly the hooks CLARA writes into, leaving every other part of
+  the ODM content model enforced unchanged: a document that misplaces an ordinary
+  ODM element still fails here exactly as it would against CDISC's own schema.
+-->
+<xs:schema xmlns="http://www.cdisc.org/ns/odm/v1.3"
+           xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           targetNamespace="http://www.cdisc.org/ns/odm/v1.3"
+           elementFormDefault="qualified">
+
+  <xs:redefine schemaLocation="cdisc-odm-1.3.2/ODM1-3-2-foundation.xsd">
+    <!-- clara:Project (Design/ODM_Interchange_Design.md §5) -->
+    <xs:group name="StudyElementExtension">
+      <xs:choice><xs:any namespace="##other" processContents="lax" minOccurs="0" maxOccurs="unbounded"/></xs:choice>
+    </xs:group>
+    <!-- clara:Arm -->
+    <xs:group name="MetaDataVersionElementExtension">
+      <xs:choice><xs:any namespace="##other" processContents="lax" minOccurs="0" maxOccurs="unbounded"/></xs:choice>
+    </xs:group>
+    <!-- clara:Event -->
+    <xs:group name="StudyEventDefElementExtension">
+      <xs:choice><xs:any namespace="##other" processContents="lax" minOccurs="0" maxOccurs="unbounded"/></xs:choice>
+    </xs:group>
+    <!-- clara:Form -->
+    <xs:group name="FormDefElementExtension">
+      <xs:choice><xs:any namespace="##other" processContents="lax" minOccurs="0" maxOccurs="unbounded"/></xs:choice>
+    </xs:group>
+    <!-- clara:StaticField -->
+    <xs:group name="ItemGroupDefElementExtension">
+      <xs:choice><xs:any namespace="##other" processContents="lax" minOccurs="0" maxOccurs="unbounded"/></xs:choice>
+    </xs:group>
+    <!-- clara:Field and clara:Choice -->
+    <xs:group name="ItemDefElementExtension">
+      <xs:choice><xs:any namespace="##other" processContents="lax" minOccurs="0" maxOccurs="unbounded"/></xs:choice>
+    </xs:group>
+  </xs:redefine>
+</xs:schema>

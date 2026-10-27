@@ -433,8 +433,11 @@ func (h *Handler) odmResolve(ctx context.Context, doc *odmDoc, name string, prob
 			}
 			d.setMappingForArm(odmArmNum(def), mergeArmMapping(d.Mapping[odmArmNum(def)], inst.Name, unique))
 			repeats := groupRepeats(plan, mdv, ref.oid, inst.Name)
+			if claraRepeatingForm(def.ext, ref.oid) {
+				repeats = true // 1.3 spells the per-pair flag in the extension (REQ-ODM-029)
+			}
 			if ref.repeating != nil {
-				repeats = *ref.repeating // the pair speaks for itself (REQ-ODM-050)
+				repeats = *ref.repeating // a FormRef that carries the attribute speaks for itself (REQ-ODM-050)
 			}
 			if repeats {
 				repeatingByInstrument[inst.Name] = append(repeatingByInstrument[inst.Name], unique)
@@ -1331,6 +1334,19 @@ func groupRepeats(plan *odmBuildPlan, mdv *odmMetaDataVersion, formOID, instrume
 	for _, ref := range form.groupRefs {
 		if target, ok := plan.groupByName[ref.oid]; ok && target.instrument == instrument && !target.matrix {
 			return target.repeating
+		}
+	}
+	return false
+}
+
+// claraRepeatingForm reports whether a CLARA event extension names this form among
+// the instruments that repeat at that event. ODM 1.3.2 gives a FormRef no Repeating
+// attribute, so a 1.3 document spells the per-pair flag here instead; the list holds
+// form OIDs, which contain no whitespace by construction (REQ-ODM-029).
+func claraRepeatingForm(ext map[string]string, formOID string) bool {
+	for _, name := range strings.Fields(ext["repeatingForms"]) {
+		if name == formOID {
+			return true
 		}
 	}
 	return false

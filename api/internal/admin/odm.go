@@ -57,6 +57,33 @@ func odmDialectForVersion(version string) (odmDialect, bool) {
 	}
 }
 
+// isODM13 reports the dialect's vintage where the two schemas disagree about
+// vocabulary, which is twice in this exporter:
+//
+//   - clinical data: 1.3.2 lets StudyEventData hold only AuditRecord, Signature,
+//     Annotation and FormData, so a clinical ItemGroupData has no other parent; 2.0
+//     removed the level and hangs groups directly off StudyEventData (REQ-ODM-027);
+//   - the per-pair repeating flag: 2.0 carries it as FormRef/@Repeating, while
+//     1.3.2's FormRef takes only FormOID plus the shared Mandatory/OrderNumber
+//     (REQ-ODM-029).
+func (d odmDialect) isODM13() bool { return d.namespace == odmNamespace }
+
+// odmSASPattern is ODM's own sasName pattern, and eight characters is its own
+// length cap (ODM1-3-2-foundation.xsd: maxLength 8 plus this expression).
+var odmSASPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// odmSASName reports whether a CLARA name may be written as an ODM SAS name.
+// CLARA names routinely run past eight characters and may hold spaces, so the ones
+// that do not fit are left out rather than shortened: an eight-character truncation
+// collides between fields, cannot round-trip, and misrepresents the machine name
+// @Name already carries (REQ-ODM-028). Import reads @Name and never these.
+func odmSASName(name string) (string, bool) {
+	if len(name) > 8 || !odmSASPattern.MatchString(name) {
+		return "", false
+	}
+	return name, true
+}
+
 // odmLocalName maps a CLARA name onto the character set an OID accepts. CLARA
 // field names are already lower-case alnum plus underscore, so this is the
 // identity for everything this system created and a repair for names that came

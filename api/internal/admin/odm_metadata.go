@@ -94,6 +94,7 @@ type odmPlan struct {
 
 	identifier          string // GD-8: first field of the earliest instrument with fields
 	identifierDelivered bool   // the applied level delivers that column (REQ-ODM-030)
+	v13                 bool   // the ODM 1.3 dialect, whose vocabulary differs from 2.0 (REQ-ODM-027/029)
 }
 
 type odmEvent struct {
@@ -338,6 +339,7 @@ func (p *odmPlan) declaredEvents() []odmEvent {
 // carries a value for, in declared order.
 type groupRow struct {
 	oid       string
+	formOID   string // the FormDef that owns this group, for 1.3's FormData level (REQ-ODM-027)
 	repeatKey int
 	items     []itemRow
 }
@@ -351,7 +353,7 @@ type itemRow struct{ oid, value string }
 func (p *odmPlan) groupsForRow(row dataapi.ExportRow, repeatOf string, instance int) []groupRow {
 	out := make([]groupRow, 0, len(p.groups))
 	for _, g := range p.groups {
-		gr := groupRow{oid: g.oid}
+		gr := groupRow{oid: g.oid, formOID: g.formOID}
 		if !g.isMatrix && g.instrumentName == repeatOf && instance > 1 {
 			gr.repeatKey = instance
 		}
@@ -435,27 +437,36 @@ func (p *odmPlan) writeEventDefs(w odmWriter) error {
 		if err := w.start("StudyEventDef", attrs...); err != nil {
 			return err
 		}
+		repeating := make([]string, 0, len(ev.instruments))
 		for i, ref := range ev.instruments { // the event↔form association ODM defines (§3.2)
 			attrs := []kv{{"FormOID", odmOID("FRM_", ref.name)}, {"Mandatory", noAttr},
 				{"OrderNumber", strconv.Itoa(i + 1)}}
-			// §3.3 marks the item group repeating, which cannot say *which* of an
-			// instrument's events that means; the FormRef's own attribute does, so a
-			// project where one pair repeats and another does not round-trips (REQ-ODM-050).
 			if ref.repeating {
-				attrs = append(attrs, kv{"Repeating", yesAttr})
+				repeating = append(repeating, odmOID("FRM_", ref.name))
+				// ODM 2.0 lets the FormRef speak for its own pair; 1.3.2 gives it no
+				// Repeating attribute at all, so there the flag goes to clara:Event below
+				// rather than being dropped — §3.3's group-level marking cannot say which
+				// of an instrument's events repeats, and REQ-ODM-050 must survive (REQ-ODM-029).
+				if !p.v13 {
+					attrs = append(attrs, kv{"Repeating", yesAttr})
+				}
 			}
 			if err := w.elem("FormRef", attrs...); err != nil {
 				return err
 			}
 		}
+		ext := []kv{}
 		if ev.synthetic {
-			if err := w.ext("Event", kv{"synthetic", "1"}); err != nil {
-				return err
-			}
-		} else if err := w.ext("Event",
-			kv{"armNum", strconv.Itoa(ev.armNum)}, kv{"eventName", ev.label},
-			optKV("period", ev.period), optKV("safeRegionStart", ev.safeStart),
-			optKV("safeRegionEnd", ev.safeEnd)); err != nil {
+			ext = append(ext, kv{"synthetic", "1"})
+		} else {
+			ext = append(ext, kv{"armNum", strconv.Itoa(ev.armNum)}, kv{"eventName", ev.label},
+				optKV("period", ev.period), optKV("safeRegionStart", ev.safeStart),
+				optKV("safeRegionEnd", ev.safeEnd))
+		}
+		if len(repeating) > 0 {
+			ext = append(ext, kv{"repeatingForms", strings.Join(repeating, " ")})
+		}
+		if err := w.ext("Event", ext...); err != nil {
 			return err
 		}
 		if err := w.end("StudyEventDef"); err != nil {
@@ -496,8 +507,11 @@ func (p *odmPlan) writeFormDefs(w odmWriter) error {
 
 func (p *odmPlan) writeItemGroups(w odmWriter) error {
 	for _, g := range p.groups {
-		if err := w.start("ItemGroupDef", kv{"OID", g.oid}, kv{"Name", g.name},
-			kv{"Repeating", boolYN(g.repeating)}, kv{"SASDatasetName", g.name}); err != nil {
+		attrs := []kv{{"OID", g.oid}, {"Name", g.name}, {"Repeating", boolYN(g.repeating)}}
+		if sas, ok := odmSASName(g.name); ok {
+			attrs = append(attrs, kv{"SASDatasetName", sas}) // omitted where sasName refuses it (REQ-ODM-028)
+		}
+		if err := w.start("ItemGroupDef", attrs...); err != nil {
 			return err
 		}
 		for i, it := range g.items {
@@ -534,8 +548,11 @@ func (p *odmPlan) writeItemGroups(w odmWriter) error {
 func (p *odmPlan) writeItemDefs(w odmWriter) error {
 	for _, g := range p.groups {
 		for _, it := range g.items {
-			if err := w.start("ItemDef", kv{"OID", it.oid}, kv{"Name", it.name},
-				kv{"DataType", it.dataType}, kv{"SASFieldName", it.name}); err != nil {
+			attrs := []kv{{"OID", it.oid}, {"Name", it.name}, {"DataType", it.dataType}}
+			if sas, ok := odmSASName(it.name); ok {
+				attrs = append(attrs, kv{"SASFieldName", sas}) // omitted where sasName refuses it (REQ-ODM-028)
+			}
+			if err := w.start("ItemDef", attrs...); err != nil {
 				return err
 			}
 			if err := w.text("Description", it.label); err != nil {

@@ -5,7 +5,8 @@ This document outlines how a CLARA **project** — one study's structure and rec
 ## Interchange Format
 - CDISC ODM XML in either the 1.3 namespace (`http://www.cdisc.org/ns/odm/v1.3`, `ODMVersion="1.3.2"`) or the 2.0 namespace (`http://www.cdisc.org/ns/odm/v2.0`, `ODMVersion="2.0"`), snapshot documents, UTF-8. Export offers both versions and defaults to 1.3; import detects either from the uploaded XML (REQ-ODM-010/011/064).
 - One document per project: `Study` + one `MetaDataVersion` + `ClinicalData`. Metadata-only is valid for an empty project (REQ-ODM-020).
-- A CLARA extension namespace carries what ODM has no element for — branching logic, the three sensitivity flags, transfer copy instructions, matrix grouping (REQ-ODM-051, DEV-ODM-3). Standard consumers ignore it; a file without it still imports (REQ-ODM-052).
+- A CLARA extension namespace carries what ODM has no element for — branching logic, the three sensitivity flags, transfer copy instructions, matrix grouping (REQ-ODM-051, DEV-ODM-3). Standard consumers ignore it; a file without it still imports (REQ-ODM-052). Because ODM 1.3.2 defines no extension point a foreign element can occupy (`xs:any` appears nowhere in it), CLARA also publishes a wrapper schema that fills the spec's empty extension groups, so a strict validator can check a CLARA document rather than being handed one it must reject (REQ-ODM-055).
+- SAS dataset and variable names are written only where they fit ODM's own `sasName` type — 8 characters, `[A-Za-z_][A-Za-z0-9_]*` — and omitted otherwise; the machine name rides on `@Name`, which is what import reads back (REQ-ODM-028). Likewise a repeating pair: 2.0 marks it on the `FormRef`, 1.3 has no such attribute there and names the event's repeating forms in `clara:Event/@repeatingForms` (REQ-ODM-029).
 
 ## Surfaces
 - `GET /api/v1/projects/{id}/export/odm` — streamed download (REQ-ODM-025, REQ-TECH-011).
@@ -30,19 +31,19 @@ This document outlines how a CLARA **project** — one study's structure and rec
 ## Mapping (summary — normative tables in the design document)
 | CLARA | ODM |
 |---|---|
-| project | `Study` + `GlobalVariables`; REK number as a `Protocol/Reference` |
-| arm + event (GD-15) | `EventDef Type="Standard"`, OID encoding `unique_event_name` (`…_arm_<n>`) |
-| instrument (+ repeat per pair, REQ-DB-047) | `FormDef`, `ItemGroupDef Repeating` |
-| field | `ItemDef` (DataType/Length from the validation type, `RangeCheck` for min/max) |
-| choices (`code$label##…`) | `CodeList` with `CodeListItem` decodes |
-| calculated field | `MethodDef MethodType="Formula"` + `ItemDef/MethodRef` |
-| record identifier (GD-8) | `ItemRef KeySequence="1" Mandatory="Y"`; `SubjectKey` |
-| checkbox choice `<f>___<code>` (REQ-DB-042) | its own `ItemDef` in the parent's `ItemGroupDef` |
-| EAV row (record, event, instance) | `ClinicalData/SubjectData/ItemGroupData` (`@ItemGroupRepeatKey`) |
+| project | `Study` + `GlobalVariables`; organization, investigator, data manager and REK number travel in `clara:Project`, because 1.3.2's `Protocol` has no sponsor, investigator or reference element (§3.1) |
+| arm + event (GD-15) | `StudyEventDef Repeating="No" Type="Scheduled"` — there is no `EventDef` and no `Standard` type in ODM — with the arm in `@Category` and canonical order on `Protocol/StudyEventRef/@OrderNumber`; OID encodes `unique_event_name` (`…_arm_<n>`) (§3.2) |
+| instrument (+ repeat per pair, REQ-DB-047) | `FormDef` with one `ItemGroupRef` to the instrument's `ItemGroupDef`, which carries `@Repeating`. The *per-pair* designation is a different thing: 2.0 spells it `FormRef/@Repeating`, and 1.3.2 gives `FormRef` no such attribute, so there it names the event's repeating forms in `clara:Event/@repeatingForms` (REQ-ODM-029) |
+| field | `ItemDef` with lowercase `@DataType` (`text`, `integer`, `float`, `date`, `datetime` — ODM 1.3.2's own enumeration), `@Length` only where validation supplies one, and min/max as `RangeCheck/CheckValue/@Value` pairs, since 1.3.2 has no bound attributes on `RangeCheck` (§3.4) |
+| choices (`code$label##…`) | `CodeList DataType="text"` with one `CodeListItem/@CodedValue` and its `Decode/TranslatedText` per choice in stored order; never `EnumeratedItem`, which carries no label (§3.5) |
+| calculated field | `MethodDef Type="Calculation"` (not `MethodType`/`Formula`) holding the expression as text in `FormalExpression/TranslatedText`, referenced by `ItemRef/@MethodOID` — not an `ItemDef/MethodRef` — and never evaluated (§3.8) |
+| record identifier (GD-8) | `ItemRef/@KeySequence="1"` with `@Mandatory="Yes"`; `SubjectKey` per §4.1 |
+| checkbox choice `<f>___<code>` (REQ-DB-042) | its own `ItemDef DataType="integer"` in the instrument's `ItemGroupDef`, sharing `CL_BOOLEAN`; the parent row is display metadata and stays in `clara:Choice` (§3.6, §3.7) |
+| EAV row (record, event, instance) | 1.3: `ClinicalData/SubjectData/StudyEventData/FormData/ItemGroupData`; 2.0: the same without `FormData`, which 2.0 removed (`@ItemGroupRepeatKey` on the group either way) (REQ-ODM-027) |
 
 ## Reporting and Audit
 - Import answers counts plus an `importNote` problem list — warnings for what was converted or dropped, failures for what stopped the structure or one record (REQ-ODM-060). Codes in `Design/ODM_Interchange_Design.md` §7.
 - `odm_export` and `odm_import` audit events: level, scope, counts, options — never a value or a document body (REQ-ODM-061); refused calls write nothing (REQ-AUD-004).
 
 ## Out of scope for this step
-Transactional/delta ODM, an existing-project update through the staging set, XSD-validating against a schema at runtime, CRF page layout and `LogicalPageDef`, and DAG membership and audit history in `AdminData` (ASM-ODM-1/5, DEV-ODM-4).
+Transactional/delta ODM, an existing-project update through the staging set, validating against a schema **at runtime** (ASM-ODM-5 — the program stays pure Go, `CGO_ENABLED=0`), CRF page layout and `LogicalPageDef`, and DAG membership and audit history in `AdminData` (DEV-ODM-4). Conformance checking itself is not out of scope, only its location: `tools/odm_conformance.py` validates an exported document against the published CDISC schema for each dialect plus CLARA's extension wrapper (REQ-ODM-055), and `ci/run.sh` runs it as an **advisory** step — it reports findings and skips with a notice where lxml is not installed, rather than holding the build for a dev tool.

@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  CLARA extension wrapper for CDISC ODM 2.0 — the 2.0 counterpart of clara_odm_ext.xsd, which
+  read first: its header carries why targetNamespace must be the dialect's own, why ##other with
+  processContents="lax" rather than strict, and why foreign attributes cannot be opened through a
+  redefinition at all (libxml2 refuses both an anyAttribute wildcard and a declared attribute in a
+  redefined ...AttributeExtension group).
+
+  ODM 2.0 repeats 1.3.2's design: no xs:any anywhere, extension points are empty named groups. So
+  the same document-level fact holds here — an export carrying urn:x-clara:odm-ext:v1 is invalid
+  against vanilla 2.0 at exactly those positions, and only a redefining site schema makes such a
+  document checkable (REQ-ODM-055). Without this file the 2.0 findings mix CLARA's own namespace in
+  with the dialect's real structural gaps, which is the one thing the gate exists to tell apart.
+
+  Four hooks rather than five: ODM 2.0 has no FormDef element at all (its MetaDataVersion holds
+  StudyEventGroupDef/StudyEventDef/ItemGroupDef and spells a paper form as an ItemGroupDef plus
+  AnnotatedCRF), so there is no FormDefElementExtension to fill and no legal host for clara:Form in
+  this dialect. That is a producer-side question the wrapper cannot cover — see the 2.0 findings the
+  conformance tool prints against a real export (Study/@StudyName, GlobalVariables, ItemData/@Value).
+
+  Redefines cdisc-odm-2.0/ODM-foundation.xsd, i.e. exactly the file tools/odm_conformance.py treats
+  as vanilla 2.0, so the tool's plain mode and this wrapper differ only by the redefinition. Validate
+  against THIS file rather than the CDISC driver when a document carries CLARA's extension.
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           targetNamespace="http://www.cdisc.org/ns/odm/v2.0"
+           elementFormDefault="qualified"
+           attributeFormDefault="unqualified">
+
+  <xs:redefine schemaLocation="cdisc-odm-2.0/ODM-foundation.xsd">
+
+    <!-- clara:Project, clara:Arm (Design/ODM_Interchange_Design.md §5) -->
+    <xs:group name="MetaDataVersionElementExtension">
+      <xs:sequence>
+        <xs:any namespace="##other" processContents="lax" minOccurs="0" maxOccurs="unbounded"/>
+      </xs:sequence>
+    </xs:group>
+
+    <!-- clara:Event -->
+    <xs:group name="StudyEventDefElementExtension">
+      <xs:sequence>
+        <xs:any namespace="##other" processContents="lax" minOccurs="0" maxOccurs="unbounded"/>
+      </xs:sequence>
+    </xs:group>
+
+    <!-- clara:StaticField -->
+    <xs:group name="ItemGroupDefElementExtension">
+      <xs:sequence>
+        <xs:any namespace="##other" processContents="lax" minOccurs="0" maxOccurs="unbounded"/>
+      </xs:sequence>
+    </xs:group>
+
+    <!-- clara:Field, clara:Choice -->
+    <xs:group name="ItemDefElementExtension">
+      <xs:sequence>
+        <xs:any namespace="##other" processContents="lax" minOccurs="0" maxOccurs="unbounded"/>
+      </xs:sequence>
+    </xs:group>
+
+  </xs:redefine>
+</xs:schema>

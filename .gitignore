@@ -34,3 +34,8 @@ e2e/playwright-report/
 # Clara assistant model artifacts (REQ-AI-003, ASM-AI-2) — multi-GB downloads placed by
 # tools/fetch_assistant_model.sh at install time; the repository carries no weights.
 web/assets/models/
+
+# Python bytecode from the offline dev checks (tools/odm_conformance.py) — the repository
+# carries sources, not compiled artifacts.
+__pycache__/
+*.pyc

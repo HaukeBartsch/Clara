@@ -33,6 +33,35 @@ else
 	exit 1
 fi
 
+# --- ODM dialect conformance ----------------------------------------------------
+echo "==> ODM dialect conformance (REQ-ODM-055, advisory)"
+# A round trip cannot see a dialect error: the exporter and importer agreed with each
+# other that ODM 2.0's data nesting was ODM 1.3, and the suite stayed green (O-7). So
+# the Go suite dumps real exports of both dialects, and tools/odm_conformance.py holds
+# them to CDISC's own schemas — vendored under tools/odm_schema/, no network at run
+# time — through tools/odm_schema/clara_odm_ext.xsd, CLARA's redefinition of the
+# extension hooks 1.3.2 leaves empty.
+#
+# This is deliberately the one advisory step in the run, against the stance stated at
+# the top of this file: lxml is not part of the toolchain AGENTS.md fixes, so a machine
+# without it still builds. Findings print as WARN and never fail the build; fixing them
+# stays the point of printing them.
+odm_dump="$(mktemp -d)"
+(cd "$root/api" && CLARA_ODM_DUMP_DIR="$odm_dump" go test ./internal/admin/ -run 'TestExportODMConformanceDump' >/dev/null 2>&1) || true
+if ! ls "$odm_dump"/*.xml >/dev/null 2>&1; then
+	echo "WARN: the Go suite produced no ODM documents, so conformance went unchecked." >&2
+else
+	odm_status=0
+	python3 "$root/tools/odm_conformance.py" "$odm_dump"/*.xml || odm_status=$?
+	case "$odm_status" in
+		0) ;;
+		1) echo "WARN: an exported ODM document deviates from the CDISC schema above (REQ-ODM-055)." >&2 ;;
+		3) echo "NOTE: ODM conformance skipped — python3 lxml is not installed on this machine." >&2 ;;
+		*) echo "WARN: the ODM conformance check exited $odm_status without a verdict." >&2 ;;
+	esac
+fi
+rm -rf "$odm_dump"
+
 # --- the web layer -------------------------------------------------------------
 echo "==> php -l (web/, tests/php/)"
 lint_failed=0

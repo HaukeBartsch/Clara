@@ -88,12 +88,14 @@ CLARA's arm/event pair (REQ-DB-011, GD-15) has no arm element in ODM, so the arm
 
 The instrument↔event mapping (`instrument_events`, REQ-DB-012) is the `FormRef` list of the event: `<StudyEventDef …><FormRef FormOID="FRM_<instrument>" Mandatory="No" OrderNumber="<position>"/></StudyEventDef>` — the association ODM itself defines. `@Mandatory` stays `No`: CLARA's required-ness lives on fields, not on a form being collected at an event.
 
+A pair that repeats (REQ-DB-047) is marked where the dialect can carry it (REQ-ODM-029). **2.0** adds `Repeating="Yes"` to that `FormRef`. **1.3.2 cannot**: its `FormRefAttributeDefinition` is `FormOID` alone plus the shared `Mandatory`/`OrderNumber`, and a `Repeating` there fails validation — the attribute belongs to no 1.3 reference element, only to the definitions (`StudyEventDef`, `ItemGroupDef`). Since §3.3's group-level mark cannot say *which* of an instrument's events repeats, and REQ-ODM-050 requires the distinction to survive, a 1.3 document lists the event's repeating form OIDs in `clara:Event/@repeatingForms`. Import takes the most specific statement it finds — `FormRef/@Repeating`, then that extension attribute, then the group's own mark — so 2.0 files, CLARA 1.3 files and partner documents each resolve correctly.
+
 ### 3.3 Instruments and item groups
 
 | CLARA | ODM |
 |---|---|
 | instrument | `<FormDef OID="FRM_<name>" Name="<name>" Repeating="No">` with one `ItemGroupRef` to `IG_<name>` |
-| instrument's fields, in `position` order | `<ItemGroupDef OID="IG_<name>" Name="<name>" Repeating="No" SASDatasetName="<name>">` and one `ItemRef ItemOID="IT_<field>" Mandatory="Y\|N" OrderNumber="<position>"` per exportable field (REQ-DB-013) |
+| instrument's fields, in `position` order | `<ItemGroupDef OID="IG_<name>" Name="<name>" Repeating="No" SASDatasetName="<name>"…>` and one `ItemRef ItemOID="IT_<field>" Mandatory="Y\|N" OrderNumber="<position>"` per exportable field (REQ-DB-013). `@SASDatasetName` is written only when the instrument name satisfies ODM's `sasName` type (≤8 characters, `[A-Za-z_][A-Za-z0-9_]*`) and omitted otherwise — REQ-ODM-028 |
 | pair is repeating (`instrument_events.is_repeating`, REQ-DB-047) | `@Repeating="Yes"` on the **`ItemGroupRef`'s target** `ItemGroupDef`, and `@ItemGroupRepeatKey` on each data row (§4) — ODM marks the group repeating, not the form |
 | matrix group (`matrix_group`, REQ-DB-014) | its own `ItemGroupDef IG_<matrix_group>` (non-repeating), referenced from the instrument's `FormDef` after the main group; each row field is an `ItemRef` of that group with its own `OrderNumber` |
 | record identifier (GD-8) | `ItemRef/@KeySequence="1"` on the identifier field, plus `Mandatory="Y"` — import restores GD-8 from it (§6.2) |
@@ -102,7 +104,7 @@ The instrument↔event mapping (`instrument_events`, REQ-DB-012) is the `FormRef
 
 ### 3.4 Fields → ItemDef
 
-`ItemDef/@Name` is the CLARA machine name (round-trip anchor, O-1) and `@SASFieldName` repeats it; the human-readable label goes to `Description/TranslatedText`, the field note to `Question/TranslatedText`.
+`ItemDef/@Name` is the CLARA machine name (round-trip anchor, O-1); the human-readable label goes to `Description/TranslatedText`, the field note to `Question/TranslatedText`. `@SASFieldName` repeats the machine name **only where it fits** — 8 characters or fewer matching `[A-Za-z_][A-Za-z0-9_]*` — and is omitted otherwise, because truncating to eight would collide across fields and break the round trip `@Name` guarantees (REQ-ODM-028). Import reads `@Name` and never a SAS name, so omission loses nothing CLARA needs.
 
 | CLARA `field_type` / validation | `ItemDef/@DataType` | Extras |
 |---|---|---|
@@ -149,13 +151,17 @@ Columns the applied level removes (§4.2 steps 1 and 3 of `Data_Export_Anonymiza
 <ClinicalData StudyOID="CLARA-7" MetaDataVersionOID="CLARA-7-MDV">
   <SubjectData SubjectKey="1042">
     <StudyEventData StudyEventOID="EVT_screening_arm_1">
-      <ItemGroupData ItemGroupOID="IG_demographics">
-        <ItemData ItemOID="IT_age" Value="57"/>
-      </ItemGroupData>
+      <FormData FormOID="FRM_demographics">            <!-- ODM 1.3 only -->
+        <ItemGroupData ItemGroupOID="IG_demographics">
+          <ItemData ItemOID="IT_age" Value="57"/>
+        </ItemGroupData>
+      </FormData>
     </StudyEventData>
   </SubjectData>
 </ClinicalData>
 ```
+
+The `FormData` line is what the **1.3** dialect writes and the **2.0** dialect does not: 2.0 removed the level and lets `ItemGroupData` sit directly under `StudyEventData`, while 1.3.2 restricts `StudyEventData` to `AuditRecord`, `Signature`, `Annotation` and `FormData` and gives `ItemGroupData` no clinical parent besides `FormData`. One shared shape therefore cannot be valid in both dialects, and the 1.3 default is the one that has to carry the extra element (REQ-ODM-027, DEV-ODM-7).
 
 | CLARA (`data` EAV, REQ-DB-015…020) | ODM |
 |---|---|
@@ -164,10 +170,15 @@ Columns the applied level removes (§4.2 steps 1 and 3 of `Data_Export_Anonymiza
 | one instance of a repeating instrument (REQ-DB-047) | one `ItemGroupData/@ItemGroupRepeatKey` = `repeating_instance_number`; the non-repeating case omits the attribute entirely rather than writing `1` |
 | one stored value | `<ItemData ItemOID="IT_<field_name>" Value="<stored value>"/>` — codes, not labels (REQ-ODM-022) |
 | no stored value | **no element** (REQ-ODM-023): 1.3.2's `@IsNull` stays unwritten and nothing is invented for a cleared value |
-| instrument completion (`<form>_complete`) | dropped with notice — ODM has no per-form completion state; `FormData` would be the carrier and it models collection instances, not a review status (REQ-ODM-053) |
+| instrument completion (`<form>_complete`) | dropped with notice — ODM has no per-form completion state; `FormData` is the nearest carrier and it models collection instances, not a review status, so 1.3 writes the element (REQ-ODM-027) without putting completion in it (REQ-ODM-053) |
 | DAG of the record | dropped in this step: `AdminData/UserRef` names study users, which CLARA's DAG groups are not; carried later only if an owner asks (REQ-ODM-053) |
 
-The optional `FormData` level is **not** written (one `ItemGroupData` per group directly under `StudyEventData`), and is accepted on import when a partner emits it.
+The `FormData` level is **written in the 1.3 dialect and not in 2.0** (REQ-ODM-027). Its rules:
+
+- `@FormOID` names the owning `FormDef` (`FRM_<instrument>`); a matrix group's `ItemGroupData` belongs inside its instrument's `FormData`, since the matrix `ItemGroupDef` is referenced from that `FormDef` (§3.3).
+- `@FormRepeatKey` carries the repeating instance when one applies and is omitted otherwise — the same "omit rather than write `1`" rule `@ItemGroupRepeatKey` follows, which stays on the group unchanged (REQ-DB-047).
+- One `FormData` per (form, instance) inside a `StudyEventData`. Groups are emitted in declared order, so a form's own group and its matrix groups are adjacent and share one element; an instrument's later instance row opens a fresh `FormData`, which 1.3.2 permits (`FormData` is unbounded under `StudyEventData`) and streaming requires.
+- Import accepts **both** nestings — `ItemGroupData` under `FormData` and directly under `StudyEventData` — so 2.0 documents and partner files read the same either way (REQ-ODM-052). Nothing in CLARA's own reader depends on which shape it met, and the round-trip test covers both directions.
 
 ### 4.1 SubjectKey
 
@@ -179,12 +190,12 @@ The exporter writes `<ODM>`, `<Study>` and the whole `MetaDataVersion` first (it
 
 ## 5. CLARA Extension Namespace
 
-Namespace `urn:x-clara:odm-ext:v1`, nested in the element the data belongs to, inside the schema's element-extension hook. A conforming ODM reader ignores it; a CLARA reader restores what ODM cannot express (REQ-ODM-051). Only these elements exist:
+Namespace `urn:x-clara:odm-ext:v1`, nested in the element the data belongs to. A conforming ODM reader ignores it; a CLARA reader restores what ODM cannot express (REQ-ODM-051). "Inside the schema's extension hook" needs one qualification: 1.3.2 declares no `xs:any` anywhere, and its hooks are empty named groups (`ItemDefElementExtension` and friends) that only a **redefining** site schema can fill — so an extension-bearing document is invalid against vanilla ODM wherever the extension sits, and CLARA publishes that wrapper schema alongside the format — `tools/odm_schema/clara_odm_ext.xsd`, filling the six hooks this section writes into (REQ-ODM-055). Readers that do not validate, which is what partners run, ignore the namespace exactly as intended either way. Only these elements exist:
 
 | Element | Where | Attributes / content | Carries |
 |---|---|---|---|
 | `clara:Project` | `Study` | `organization`, `piName`, `piEmail`, `dmName`, `dmEmail`, `rekNumber`, `rekStartDate`, `rekEndDate`, `startDate`, `endDate`, `recordNaming` | §3.1 |
-| `clara:Event` | each `StudyEventDef` | `armNum`, `eventName`, `period`, `safeRegionStart`, `safeRegionEnd`, `oidSource` (the unsanitized name when the OID was rewritten, O-1) | §3.2 |
+| `clara:Event` | each `StudyEventDef` | `armNum`, `eventName`, `period`, `safeRegionStart`, `safeRegionEnd`, `oidSource` (the unsanitized name when the OID was rewritten, O-1), `repeatingForms` (form OIDs repeating at this event — 1.3's only home for the per-pair flag, REQ-ODM-029) | §3.2 |
 | `clara:Arm` | `MetaDataVersion` | `armNum`, `name`, `position` | arms that have no events of their own |
 | `clara:Form` | each `FormDef` | `isSurvey`, `branchingLogic`, `position` | GD-9, GD-13 |
 | `clara:Field` | each `ItemDef` | `fieldType`, `validationType`, `validationFormat`, `matrixGroup`, `sectionHeader`, `personalInformation`, `directIdentifier`, `exportApproved`, `annotation`, `branchingLogic`, `position` | REQ-DB-013/042/044, REQ-EXP-020/023, GD-13, DEV-DB-2 |
@@ -267,6 +278,7 @@ Dropped **with a warning**, never silently (REQ-ODM-053): instrument completion 
 - **Size.** The administration API accepts up to 32 MiB (`importBodyLimit`, REQ-API-144) and answers with the same 400 as the instrument import when exceeded. The browser upload is capped at 31 MiB so its multipart framing remains within the existing 32 MiB web and reverse-proxy request bounds; no `deploy/` change is needed.
 - **XML safety.** A `DOCTYPE` declaration or any entity declaration is refused before parsing (`dtd_forbidden`, REQ-ODM-013) — `encoding/xml` does not expand general entities, and refusing anyway keeps a future parser change from turning this into an expansion path. Element nesting is bounded (64) and the token count is bounded by the byte limit, so a deeply-nested or explosive document costs one request (REQ-ODM-014). Only `utf-8` is accepted; a BOM is tolerated and stripped (as the CSV reader does).
 - **Output.** All XML is written with `encoding/xml` token writers (`xml.Encoder`/`Flush`), never string concatenation, so no value can escape its element or forge an attribute regardless of what a record holds.
+- **Conformance is checked offline, in this repository.** CDISC's own schemas are vendored under `tools/odm_schema/` (byte-copies of the published ones; re-downloading them changes what CLARA claims conformance to and goes through review like any dependency bump), together with `tools/odm_schema/clara_odm_ext.xsd`, which redefines the extension hooks 1.3.2 leaves empty so a validator can read a CLARA document at all (REQ-ODM-055). `tools/odm_conformance.py` runs them over real exports — dumped by the Go suite when `CLARA_ODM_DUMP_DIR` is set — and `ci/run.sh` runs it as an advisory step: findings print as WARN, a machine without lxml skips with a notice. Nothing in the running program validates a schema (ASM-ODM-5).
 - **Imported text is untrusted** from the moment it is stored: labels, notes and choice text pass `validate.ApplyContentPolicy` and render escaped (REQ-ODM-062).
 - **Audit.** `odm_export` — `{surface:"api", sensitivity:<ladder name>, records:N, items:N, skipped_columns:N}`; `odm_import` — `{project_id, dry_run, arms, events, instruments, fields, records_added, records_failed, problems:N}`. Never a value, a label, or any part of the document body (REQ-AUD-014); refused calls write nothing (REQ-AUD-004). Both codes join the catalog of `Audit_Logging_Design.md` §3.5.
 - **No new configuration variables** — the inventory stays `System_Configuration_Design.md` §3 (REQ-CFG-003).
@@ -283,7 +295,7 @@ Dropped **with a warning**, never silently (REQ-ODM-053): instrument completion 
 | O-4 | A private extension namespace for what ODM cannot express, additive and ignorable, with "missing means CLARA's default" defined (REQ-ODM-051/052, DEV-ODM-3). |
 | O-5 | `SubjectKey` is the record identifier where the level delivers it; otherwise a per-file surrogate, never a hash of it (§4.1, REQ-ODM-031). |
 | O-6 | The exporter consumes the shared row stream (`RunExportRows`) instead of reading storage or re-running the ladder; the importer shares `validate` and `db` rather than restating their rules (REQ-ODM-021/042). |
-| O-7 | Round-trip fidelity is gated by a test — export, import into a fresh project, compare structure and values — rather than by validating against an XSD at runtime, which the pure-Go constraint rules out (ASM-ODM-5). |
+| O-7 | Round-trip fidelity is gated by a test — export, import into a fresh project, compare structure and values — rather than by validating against an XSD at runtime, which the pure-Go constraint rules out (ASM-ODM-5). A round trip alone cannot say whether either side is standard: CLARA exported 2.0's data nesting under `ODMVersion="1.3.2"`, imported it back, and the test passed because both ends were wrong together. Schema conformance is therefore gated separately and offline — CI validates an exported document against the published CDISC schema for its dialect plus CLARA's wrapper (REQ-ODM-055), costing the running program nothing. |
 | O-8 | `DOCTYPE` refused, depth bounded, everything written through `encoding/xml`, imported text run through the content policy (§9). |
 
 ### 10.2 Requirement traceability
@@ -292,8 +304,8 @@ Dropped **with a warning**, never silently (REQ-ODM-053): instrument completion 
 |---|---|
 | REQ-ODM-001…006 (surfaces, gating, UI metadata overrides) | §7, §9; web UI §5.2 and §6.4 in `User_Interface_Design.md` |
 | REQ-ODM-010…014 (dialect, refusal, limits) | §2, §9 |
-| REQ-ODM-020…026 (export content) | §3, §4, §6.1 |
+| REQ-ODM-020…029 (export content, per-dialect vocabulary, SAS names) | §3, §4, §6.1 |
 | REQ-ODM-030/031 (subject key) | §4.1 |
 | REQ-ODM-040…047 (import effects) | §6.2 |
-| REQ-ODM-050…054 (fidelity, losses) | §5, §8, §10.1 O-7 |
+| REQ-ODM-050…055 (fidelity, losses, published wrapper schema) | §5, §8, §10.1 O-7 |
 | REQ-ODM-060…063 (reporting, audit, privacy) | §7, §9 |
