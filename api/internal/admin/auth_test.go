@@ -118,10 +118,10 @@ func TestAuthLocalLoginMissingHash(t *testing.T) {
 // TestAuthUnknownEmail: no row is 401 account_not_found + audit (REQ-AUTH-006).
 func TestAuthUnknownEmail(t *testing.T) {
 	e := newEnv(t)
+	idp, provider := e.useIdP(t)
 
-	rec := e.do("POST", "/api/v1/auth/login", map[string]any{
-		"email": "ghost@example.org", "source": "oauth2",
-	}, nil)
+	rec := e.do("POST", "/api/v1/auth/login",
+		oauthLoginBody(t, idp, provider.Issuer, "ghost@example.org", nil), nil)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
 	}
@@ -163,15 +163,15 @@ func TestAuthDisabledAccount(t *testing.T) {
 // TestAuthExpiredAccount: a passed valid_until is 403 account_expired (GD-19).
 func TestAuthExpiredAccount(t *testing.T) {
 	e := newEnv(t)
+	idp, provider := e.useIdP(t)
 	u := e.mustUser("old@example.org")
 	if err := e.Store.SetUserValidUntil(context.Background(), u.ID,
 		sql.NullString{String: "2020-01-01", Valid: true}); err != nil {
 		t.Fatalf("SetUserValidUntil: %v", err)
 	}
 
-	rec := e.do("POST", "/api/v1/auth/login", map[string]any{
-		"email": "old@example.org", "source": "oauth2",
-	}, nil)
+	rec := e.do("POST", "/api/v1/auth/login",
+		oauthLoginBody(t, idp, provider.Issuer, "old@example.org", nil), nil)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", rec.Code)
 	}
@@ -189,11 +189,11 @@ func TestAuthExpiredAccount(t *testing.T) {
 // on the row and audits login_success (REQ-AUTH-005).
 func TestAuthOAuth2Login(t *testing.T) {
 	e := newEnv(t)
+	idp, provider := e.useIdP(t)
 	u := e.mustUser("sso@example.org")
 
-	rec := e.do("POST", "/api/v1/auth/login", map[string]any{
-		"email": "sso@example.org", "source": "oauth2", "provider": "https://idp.example.org",
-	}, nil)
+	rec := e.do("POST", "/api/v1/auth/login",
+		oauthLoginBody(t, idp, provider.Issuer, "sso@example.org", nil), nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -223,11 +223,11 @@ func TestAuthOAuth2Login(t *testing.T) {
 // handler, so mutating it before the request configures promotion.
 func TestAuthBootstrapPromotion(t *testing.T) {
 	e := newEnv(t)
+	idp, provider := e.useIdP(t)
 	e.Cfg.AdminBootstrapEmail = "root@example.org"
 
-	rec := e.do("POST", "/api/v1/auth/login", map[string]any{
-		"email": "root@example.org", "source": "oauth2",
-	}, nil)
+	rec := e.do("POST", "/api/v1/auth/login",
+		oauthLoginBody(t, idp, provider.Issuer, "root@example.org", nil), nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -254,15 +254,15 @@ func TestAuthBootstrapPromotion(t *testing.T) {
 // the deliberate disable sticks.
 func TestAuthBootstrapDisabledStaysDisabled(t *testing.T) {
 	e := newEnv(t)
+	idp, provider := e.useIdP(t)
 	e.Cfg.AdminBootstrapEmail = "root@example.org"
 	u := &db.User{Email: "root@example.org", DisplayName: "Root", Enabled: false}
 	if _, err := e.Store.CreateUser(context.Background(), u); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
 
-	rec := e.do("POST", "/api/v1/auth/login", map[string]any{
-		"email": "root@example.org", "source": "oauth2",
-	}, nil)
+	rec := e.do("POST", "/api/v1/auth/login",
+		oauthLoginBody(t, idp, provider.Issuer, "root@example.org", nil), nil)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403 account_disabled", rec.Code)
 	}
@@ -281,13 +281,13 @@ func TestAuthBootstrapDisabledStaysDisabled(t *testing.T) {
 // other enabled admin even an oauth2 login recovers administration.
 func TestAuthBootstrapNoRePromotion(t *testing.T) {
 	e := newEnv(t)
+	idp, provider := e.useIdP(t)
 	e.Cfg.AdminBootstrapEmail = "root@example.org"
 	e.mustAdmin("other@example.org") // administration exists independently
 	mustLocalUser(t, e, "root@example.org", "correct horse battery staple")
 
-	rec := e.do("POST", "/api/v1/auth/login", map[string]any{
-		"email": "root@example.org", "source": "oauth2",
-	}, nil)
+	rec := e.do("POST", "/api/v1/auth/login",
+		oauthLoginBody(t, idp, provider.Issuer, "root@example.org", nil), nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("oauth2 login: %d %s", rec.Code, rec.Body.String())
 	}
@@ -311,14 +311,14 @@ func TestAuthBootstrapNoRePromotion(t *testing.T) {
 
 	// No other enabled administrator: the external-IdP login promotes again.
 	recovery := newEnv(t)
+	ridp, rprovider := recovery.useIdP(t)
 	recovery.Cfg.AdminBootstrapEmail = "root@example.org"
 	if _, err := recovery.Store.CreateUser(context.Background(),
 		&db.User{Email: "root@example.org", DisplayName: "Root", Enabled: true}); err != nil {
 		t.Fatalf("CreateUser: %v", err)
 	}
-	rec = recovery.do("POST", "/api/v1/auth/login", map[string]any{
-		"email": "root@example.org", "source": "oauth2",
-	}, nil)
+	rec = recovery.do("POST", "/api/v1/auth/login",
+		oauthLoginBody(t, ridp, rprovider.Issuer, "root@example.org", nil), nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("recovery login: %d %s", rec.Code, rec.Body.String())
 	}

@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"database/sql"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -49,6 +50,13 @@ type loginRequest struct {
 	SourceName  string            `json:"source_name"`
 	Attempts    map[string]string `json:"attempts"`
 	FirstFactor string            `json:"first_factor"`
+	// Assertion is the provider's signed ID token on the `oauth2` leg, and
+	// AssertionNonce the nonce PHP generated alongside `state` and the PKCE verifier
+	// (Sequence J, REQ-AUTH-076/079, DEV-AUTH-18). The nonce is forwarded because only
+	// that browser's session knows it; the token is what the API verifies instead of
+	// taking PHP's word for. Both are unused on the local and LDAP legs.
+	Assertion      string `json:"assertion"`
+	AssertionNonce string `json:"assertion_nonce"`
 }
 
 // login implements POST /api/v1/auth/login with the processing order of
@@ -80,10 +88,68 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, err := h.Store.GetUserByEmail(ctx, body.Email)
-	if err != nil {
-		errInternal(w)
-		return
+	// Sequence J (REQ-AUTH-076, DEV-AUTH-18): on the oauth2 leg the provider's own
+	// signature is satisfied first. The order is the point — no user row is read, no
+	// active check runs and no session material is issued on an unproven assertion,
+	// which is what "PHP vouches for it" used to mean (finding F8).
+	var assertion *verifiedAssertion
+	if body.Source == "oauth2" {
+		a, af := h.verifyAssertion(ctx, body.Provider, body.Assertion, body.AssertionNonce)
+		if af != nil {
+			h.loginFailureExtra(ctx, &body, af.reason, af.observed.auditDetails())
+			APIError(w, af.status, af.reason, af.message)
+			return
+		}
+		assertion = a
+	}
+
+	// The address a provider login is judged by is the one its assertion verified, not
+	// the string that arrived beside it. DEV-AUTH-15 narrowed bootstrap promotion
+	// precisely because an IdP-controlled mail attribute could name the administrator,
+	// and re-opening that through a body field would be a poor way to spend a signature.
+	bootstrapEmail := body.Email
+	if assertion != nil {
+		bootstrapEmail = assertion.Email
+	}
+
+	// Step 8 (REQ-AUTH-080): the account is the one this provider subject is bound to;
+	// only when no such binding exists does the address get consulted. Preferring the
+	// binding over the address is what stops a mail attribute edited or reassigned at
+	// the identity provider from moving an account into different hands.
+	var (
+		u             *db.User
+		resolvedBySub bool
+	)
+	if assertion != nil {
+		link, err := h.Store.GetProviderLinkBySubject(ctx, assertion.Issuer, assertion.Subject)
+		if err != nil {
+			errInternal(w)
+			return
+		}
+		if link != nil {
+			u, err = h.Store.GetUser(ctx, link.UserID)
+			if err != nil {
+				errInternal(w)
+				return
+			}
+			if u == nil {
+				// The binding names an account that no longer exists. Falling back to the
+				// address would give this provider identity to whoever holds the mailbox
+				// now, so it fails closed and stays an administrator's decision.
+				h.loginFailureExtra(ctx, &body, "account_not_found", assertion.auditDetails())
+				APIError(w, http.StatusUnauthorized, "account_not_found", "no account for this identity")
+				return
+			}
+			resolvedBySub = true
+		}
+	}
+	if !resolvedBySub {
+		var err error
+		u, err = h.Store.GetUserByEmail(ctx, body.Email)
+		if err != nil {
+			errInternal(w)
+			return
+		}
 	}
 
 	// A call carrying attempts is the record of a *failed* named-source
@@ -131,29 +197,51 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 			APIError(w, http.StatusUnauthorized, "bad_password", "invalid email or password")
 			return
 		}
-	} else if u == nil && !h.isBootstrapEmail(body.Email) {
+	} else if u == nil && !h.isBootstrapEmail(bootstrapEmail) {
 		h.loginFailure(ctx, &body, "account_not_found")
 		APIError(w, http.StatusUnauthorized, "account_not_found", "no account for this email")
 		return
+	}
+
+	// A binding for a different subject on the account the address names is two
+	// identities claiming one account. REQ-AUTH-080 refuses to guess which one a
+	// directory edit meant: not a silent rebind, and not a silent lockout of whoever
+	// was there first — an audit entry an administrator resolves.
+	if assertion != nil && !resolvedBySub && u != nil {
+		links, err := h.Store.ListProviderLinksByUser(ctx, u.ID)
+		if err != nil {
+			errInternal(w)
+			return
+		}
+		for _, l := range links {
+			if l.Issuer == assertion.Issuer && l.Subject != assertion.Subject {
+				h.loginFailureExtra(ctx, &body, "subject_conflict", assertion.auditDetails())
+				APIError(w, http.StatusForbidden, "subject_conflict",
+					"this account is already bound to a different identity at that provider")
+				return
+			}
+		}
 	}
 
 	// Step 2 (REQ-AUTH-007, DEV-AUTH-15): bootstrap promotion, narrowed — a
 	// login creates the row only in the first-installation case, never
 	// re-enables a disabled account, and promotes an existing enabled row only
 	// for a local login or while no other enabled administrator exists. The
-	// startup ensure (cmd/server) stays the operator's setup action.
-	if h.isBootstrapEmail(body.Email) {
+	// startup ensure (cmd/server) stays the operator's setup path. A provider
+	// login whose subject is already bound to an account is not a first
+	// installation for that person, whatever address it names (REQ-AUTH-080).
+	if h.isBootstrapEmail(bootstrapEmail) && !resolvedBySub {
 		enabledAdmins, err := h.Store.CountEnabledAdmins(ctx)
 		if err != nil {
 			errInternal(w)
 			return
 		}
 		promote := body.Source == "local" || enabledAdmins == 0
-		if _, err := h.Store.EnsureBootstrapForLogin(ctx, body.Email, "Administrator", promote); err != nil {
+		if _, err := h.Store.EnsureBootstrapForLogin(ctx, bootstrapEmail, "Administrator", promote); err != nil {
 			errInternal(w)
 			return
 		}
-		if u, err = h.Store.GetUserByEmail(ctx, body.Email); err != nil || u == nil {
+		if u, err = h.Store.GetUserByEmail(ctx, bootstrapEmail); err != nil || u == nil {
 			errInternal(w)
 			return
 		}
@@ -198,6 +286,18 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		errInternal(w)
 		return
 	}
+	if assertion != nil {
+		// First verified login for this (iss, sub): record the binding, so the next one
+		// resolves by subject and an address edited at the provider can no longer move
+		// the account (REQ-AUTH-080). It is idempotent — two concurrent logins of one
+		// person write one row. A failure here does not take back a login the assertion
+		// already satisfied; the binding is retried on the next sign-in, so it is logged
+		// and the request goes through.
+		if err := h.Store.EnsureProviderLink(ctx, assertion.Issuer, assertion.Subject, u.ID, now); err != nil {
+			slog.Error("provider subject link not recorded",
+				"issuer", assertion.Issuer, "user_id", u.ID, "err", err)
+		}
+	}
 	u.LastLoginAt = sql.NullString{String: now.Format("2006-01-02 15:04:05"), Valid: true}
 	u.AuthSource = body.Source
 	details := map[string]any{"source": body.Source, "display_name": u.DisplayName}
@@ -209,6 +309,14 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	}
 	if mfaFactor != "" {
 		details["mfa"] = mfaFactor // totp | email | recovery (Audit_Logging_Design.md §3.1)
+	}
+	if assertion != nil {
+		// REQ-AUTH-084: the issuer, the provider subject, the assurance claims seen and
+		// whether the address was verified — and no token, signature or other claim
+		// material beside it (REQ-AUTH-036).
+		for k, v := range assertion.auditDetails() {
+			details[k] = v
+		}
 	}
 	if err := h.Audit.Insert(ctx, audit.Entry{
 		EventType: audit.LoginSuccess, Source: audit.SourceUI,
@@ -343,10 +451,33 @@ func (h *Handler) verifyFailure(ctx context.Context, email, reason string) {
 // when no source could be reached (Audit_Logging_Design.md §3.1, DEV-AUD-5).
 // Account-state rejections keep their specific reason (REQ-AUTH-065).
 func (h *Handler) loginFailure(ctx context.Context, body *loginRequest, reason string) {
+	h.loginFailureExtra(ctx, body, reason, nil)
+}
+
+// providerSideReasons are refusals that say something about the installation or the
+// identity provider rather than about the person trying to sign in: an unreachable
+// provider, a discovery document whose issuer disagrees with the configured one, an
+// issuer nobody configured. None of them spends the address's brute-force budget
+// (REQ-AUTH-035) — an outage at the IdP must not lock every one of its users out of
+// CLARA on top of locking them out of everything else.
+var providerSideReasons = map[string]bool{
+	"rate_limited":         true,
+	"first_factor_expired": true,
+	reasonProviderUnavail:  true,
+	reasonIssuerMismatch:   true,
+	reasonUnknownProvider:  true,
+}
+
+// loginFailureExtra records a refused login with details beyond the standard set.
+// `extra` carries what Sequence J established when it has established anything —
+// issuer, subject, assurance claims observed (REQ-AUTH-084) — and never token
+// material, which is why the assertion type does not hold any to begin with
+// (REQ-AUTH-036).
+func (h *Handler) loginFailureExtra(ctx context.Context, body *loginRequest, reason string, extra map[string]any) {
 	// The lockout rejection must not extend itself, and neither does a stale
 	// first-factor handle: taking a minute over a code is not a credential
 	// attempt, and it must not spend the address's lockout budget (REQ-AUTH-035).
-	if reason != "rate_limited" && reason != "first_factor_expired" {
+	if !providerSideReasons[reason] {
 		h.lockouts.failure(body.Email, time.Now())
 	}
 	if len(body.Attempts) > 0 {
@@ -366,6 +497,9 @@ func (h *Handler) loginFailure(ctx context.Context, body *loginRequest, reason s
 	}
 	if len(body.Attempts) > 0 {
 		details["attempts"] = body.Attempts
+	}
+	for k, v := range extra {
+		details[k] = v
 	}
 	_ = h.Audit.Insert(ctx, audit.Entry{
 		EventType: audit.LoginFailure, Source: audit.SourceUI,

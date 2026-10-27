@@ -552,3 +552,121 @@ func TestLoadReadsDotEnv(t *testing.T) {
 		t.Errorf("APIAddr = %q, want 9.9.9.9:9999 (read from .env)", cfg.APIAddr)
 	}
 }
+
+// TestLoadAssertionDefaults covers REQ-CFG-035's defaults: a provider configured only
+// with issuer/client id/secret gets the strict reading of every assertion setting, and
+// each default is what Sequence J needs rather than what is convenient to parse.
+func TestLoadAssertionDefaults(t *testing.T) {
+	clearAuthEnv(t)
+	t.Setenv("ADMIN_BOOTSTRAP_EMAIL", "admin@example.org")
+	t.Setenv("OAUTH2_1_ISSUER", "https://idp.example.org")
+	t.Setenv("OAUTH2_1_CLIENT_ID", "csms")
+	t.Setenv("OAUTH2_1_CLIENT_SECRET", "s3cret")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	if len(cfg.OAuth2) != 1 {
+		t.Fatalf("OAuth2 providers = %d, want 1", len(cfg.OAuth2))
+	}
+	p := cfg.OAuth2[0]
+	if p.SubjectAttr != "sub" {
+		t.Errorf("SubjectAttr = %q, want sub (REQ-AUTH-080)", p.SubjectAttr)
+	}
+	if p.AllowUnverifiedEmail {
+		t.Error("AllowUnverifiedEmail = true, want false: an unset setting must not drop the address check (REQ-AUTH-078)")
+	}
+	if p.IDTokenAlg != "RS256" {
+		t.Errorf("IDTokenAlg = %q, want RS256 (REQ-AUTH-077)", p.IDTokenAlg)
+	}
+	if p.NonceRequired {
+		t.Error("NonceRequired = true, want false until the provider is observed echoing the claim (REQ-AUTH-079)")
+	}
+	if len(p.MinACR) != 0 {
+		t.Errorf("MinACR = %v, want empty (no assurance gate, REQ-AUTH-081)", p.MinACR)
+	}
+	if cfg.OAuthJWKSTTLSec != 3600 {
+		t.Errorf("OAuthJWKSTTLSec = %d, want 3600", cfg.OAuthJWKSTTLSec)
+	}
+}
+
+// TestLoadAssertionSettings covers the non-default side of REQ-CFG-035.
+func TestLoadAssertionSettings(t *testing.T) {
+	clearAuthEnv(t)
+	t.Setenv("ADMIN_BOOTSTRAP_EMAIL", "admin@example.org")
+	t.Setenv("OAUTH2_1_ISSUER", "https://idp.example.org")
+	t.Setenv("OAUTH2_1_CLIENT_ID", "csms")
+	t.Setenv("OAUTH2_1_CLIENT_SECRET", "s3cret")
+	t.Setenv("OAUTH2_1_SUBJECT_ATTR", "persistent_id")
+	t.Setenv("OAUTH2_1_REQUIRE_EMAIL_VERIFIED", "0")
+	t.Setenv("OAUTH2_1_MIN_ACR", "urn:clara:mfa, urn:eidas:large ")
+	t.Setenv("OAUTH2_1_NONCE_REQUIRED", "1")
+	t.Setenv("OAUTH2_1_ID_TOKEN_ALG", "es256")
+	t.Setenv("OAUTH2_JWKS_TTL", "600")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	p := cfg.OAuth2[0]
+	if p.SubjectAttr != "persistent_id" {
+		t.Errorf("SubjectAttr = %q, want persistent_id", p.SubjectAttr)
+	}
+	if !p.AllowUnverifiedEmail {
+		t.Error("AllowUnverifiedEmail = false, want true for REQUIRE_EMAIL_VERIFIED=0")
+	}
+	if len(p.MinACR) != 2 || p.MinACR[0] != "urn:clara:mfa" || p.MinACR[1] != "urn:eidas:large" {
+		t.Errorf("MinACR = %v, want [urn:clara:mfa urn:eidas:large] (trimmed)", p.MinACR)
+	}
+	if !p.NonceRequired {
+		t.Error("NonceRequired = false, want true")
+	}
+	if p.IDTokenAlg != "ES256" {
+		t.Errorf("IDTokenAlg = %q, want the canonical ES256", p.IDTokenAlg)
+	}
+	if cfg.OAuthJWKSTTLSec != 600 {
+		t.Errorf("OAuthJWKSTTLSec = %d, want 600", cfg.OAuthJWKSTTLSec)
+	}
+}
+
+// TestLoadRejectsUnverifiableAlgorithms is REQ-AUTH-077's startup rule: the values that
+// would make "verify the signature" a no-op cannot be configured at all, so a typo in
+// the environment fails at startup instead of opening the login path.
+func TestLoadRejectsUnverifiableAlgorithms(t *testing.T) {
+	for _, alg := range []string{"none", "None", "HS256", "HS384", "HS512", "oct", ""} {
+		t.Run("alg="+alg, func(t *testing.T) {
+			clearAuthEnv(t)
+			t.Setenv("ADMIN_BOOTSTRAP_EMAIL", "admin@example.org")
+			t.Setenv("OAUTH2_1_ISSUER", "https://idp.example.org")
+			t.Setenv("OAUTH2_1_CLIENT_ID", "csms")
+			t.Setenv("OAUTH2_1_CLIENT_SECRET", "s3cret")
+			if alg == "" {
+				// An empty value falls back to the default rather than being rejected,
+				// so this case is only meaningful when a value is actually set.
+				t.Skip("empty means unset; covered by the defaults test")
+			}
+			t.Setenv("OAUTH2_1_ID_TOKEN_ALG", alg)
+			if _, err := Load(); err == nil {
+				t.Errorf("Load() succeeded for OAUTH2_1_ID_TOKEN_ALG=%q, want rejection (REQ-AUTH-077)", alg)
+			}
+		})
+	}
+}
+
+// TestLoadRejectsJWKSTTLBelowOne keeps a mistyped "0" from meaning "never refetch keys".
+func TestLoadRejectsJWKSTTLBelowOne(t *testing.T) {
+	for _, raw := range []string{"0", "-1", "abc", "1h"} {
+		t.Run("ttl="+raw, func(t *testing.T) {
+			clearAuthEnv(t)
+			t.Setenv("ADMIN_BOOTSTRAP_EMAIL", "admin@example.org")
+			t.Setenv("OAUTH2_1_ISSUER", "https://idp.example.org")
+			t.Setenv("OAUTH2_1_CLIENT_ID", "csms")
+			t.Setenv("OAUTH2_1_CLIENT_SECRET", "s3cret")
+			t.Setenv("OAUTH2_JWKS_TTL", raw)
+			if _, err := Load(); err == nil {
+				t.Errorf("Load() succeeded for OAUTH2_JWKS_TTL=%q, want rejection (REQ-CFG-035)", raw)
+			}
+		})
+	}
+}

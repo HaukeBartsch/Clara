@@ -37,6 +37,37 @@ type OAuth2Provider struct {
 	RedirectURI  string
 	EmailAttr    string
 	Names        []string // OAUTH2_N_NAMES — login-page display names (REQ-CFG-032)
+
+	// Sequence J assertion settings (REQ-CFG-035, DEV-AUTH-18). These configure
+	// what the API requires of a provider's ID token — the verification itself
+	// lives in admin/assertion.go. They are deliberately not read from the
+	// provider's own metadata: an IdP advertising `none` or an HMAC algorithm
+	// must not be able to describe its way into being believed (REQ-AUTH-077).
+	SubjectAttr string // OAUTH2_N_SUBJECT_ATTR, default `sub`
+	// AllowUnverifiedEmail is the inverse of OAUTH2_N_REQUIRE_EMAIL_VERIFIED on purpose:
+	// a security check must not be switched off by a zero value. Storing it as
+	// "require…" would make an unset or hand-built provider accept an unverified
+	// address, which is finding F10; stored this way, silence means strict.
+	AllowUnverifiedEmail bool     // OAUTH2_N_REQUIRE_EMAIL_VERIFIED=0 (REQ-AUTH-078)
+	MinACR               []string // OAUTH2_N_MIN_ACR; empty means no assurance gate (REQ-AUTH-081)
+	NonceRequired        bool     // OAUTH2_N_NONCE_REQUIRED, default 0 until the provider is observed echoing it (REQ-AUTH-079)
+	IDTokenAlg           string   // OAUTH2_N_ID_TOKEN_ALG, default RS256; asymmetric set only (REQ-AUTH-077)
+}
+
+// MinACRSet reports whether an assurance gate is configured for this provider.
+func (p OAuth2Provider) AssuranceGate() bool { return len(p.MinACR) > 0 }
+
+// asymmetricAlgs is the set OAUTH2_N_ID_TOKEN_ALG accepts, keyed by its
+// upper-cased spelling and mapped to the canonical JOSE name go-oidc expects.
+// `none` and the HMAC family (HS256/384/512) are excluded by construction, so a
+// typo in the environment cannot configure an algorithm that verifies nothing —
+// the point of REQ-AUTH-077's startup rule, and the reason the list is
+// asymmetric-only rather than "any JOSE algorithm the library knows".
+var asymmetricAlgs = map[string]string{
+	"RS256": "RS256", "RS384": "RS384", "RS512": "RS512",
+	"PS256": "PS256", "PS384": "PS384", "PS512": "PS512",
+	"ES256": "ES256", "ES384": "ES384", "ES512": "ES512",
+	"EDDSA": "EdDSA",
 }
 
 // LDAPServer is one configured server. Servers no longer carry an evaluation
@@ -81,6 +112,10 @@ type Config struct {
 	// §3.4/§3.5 authentication
 	OAuth2 []OAuth2Provider
 	LDAP   []LDAPServer
+	// OAuthJWKSTTLSec bounds how long a fetched provider key set may be reused
+	// before a scheduled refetch (OAUTH2_JWKS_TTL, REQ-CFG-035). An unknown `kid`
+	// still triggers an immediate refresh on its own (REQ-AUTH-077).
+	OAuthJWKSTTLSec int
 
 	// §3.6 anonymization
 	AnonSalt         string
@@ -272,6 +307,22 @@ func Load() (*Config, error) {
 	}
 	cfg.LocalLoginNames = names
 
+	// OAUTH2_JWKS_TTL (REQ-CFG-035) bounds how long a fetched provider key set may
+	// be reused. A non-positive value is rejected rather than defaulted: "0" reads
+	// like "no cache" and means "never refetch", which is the opposite of what an
+	// operator typing it intends. An unknown `kid` refreshes immediately whatever
+	// this says (REQ-AUTH-077).
+	cfg.OAuthJWKSTTLSec = 3600
+	if raw := get("OAUTH2_JWKS_TTL"); raw != "" {
+		ttl, err := strconv.Atoi(raw)
+		switch {
+		case err != nil || ttl < 1:
+			fail("OAUTH2_JWKS_TTL: %q is not a positive number of seconds (REQ-CFG-035)", raw)
+		default:
+			cfg.OAuthJWKSTTLSec = ttl
+		}
+	}
+
 	// §3.4 OAuth2 providers 1–3
 	for n := 1; n <= 3; n++ {
 		issuer := get(fmt.Sprintf("OAUTH2_%d_ISSUER", n))
@@ -294,6 +345,35 @@ func Load() (*Config, error) {
 			fail("OAUTH2_%d_NAMES: %q contains an entry that is empty after trimming (REQ-CFG-032)", n, rawNames)
 		}
 		p.Names = names
+
+		// Sequence J: what this provider's assertion has to satisfy (REQ-CFG-035).
+		// The signing algorithm is validated rather than defaulted-on-error — an
+		// installation that asks for PS256 and quietly accepts whatever the token
+		// header names instead would have no algorithm pin at all (REQ-AUTH-077).
+		p.SubjectAttr = strings.TrimSpace(getOr(get, fmt.Sprintf("OAUTH2_%d_SUBJECT_ATTR", n), "sub"))
+		if p.SubjectAttr == "" {
+			fail("OAUTH2_%d_SUBJECT_ATTR: empty — name the claim carrying the stable provider subject, or unset it for `sub` (REQ-CFG-035)", n)
+			p.SubjectAttr = "sub"
+		}
+		p.AllowUnverifiedEmail = !getBool(get, fmt.Sprintf("OAUTH2_%d_REQUIRE_EMAIL_VERIFIED", n), true) // inverted: see the field comment
+		if raw := get(fmt.Sprintf("OAUTH2_%d_MIN_ACR", n)); raw != "" {
+			for _, v := range strings.Split(raw, ",") {
+				if t := strings.TrimSpace(v); t != "" {
+					p.MinACR = append(p.MinACR, t)
+				}
+			}
+		}
+		// Absent means "not yet observed", not "satisfied": REQ-AUTH-079 reports an
+		// unset value as unknown rather than treating a missing nonce as harmless.
+		p.NonceRequired = getBool(get, fmt.Sprintf("OAUTH2_%d_NONCE_REQUIRED", n), false)
+		rawAlg := strings.TrimSpace(getOr(get, fmt.Sprintf("OAUTH2_%d_ID_TOKEN_ALG", n), "RS256"))
+		alg, ok := asymmetricAlgs[strings.ToUpper(rawAlg)]
+		if !ok {
+			fail("OAUTH2_%d_ID_TOKEN_ALG: %q is not an asymmetric signing algorithm — `none` and the HMAC family cannot be configured (REQ-AUTH-077)", n, rawAlg)
+			alg = "RS256"
+		}
+		p.IDTokenAlg = alg
+
 		cfg.OAuth2 = append(cfg.OAuth2, p)
 	}
 
@@ -549,6 +629,7 @@ func (c *Config) Dump() []string {
 		"TRUSTED_PROXY_CIDRS="+c.trustedProxyRaw+" (thresholds in system_settings)",
 		"AUTH_INACTIVITY_LIMIT_DAYS="+itoa(c.AuthInactivityLimitDays)+" (0 = off)",
 		"AUTH_PASSWORD_TOKEN_TTL_DAYS="+itoa(c.AuthPasswordTokenTTLDays),
+		"OAUTH2_JWKS_TTL="+itoa(c.OAuthJWKSTTLSec)+" (bound on provider key reuse, REQ-CFG-035)",
 		"APP_TIMEZONE="+c.AppTimezone,
 		"AUTH_REQUIRE_2FA="+boolStr(c.AuthRequire2FA),
 		"TOTP_ISSUER="+c.TotpIssuer,
@@ -568,6 +649,14 @@ func (c *Config) Dump() []string {
 			fmt.Sprintf("OAUTH2_%d_CLIENT_SECRET=%s", p.N, m),
 			fmt.Sprintf("OAUTH2_%d_EMAIL_ATTR=%s", p.N, p.EmailAttr),
 			fmt.Sprintf("OAUTH2_%d_NAMES=%s", p.N, namesStr(p.Names)),
+			// Sequence J assertion settings (REQ-CFG-035): what a provider's ID token
+			// must satisfy here, so an operator can read the gate off the report
+			// rather than infer it from a code comment (REQ-AUTH-081).
+			fmt.Sprintf("OAUTH2_%d_SUBJECT_ATTR=%s (REQ-AUTH-080)", p.N, p.SubjectAttr),
+			fmt.Sprintf("OAUTH2_%d_REQUIRE_EMAIL_VERIFIED=%s (REQ-AUTH-078)", p.N, boolStr(!p.AllowUnverifiedEmail)),
+			fmt.Sprintf("OAUTH2_%d_ID_TOKEN_ALG=%s (pinned, REQ-AUTH-077)", p.N, p.IDTokenAlg),
+			fmt.Sprintf("OAUTH2_%d_NONCE_REQUIRED=%s (REQ-AUTH-079; 0 means unobserved, not satisfied)", p.N, boolStr(p.NonceRequired)),
+			fmt.Sprintf("OAUTH2_%d_MIN_ACR=%s (empty = no assurance gate, REQ-AUTH-081)", p.N, none(strings.Join(p.MinACR, ", "))),
 		)
 	}
 	for _, s := range c.LDAP {

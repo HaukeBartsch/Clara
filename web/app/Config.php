@@ -44,6 +44,25 @@ final class Config
      */
     public const MAX_MONITORING_PERIOD_MINUTES = 1440;
 
+    /**
+     * The signing algorithms `OAUTH2_N_ID_TOKEN_ALG` may name (REQ-AUTH-077, REQ-CFG-035) —
+     * the asymmetric set only, keyed by upper-cased spelling and valued by the canonical name
+     * verification pins. `none` and the HMAC family are absent because they must not be
+     * configurable even by mistake: identity providers advertise both in their metadata, and an
+     * algorithm whose key the asserting side could also obtain is not a verification. The same
+     * set `config.asymmetricAlgs` fixes on the API side, so one `.env` cannot satisfy one
+     * component and refuse the other.
+     */
+    public const ID_TOKEN_ALGORITHMS = [
+        'RS256' => 'RS256', 'RS384' => 'RS384', 'RS512' => 'RS512',
+        'PS256' => 'PS256', 'PS384' => 'PS384', 'PS512' => 'PS512',
+        'ES256' => 'ES256', 'ES384' => 'ES384', 'ES512' => 'ES512',
+        'EDDSA' => 'EdDSA',
+    ];
+
+    /** `OAUTH2_JWKS_TTL` default (REQ-CFG-035), in seconds. */
+    public const DEFAULT_JWKS_TTL_SECONDS = 3600;
+
     public string $appEnv = 'development';
 
     public bool $isDevelopment = true;
@@ -105,9 +124,22 @@ final class Config
      * the client credentials and the claim that names the user; the secret is a
      * secret — never logged, never rendered (REQ-CFG-021, REQ-AUTH-036).
      *
-     * @var list<array{index: int, issuer: string, client_id: string, client_secret: string, redirect_uri: string, email_attr: string, names: list<string>}>
+     * The last five entries are what a provider's assertion has to satisfy (Sequence J,
+     * REQ-CFG-035): PHP does not verify the signature — the API does (REQ-AUTH-076) — but it
+     * sends the `nonce` whose absence `nonce_required` makes fatal, and every one of them is
+     * configuration the administrator has to be able to read back rather than infer
+     * (REQ-AUTH-081). Defaults match `config.OAuth2Provider` in the Go loader.
+     *
+     * @var list<array{index: int, issuer: string, client_id: string, client_secret: string, redirect_uri: string, email_attr: string, names: list<string>, subject_attr: string, require_email_verified: bool, min_acr: list<string>, nonce_required: bool, id_token_alg: string}>
      */
     public array $oauthProviders = [];
+
+    /**
+     * How long a fetched provider key set may be reused before a scheduled refetch
+     * (`OAUTH2_JWKS_TTL`, REQ-CFG-035). The API enforces it; the web layer reads it only to
+     * report the gate it configures, so an administrator sees one number for both components.
+     */
+    public int $oauthJwksTtl = self::DEFAULT_JWKS_TTL_SECONDS;
 
     /**
      * The LDAP servers configured for this installation (REQ-CFG-012). PHP binds
@@ -326,6 +358,20 @@ final class Config
             );
         } else {
             $c->monitoringPeriodMinutes = (int) $period;
+        }
+
+        // --- provider assertion gate (REQ-CFG-035) ---
+        // OAUTH2_JWKS_TTL bounds how long the API reuses a fetched provider key set. It is read
+        // here so the web layer can report the number it shares with the API; the API refuses the
+        // same bad values at its own startup, and `0` — which reads as "no cache" and would mean
+        // "never refetch" — is refused rather than defaulted (REQ-AUTH-077).
+        $jwksTtl = $get('OAUTH2_JWKS_TTL');
+        if ($jwksTtl !== '') {
+            if (preg_match('/^\d+$/', $jwksTtl) !== 1 || (int) $jwksTtl < 1) {
+                $errors[] = "OAUTH2_JWKS_TTL: '{$jwksTtl}' is not a positive number of seconds (REQ-CFG-035)";
+            } else {
+                $c->oauthJwksTtl = (int) $jwksTtl;
+            }
         }
 
         // --- authentication sources (REQ-CFG-032) ---

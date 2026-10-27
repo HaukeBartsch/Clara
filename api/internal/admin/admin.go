@@ -56,6 +56,11 @@ type Handler struct {
 	tfaSends   *sendLimiter    // per-account cap on emailed codes (in-memory)
 	resetSends *addressLimiter // per-address cap on reset requests (REQ-API-119)
 	lockouts   *authLockout    // Sequence E brute-force store (§2.5)
+
+	// assertions caches one provider verifier per issuer for Sequence J
+	// (REQ-AUTH-076…082): go-oidc's key set is meant to be long lived, so discovery
+	// and key fetching happen once per provider rather than once per sign-in.
+	assertions *providerVerifiers
 }
 
 // New builds the administration handler and registers every area's routes.
@@ -65,8 +70,11 @@ type Handler struct {
 // an empty blocked list.
 func New(store *db.Store, cfg *config.Config, aw *audit.Writer, reg *metrics.Registry, limiter *dataapi.RateLimiter) *Handler {
 	h := &Handler{Store: store, Cfg: cfg, Audit: aw, Mail: mailer.New(cfg), Metrics: reg, Limiter: limiter,
-		Data:     &dataapi.Handler{Store: store, Cfg: cfg, Audit: aw, Metrics: reg},
-		tfaSends: newSendLimiter(), resetSends: newAddressLimiter(), lockouts: newAuthLockout()}
+		Data:       &dataapi.Handler{Store: store, Cfg: cfg, Audit: aw, Metrics: reg},
+		tfaSends:   newSendLimiter(),
+		resetSends: newAddressLimiter(),
+		lockouts:   newAuthLockout(),
+		assertions: newProviderVerifiers()}
 	mux := http.NewServeMux()
 	h.registerAuth(mux)
 	h.registerTfa(mux)

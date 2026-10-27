@@ -301,12 +301,12 @@ func TestTFAEnrollmentMandated(t *testing.T) {
 // form logins only (GD-21).
 func TestTFAOAuth2Exempt(t *testing.T) {
 	e := newEnv(t)
+	idp, provider := e.useIdP(t)
 	e.mustUser("idp@example.org")
 	e.Cfg.AuthRequire2FA = false
 
-	rec := e.do("POST", "/api/v1/auth/login", map[string]any{
-		"email": "idp@example.org", "source": "oauth2", "provider": "1",
-	}, nil)
+	rec := e.do("POST", "/api/v1/auth/login",
+		oauthLoginBody(t, idp, provider.Issuer, "idp@example.org", nil), nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("oauth2 login: %d %s", rec.Code, rec.Body.String())
 	}
