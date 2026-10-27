@@ -6,8 +6,8 @@
 # stress_api.py against it and shuts the server down again. All arguments are
 # forwarded to stress_api.py, so scale can be tuned per run:
 #
-#   ./run_stress.sh                                   # full default scale
-#   ./run_stress.sh --projects 5 --max-events 10      # quick smoke run
+#   ./run_stress.sh                                   # default scale: 40 projects, complete records
+#   ./run_stress.sh --projects 5 --no-fill-all        # quick smoke run
 #
 # While the phases run, stress_api.py samples GET /api/v1/system/metrics every
 # 5 s (--metrics-interval, 0 switches it off) and reports every measure with its

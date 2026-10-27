@@ -33,10 +33,14 @@ Phases (timed individually):
              API (POST /api/ content=record action=import) as batches of
              data[i][…] rows. Values are generated per field type so every
              row passes validation (choice codes, integer/float grammar,
-             canonical dates). Numbering continues above the highest record
-             number each project already holds, so a repeat run only ever adds:
-             an identifier an earlier run used would otherwise update that
-             project's stored row instead of growing it.
+             canonical dates). Records are complete by default — every
+             instrument of their project in every record, every checkbox box
+             checked — and --no-fill-all switches back to the sparse mix of
+             1..4 sampled instruments with roughly half the boxes blank.
+             Numbering continues above the highest record number each project
+             already holds, so a repeat run only ever adds: an identifier an
+             earlier run used would otherwise update that project's stored row
+             instead of growing it.
 3. export  — export every project twice as CSV through the data API
              (content=record returnFormat=csv): once raw (choice codes) and
              once with rawOrLabel=label (choice labels), both streamed to
@@ -70,6 +74,9 @@ Usage (see run_stress.sh for a launcher that starts a throwaway server):
     python3 stress_api.py --base-url http://127.0.0.1:8099 \
         --service-token dev-internal-token \
         --email admin@example.org --password secret
+
+Default scale is 40 projects filled completely (--projects 40, --fill-all);
+pass --projects 5 --no-fill-all for a quick smoke run.
 """
 
 import argparse
@@ -633,10 +640,10 @@ def next_record_number(api, projects):
 
 def generate_rows(projects, cfg, rnd, first=1):
     """Compact row specs (record, form, event) for every project — the values
-    themselves are generated at send time. Each record fills 1..4 random
-    instruments, each at a random event, or every instrument of its project when
-    `--fill-all` asks for complete records. Numbering starts at `first`, above what
-    an earlier run left in these projects."""
+    themselves are generated at send time. By default each record fills every
+    instrument of its project (`--fill-all` is on); `--no-fill-all` instead
+    gives a record 1..4 random instruments, each at a random event. Numbering
+    starts at `first`, above what an earlier run left in these projects."""
     specs = []
     seq = first - 1
     for p in projects:
@@ -1056,7 +1063,7 @@ def main():
                     help="name projects as <prefix>01, <prefix>02, …")
     ap.add_argument("--status-file", default="",
                     help="atomically write phase progress for a supervising UI")
-    ap.add_argument("--projects", type=int, default=5)
+    ap.add_argument("--projects", type=int, default=40)
     ap.add_argument("--min-events", type=int, default=1)
     ap.add_argument("--max-events", type=int, default=200)
     ap.add_argument("--min-instruments", type=int, default=1)
@@ -1067,11 +1074,14 @@ def main():
                     help="upper bound of fields per instrument, transfer field included")
     ap.add_argument("--min-records", type=int, default=10)
     ap.add_argument("--max-records", type=int, default=60)
-    ap.add_argument("--fill-all", action="store_true",
+    ap.add_argument("--fill-all", action=argparse.BooleanOptionalAction, default=True,
                     help="complete records: every instrument of the project in every "
                          "record, and every checkbox box checked (the kinds that carry "
                          "no value — description, header, transfer, calculated — are "
-                         "still contributed by the dictionary, not by the row)")
+                         "still contributed by the dictionary, not by the row). "
+                         "--no-fill-all goes back to the sparse mix: 1..4 sampled "
+                         "instruments per record and roughly half the checkbox boxes "
+                         "left blank")
     ap.add_argument("--batch", type=int, default=25, help="rows per import call")
     ap.add_argument("--seed", type=int, default=20261001, help="0 = time-seeded")
     ap.add_argument("--metrics-interval", type=float, default=5.0,

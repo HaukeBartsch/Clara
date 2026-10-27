@@ -373,7 +373,7 @@ return [
     'admin.monitoring.window' => 'Waiting for the first sample…',
     'admin.monitoring.updated' => 'Updated {seconds} s ago.',
     'admin.monitoring.stress.title' => 'Stress Test',
-    'admin.monitoring.stress.description' => 'Creates StressTest01–StressTest05, builds up to 100 instruments and loads sample records. It runs in the background for about five minutes. A project that is already there is reused: starting the test again adds new records to what the first run set up instead of beginning from scratch. The projects and data are left in place when it finishes; remove them manually to reset the test.',
+    'admin.monitoring.stress.description' => 'Creates StressTest01–StressTest40, builds up to 100 instruments per project and loads sample records with every instrument of every record filled. It runs in the background for about twenty minutes. A project that is already there is reused: starting the test again adds new records to what the first run set up instead of beginning from scratch. The projects and data are left in place when it finishes; remove them manually to reset the test.',
     'admin.monitoring.stress.start' => 'Start Stress Test',
     'admin.monitoring.stress.started' => 'The stress test started in the background. Progress will appear here.',
     'admin.monitoring.stress.start_failed' => 'The stress test could not start. Check the web server log for details.',
