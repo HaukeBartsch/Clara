@@ -37,6 +37,21 @@ Element and attribute spellings below follow **CDISC ODM 1.3.2** (`ODM1-3-2-foun
 </ODM>
 ```
 
+The **2.0** dialect is not 1.3 under another namespace: it renamed, re-typed or removed much of what the sections below spell out, and CLARA writes each dialect the way **its own** schema defines it (REQ-ODM-015). What differs, and where each spelling lives:
+
+| 1.3 writes | 2.0 writes | why (§) |
+|---|---|---|
+| `Study/@OID` + `GlobalVariables/StudyName`, `StudyDescription`, `ProtocolName` | `Study/@OID,@StudyName,@ProtocolName` — the last two `use="required"` — plus optional `Study/Description`; **no `GlobalVariables`** | §3.1 |
+| `<TranslatedText xml:lang="en">` | `<TranslatedText xml:lang="en" Type="text/plain">` — 2.0 requires the media type and says a `text/plain` one must be present | §3.4, §3.5, §3.8 |
+| `FormDef` per instrument, referenced by `StudyEventDef/FormRef` | **no form element exists**: the instrument is a top-level `ItemGroupDef @Type="Form"`, its matrix groups are `@Type="Section"` referenced from it, and the event references them with `ItemGroupRef` (whose `@Mandatory` is required) | §3.2, §3.3 |
+| `Protocol/StudyEventRef/@OrderNumber` | **no `Protocol`** — 2.0 allows only `StudyEventGroupRef` there; events stand in their declaration order, arm on `@Category` plus `clara:Event` | §3.2 |
+| `ItemGroupDef/@Repeating="Yes"` | `@Repeating="Simple"` — the type 2.0 substituted is `No\|Simple\|Dynamic\|Static`, and `Yes` is not in it | §3.3 |
+| `@SASDatasetName`, `@SASFieldName` | `@DatasetName`; nothing at item level, where `@Name` carries the machine name | §3.3, REQ-ODM-028 |
+| `FormalExpression` text | `FormalExpression/Code` — and a `MethodDef` gains its now-mandatory `MethodSignature` child in both dialects' terms | §3.8 |
+| `ItemData/@Value="…"` | `<ItemData …><Value>…</Value></ItemData>` | §4 |
+
+Writing one dialect's shape under the other's `ODMVersion` fails that schema outright rather than degrading quietly: 2.0 refuses `GlobalVariables`, `FormDef`, `FormRef`, `Protocol/StudyEventRef`, `ItemGroupDef/@Repeating="Yes"`, the SAS attributes and `ItemData/@Value`, and demands `StudyName`, `ProtocolName`, `TranslatedText/@Type` and `MethodSignature`; 1.3.2 refuses what 2.0 invented. Two documents that share a shape and differ only in their root namespace — which is what this exporter first wrote — is not a two-dialect export but a broken one, and only the offline check of §10 (REQ-ODM-055) can see it, since CLARA's own importer agrees with its own exporter about any shape they both use (O-7).
+
 Rules:
 
 - **Attribute values.** `FileOID` = `CLARA-<project_id>-<UTC creation stamp>` (unique per download, not reused); `CreationDateTime` UTC with the `Z` suffix (GD-7); `FileType="Snapshot"` always (ASM-ODM-1); `ODMVersion="1.3.2"` in the v1.3 namespace or `"2.0"` in the v2.0 namespace; `SourceSystem="CLARA"`. No `Granularity`, `Archival` or `PriorFileOID` is written. The export choice defaults to 1.3; `odm_version=1.3|2.0` selects the namespace and matching envelope version. Import accepts both namespaces.
@@ -47,7 +62,7 @@ Rules:
   | Study | `CLARA-<project_id>` | — |
   | MetaDataVersion | `CLARA-<project_id>-MDV` | the project name |
   | event | `EVT_<unique_event_name>` | `unique_event_name` (GD-15) |
-  | instrument | `FRM_<instrument_name>` | `instrument_name` |
+  | instrument | 1.3: `FRM_<instrument_name>`; 2.0 has no separate OID — the instrument *is* its item group | `instrument_name` |
   | instrument's item group | `IG_<instrument_name>` | `instrument_name` |
   | matrix group | `IG_<matrix_group>` | `matrix_group` |
   | field | `IT_<field_name>` | `field_name` |
@@ -61,13 +76,13 @@ Rules:
 
 ## 3. Metadata Mapping (export direction, normative)
 
-Order inside `MetaDataVersion` follows the schema's sequence: `Protocol`, `StudyEventDef`*, `FormDef`*, `ItemGroupDef`*, `ItemDef`*, `CodeList`*, `MethodDef`*.
+Order inside `MetaDataVersion` follows the schema's sequence — 1.3.2: `Protocol`, `StudyEventDef`*, `FormDef`*, `ItemGroupDef`*, `ItemDef`*, `CodeList`*, `MethodDef`*; 2.0 the same minus `FormDef` (it declares none) and with no `Protocol`, which it does not use for events (§3.2).
 
 ### 3.1 Study and project metadata
 
 | CLARA (`projects`) | ODM |
 |---|---|
-| `project_name` | `GlobalVariables/StudyName`; also `MetaDataVersion/@Name` |
+| `project_name` | 1.3: `GlobalVariables/StudyName`; 2.0: `Study/@StudyName` with `@ProtocolName` repeated (REQ-ODM-015). Also `MetaDataVersion/@Name` in both dialects |
 | `organization`, `pi_name`, `dm_name` | `clara:Project` extension (§5) — ODM 1.3.2's `Protocol` carries no sponsor/investigator element, and inventing an `AdminData/UserRef` for a person would model a study user that does not exist |
 | `rek_number` | `clara:Project/@rekNumber` |
 | `rek_start_date`, `rek_end_date`, `start_date`, `end_date` | `clara:Project` attributes (dates as `YYYY-MM-DD`) |
@@ -81,30 +96,35 @@ CLARA's arm/event pair (REQ-DB-011, GD-15) has no arm element in ODM, so the arm
 | CLARA (`events`) | ODM |
 |---|---|
 | one event | `<StudyEventDef OID="EVT_<unique_event_name>" Name="<unique_event_name>" Repeating="No" Type="Scheduled" Category="Arm <arm_num> — <arm name>">` |
-| canonical event order (GD-15: `period`, then `position`) | `Protocol/StudyEventRef/@OrderNumber`, assigned by that ordering, with `Mandatory="No"` (CLARA does not mark a visit mandatory) |
+| canonical event order (GD-15: `period`, then `position`) | 1.3: `Protocol/StudyEventRef/@OrderNumber`, assigned by that ordering, with `Mandatory="No"` (CLARA does not mark a visit mandatory). 2.0: **no `Protocol` at all** — it allows only `StudyEventGroupRef` there, and a CLARA project has no event groups to define — so the order is the declaration order of the `StudyEventDef`s, which is that same ordering (REQ-ODM-015) |
 | `event_name` label, `arm_num`, `period`, `safe_region_start`, `safe_region_end` | `clara:Event` extension (§5) |
 
 `Type` is `Scheduled` for every CLARA event: ODM 1.3.2's enumeration is `Scheduled \| Unscheduled \| Common` and CLARA has no unscheduled-visit notion; a repeating *event* is not a thing here either, so `Repeating="No"` (an imported `Repeating="Yes"` or `Type="Unscheduled"` is accepted, converted to No/Scheduled, and warned as `event_flattened`).
 
-The instrument↔event mapping (`instrument_events`, REQ-DB-012) is the `FormRef` list of the event: `<StudyEventDef …><FormRef FormOID="FRM_<instrument>" Mandatory="No" OrderNumber="<position>"/></StudyEventDef>` — the association ODM itself defines. `@Mandatory` stays `No`: CLARA's required-ness lives on fields, not on a form being collected at an event.
+The instrument↔event mapping (`instrument_events`, REQ-DB-012) is the event's own reference list — spelled differently by each dialect, since 2.0 removed the form element it was made of (§3.3):
 
-A pair that repeats (REQ-DB-047) is marked where the dialect can carry it (REQ-ODM-029). **2.0** adds `Repeating="Yes"` to that `FormRef`. **1.3.2 cannot**: its `FormRefAttributeDefinition` is `FormOID` alone plus the shared `Mandatory`/`OrderNumber`, and a `Repeating` there fails validation — the attribute belongs to no 1.3 reference element, only to the definitions (`StudyEventDef`, `ItemGroupDef`). Since §3.3's group-level mark cannot say *which* of an instrument's events repeats, and REQ-ODM-050 requires the distinction to survive, a 1.3 document lists the event's repeating form OIDs in `clara:Event/@repeatingForms`. Import takes the most specific statement it finds — `FormRef/@Repeating`, then that extension attribute, then the group's own mark — so 2.0 files, CLARA 1.3 files and partner documents each resolve correctly.
+- **1.3** lists the mapped instruments: `<StudyEventDef …><FormRef FormOID="FRM_<instrument>" Mandatory="No" OrderNumber="<position>"/></StudyEventDef>`.
+- **2.0** lists the item groups their data holds: `<StudyEventDef …><ItemGroupRef ItemGroupOID="IG_<instrument>" Mandatory="No" OrderNumber="<n>"/><ItemGroupRef ItemGroupOID="IG_<matrix_group>" …/></StudyEventDef>` — one reference per group of every mapped instrument, in instrument order and with `@OrderNumber` unique among the event's siblings. It names the matrix groups beside the instrument's own because §4 nests their `ItemGroupData` there, flat under `StudyEventData`, rather than inside the instrument's group (REQ-ODM-015).
+
+`@Mandatory` stays `No` on every reference either way: CLARA's required-ness lives on fields, not on a form being collected at an event. Import reads `FormRef` where a document declares them and `ItemGroupRef` otherwise, keeping only the references that name an instrument (§6.2).
+
+A pair that repeats (REQ-DB-047) is marked in the extension, because **neither** dialect can carry it on the reference a pair is made of (REQ-ODM-029): 1.3.2's `FormRefAttributeDefinition` is `FormOID` alone plus the shared `Mandatory`/`OrderNumber`, and 2.0 has no `FormRef` at all while its `ItemGroupRef` carries no `Repeating` either — in both, a `Repeating` on a reference fails validation, the attribute belonging to the definitions (`StudyEventDef`, `ItemGroupDef`) alone. Since §3.3's group-level mark cannot say *which* of an instrument's events repeats, and REQ-ODM-050 requires the distinction to survive, a CLARA document lists the event's repeating instruments in `clara:Event/@repeatingForms` (the instrument's OID in this dialect: `FRM_…` under 1.3, `IG_…` under 2.0). Import takes the most specific statement it finds — a `FormRef/@Repeating` that carries one, which no CLARA document writes and a partner's 1.3 file may, then that extension attribute, then the group's own mark — so each kind of file resolves correctly.
 
 ### 3.3 Instruments and item groups
 
 | CLARA | ODM |
 |---|---|
-| instrument | `<FormDef OID="FRM_<name>" Name="<name>" Repeating="No">` with one `ItemGroupRef` to `IG_<name>` |
-| instrument's fields, in `position` order | `<ItemGroupDef OID="IG_<name>" Name="<name>" Repeating="No" SASDatasetName="<name>"…>` and one `ItemRef ItemOID="IT_<field>" Mandatory="Y\|N" OrderNumber="<position>"` per exportable field (REQ-DB-013). `@SASDatasetName` is written only when the instrument name satisfies ODM's `sasName` type (≤8 characters, `[A-Za-z_][A-Za-z0-9_]*`) and omitted otherwise — REQ-ODM-028 |
-| pair is repeating (`instrument_events.is_repeating`, REQ-DB-047) | `@Repeating="Yes"` on the **`ItemGroupRef`'s target** `ItemGroupDef`, and `@ItemGroupRepeatKey` on each data row (§4) — ODM marks the group repeating, not the form |
-| matrix group (`matrix_group`, REQ-DB-014) | its own `ItemGroupDef IG_<matrix_group>` (non-repeating), referenced from the instrument's `FormDef` after the main group; each row field is an `ItemRef` of that group with its own `OrderNumber` |
+| instrument | 1.3: `<FormDef OID="FRM_<name>" Name="<name>" Repeating="No">` with one `ItemGroupRef` to `IG_<name>`, and `clara:Form` inside it. 2.0 declares **no form element**, so the instrument *is* its item group: `<ItemGroupDef OID="IG_<name>" Name="<name>" Repeating="No|Simple" Type="Form">`, with `clara:Form` carried on that group instead — same extension element, different host, because 2.0 has nothing else to put it in (REQ-ODM-015) |
+| instrument's fields, in `position` order | `<ItemGroupDef OID="IG_<name>" Name="<name>" Repeating="No"…>` (`Type="Form"` under 2.0) and one `ItemRef ItemOID="IT_<field>" Mandatory="Y\|N" OrderNumber="<position>"` per exportable field (REQ-DB-013). The dataset name is written only when the instrument name satisfies ODM's `sasName` type (≤8 characters, `[A-Za-z_][A-Za-z0-9_]*`) and omitted otherwise — `@SASDatasetName` in 1.3, `@DatasetName` in 2.0, which declares no SAS attribute (REQ-ODM-028) |
+| pair is repeating (`instrument_events.is_repeating`, REQ-DB-047) | `@Repeating="Yes"` — **`"Simple"` in 2.0**, whose substituted type is `No\|Simple\|Dynamic\|Static` and admits no `Yes` — on the referenced `ItemGroupDef`, plus `@ItemGroupRepeatKey` on each data row (§4): ODM marks the group repeating, not the form. The per-pair flag is §3.2's extension attribute |
+| matrix group (`matrix_group`, REQ-DB-014) | its own `ItemGroupDef IG_<matrix_group>` (non-repeating; `Type="Section"` under 2.0), referenced after the main group — from the instrument's `FormDef` in 1.3, and from the instrument's **own item group** in 2.0, which is what tells a reader which instrument a Section belongs to when the event references every group side by side (§3.2); each row field is an `ItemRef` of that group with its own `OrderNumber` |
 | record identifier (GD-8) | `ItemRef/@KeySequence="1"` on the identifier field, plus `Mandatory="Y"` — import restores GD-8 from it (§6.2) |
 
 `checkbox`, `description`, `header` and `transfer` fields are handled by §3.6 and §3.7; every other field type gets one `ItemDef`.
 
 ### 3.4 Fields → ItemDef
 
-`ItemDef/@Name` is the CLARA machine name (round-trip anchor, O-1); the human-readable label goes to `Description/TranslatedText`, the field note to `Question/TranslatedText`. `@SASFieldName` repeats the machine name **only where it fits** — 8 characters or fewer matching `[A-Za-z_][A-Za-z0-9_]*` — and is omitted otherwise, because truncating to eight would collide across fields and break the round trip `@Name` guarantees (REQ-ODM-028). Import reads `@Name` and never a SAS name, so omission loses nothing CLARA needs.
+`ItemDef/@Name` is the CLARA machine name (round-trip anchor, O-1); the human-readable label goes to `Description/TranslatedText`, the field note to `Question/TranslatedText` — under 2.0 each with `@Type="text/plain"`, the media type that schema requires and 1.3.2 does not declare (REQ-ODM-015). `@SASFieldName` repeats the machine name **only where it fits** — 8 characters or fewer matching `[A-Za-z_][A-Za-z0-9_]*` — and is omitted otherwise, because truncating to eight would collide across fields and break the round trip `@Name` guarantees (REQ-ODM-028). It is a 1.3 attribute: 2.0 declares no SAS attribute at item level, so there `@Name` carries the machine name alone. Import reads `@Name` and never a SAS name, so omission loses nothing CLARA needs.
 
 | CLARA `field_type` / validation | `ItemDef/@DataType` | Extras |
 |---|---|---|
@@ -123,7 +143,7 @@ A pair that repeats (REQ-DB-047) is marked where the dialect can carry it (REQ-O
 | `checkbox` | *not* an `ItemDef` for the parent — see §3.6 | |
 | `description`, `header`, `transfer` | no `ItemDef` at all — §3.7 | |
 
-`validation_min` / `validation_max` of a numeric or date field become `<RangeCheck SoftHard="Hard" Comparator="GE"><CheckValue Value="<min>"/></RangeCheck>` and the `LE` twin (1.3.2 puts bounds in `CheckValue`, not in `LowerBound`/`UpperBound` attributes). `required=1` → `ItemRef/@Mandatory="Y"`.
+`validation_min` / `validation_max` of a numeric or date field become `<RangeCheck SoftHard="Hard" Comparator="GE"><CheckValue><min></CheckValue></RangeCheck>` and the `LE` twin — the bound is `CheckValue`'s **character content**, since neither dialect declares any attribute on it (1.3.2 types it as text, 2.0 copies that), and 1.3.2 puts bounds in `CheckValue` rather than in `LowerBound`/`UpperBound` attributes (REQ-ODM-065). `required=1` → `ItemRef/@Mandatory="Y"`.
 
 ### 3.5 Choices → CodeList
 
@@ -139,7 +159,22 @@ Per REQ-EXP-053/REQ-DB-042 the export works on derived columns, and so does ODM:
 
 ### 3.8 Calculated fields
 
-`<MethodDef OID="MTH_<field_name>" Name="<field_name>" Type="Calculation"><Description><TranslatedText>…</TranslatedText></Description><FormalExpression><TranslatedText xml:lang="en"><calculation as stored></TranslatedText></FormalExpression></MethodDef>`, referenced from the field's `ItemRef/@MethodOID`. The expression is carried **as text**: import stores it after grammar validation and never evaluates it (REQ-ODM-047). Its dependencies (`calculated_dependencies`) are recomputed by the ordinary write path, not read from the file.
+`<MethodDef OID="MTH_<field_name>" Name="<field_name>" Type="Computation">`, referenced from the field's `ItemRef/@MethodOID`. `Type` is `Computation`, which both dialects enumerate — **not** `"Calculation"`, a word neither schema admits (REQ-ODM-065). Its children are each dialect's own, and both schemas make the first two mandatory:
+
+```xml
+<!-- 1.3 -->                                                     <!-- 2.0 -->
+<MethodDef … Type="Computation">                                 <MethodDef … Type="Computation">
+  <Description><TranslatedText xml:lang="en">…                   <Description><TranslatedText xml:lang="en" Type="text/plain">…
+                </TranslatedText></Description>                                   </TranslatedText></Description>
+  <FormalExpression><calculation as stored>                      <MethodSignature/>                    <!-- required in 2.0, empty:
+  </FormalExpression>                                                                            no parameters -->
+</MethodDef>                                                     <FormalExpression>                   <!-- text is not allowed
+                                                                   <Code><calculation as stored></Code> here; 2.0 moved the body -->
+                                                                 </FormalExpression>                 <!-- into a Code child -->
+                                                                 </MethodDef>
+```
+
+The expression is carried **as text**: import stores it after grammar validation and never evaluates it (REQ-ODM-047), reading it from `Code`, `TranslatedText` or bare character content, and consuming the signature it cannot use. Its dependencies (`calculated_dependencies`) are recomputed by the ordinary write path, not read from the file. A method body is exactly the kind of shape a fixture without a calculated field hides: the exporter wrote an invalid `Type` and a prose element neither schema accepts there, and every round trip passed (REQ-ODM-055).
 
 ### 3.9 What the metadata leaves out
 
@@ -168,7 +203,7 @@ The `FormData` line is what the **1.3** dialect writes and the **2.0** dialect d
 | one record | one `SubjectData/@SubjectKey` (§4.1) |
 | `(record, unique_event_name)` | one `StudyEventData/@StudyEventOID` (`EVT_…`) |
 | one instance of a repeating instrument (REQ-DB-047) | one `ItemGroupData/@ItemGroupRepeatKey` = `repeating_instance_number`; the non-repeating case omits the attribute entirely rather than writing `1` |
-| one stored value | `<ItemData ItemOID="IT_<field_name>" Value="<stored value>"/>` — codes, not labels (REQ-ODM-022) |
+| one stored value | 1.3: `<ItemData ItemOID="IT_<field_name>" Value="<stored value>"/>`; 2.0: `<ItemData ItemOID="IT_<field_name>"><Value><stored value></Value></ItemData>` (REQ-ODM-015) — codes, not labels either way (REQ-ODM-022) |
 | no stored value | **no element** (REQ-ODM-023): 1.3.2's `@IsNull` stays unwritten and nothing is invented for a cleared value |
 | instrument completion (`<form>_complete`) | dropped with notice — ODM has no per-form completion state; `FormData` is the nearest carrier and it models collection instances, not a review status, so 1.3 writes the element (REQ-ODM-027) without putting completion in it (REQ-ODM-053) |
 | DAG of the record | dropped in this step: `AdminData/UserRef` names study users, which CLARA's DAG groups are not; carried later only if an owner asks (REQ-ODM-053) |
@@ -195,9 +230,9 @@ Namespace `urn:x-clara:odm-ext:v1`, nested in the element the data belongs to. A
 | Element | Where | Attributes / content | Carries |
 |---|---|---|---|
 | `clara:Project` | `Study` | `organization`, `piName`, `piEmail`, `dmName`, `dmEmail`, `rekNumber`, `rekStartDate`, `rekEndDate`, `startDate`, `endDate`, `recordNaming` | §3.1 |
-| `clara:Event` | each `StudyEventDef` | `armNum`, `eventName`, `period`, `safeRegionStart`, `safeRegionEnd`, `oidSource` (the unsanitized name when the OID was rewritten, O-1), `repeatingForms` (form OIDs repeating at this event — 1.3's only home for the per-pair flag, REQ-ODM-029) | §3.2 |
+| `clara:Event` | each `StudyEventDef` | `armNum`, `eventName`, `period`, `safeRegionStart`, `safeRegionEnd`, `oidSource` (the unsanitized name when the OID was rewritten, O-1), `repeatingForms` (the OIDs repeating at this event — the per-pair flag's only home in **either** dialect, REQ-ODM-029) | §3.2 |
 | `clara:Arm` | `MetaDataVersion` | `armNum`, `name`, `position` | arms that have no events of their own |
-| `clara:Form` | each `FormDef` | `isSurvey`, `branchingLogic`, `position` | GD-9, GD-13 |
+| `clara:Form` | each `FormDef` in 1.3; the instrument's Form-typed `ItemGroupDef` in 2.0, which has no form element to hold it (REQ-ODM-015) | `isSurvey`, `branchingLogic`, `position` | GD-9, GD-13 |
 | `clara:Field` | each `ItemDef` | `fieldType`, `validationType`, `validationFormat`, `matrixGroup`, `sectionHeader`, `personalInformation`, `directIdentifier`, `exportApproved`, `annotation`, `branchingLogic`, `position` | REQ-DB-013/042/044, REQ-EXP-020/023, GD-13, DEV-DB-2 |
 | `clara:StaticField` | the instrument's `ItemGroupDef` | `fieldName`, `fieldType` (`description` \| `header` \| `transfer`), `label`, `instructions`, `position`, plus the sensitivity attributes of `clara:Field` | §3.7, REQ-DB-050 |
 | `clara:Choice` | a checkbox parent's extension point | `fieldName`, `choices` (the stored grammar), plus its sensitivity attributes | §3.6's parent row |
@@ -228,8 +263,8 @@ The audit row is written by the pipeline (`writeExportAudit`, `record_export.go:
 
 ### 6.2 Import build order
 
-1. **Parse** (§9 limits first): decode into an intermediate model — `Study`/`GlobalVariables`, one `MetaDataVersion` (events, forms, groups, items, codelists, methods), and `ClinicalData` grouped by `SubjectKey`. Unknown elements are recorded as problems, not errors (REQ-ODM-053). A second `MetaDataVersion` in the document is a problem (`mdv_ignored`) and only the first builds.
-2. **Resolve** the design against CLARA's rules: valid instrument names per REQ-DB-011 are preserved; invalid or overlong external names are normalized to the allowed 255-character set and reported as `name_renamed`. Names are de-duplicated, with `field_name` uniqueness per project enforced (a name used twice across instruments is renamed with a suffix and warned, since `fields(project_id, field_name)` is unique); matrix groups are collected, checkbox parents reconstructed from derived items when no parent extension row exists, and GD-8 taken from `KeySequence="1"` or the first field of the earliest form with fields.
+1. **Parse** (§9 limits first): decode into an intermediate model — the `Study` (its name from `GlobalVariables` under 1.3 or its own `@StudyName` under 2.0), one `MetaDataVersion` (events, forms, groups, items, codelists, methods), and `ClinicalData` grouped by `SubjectKey`. Unknown elements are recorded as problems, not errors (REQ-ODM-053). A second `MetaDataVersion` in the document is a problem (`mdv_ignored`) and only the first builds. A document that declares no `FormDef` — every ODM 2.0 file, since 2.0 has no such element — gets one form per `ItemGroupDef @Type="Form"`, holding the groups nested inside it as its references and each of its event's group references that names it as a pair: the translation happens once at the end of the parse so both dialects resolve through one path, and a document that declares any `FormDef` is left exactly as it arrived (REQ-ODM-015).
+2. **Resolve** the design against CLARA's rules: valid instrument names per REQ-DB-011 are preserved; invalid or overlong external names are normalized to the allowed 255-character set and reported as `name_renamed`. Names are de-duplicated, with `field_name` uniqueness per project enforced (a name used twice across instruments is renamed with a suffix and warned, since `fields(project_id, field_name)` is unique); matrix groups are collected — taking the name the document gives their `ItemGroupDef`, and inventing `<instrument>_group` only when it names nothing (§5: ODM first) — checkbox parents reconstructed from derived items when no parent extension row exists, and GD-8 taken from `KeySequence="1"` or the first field of the earliest form with fields.
 3. **Validate** the design through the existing design path: the same `stagedDesign` snapshot and validation view the instrument import uses (`admin/staged_design.go`, REQ-API-152), so calculation expressions, branching references, choice grammars and the record-identifier rule are checked by the code that owns them rather than a second implementation.
 4. **Build** — one transaction: project row (name from `project_name` or `StudyName`, 409 on collision, REQ-ODM-044), arms, events, instruments, fields, mapping, repeat flags, then `MaterializePairGrants`. Request-supplied project metadata overrides the corresponding values from the CLARA extension before the row is built (REQ-ODM-006); omitted parameters preserve the document values/defaults. Any failure here rolls the whole thing back and answers 400 with the problem list (REQ-ODM-040).
 5. **Load records** — after commit, one transaction per record in file order: resolve event → `unique_event_name`, instrument → owning form, instance number, then per value run `validate.ValidateValue` against the field's spec and `validate.ApplyContentPolicy` (the same calls `dataapi/record_import.go:501-520` makes), canonicalize dates, and write with `Store.UpsertDataValueTx` / clear with `DeleteDataValueTx`. A value that fails fails **its record** and the rest continue (REQ-ODM-041); an unknown item is a per-record problem, not a failure, matching how the data import reports unknown keys.
@@ -303,8 +338,9 @@ Dropped **with a warning**, never silently (REQ-ODM-053): instrument completion 
 | Requirement | Section |
 |---|---|
 | REQ-ODM-001…006 (surfaces, gating, UI metadata overrides) | §7, §9; web UI §5.2 and §6.4 in `User_Interface_Design.md` |
-| REQ-ODM-010…014 (dialect, refusal, limits) | §2, §9 |
+| REQ-ODM-010…015 (dialect, per-dialect vocabulary, refusal, limits) | §2, §3.1, §4, §9 |
 | REQ-ODM-020…029 (export content, per-dialect vocabulary, SAS names) | §3, §4, §6.1 |
+| REQ-ODM-065 (text-typed carriers: `CheckValue`, `FormalExpression`/`Code`, `MethodSignature`) | §3.4, §3.8 |
 | REQ-ODM-030/031 (subject key) | §4.1 |
 | REQ-ODM-040…047 (import effects) | §6.2 |
 | REQ-ODM-050…055 (fidelity, losses, published wrapper schema) | §5, §8, §10.1 O-7 |

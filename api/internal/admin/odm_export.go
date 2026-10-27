@@ -205,7 +205,7 @@ func (h *Handler) exportODM(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
 
-	enc := odmWriter{enc: xml.NewEncoder(w)}
+	enc := odmWriter{enc: xml.NewEncoder(w), v13: plan.v13}
 	if err := writeODMRoot(enc, plan, now, schemaVersion, dialect); err != nil {
 		return // a broken pipe is the client leaving; there is nothing to answer
 	}
@@ -415,7 +415,21 @@ func (h *Handler) writeODMClinicalData(w odmWriter, plan *odmPlan, rows *dataapi
 			for _, item := range group.items {
 				// An absent value stays absent: no empty ItemData, no null indicator
 				// invented for it (REQ-ODM-023).
-				if err := enc.EncodeElement("", odmStart(itemDataName, kv{"ItemOID", item.oid}, kv{"Value", item.value})); err != nil {
+				if plan.v13 {
+					if err := enc.EncodeElement("", odmStart(itemDataName, kv{"ItemOID", item.oid}, kv{"Value", item.value})); err != nil {
+						return err
+					}
+					continue
+				}
+				// 2.0 declares no `Value` attribute on ItemData: the value is a `Value`
+				// child element (REQ-ODM-015).
+				if err := start("ItemData", kv{"ItemOID", item.oid}); err != nil {
+					return err
+				}
+				if err := enc.EncodeElement(item.value, odmStart("Value")); err != nil {
+					return err
+				}
+				if err := end("ItemData"); err != nil {
 					return err
 				}
 			}

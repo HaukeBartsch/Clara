@@ -1308,7 +1308,7 @@ The endpoint writes one entry per call and returns no data: it discloses nothing
 
 ### 4.29 Project interchange — CDISC ODM XML (REQ-API-169…170)
 
-**`GET /api/v1/projects/{id}/export/odm`** — the project as one CDISC ODM document: `Study` + `GlobalVariables`, one `MetaDataVersion` describing the current structure, and `ClinicalData` for the records in scope (`ODM_Interchange_Design.md` §2–§4). Unknown query parameters are accepted and ignored except for the supported version selector (REQ-API-017). Gates on `is_admin` — not `project_admin`, since a whole-study file is bulk data movement (REQ-ODM-002); any other actor gets the uniform 403 of §4.2 and nothing is written (REQ-AUD-004).
+**`GET /api/v1/projects/{id}/export/odm`** — the project as one CDISC ODM document: a `Study` (named through `GlobalVariables` under 1.3 and through its own attributes under 2.0) with one `MetaDataVersion` describing the current structure, and `ClinicalData` for the records in scope — each dialect spelled as its own schema defines it (`ODM_Interchange_Design.md` §2–§4, REQ-ODM-015). Unknown query parameters are accepted and ignored except for the supported version selector (REQ-API-017). Gates on `is_admin` — not `project_admin`, since a whole-study file is bulk data movement (REQ-ODM-002); any other actor gets the uniform 403 of §4.2 and nothing is written (REQ-AUD-004).
 
 | Parameter | Values | Default | Meaning |
 |---|---|---|---|

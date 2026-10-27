@@ -91,6 +91,9 @@ type odmEventDef struct {
 	eventType string
 	repeating bool
 	formRefs  []odmEventFormRef
+	// groupRefs holds 2.0's ItemGroupRefs, which name the groups this event's data
+	// carries; those pointing at an instrument become formRefs (§3.2, REQ-ODM-015).
+	groupRefs []odmGroupRef
 	ext       map[string]string // clara:Event (§5)
 }
 
@@ -105,8 +108,12 @@ type odmGroupDef struct {
 	oid       string
 	name      string
 	repeating bool
+	groupType string // 2.0's structural role: Form, Section, Concept or Dataset (§3.3)
 	itemRefs  []odmItemRef
+	groupRefs []odmGroupRef       // 2.0 nests a form's sections here; 1.3 says it in the FormDef
 	statics   []map[string]string // clara:StaticField rows (§3.7)
+	formExt   map[string]string   // clara:Form carried on the group, as 2.0 has to (§5)
+	isForm    bool                // this group is an instrument, in one dialect or the other
 }
 
 type odmItemDef struct {
@@ -337,8 +344,16 @@ func odmLocal(n xml.Name) string { return n.Local }
 func (r *odmReader) parseStudy(el xml.StartElement) (*odmStudy, error) {
 	study := &odmStudy{}
 	for _, a := range el.Attr {
-		if odmLocal(a.Name) == "OID" {
+		switch odmLocal(a.Name) {
+		case "OID":
 			study.oid = a.Value
+		case "StudyName", "ProtocolName":
+			// 2.0 names its study with attributes; 1.3 keeps GlobalVariables children (REQ-ODM-015).
+			if odmLocal(a.Name) == "StudyName" {
+				study.studyName = a.Value
+			} else {
+				study.protocolName = a.Value
+			}
 		}
 	}
 	for {
@@ -362,6 +377,13 @@ func (r *odmReader) parseStudy(el xml.StartElement) (*odmStudy, error) {
 					return study, err
 				}
 				study.mdvs = append(study.mdvs, mdv)
+			case odmLocal(t.Name) == "Description":
+				// 2.0's study-level prose slot, where 1.3 has GlobalVariables/StudyDescription.
+				text, err := r.elementText(t)
+				if err != nil {
+					return study, err
+				}
+				study.studyDescription = text
 			case r.isExtension(t.Name, claraExtNamespace):
 				// Project and Arm are read from their attributes, and either way the
 				// element's subtree is consumed here: its end tag must never read as
@@ -490,7 +512,49 @@ func (r *odmReader) parseMetaDataVersion(el xml.StartElement, study *odmStudy) (
 			}
 			r.leave()
 		case xml.EndElement:
+			r.synthesizeForms(mdv)
 			return mdv, nil
+		}
+	}
+}
+
+// synthesizeForms gives an ODM 2.0 document the forms its dialect no longer declares.
+// 2.0 removed FormDef and names an instrument by an ItemGroupDef with @Type="Form"
+// (REQ-ODM-015), while everything downstream — instruments and their order, the
+// event↔instrument pairs, which group is a matrix group, per-pair repetition — resolves
+// through form definitions. So each Form-typed group becomes one here, carrying the
+// sections nested inside it as the references a FormDef would have held, and each of an
+// event's group references that names such a group becomes a pair. Doing the translation
+// once at the end of the parse keeps one resolution path for both dialects; a document
+// that declares any FormDef — every CLARA 1.3 file, and any partner's own shape — is
+// left exactly as it arrived.
+func (r *odmReader) synthesizeForms(mdv *odmMetaDataVersion) {
+	if len(mdv.forms) > 0 {
+		return
+	}
+	byOID := make(map[string]*odmGroupDef, len(mdv.groups))
+	for _, g := range mdv.groups {
+		byOID[g.oid] = g
+	}
+	for _, g := range mdv.groups {
+		if !strings.EqualFold(g.groupType, odmGroupFormType) {
+			continue
+		}
+		g.isForm = true
+		form := &odmFormDef{oid: g.oid, name: g.name, ext: g.formExt}
+		// The group references itself first: that is the instrument's own group, and a
+		// section is any other group it holds (§3.3).
+		form.groupRefs = append([]odmGroupRef{{oid: g.oid}}, g.groupRefs...)
+		mdv.forms = append(mdv.forms, form)
+	}
+	if len(mdv.forms) == 0 {
+		return // a 2.0 document that declares no instrument says so itself (REQ-ODM-053)
+	}
+	for _, ev := range mdv.events {
+		for _, ref := range ev.groupRefs {
+			if g := byOID[ref.oid]; g != nil && g.isForm {
+				ev.formRefs = append(ev.formRefs, odmEventFormRef{oid: ref.oid, order: ref.order})
+			}
 		}
 	}
 }
@@ -561,6 +625,17 @@ func (r *odmReader) parseStudyEventDef(el xml.StartElement, mdv *odmMetaDataVers
 					oid:       attrOf(t, "FormOID"),
 					order:     intAttr(t, "OrderNumber"),
 					repeating: yesNoAttr(t, "Repeating"),
+				})
+				if err := r.skip(); err != nil {
+					return err
+				}
+			case odmLocal(t.Name) == "ItemGroupRef":
+				// 2.0's event references the item groups their data holds; the ones that
+				// name an instrument become this event's pairs once the whole metadata
+				// version is read and their types are known (REQ-ODM-015, §3.2).
+				def.groupRefs = append(def.groupRefs, odmGroupRef{
+					oid:   attrOf(t, "ItemGroupOID"),
+					order: intAttr(t, "OrderNumber"),
 				})
 				if err := r.skip(); err != nil {
 					return err
@@ -641,7 +716,9 @@ func (r *odmReader) parseItemGroupDef(el xml.StartElement, mdv *odmMetaDataVersi
 		case "Name":
 			def.name = a.Value
 		case "Repeating":
-			def.repeating = odmTrue(a.Value)
+			def.repeating = odmRepeating(a.Value) // 2.0 spells a repeating group Simple/Dynamic/Static
+		case "Type":
+			def.groupType = a.Value // what the group is, which only 2.0 says
 		}
 	}
 	if err := r.claim("ItemGroupDef", def.oid); err != nil {
@@ -673,6 +750,21 @@ func (r *odmReader) parseItemGroupDef(el xml.StartElement, mdv *odmMetaDataVersi
 				}
 			case r.isExtension(t.Name, claraExtNamespace) && odmLocal(t.Name) == "StaticField":
 				def.statics = append(def.statics, attrsOf(t))
+				if err := r.skip(); err != nil {
+					return err
+				}
+			case odmLocal(t.Name) == "ItemGroupRef":
+				// 2.0 nests an instrument's sections inside its own group, which is where
+				// a 1.3 document would say it in the FormDef (§3.3, REQ-ODM-015).
+				def.groupRefs = append(def.groupRefs, odmGroupRef{
+					oid:   attrOf(t, "ItemGroupOID"),
+					order: intAttr(t, "OrderNumber"),
+				})
+				if err := r.skip(); err != nil {
+					return err
+				}
+			case r.isExtension(t.Name, claraExtNamespace) && odmLocal(t.Name) == "Form":
+				def.formExt = attrsOf(t) // 2.0 has no FormDef to carry it, so the group does (§5)
 				if err := r.skip(); err != nil {
 					return err
 				}
@@ -761,12 +853,22 @@ func (r *odmReader) parseRangeCheck(el xml.StartElement, def *odmItemDef) error 
 				return err
 			}
 			if odmLocal(t.Name) == "CheckValue" {
+				// Both dialects type CheckValue as text and declare no attribute on it; a
+				// document that spells the bound with a Value attribute is still read
+				// (REQ-ODM-015). elementText consumes the element, so skip() must not.
 				value = attrOf(t, "Value")
+				text, err := r.elementText(t)
+				if err != nil {
+					return err
+				}
+				if value == "" {
+					value = text
+				}
 			} else {
 				other = true // a DateTimeStamp or a soft bound CLARA does not carry
-			}
-			if err := r.skip(); err != nil {
-				return err
+				if err := r.skip(); err != nil {
+					return err
+				}
 			}
 			r.leave()
 		case xml.EndElement:
@@ -906,11 +1008,26 @@ func (r *odmReader) parseMethodDef(el xml.StartElement, mdv *odmMetaDataVersion)
 			// expression grammar then judges. ALGORITHM and COMMENT are §8 losses.
 			switch odmLocal(t.Name) {
 			case "FormalExpression", "Algorithm":
-				text, err := r.elementText(t)
+				text, err := r.expressionText(t)
 				if err != nil {
 					return err
 				}
 				m.expression = text
+			case "MethodSignature":
+				// 2.0 requires a signature on every MethodDef. CLARA's expression takes no
+				// parameters and returns the field's value, so the empty one the export
+				// writes is the whole statement, and a partner's is a §8 loss read silently
+				// (REQ-ODM-015).
+				if err := r.skip(); err != nil {
+					return err
+				}
+			case "Description":
+				// A method's description says which field it computes — the ItemDef already
+				// names that, and 2.0 makes the element mandatory whether or not anyone has
+				// anything to add, so reading it costs nothing and storing it would (REQ-ODM-047).
+				if _, err := r.elementText(t); err != nil {
+					return err
+				}
 			default:
 				if err := r.ignoreElement(t, "MethodDef"); err != nil {
 					return err
@@ -1098,16 +1215,58 @@ func (r *odmReader) parseItemGroupData(el xml.StartElement) (*odmGroupData, erro
 						}
 					}
 				}
-				group.items = append(group.items, item)
-				if err := r.skip(); err != nil {
+				// Children: 2.0 carries the value as a `Value` element where 1.3 spells it
+				// `@Value` (REQ-ODM-015); anything else inside is content CLARA does not read.
+				if err := r.readItemDataChildren(&item); err != nil {
 					return group, err
 				}
+				group.items = append(group.items, item)
 			} else if err := r.ignoreElement(t, "ItemGroupData"); err != nil {
 				return group, err
 			}
 			r.leave()
 		case xml.EndElement:
 			return group, nil
+		}
+	}
+}
+
+// readItemDataChildren consumes an ItemData's subtree and its end tag, taking the value a
+// 2.0 document carries as a `Value` child element — 1.3 spells the same thing with a
+// `Value` attribute, which is already on the item by the time this runs (REQ-ODM-015).
+// CLARA stores one value per field, so the first `Value` wins and a further one is named
+// rather than guessed at (REQ-ODM-053).
+func (r *odmReader) readItemDataChildren(item *odmItemValue) error {
+	filled := item.value != ""
+	for {
+		tok, err := r.dec.Token()
+		if err != nil {
+			return r.fatal("not_odm", "ItemData ends before it closes")
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if err := r.enter(); err != nil {
+				return err
+			}
+			if odmLocal(t.Name) == "Value" && t.Name.Space == r.namespace {
+				text, err := r.elementText(t)
+				if err != nil {
+					return err
+				}
+				switch {
+				case text == "":
+				case filled:
+					r.problems.add("", "", "element_ignored",
+						"ItemData carries more than one Value; CLARA stores a single value per field (REQ-ODM-053)")
+				default:
+					item.value, filled = text, true
+				}
+			} else if err := r.ignoreElement(t, "ItemData"); err != nil {
+				return err
+			}
+			r.leave()
+		case xml.EndElement:
+			return nil
 		}
 	}
 }
@@ -1130,6 +1289,54 @@ func (r *odmReader) ignoreElement(el xml.StartElement, where string) error {
 // reads by prefix — the CLARA extension only; anything else is ignored content.
 func (r *odmReader) isExtension(name xml.Name, namespace string) bool {
 	return name.Space == namespace
+}
+
+// expressionText reads a method body, which each dialect spells its own way: 1.3.2
+// types FormalExpression as plain text (a file that wrapped it in TranslatedText still
+// reads), and 2.0 moved the text into a Code child (REQ-ODM-047, REQ-ODM-015). The
+// first body wins and a further one is named, as elsewhere in this reader.
+func (r *odmReader) expressionText(el xml.StartElement) (string, error) {
+	text, seen := "", false
+	take := func(one string) {
+		if one == "" {
+			return
+		}
+		if seen {
+			r.problems.add("", "", "element_ignored",
+				"a method carries more than one body; CLARA stores the first (REQ-ODM-053)")
+			return
+		}
+		text, seen = one, true
+	}
+	for {
+		tok, err := r.dec.Token()
+		if err != nil {
+			return text, r.fatal("not_odm", "a method body ends before it closes")
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			if err := r.enter(); err != nil {
+				return text, err
+			}
+			switch odmLocal(t.Name) {
+			case "Code", "TranslatedText":
+				one, err := r.elementText(t)
+				if err != nil {
+					return text, err
+				}
+				take(one)
+			default:
+				if err := r.ignoreElement(t, odmLocal(el.Name)); err != nil {
+					return text, err
+				}
+			}
+			r.leave()
+		case xml.CharData:
+			take(strings.TrimSpace(string(t)))
+		case xml.EndElement:
+			return text, nil
+		}
+	}
 }
 
 // elementText reads an element that holds prose: its TranslatedText children, or
@@ -1228,7 +1435,8 @@ func (r *odmReader) checkDocument(doc *odmDoc) error {
 		for _, ref := range event.formRefs {
 			if mdv.formByOID(ref.oid) == nil {
 				return r.fatal("dangling_ref", fmt.Sprintf(
-					"the event %q references the form %q, which no FormDef declares", event.name, ref.oid))
+					"the event %q references the form %q, which nothing declares — no FormDef, and in 2.0 no ItemGroupDef with @Type=\"Form\" (REQ-ODM-054)",
+					event.name, ref.oid))
 			}
 		}
 	}
@@ -1412,6 +1620,17 @@ func yesNoAttr(el xml.StartElement, name string) *bool {
 func odmTrue(v string) bool {
 	v = strings.TrimSpace(v)
 	return strings.EqualFold(v, "Y") || strings.EqualFold(v, "Yes")
+}
+
+// odmRepeating reads an ItemGroupDef/@Repeating in whichever dialect spelled it: 1.3's
+// Yes/No, or 2.0's No|Simple|Dynamic|Static, where every shape but No repeats
+// (REQ-ODM-015). Anything else reads as not repeating, as an unknown value always did.
+func odmRepeating(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "yes", "simple", "dynamic", "static":
+		return true
+	}
+	return false
 }
 
 func extBool(attrs map[string]string, name string) bool {

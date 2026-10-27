@@ -69,7 +69,11 @@ func (e *env) seedInterchange() int64 {
 	demography := e.mustInstrument(projectID, "demography")
 	add(demography, db.Field{FieldName: "record_id", FieldType: "text", Position: 1})
 	add(demography, db.Field{FieldName: "age", FieldType: "text", Position: 2,
-		ValidationType: sql.NullString{String: "integer", Valid: true}})
+		ValidationType: sql.NullString{String: "integer", Valid: true},
+		// Bounds travel as ODM's own RangeCheck, whose CheckValue is text in both
+		// dialects — a shape the schema gate only sees if the fixture has one.
+		ValidationMin: sql.NullString{String: "0", Valid: true},
+		ValidationMax: sql.NullString{String: "120", Valid: true}})
 	add(demography, db.Field{FieldName: "sex", FieldType: "dropdown", Position: 3,
 		Choices: sql.NullString{String: "1$Male##2$Female", Valid: true}, Required: true})
 	add(demography, db.Field{FieldName: "symptoms", FieldType: "checkbox", Position: 4,
@@ -82,6 +86,12 @@ func (e *env) seedInterchange() int64 {
 		MatrixGroup: sql.NullString{String: "bp_group", Valid: true}})
 	add(vitals, db.Field{FieldName: "dbp", FieldType: "text", Position: 3,
 		MatrixGroup: sql.NullString{String: "bp_group", Valid: true}})
+	// A calculated field is the only thing that makes the export declare a MethodDef,
+	// and a bounded one the only thing that makes it write a RangeCheck: both are
+	// shapes each dialect spells its own way, so the schema check needs them here
+	// (REQ-ODM-047).
+	add(vitals, db.Field{FieldName: "bmi", FieldType: "calculated", Position: 4,
+		Calculation: sql.NullString{String: "[baseline_arm_1][weight]", Valid: true}})
 
 	adverse := e.mustInstrument(projectID, "adverse_event")
 	add(adverse, db.Field{FieldName: "term", FieldType: "notes", Position: 1})
@@ -132,7 +142,8 @@ func (e *env) designDump(projectID int64) []string {
 	rows, err := e.Store.DB.QueryContext(context.Background(),
 		`SELECT i.name, f.field_name, f.field_type, COALESCE(f.choices,''),
 		        COALESCE(f.validation_type,''), COALESCE(f.matrix_group,''), f.required, f.position,
-		        COALESCE(f.branching_logic,''), f.personal_information, f.direct_identifier, f.export_approved
+		        COALESCE(f.branching_logic,''), f.personal_information, f.direct_identifier, f.export_approved,
+		        COALESCE(f.validation_min,''), COALESCE(f.validation_max,''), COALESCE(f.calculation,'')
 		 FROM fields f JOIN instruments i ON i.id = f.instrument_id
 		 WHERE f.project_id = ? ORDER BY i.position, f.position`, projectID)
 	if err != nil {
@@ -142,15 +153,19 @@ func (e *env) designDump(projectID int64) []string {
 	var out []string
 	for rows.Next() {
 		var instrument, fieldName, fieldType, choices, validationType, matrixGroup, branching string
+		var minBound, maxBound, calculation string
 		var required, personal, identifier, approved bool
 		var position int
 		if err := rows.Scan(&instrument, &fieldName, &fieldType, &choices, &validationType,
-			&matrixGroup, &required, &position, &branching, &personal, &identifier, &approved); err != nil {
+			&matrixGroup, &required, &position, &branching, &personal, &identifier, &approved,
+			&minBound, &maxBound, &calculation); err != nil {
 			e.t.Fatalf("design scan: %v", err)
 		}
-		out = append(out, fmt.Sprintf("%s|%s|%s|choices=%s|vt=%s|matrix=%s|required=%v|pos=%d|branch=%s|pi=%v|id=%v|ok=%v",
+		// The bounds and the expression ride here too: a RangeCheck and a MethodDef are
+		// part of what an interchange file promises back (REQ-ODM-047, REQ-ODM-050).
+		out = append(out, fmt.Sprintf("%s|%s|%s|choices=%s|vt=%s|matrix=%s|required=%v|pos=%d|branch=%s|pi=%v|id=%v|ok=%v|min=%s|max=%s|calc=%s",
 			instrument, fieldName, fieldType, choices, validationType, matrixGroup,
-			required, position, branching, personal, identifier, approved))
+			required, position, branching, personal, identifier, approved, minBound, maxBound, calculation))
 	}
 
 	mappings, err := e.Store.DB.QueryContext(context.Background(),
@@ -221,8 +236,8 @@ func TestImportODMRoundTrip(t *testing.T) {
 	if len(report.Problems) != 0 {
 		t.Errorf("a CLARA document imported with %d problems: %+v", len(report.Problems), report.Problems)
 	}
-	if report.Arms != 2 || report.Instruments != 3 || report.Fields != 8 || report.Events != 3 {
-		t.Errorf("counts = arms %d, instruments %d, fields %d, events %d, want 2/3/8/3",
+	if report.Arms != 2 || report.Instruments != 3 || report.Fields != 9 || report.Events != 3 {
+		t.Errorf("counts = arms %d, instruments %d, fields %d, events %d, want 2/3/9/3",
 			report.Arms, report.Instruments, report.Fields, report.Events)
 	}
 	if report.RecordsAdded != 2 || report.RecordsFailed != 0 {
@@ -378,8 +393,8 @@ func TestImportODMWithoutExtension(t *testing.T) {
 	// The identifier's Mandatory="Y" travels with its KeySequence="1" marker, so it
 	// names GD-8 here rather than setting CLARA's required flag (§3.3, REQ-ODM-050).
 	want := []string{
-		"form|record_id|text|choices=|vt=|matrix=|required=false|pos=1|branch=|pi=false|id=false|ok=false",
-		"form|age|text|choices=|vt=integer|matrix=|required=false|pos=2|branch=|pi=false|id=false|ok=false",
+		"form|record_id|text|choices=|vt=|matrix=|required=false|pos=1|branch=|pi=false|id=false|ok=false|min=|max=|calc=",
+		"form|age|text|choices=|vt=integer|matrix=|required=false|pos=2|branch=|pi=false|id=false|ok=false|min=|max=|calc=",
 		"map|1|form|visit_arm_1|repeating=false",
 	}
 	if got := e.designDump(report.ProjectID); strings.Join(got, "\n") != strings.Join(want, "\n") {
@@ -645,6 +660,92 @@ func (e *env) projectCount() int {
 		e.t.Fatalf("count projects: %v", err)
 	}
 	return n
+}
+
+// odm20Document is an ODM 2.0 file as a partner writes it rather than as CLARA wrote
+// one: the study named on the Study element with no GlobalVariables, an instrument as a
+// Form-typed item group that holds a Section group, the event referencing both, and each
+// value carried as a Value child. It carries no CLARA extension at all, so everything
+// that has to survive arrives in 2.0's own spelling (REQ-ODM-015, REQ-ODM-052).
+func odm20Document() string {
+	return `<?xml version="1.0" encoding="UTF-8"?>
+<ODM xmlns="http://www.cdisc.org/ns/odm/v2.0" FileType="Snapshot" ODMVersion="2.0"
+     FileOID="partner-20" CreationDateTime="2026-10-27T00:00:00Z">
+ <Study OID="STY_p20" StudyName="Partner study" ProtocolName="A partner protocol">
+  <Description><TranslatedText xml:lang="en" Type="text/plain">Written elsewhere</TranslatedText></Description>
+  <MetaDataVersion OID="MDV_p20" Name="Partner study">
+   <StudyEventDef OID="EVT_visit_arm_1" Name="visit_arm_1" Repeating="No" Type="Scheduled" Category="Arm 1">
+    <ItemGroupRef ItemGroupOID="IG_visit" Mandatory="Yes" OrderNumber="1"/>
+    <ItemGroupRef ItemGroupOID="IG_notes_group" Mandatory="No" OrderNumber="2"/>
+   </StudyEventDef>
+   <ItemGroupDef OID="IG_visit" Name="visit" Repeating="No" Type="Form">
+    <ItemRef ItemOID="IT_record_id" Mandatory="Yes" OrderNumber="1" KeySequence="1"/>
+    <ItemRef ItemOID="IT_score" Mandatory="No" OrderNumber="2"/>
+    <ItemGroupRef ItemGroupOID="IG_notes_group" Mandatory="No" OrderNumber="3"/>
+   </ItemGroupDef>
+   <ItemGroupDef OID="IG_notes_group" Name="notes_group" Repeating="Simple" Type="Section">
+    <ItemRef ItemOID="IT_note" Mandatory="No" OrderNumber="1"/>
+   </ItemGroupDef>
+   <ItemDef OID="IT_record_id" Name="record_id" DataType="text"/>
+   <ItemDef OID="IT_score" Name="score" DataType="integer">
+    <Description><TranslatedText xml:lang="en" Type="text/plain">Score</TranslatedText></Description>
+    <RangeCheck Comparator="GE" SoftHard="Hard"><CheckValue>0</CheckValue></RangeCheck>
+   </ItemDef>
+   <ItemDef OID="IT_note" Name="note" DataType="text"/>
+  </MetaDataVersion>
+ </Study>
+ <ClinicalData StudyOID="STY_p20" MetaDataVersionOID="MDV_p20">
+  <SubjectData SubjectKey="R1"><StudyEventData StudyEventOID="EVT_visit_arm_1">
+   <ItemGroupData ItemGroupOID="IG_visit">
+    <ItemData ItemOID="IT_record_id"><Value>R1</Value></ItemData>
+    <ItemData ItemOID="IT_score"><Value>7</Value></ItemData>
+   </ItemGroupData>
+   <ItemGroupData ItemGroupOID="IG_notes_group">
+    <ItemData ItemOID="IT_note"><Value>seen and scored</Value></ItemData>
+   </ItemGroupData>
+  </StudyEventData></SubjectData>
+ </ClinicalData>
+</ODM>`
+}
+
+// A 2.0 document from outside CLARA imports whole: the instrument comes from the Form-typed
+// item group, its matrix group from the Section nested in it, the study name from
+// Study/@StudyName, and every value from a Value child (REQ-ODM-015). The reader cannot
+// learn any of this from CLARA's own writer, which is why the document here is hand-written.
+func TestImportODM20Document(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("odm-partner20@example.org")
+
+	rec := e.do("POST", "/api/v1/projects/import/odm?project_name=Partner%20Copy", odm20Document(), admin)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("import status = %d: %s", rec.Code, rec.Body.String())
+	}
+	var report odmImportReport
+	e.decode(rec, &report)
+	for _, p := range report.Problems {
+		if p.Code == "element_ignored" || p.Code == "attribute_ignored" {
+			t.Errorf("a conforming 2.0 document lost %s: %s", p.Code, p.Message)
+		}
+	}
+	if report.Instruments != 1 || report.Fields != 3 || report.RecordsAdded != 1 {
+		t.Fatalf("report = %+v", report)
+	}
+
+	design := strings.Join(e.designDump(report.ProjectID), "\n")
+	for _, want := range []string{
+		"visit|score|text|choices=|vt=integer", // the RangeCheck's bound came across too
+		"visit|note|text|choices=|vt=|matrix=notes_group",
+	} {
+		if !strings.Contains(design, want) {
+			t.Errorf("imported design holds no %q:\n%s", want, design)
+		}
+	}
+	if !strings.Contains(design, "min=0") {
+		t.Errorf("the RangeCheck bound did not survive: %s", design)
+	}
+	if got := e.valueDump(report.ProjectID); !strings.Contains(strings.Join(got, "\n"), "seen and scored") {
+		t.Errorf("a Value child did not reach the record: %v", got)
+	}
 }
 
 // extensionODM states CLARA's own attributes: a date field, a field whose validation

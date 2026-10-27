@@ -432,6 +432,79 @@ func TestExportODM20RoundTrip(t *testing.T) {
 	}
 }
 
+// Each dialect is written the way its own schema spells it, and neither borrows from
+// the other (REQ-ODM-015). The schema check proves a document is valid; it cannot prove
+// this half — a 1.3 document with a stray 2.0 spelling would still be checked against
+// 1.3 alone — so the shapes §3 promises are asserted here: an instrument is a Form-typed
+// item group rather than a FormDef, an event names item groups rather than forms, prose
+// names its media type, and a method's body sits in a Code child.
+func TestExportODMWritesItsOwnDialect(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("odm-dialect@example.org")
+	sourceID := e.seedInterchange()
+
+	body := func(version string) string {
+		t.Helper()
+		path := "/api/v1/projects/" + itoa(sourceID) + "/export/odm"
+		if version != "" {
+			path += "?odm_version=" + version
+		}
+		rec := e.do("GET", path, nil, admin)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("export %q status = %d: %s", version, rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+	holds := func(label, body string, want []string) {
+		t.Helper()
+		for _, s := range want {
+			if !strings.Contains(body, s) {
+				t.Errorf("%s holds no %q", label, s)
+			}
+		}
+	}
+	omits := func(label, body string, absent []string) {
+		t.Helper()
+		for _, s := range absent {
+			if strings.Contains(body, s) {
+				t.Errorf("%s holds %q, which belongs to the other dialect or to no dialect at all", label, s)
+			}
+		}
+	}
+
+	v20 := body("2.0")
+	holds("ODM 2.0", v20, []string{
+		`<Study OID="CLARA-` + itoa(sourceID) + `" StudyName="Interchange source" ProtocolName=`,
+		`ItemGroupDef OID="IG_vitals" Name="vitals" Repeating="No" Type="Form"`,
+		`ItemGroupDef OID="IG_bp_group" Name="bp_group" Repeating="No" Type="Section"`,
+		`ItemGroupDef OID="IG_adverse_event" Name="adverse_event" Repeating="Simple" Type="Form">`,
+		`<TranslatedText xml:lang="en" Type="text/plain">`,
+		`<MethodSignature></MethodSignature>`, // an empty signature: the expression takes no parameters
+		`<FormalExpression><Code>[baseline_arm_1][weight]</Code></FormalExpression>`,
+		`<ItemGroupRef ItemGroupOID="IG_vitals"`,
+		`<ItemData ItemOID="IT_age"><Value>40</Value></ItemData>`,
+	})
+	omits("ODM 2.0", v20, []string{
+		"<GlobalVariables", "<FormDef", "<FormRef", "<Protocol",
+		"SASFieldName", "SASDatasetName", // 2.0 declares neither; @DatasetName carries it
+		`Repeating="Yes"`, // the type 2.0 replaced with No|Simple|Dynamic|Static
+	})
+
+	v13 := body("")
+	holds("ODM 1.3", v13, []string{
+		`<Study OID="CLARA-` + itoa(sourceID) + `">`,
+		"<GlobalVariables><StudyName>Interchange source</StudyName>",
+		`<FormDef OID="FRM_vitals"`,
+		`<FormRef FormOID="FRM_vitals"`,
+		`<ItemData ItemOID="IT_age" Value="40">`,
+		`SASDatasetName="vitals"`,
+		"<FormalExpression>[baseline_arm_1][weight]</FormalExpression>", // text, not a Code child
+	})
+	omits("ODM 1.3", v13, []string{
+		`Type="text/plain"`, `Type="Form"`, `<MethodSignature`, `<Code>`, `Repeating="Simple"`,
+	})
+}
+
 func TestExportODMRejectsUnknownVersion(t *testing.T) {
 	e := newEnv(t)
 	admin := e.mustAdmin("odm-invalid-version@example.org")
@@ -518,10 +591,9 @@ func odmConformance(t *testing.T) (string, string) {
 // tools/odm_conformance.py over exports of both dialects.
 //
 // Soft by decision: the validator is development tooling on the order of Playwright, so its
-// absence skips rather than fails, and REQ-ODM-055's build gate only warns. Of the two
-// dialects only 1.3 is enforced — 2.0's mapping still deviates (it writes 1.3's
-// GlobalVariables and ItemData/@Value where 2.0 wants Study attributes and a Value child),
-// so that one reports and waits for its own decision.
+// absence skips rather than fails, and REQ-ODM-055's build gate only warns. What it checks,
+// once it can run, is both dialects — each writes its own header and value carrier now
+// (REQ-ODM-015), so neither has a deviation left to excuse.
 func TestExportODMConformanceAgainstSchema(t *testing.T) {
 	python, tool := odmConformance(t)
 
@@ -534,7 +606,7 @@ func TestExportODMConformanceAgainstSchema(t *testing.T) {
 		enforce bool
 	}{
 		{"", "project_odm_1.3.xml", true},
-		{"2.0", "project_odm_2.0.xml", false},
+		{"2.0", "project_odm_2.0.xml", true},
 	} {
 		path := "/api/v1/projects/" + itoa(projectID) + "/export/odm"
 		if dialect.version != "" {
@@ -585,7 +657,7 @@ func TestExportODMWrapperEarnsItsPlace(t *testing.T) {
 		clean   bool // the wrapped run must exit 0, not merely stop naming the extension
 	}{
 		{"", "project_odm_1.3.xml", true},
-		{"2.0", "project_odm_2.0.xml", false},
+		{"2.0", "project_odm_2.0.xml", true},
 	} {
 		path := "/api/v1/projects/" + itoa(projectID) + "/export/odm"
 		if dialect.version != "" {
@@ -613,13 +685,10 @@ func TestExportODMWrapperEarnsItsPlace(t *testing.T) {
 		}
 		for _, finding := range findings {
 			if strings.Contains(finding, claraExtNamespace) {
-				continue
+				continue // exactly what vanilla ODM must refuse: the extension, nothing else
 			}
-			if dialect.version == "2.0" && !strings.Contains(finding, "clara:") {
-				continue // 2.0's known structural deviations, reported by the test above
-			}
-			t.Errorf("vanilla ODM %s rejects something that is not a CLARA extension element, so the\n"+
-				"wrapper is masking a real defect: %s", label, finding)
+			t.Errorf("vanilla ODM %s rejects something that is not a CLARA extension element — either\n"+
+				"the mapping deviates from the schema or this wrapper hides it: %s", label, finding)
 		}
 
 		wrapped, wrappedErr := exec.Command(python, tool, file).CombinedOutput()
@@ -632,7 +701,7 @@ func TestExportODMWrapperEarnsItsPlace(t *testing.T) {
 			}
 		}
 		if dialect.clean && wrappedErr != nil {
-			t.Errorf("the wrapped ODM 1.3 export must validate; the check said: %v\n%s", wrappedErr, wrapped)
+			t.Errorf("the wrapped ODM %s export must validate; the check said: %v\n%s", label, wrappedErr, wrapped)
 		}
 		if plainErr == nil {
 			t.Errorf("vanilla ODM %s exited without a finding for an extension-bearing document", label)

@@ -30,7 +30,24 @@ import (
 type kv struct{ name, value string }
 
 // odmWriter wraps the encoder with the three shapes this document needs.
-type odmWriter struct{ enc *xml.Encoder }
+type odmWriter struct {
+	enc *xml.Encoder
+	v13 bool // the ODM 1.3 dialect, whose vocabulary differs from 2.0 (REQ-ODM-015)
+}
+
+// translatedText is the prose element itself: 1.3.2 leaves it at a language, while
+// 2.0 makes the media type required and names text/plain as the one that must be
+// present. CLARA writes plain text in both, so 2.0 says so (REQ-ODM-015).
+func (w odmWriter) translatedText() xml.StartElement {
+	el := xml.StartElement{
+		Name: xml.Name{Local: "TranslatedText"},
+		Attr: []xml.Attr{{Name: xml.Name{Local: "xml:lang"}, Value: odmLanguage}},
+	}
+	if !w.v13 {
+		el.Attr = append(el.Attr, xml.Attr{Name: xml.Name{Local: "Type"}, Value: odmTextMediaType})
+	}
+	return el
+}
 
 func (w odmWriter) start(name string, attrs ...kv) error {
 	return w.enc.EncodeToken(odmStart(name, attrs...))
@@ -38,6 +55,13 @@ func (w odmWriter) start(name string, attrs ...kv) error {
 
 func (w odmWriter) end(name string) error {
 	return w.enc.EncodeToken(xml.EndElement{Name: xml.Name{Local: name}})
+}
+
+// plain writes `<name>value</name>` with character content rather than a
+// TranslatedText, which is what CheckValue holds in either dialect and what
+// FormalExpression holds in 1.3 (REQ-ODM-015).
+func (w odmWriter) plain(name, value string) error {
+	return w.enc.EncodeElement(value, odmStart(name))
 }
 
 // elem writes a self-closed element in the ODM namespace.
@@ -54,11 +78,7 @@ func (w odmWriter) text(name, value string) error {
 	if err := w.start(name); err != nil {
 		return err
 	}
-	el := xml.StartElement{
-		Name: xml.Name{Local: "TranslatedText"},
-		Attr: []xml.Attr{{Name: xml.Name{Local: "xml:lang"}, Value: odmLanguage}},
-	}
-	if err := w.enc.EncodeElement(value, el); err != nil {
+	if err := w.enc.EncodeElement(value, w.translatedText()); err != nil {
 		return err
 	}
 	return w.end(name)
@@ -78,6 +98,26 @@ func (w odmWriter) ext(name string, attrs ...kv) error {
 // of truth and CLARA stores one label per field, not a per-language matrix, so one
 // TranslatedText per item (REQ-UI-008).
 const odmLanguage = "en"
+
+// odmTextMediaType is the media type 2.0 requires every TranslatedText to name, and
+// the one its schema says must be present (ODM-study.xsd:24). CLARA stores plain
+// labels, so this is the honest answer rather than a placeholder (REQ-ODM-015).
+const odmTextMediaType = "text/plain"
+
+// odmGroupFormType and odmGroupSectionType are 2.0's structural roles for an item
+// group: an instrument is a top-level Form group, and a matrix group nested inside
+// it is a Section (REQ-ODM-015). 1.3 says neither — it has no Type attribute and
+// names the instrument with a FormDef instead (§3.3).
+const (
+	odmGroupFormType    = "Form"
+	odmGroupSectionType = "Section"
+)
+
+// odmMethodComputation is the MethodDef type for a computed value. Both dialects
+// enumerate it and neither admits the word "Calculation", which this exporter used to
+// write — and no validator saw it, because the conformance fixture held no calculated
+// field (REQ-ODM-047).
+const odmMethodComputation = "Computation"
 
 // odmPlan is the export's view of a project's design.
 type odmPlan struct {
@@ -373,23 +413,37 @@ func (p *odmPlan) groupsForRow(row dataapi.ExportRow, repeatOf string, instance 
 
 // writeMetadata writes Study with its MetaDataVersion (§3).
 func (p *odmPlan) writeMetadata(w odmWriter) error {
-	if err := w.start("Study", kv{"OID", p.studyOID}); err != nil {
-		return err
-	}
-	if err := w.start("GlobalVariables"); err != nil {
-		return err
-	}
-	for _, el := range [][2]string{
-		{"StudyName", p.project.ProjectName},
-		{"StudyDescription", p.project.ProjectName},
-		{"ProtocolName", p.project.ProjectName}, // repeats the name for readers that show it (§3.1)
-	} {
-		if err := w.enc.EncodeElement(el[1], odmStart(el[0])); err != nil {
+	// The study header is each dialect's own (REQ-ODM-015): 2.0 dropped GlobalVariables
+	// and requires the naming on the element, so writing 1.3's shape under
+	// ODMVersion="2.0" fails that schema on two required attributes and one stray element.
+	if p.v13 {
+		if err := w.start("Study", kv{"OID", p.studyOID}); err != nil {
 			return err
 		}
-	}
-	if err := w.end("GlobalVariables"); err != nil {
+	} else if err := w.start("Study",
+		kv{"OID", p.studyOID},
+		kv{"StudyName", p.project.ProjectName},
+		kv{"ProtocolName", p.project.ProjectName}); err != nil { // §3.1: repeated for readers that show it
 		return err
+	}
+	if p.v13 {
+		if err := w.start("GlobalVariables"); err != nil {
+			return err
+		}
+		for _, el := range [][2]string{
+			{"StudyName", p.project.ProjectName},
+			{"StudyDescription", p.project.ProjectName},
+			{"ProtocolName", p.project.ProjectName}, // repeats the name for readers that show it (§3.1)
+		} {
+			if err := w.enc.EncodeElement(el[1], odmStart(el[0])); err != nil {
+				return err
+			}
+		}
+		if err := w.end("GlobalVariables"); err != nil {
+			return err
+		}
+	} else if err := w.text("Description", p.project.ProjectName); err != nil {
+		return err // 2.0's study-level prose slot, where StudyDescription used to sit
 	}
 
 	if err := w.start("MetaDataVersion", kv{"OID", p.mdvOID}, kv{"Name", p.project.ProjectName}); err != nil {
@@ -409,7 +463,16 @@ func (p *odmPlan) writeMetadata(w odmWriter) error {
 	return w.end("Study")
 }
 
+// writeProtocol writes 1.3's event list. ODM 2.0 has no Protocol/StudyEventRef: its
+// Protocol may hold only StudyEventGroupRef, and an event is reached through a
+// StudyEventGroupDef instead (ODM-protocol.xsd:200). CLARA declares each event once,
+// in canonical order, as a StudyEventDef — which is where a 2.0 reader finds them —
+// and the arm it belongs to rides on @Category plus clara:Event/@armNum, so nothing
+// is lost by saying it once rather than twice (REQ-ODM-015).
 func (p *odmPlan) writeProtocol(w odmWriter) error {
+	if !p.v13 {
+		return nil
+	}
 	if err := w.start("Protocol"); err != nil {
 		return err
 	}
@@ -421,6 +484,28 @@ func (p *odmPlan) writeProtocol(w odmWriter) error {
 		}
 	}
 	return w.end("Protocol")
+}
+
+// instrumentOID names an instrument in the dialect being written: 1.3 gives it a
+// FormDef whose OID the FormRef and clara:Event name, and 2.0 has no form element —
+// there the instrument *is* its own item group (REQ-ODM-015, §3.3).
+func (p *odmPlan) instrumentOID(name string) string {
+	if p.v13 {
+		return odmOID("FRM_", name)
+	}
+	return odmOID("IG_", name)
+}
+
+// groupsOf returns the item groups one instrument fills: its own group first, then
+// the matrix groups whose rows it collects, in plan order.
+func (p *odmPlan) groupsOf(instrument string) []*odmGroupPlan {
+	out := make([]*odmGroupPlan, 0, 2)
+	for _, g := range p.groups {
+		if g.instrumentName == instrument {
+			out = append(out, g)
+		}
+	}
+	return out
 }
 
 func (p *odmPlan) writeEventDefs(w odmWriter) error {
@@ -438,21 +523,40 @@ func (p *odmPlan) writeEventDefs(w odmWriter) error {
 			return err
 		}
 		repeating := make([]string, 0, len(ev.instruments))
-		for i, ref := range ev.instruments { // the event↔form association ODM defines (§3.2)
-			attrs := []kv{{"FormOID", odmOID("FRM_", ref.name)}, {"Mandatory", noAttr},
-				{"OrderNumber", strconv.Itoa(i + 1)}}
+		for _, ref := range ev.instruments {
 			if ref.repeating {
-				repeating = append(repeating, odmOID("FRM_", ref.name))
-				// ODM 2.0 lets the FormRef speak for its own pair; 1.3.2 gives it no
-				// Repeating attribute at all, so there the flag goes to clara:Event below
-				// rather than being dropped — §3.3's group-level marking cannot say which
-				// of an instrument's events repeats, and REQ-ODM-050 must survive (REQ-ODM-029).
-				if !p.v13 {
-					attrs = append(attrs, kv{"Repeating", yesAttr})
-				}
+				repeating = append(repeating, p.instrumentOID(ref.name))
 			}
-			if err := w.elem("FormRef", attrs...); err != nil {
-				return err
+		}
+		// The event↔instrument association, spelled as each dialect defines it (§3.2).
+		// 1.3 names the form; 2.0 removed FormRef and references the item groups the
+		// event's data holds, which is every group of every instrument mapped here —
+		// including a matrix group, whose ItemGroupData sits beside its instrument's
+		// own rather than inside it (§4). Both carry @Mandatory, which 2.0 requires of
+		// any reference, and an OrderNumber unique among the event's siblings (GD-15).
+		order := 0
+		for _, ref := range ev.instruments {
+			if p.v13 {
+				order++
+				fattrs := []kv{{"FormOID", odmOID("FRM_", ref.name)}, {"Mandatory", noAttr},
+					{"OrderNumber", strconv.Itoa(order)}}
+				// 1.3.2 gives a FormRef no Repeating attribute, so the per-pair flag goes to
+				// clara:Event below rather than being dropped: §3.3's group-level marking
+				// cannot say which of an instrument's events repeats (REQ-ODM-050). In 2.0
+				// there is no FormRef to speak for the pair either, and its ItemGroupRef has
+				// no Repeating attribute, so clara:Event carries it in both dialects
+				// (REQ-ODM-029).
+				if err := w.elem("FormRef", fattrs...); err != nil {
+					return err
+				}
+				continue
+			}
+			for _, g := range p.groupsOf(ref.name) {
+				order++
+				if err := w.elem("ItemGroupRef", kv{"ItemGroupOID", g.oid},
+					kv{"Mandatory", noAttr}, kv{"OrderNumber", strconv.Itoa(order)}); err != nil {
+					return err
+				}
 			}
 		}
 		ext := []kv{}
@@ -476,7 +580,13 @@ func (p *odmPlan) writeEventDefs(w odmWriter) error {
 	return nil
 }
 
+// writeFormDefs writes the form level ODM 1.3.2 defines. ODM 2.0 declares no FormDef
+// at all: an instrument is a top-level ItemGroupDef with @Type="Form", which
+// writeItemGroups emits, so this step is simply absent from that dialect (REQ-ODM-015).
 func (p *odmPlan) writeFormDefs(w odmWriter) error {
+	if !p.v13 {
+		return nil
+	}
 	for _, instr := range p.instruments {
 		formOID := odmOID("FRM_", instr.Name)
 		if err := w.start("FormDef", kv{"OID", formOID}, kv{"Name", instr.Name},
@@ -507,9 +617,21 @@ func (p *odmPlan) writeFormDefs(w odmWriter) error {
 
 func (p *odmPlan) writeItemGroups(w odmWriter) error {
 	for _, g := range p.groups {
-		attrs := []kv{{"OID", g.oid}, {"Name", g.name}, {"Repeating", boolYN(g.repeating)}}
+		attrs := []kv{{"OID", g.oid}, {"Name", g.name}, {"Repeating", p.repeatingAttr(g.repeating)}}
+		if !p.v13 {
+			// 2.0 asks an item group what it *is*: the instrument's own group is a Form,
+			// and a matrix group nested inside it is a Section (REQ-ODM-015).
+			attrs = append(attrs, kv{"Type", p.groupType(g)})
+		}
 		if sas, ok := odmSASName(g.name); ok {
-			attrs = append(attrs, kv{"SASDatasetName", sas}) // omitted where sasName refuses it (REQ-ODM-028)
+			// The dataset name each dialect declares: 2.0 dropped the SAS spelling along
+			// with every other SAS attribute and calls the same thing DatasetName
+			// (REQ-ODM-028). Omitted where sasName refuses it, as on both.
+			if p.v13 {
+				attrs = append(attrs, kv{"SASDatasetName", sas})
+			} else {
+				attrs = append(attrs, kv{"DatasetName", sas})
+			}
 		}
 		if err := w.start("ItemGroupDef", attrs...); err != nil {
 			return err
@@ -525,6 +647,31 @@ func (p *odmPlan) writeItemGroups(w odmWriter) error {
 			}
 			if err := w.elem("ItemRef", attrs...); err != nil {
 				return err
+			}
+		}
+		if !p.v13 && !g.isMatrix {
+			// With no FormDef to hold them, the sections of an instrument are stated by
+			// the instrument's own group: 2.0 lets a group reference groups, and that
+			// nesting is what tells a reader which instrument a Section belongs to when
+			// the event references all of them side by side (REQ-ODM-015, §3.3).
+			order := len(g.items)
+			for _, sub := range p.groupsOf(g.instrumentName) {
+				if sub == g {
+					continue
+				}
+				order++
+				if err := w.elem("ItemGroupRef", kv{"ItemGroupOID", sub.oid},
+					kv{"Mandatory", noAttr}, kv{"OrderNumber", strconv.Itoa(order)}); err != nil {
+					return err
+				}
+			}
+			if instr := p.instrument(g.instrumentName); instr != nil {
+				// What FormDef carried in 1.3 travels here instead, in the same extension
+				// element (§5), so a round trip restores it either way (REQ-ODM-050).
+				if err := w.ext("Form", kv{"isSurvey", bool01(instr.IsSurvey)},
+					kv{"branchingLogic", instr.BranchingLogic.String}); err != nil {
+					return err
+				}
 			}
 		}
 		for _, f := range g.statics { // §3.7: display-only rows live here, with their position
@@ -545,12 +692,43 @@ func (p *odmPlan) writeItemGroups(w odmWriter) error {
 	return nil
 }
 
+// repeatingAttr spells an item group's repeating flag as the dialect being written
+// declares it: 1.3 uses Yes/No, and 2.0 replaced the type with a choice of shapes in
+// which "Yes" is not one — Simple is the unbounded repetition CLARA does (REQ-ODM-015).
+func (p *odmPlan) repeatingAttr(repeating bool) string {
+	if p.v13 || !repeating {
+		return boolYN(repeating)
+	}
+	return "Simple"
+}
+
+// groupType is 2.0's structural role for one of CLARA's item groups.
+func (p *odmPlan) groupType(g *odmGroupPlan) string {
+	if g.isMatrix {
+		return odmGroupSectionType
+	}
+	return odmGroupFormType
+}
+
+// instrument finds an instrument by name, or nil when the plan no longer holds it.
+func (p *odmPlan) instrument(name string) *db.Instrument {
+	for i := range p.instruments {
+		if p.instruments[i].Name == name {
+			return &p.instruments[i]
+		}
+	}
+	return nil
+}
+
 func (p *odmPlan) writeItemDefs(w odmWriter) error {
 	for _, g := range p.groups {
 		for _, it := range g.items {
 			attrs := []kv{{"OID", it.oid}, {"Name", it.name}, {"DataType", it.dataType}}
-			if sas, ok := odmSASName(it.name); ok {
-				attrs = append(attrs, kv{"SASFieldName", sas}) // omitted where sasName refuses it (REQ-ODM-028)
+			if sas, ok := odmSASName(it.name); ok && p.v13 {
+				// 1.3 carries the machine name in SASFieldName and import reads it back;
+				// 2.0 declares no SAS attribute at all, so @Name alone carries it
+				// (REQ-ODM-028). Omitted where sasName refuses it as before.
+				attrs = append(attrs, kv{"SASFieldName", sas})
 			}
 			if err := w.start("ItemDef", attrs...); err != nil {
 				return err
@@ -570,8 +748,8 @@ func (p *odmPlan) writeItemDefs(w odmWriter) error {
 				if err := w.start("RangeCheck", kv{"Comparator", bound.comparator}, kv{"SoftHard", "Hard"}); err != nil {
 					return err
 				}
-				if err := w.elem("CheckValue", kv{"Value", bound.value}); err != nil {
-					return err
+				if err := w.plain("CheckValue", bound.value); err != nil {
+					return err // the bound is CheckValue's text; it declares no attribute
 				}
 				if err := w.end("RangeCheck"); err != nil {
 					return err
@@ -661,24 +839,37 @@ func (p *odmPlan) writeCodeLists(w odmWriter) error {
 func (p *odmPlan) writeMethods(w odmWriter) error {
 	for _, m := range p.methods {
 		if err := w.start("MethodDef", kv{"OID", m.oid}, kv{"Name", m.name},
-			kv{"Type", "Calculation"}); err != nil {
-			return err
+			kv{"Type", odmMethodComputation}); err != nil {
+			return err // both dialects enumerate Computation; neither knows "Calculation"
 		}
 		if err := w.text("Description", m.name); err != nil {
 			return err
 		}
-		// The expression travels as text and is never evaluated here (REQ-ODM-047). It
-		// sits inside a TranslatedText like every other piece of prose in the document
-		// (§3.8), and it inherits the root's namespace declaration instead of restating
-		// it: spelling the namespace on this one element would emit a second xmlns (§2).
-		if err := w.start("FormalExpression"); err != nil {
-			return err
+		// 2.0 makes a signature a required child of MethodDef. CLARA's expression takes no
+		// parameters and returns the field's value, so the element stands empty (REQ-ODM-015).
+		if !p.v13 {
+			if err := w.elem("MethodSignature"); err != nil {
+				return err
+			}
 		}
-		if err := w.text2(m.expression); err != nil {
-			return err
-		}
-		if err := w.end("FormalExpression"); err != nil {
-			return err
+		// The expression travels as text and is never evaluated here (REQ-ODM-047). It sits
+		// where each dialect's own schema holds that text — 1.3.2 types FormalExpression as
+		// plain character content, and 2.0 moved it into a Code child — and neither accepts
+		// the TranslatedText every other piece of prose in this document needs (§3.8).
+		if p.v13 {
+			if err := w.plain("FormalExpression", m.expression); err != nil {
+				return err
+			}
+		} else {
+			if err := w.start("FormalExpression"); err != nil {
+				return err
+			}
+			if err := w.plain("Code", m.expression); err != nil {
+				return err
+			}
+			if err := w.end("FormalExpression"); err != nil {
+				return err
+			}
 		}
 		if err := w.end("MethodDef"); err != nil {
 			return err
@@ -712,11 +903,7 @@ func (p *odmPlan) writeExtension(w odmWriter) error {
 
 // text2 writes a bare TranslatedText (the Decode child already opens the element).
 func (w odmWriter) text2(value string) error {
-	el := xml.StartElement{
-		Name: xml.Name{Local: "TranslatedText"},
-		Attr: []xml.Attr{{Name: xml.Name{Local: "xml:lang"}, Value: odmLanguage}},
-	}
-	return w.enc.EncodeElement(value, el)
+	return w.enc.EncodeElement(value, w.translatedText())
 }
 
 func optKV(name string, v *int64) kv {

@@ -71,6 +71,7 @@ type odmBuildPlan struct {
 // ItemGroupData carries then becomes the storage slot).
 type odmGroupTarget struct {
 	instrument string
+	name       string // the ItemGroupDef's own Name, which a partner states (§3.3)
 	matrix     bool
 	repeating  bool
 }
@@ -389,7 +390,11 @@ func (h *Handler) odmResolve(ctx context.Context, doc *odmDoc, name string, prob
 			if _, taken := targets[ref.oid]; taken {
 				continue
 			}
-			targets[ref.oid] = odmGroupTarget{instrument: inst.Name, matrix: !ref.isOwnGroup}
+			target := odmGroupTarget{instrument: inst.Name, matrix: !ref.isOwnGroup}
+			if group := mdv.groupByOID(ref.oid); group != nil {
+				target.name = group.name // what the document calls this group, in its own words
+			}
+			targets[ref.oid] = target
 		}
 	}
 	for _, def := range mdv.groups {
@@ -619,7 +624,14 @@ func odmFieldOf(mdv *odmMetaDataVersion, item *odmItemDef, ref odmItemRef, targe
 	if matrix := extStr(item.ext, "matrixGroup"); matrix != "" {
 		f.MatrixGroup = sql.NullString{String: matrix, Valid: true}
 	} else if target.matrix {
-		f.MatrixGroup = sql.NullString{String: target.instrument + "_group", Valid: true}
+		// The group's own name first: a partner states it on the ItemGroupDef, and CLARA
+		// writes it in both dialects — only a document that names nothing at all takes the
+		// name this importer invents (§5: ODM first, the extension where ODM is silent).
+		matrix := target.name
+		if matrix == "" || matrix == target.instrument {
+			matrix = target.instrument + "_group"
+		}
+		f.MatrixGroup = sql.NullString{String: matrix, Valid: true}
 	}
 	if header := extStr(item.ext, "sectionHeader"); header != "" {
 		f.SectionHeader = sql.NullString{String: header, Valid: true}
