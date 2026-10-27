@@ -57,6 +57,7 @@ else
 		0) ;;
 		1) echo "WARN: an exported ODM document deviates from the CDISC schema above (REQ-ODM-055)." >&2 ;;
 		3) echo "NOTE: ODM conformance skipped — python3 lxml is not installed on this machine." >&2 ;;
+		4) echo "WARN: a vendored ODM schema will not load, so the check produced no verdict at all (REQ-ODM-055)." >&2 ;;
 		*) echo "WARN: the ODM conformance check exited $odm_status without a verdict." >&2 ;;
 	esac
 fi

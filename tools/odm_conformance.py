@@ -28,9 +28,11 @@ conformance to, so it is a review event like any other dependency bump):
                        schemas import through ../core/
 
 lxml is development tooling on the order of Playwright or semgrep (ASM-ODM-5): nothing
-in the running program validates an XSD. Exit codes keep "found nothing" apart from
-"nothing was checked": 0 every document valid · 1 a document deviates · 2 bad
-invocation · 3 environment cannot check (no lxml) — which is what a soft step reads.
+in the running program validates an XSD. Exit codes keep "found nothing", "the document
+deviates" and "nothing was validated" apart: 0 every document valid · 1 a document
+deviates · 2 bad invocation · 3 environment cannot check (no lxml) — which is what a
+soft step reads — · 4 the check itself is broken, a vendored schema will not load, so
+no document has earned any verdict.
 """
 
 import collections
@@ -74,33 +76,42 @@ def distinct(error_log):
 
 
 def check(path, wrapper, cache):
-    """Validate one document against its dialect's schema; True when it conforms."""
+    """Validate one document against its dialect's schema.
+
+    Returns "ok", "deviates" or "broken" — the last meaning the check itself could not
+    run, which must never be read as either a pass or a finding against the document.
+    """
     try:
         namespace = dialect_of(path)
     except ET.ParseError as error:
         print(f"  FAIL {os.path.basename(path)}: not well-formed XML — {error}")
-        return False
+        return "deviates"
     if namespace not in SCHEMAS:
         print(f"  SKIP {os.path.basename(path)}: root namespace {namespace!r} is neither "
               "ODM 1.3 nor 2.0, so no schema applies")
-        return True
+        return "ok"
 
     from lxml import etree
     name = SCHEMAS[namespace][0 if wrapper else 1]
     if name not in cache:
         try:
             cache[name] = etree.XMLSchema(etree.parse(os.path.join(SCHEMA_DIR, name)))
-        except (etree.XMLSchemaParseError, OSError) as error:
-            print(f"  FAIL schema {name} will not load — {error}")
-            return False
+        except (etree.XMLSchemaParseError, OSError, etree.XMLSyntaxError) as error:
+            print(f"  FAIL the check itself is broken: schema {name} will not load — {error}")
+            return "broken"
 
-    with open(path, "rb") as handle:
-        document = etree.parse(handle)
+    try:
+        with open(path, "rb") as handle:
+            document = etree.parse(handle)
+    except (OSError, etree.XMLSyntaxError) as error:
+        print(f"  FAIL {os.path.basename(path)}: cannot be read by the validator — {error}")
+        return "deviates"
+
     label = "ODM 1.3" if namespace.endswith("/v1.3") else "ODM 2.0"
-    through = "CLARA wrapper" if wrapper and name != SCHEMAS[namespace][1] else "vanilla CDISC"
+    through = "CLARA wrapper" if name == SCHEMAS[namespace][0] and wrapper else "vanilla CDISC"
     if cache[name].validate(document):
         print(f"  OK   {os.path.basename(path)} ({label}, {through}): conforms")
-        return True
+        return "ok"
 
     found = distinct(cache[name].error_log)
     print(f"  FAIL {os.path.basename(path)} ({label}, {through}): "
@@ -109,7 +120,7 @@ def check(path, wrapper, cache):
         print(f"         {f'{count}x ' if count > 1 else ''}{message[:200]}")
     if len(found) > MAX_DISTINCT:
         print(f"         … {len(found) - MAX_DISTINCT} further class(es) not shown")
-    return False
+    return "deviates"
 
 
 def main(argv):
@@ -135,10 +146,17 @@ def main(argv):
         print("       setup: python3 -m pip install --user lxml")
         return 3
 
-    cache, failed = {}, 0
+    cache, failed, broken = {}, 0, False
     for path in args:
-        if not check(path, wrapper, cache):
+        verdict = check(path, wrapper, cache)
+        if verdict == "deviates":
             failed += 1
+        elif verdict == "broken":
+            broken = True
+    if broken:
+        # Nothing was validated, so no document gets a verdict either way — and the run
+        # must not read as "the documents are fine" or as "this document deviates".
+        return 4
     return 1 if failed else 0
 
 
