@@ -304,7 +304,7 @@ abstract class StructureController extends ProjectPageController
      * event's unique name (§7.3, `Data_Validation_Design.md` §7.1). Fetched by the expression
      * editor only when the designer opens the picker, so a page render never pays for it;
      * the fields of each mapped instrument are one read each, bounded by the instrument
-     * count, never by a table's rows (Plan/Web_Implementation.md §7 rule 13).
+     * count, never by a table's rows (User_Interface_Design.md §12 rule 13).
      */
     public function data(): Response
     {

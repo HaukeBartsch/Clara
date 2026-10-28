@@ -788,7 +788,7 @@ vhost level mod_rewrite runs before the URL is mapped to a file, where `-f` alwa
 asset would be routed to PHP.
 
 Check either server with §13.1. `e2e/tests/deployment.spec.ts` automates those checks plus a parity check
-of the two files against this guide (`Plan/Web_Implementation.md` §8); point it at a deployed front door
+of the two files against this guide (`Design/Technology_Stack_Design.md` §6); point it at a deployed front door
 with `CLARA_DEPLOY_URL` and name the server with `CLARA_PROXY_KIND=nginx|apache`.
 
 ---

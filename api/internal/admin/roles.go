@@ -17,7 +17,7 @@ import (
 // point of the screen — but there is no delete endpoint: a member's
 // `user_projects.role_id` cascades to NULL, which REQ-AUTH-022 reads as full
 // permissions, so deleting a role would silently promote everyone holding it
-// (Plan/Web_Implementation.md §7 rule 5).
+// (User_Interface_Design.md §12 rule 5).
 func (h *Handler) registerRoles(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/projects/{id}/roles", h.listRoles)
 	mux.HandleFunc("POST /api/v1/projects/{id}/roles", h.createRole)

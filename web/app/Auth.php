@@ -36,7 +36,7 @@ final class Auth
         ?LdapRace $ldap = null
     ) {
         // Injectable rather than constructed inline so the redirect and the directory
-        // race can be exercised against a fixture (Plan/Web_Implementation.md §8).
+        // race can be exercised against a fixture (Design/Technology_Stack_Design.md §6).
         $this->oauth = $oauth ?? new Oauth($api, $config, $logger);
         $this->ldap = $ldap ?? new LdapRace($config, $logger);
     }

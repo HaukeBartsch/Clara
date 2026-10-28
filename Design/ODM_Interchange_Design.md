@@ -1,7 +1,7 @@
 # ODM Interchange — Design
 
 **Project:** Clinical Study Management System (REDCap API Replacement)\
-**Implements:** `Requirements/ODM_Interchange_Requirements.md` (REQ-ODM-…; source plan `Plan/ODM_Interchange.md`), on top of the export pipeline of `Design/Data_Export_Anonymization_Design.md` §4 and the write path of `Design/Data_Validation_Design.md`\
+**Implements:** `Requirements/ODM_Interchange_Requirements.md` (REQ-ODM-…), on top of the export pipeline of `Design/Data_Export_Anonymization_Design.md` §4 and the write path of `Design/Data_Validation_Design.md`\
 **Date:** 2026-10-23
 
 ## 1. Purpose and Normative Scope

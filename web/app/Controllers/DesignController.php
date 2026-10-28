@@ -11,8 +11,8 @@
 // opens one instrument's edit form, as `?field=` does for a field.
 //
 // Field order comes from `GET …/fields` — never `GET …/fields/order`, which routes to the
-// reorder handler (Plan/Web_Implementation.md §7 rule 2). Every write sends exactly the
-// attributes the field endpoints accept (§7 rule 1); the API is the only validator of names,
+// reorder handler (User_Interface_Design.md §12 rule 2). Every write sends exactly the
+// attributes the field endpoints accept (§12 rule 1); the API is the only validator of names,
 // choices and expressions, and its `validation_error` reason is shown verbatim (REQ-VAL-029).
 
 declare(strict_types=1);

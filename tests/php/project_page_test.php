@@ -83,7 +83,7 @@ describe('project page (§6.1, REQ-UI-017)', function (): void {
         assert_contains('>30<', $response->body());
     });
 
-    it('reads the project once and never the project list (§7 rule 13)', function (): void {
+    it('reads the project once and never the project list (§12 rule 13)', function (): void {
         sign_in();
         queue_project_home();
 

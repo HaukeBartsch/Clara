@@ -5,9 +5,10 @@ Rules for LLM-assisted development on CLARA — "Clinical Logbook for Automated 
 ## Source of truth and documentation workflow
 
 - [VISION_AND_REQUIREMENTS.md](VISION_AND_REQUIREMENTS.md) is the origin document — vision, requirements, and binding decisions. All other documentation derives from it; when documents conflict, it wins.
-- Software development documents live in `Requirements/*.md`, `Plan/*.md`, and `Design/*.md`. Each functional area has one document per folder, named after the area (e.g. `Requirements/Data_Validation_Requirements.md` → `Plan/Data_Validation.md` → `Design/Data_Validation_Design.md`).
-- Functional areas: AI_Assistant, API_Endpoints, Audit_Logging, Authentication_Authorization, Data_Export_Anonymization, Data_Validation, Database_Schema, Project_Charter, System_Configuration, Technology_Stack, User_Interface.
-- Requirements carry stable IDs (`REQ-<AREA>-nnn`, assumptions `ASM-…`). Reference existing IDs when writing or changing behavior; introduce new ones in the Requirements document first, then reflect them in Plan and Design.
+- Software development documents live in `Requirements/*.md` and `Design/*.md`. Each functional area has one document per folder, named after the area (e.g. `Requirements/Data_Validation_Requirements.md` → `Design/Data_Validation_Design.md`). The chain is `VISION_AND_REQUIREMENTS.md` → Requirements → Design; every normative statement lives in one of those three.
+- `Plan/*.md` holds delivery plans, named after the delivery rather than an area (`Plan/Web_Implementation.md`, `Plan/AI_Assistant.md`): the order of work, milestones, and exit criteria of one delivery. A plan sits outside the chain — it introduces no requirement IDs and no behavior, and a rule that must outlast the delivery moves into the Design document of its area. Per-area plans existed until 2026-10-28; the "plan" citations still found in Requirements and Design quote them as of commit `2b0c371`.
+- Functional areas: AI_Assistant, API_Endpoints, Audit_Logging, Authentication_Authorization, Data_Export_Anonymization, Data_Validation, Database_Schema, ODM_Interchange, Project_Charter, System_Configuration, Technology_Stack, User_Interface.
+- Requirements carry stable IDs (`REQ-<AREA>-nnn`, assumptions `ASM-…`). Reference existing IDs when writing or changing behavior; introduce new ones in the Requirements document first, then reflect them in Design.
 - Design documents are normative for their area (e.g. `Design/Technology_Stack_Design.md` fixes toolchain selection). A deviation from a design document is a requirements-level change, not an implementation detail.
 
 ## Repository layout

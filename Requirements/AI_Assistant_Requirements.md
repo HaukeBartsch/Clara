@@ -1,7 +1,7 @@
 # AI Assistant — Requirements Analysis
 
 **Project:** Clinical Study Management System (REDCap API Replacement)\
-**Source plan:** `Plan/AI_Assistant.md`, `VISION_AND_REQUIREMENTS.md` ("Later: alternative admin WebLLM interface")\
+**Source:** `VISION_AND_REQUIREMENTS.md` ("Later: alternative admin WebLLM interface"); delivery plan `Plan/AI_Assistant.md`\
 **Status:** Approved for development handoff\
 **Date:** 2026-10-16
 

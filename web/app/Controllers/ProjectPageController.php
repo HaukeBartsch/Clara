@@ -5,7 +5,7 @@
 //
 // The detail read carries the acting user's effective permissions (REQ-API-126). They are
 // disclosure only: they decide which panel entries and controls exist, and every call
-// behind them is re-checked by the API (REQ-AUTH-033, Plan/Web_Implementation.md §7
+// behind them is re-checked by the API (REQ-AUTH-033, User_Interface_Design.md §12
 // rule 15). Nothing here caches them beyond the request.
 
 declare(strict_types=1);
@@ -131,7 +131,7 @@ abstract class ProjectPageController extends Controller
 
     /**
      * A structure object id from the body — negative while a staging set is open, because
-     * objects created in it carry provisional ids (Plan/Web_Implementation.md §7 rule 3) —
+     * objects created in it carry provisional ids (User_Interface_Design.md §12 rule 3) —
      * or 0 when the value names nothing.
      */
     protected function objectId(string $name): int

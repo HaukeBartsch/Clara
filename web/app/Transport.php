@@ -2,8 +2,8 @@
 // The one seam between the web layer and the network. It exists so the parts of
 // the application that matter most — routing, the content-negotiated page/data
 // split (REQ-UI-044), gating, CSRF, message mapping — can be exercised without a
-// running API, which is what Plan/Web_Implementation.md §8 asks of the PHP harness
-// ("Unit (no HTTP)"). Production uses CurlTransport and nothing else.
+// running API, which is what Design/Technology_Stack_Design.md §6 asks of the PHP harness
+// (it "runs with no HTTP"). Production uses CurlTransport and nothing else.
 
 declare(strict_types=1);
 

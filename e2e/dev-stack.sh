@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Development stack for the Playwright specs (REQ-TECH-028, Plan/Web_Implementation.md §8):
+# Development stack for the Playwright specs (REQ-TECH-028, Design/Technology_Stack_Design.md §6):
 # the real Go API on a throwaway SQLite file plus web/public under `php -S`, wired together with
 # the three authentication-source names the login spec asserts against.
 #

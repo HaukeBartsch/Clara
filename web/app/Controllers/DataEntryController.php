@@ -6,7 +6,8 @@
 //
 // The structure comes from the project detail read the page spends anyway (arms with their
 // events in canonical order, instruments with positions — API §4.5) plus the instrument ×
-// event mapping (§4.12): no read per arm, per event or per record (Plan §7 rule 13).
+// event mapping (§4.12): no read per arm, per event or per record
+// (User_Interface_Design.md §12 rule 13).
 
 declare(strict_types=1);
 

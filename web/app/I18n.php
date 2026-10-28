@@ -102,7 +102,7 @@ final class I18n
      *
      * Cached for a quarter of an hour per session: the selector is on every page,
      * and one read per page would spend a third of the render's API budget on it
-     * (Plan/Web_Implementation.md §7 rule 13). A language an administrator enables
+     * (User_Interface_Design.md §12 rule 13). A language an administrator enables
      * appears for everyone within that window.
      */
     public function languages(): array

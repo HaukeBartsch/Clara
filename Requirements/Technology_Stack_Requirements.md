@@ -1,7 +1,7 @@
 # Technology Stack — Requirements Analysis
 
 **Project:** Clinical Study Management System (REDCap API Replacement)\
-**Source plan:** `Plan/Technology_Stack.md`\
+**Source:** `VISION_AND_REQUIREMENTS.md` (master spec); seeded from the area plan `Plan/Technology_Stack.md`, retired 2026-10-28 and kept in history (`git show 2b0c371:Plan/Technology_Stack.md`)\
 **Status:** Approved for development handoff\
 **Date:** 2026-09-18
 

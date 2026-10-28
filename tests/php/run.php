@@ -1,7 +1,7 @@
 <?php
 // Runs every tests/php/*_test.php and reports. Exit code 0 only when nothing
 // failed — CI treats a red harness as a failed build (Design/Technology_Stack_Design.md
-// §6, Plan/Web_Implementation.md §8).
+// §6).
 //
 //   php tests/php/run.php
 

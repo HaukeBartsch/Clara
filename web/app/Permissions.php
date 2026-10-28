@@ -11,7 +11,7 @@
 // It is disclosure, not a credential — every endpoint re-checks at call time
 // (REQ-AUTH-033), so whatever this shows still has to survive the API's own
 // decision. Never carry levels into the session (they go stale), and never fetch
-// the read more than once per page (Plan/Web_Implementation.md §7 rule 15).
+// the read more than once per page (User_Interface_Design.md §12 rule 15).
 
 declare(strict_types=1);
 

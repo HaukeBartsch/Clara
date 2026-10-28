@@ -53,7 +53,7 @@ describe('two-factor settings (§2.5, REQ-UI-039)', function (): void {
         $response = router_for(http_request('GET', '/account/two-factor', browser_headers()))->dispatch();
 
         assert_contains('Authenticator app', $response->body());
-        assert_contains('2026-09-30 12:00:00', $response->body(), 'a system timestamp is shown as returned (§7 rule 9)');
+        assert_contains('2026-09-30 12:00:00', $response->body(), 'a system timestamp is shown as returned (§12 rule 9)');
         assert_contains('8 recovery codes left', $response->body());
     });
 

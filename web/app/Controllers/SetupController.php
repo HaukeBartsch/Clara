@@ -11,7 +11,7 @@
 // Reordering is computed here from a fresh read and sent as the full ordered id list every
 // order endpoint requires (§4.8–§4.10); the arms' and events' ids never change by it
 // (REQ-API-129). New projects already hold arm 1, the `baseline` event and the instrument
-// `instrument` (REQ-API-050) — nothing here creates them (Plan/Web_Implementation.md §7 rule 4).
+// `instrument` (REQ-API-050) — nothing here creates them (User_Interface_Design.md §12 rule 4).
 
 declare(strict_types=1);
 

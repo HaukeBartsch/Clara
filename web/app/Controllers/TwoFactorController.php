@@ -200,7 +200,7 @@ final class TwoFactorController extends Controller
     /**
      * Renders the page. `$status` is the status read; `null` asks for a fresh one, which
      * keeps every failure path from having to fetch it itself — and still means one read
-     * per render (Plan/Web_Implementation.md §7 rule 13).
+     * per render (User_Interface_Design.md §12 rule 13).
      *
      * @param array{method: string, enrolled_at: string, recovery_codes_remaining: int}|null $status
      * @param array<string, mixed> $view

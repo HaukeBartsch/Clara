@@ -54,7 +54,7 @@ final class FakeLdapSet implements LdapAttemptSet
     }
 }
 
-/** The launcher seam LdapRace exists around (Plan/Web_Implementation.md §8). */
+/** The launcher seam LdapRace exists around (Design/Technology_Stack_Design.md §6). */
 final class FakeLdapLauncher implements LdapLauncher
 {
     /** @var list<array<string, scalar>> every job started, across every set */

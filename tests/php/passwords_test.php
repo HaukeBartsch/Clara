@@ -38,7 +38,7 @@ describe('change own password (§2.6, REQ-AUTH-061)', function (): void {
         assert_contains('identity provider', $response->body());
     });
 
-    it('sends exactly the two attributes the endpoint accepts (§7 rule 1)', function (): void {
+    it('sends exactly the two attributes the endpoint accepts (§12 rule 1)', function (): void {
         sign_in();
         queue_shell();
         queue_sidebar_projects();

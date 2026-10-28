@@ -12,8 +12,8 @@ A research electronic data capture (EDC) system for clinical studies: a web-base
 |---|---|
 | [VISION_AND_REQUIREMENTS.md](VISION_AND_REQUIREMENTS.md) | Origin document — vision, requirements, and binding decisions |
 | Requirements documents | Derived, detailed functional requirements (one area per document) |
-| Plan documents | Implementation sequencing and milestones |
-| Design documents | Architecture and technical design derived from the above |
+| Design documents | Architecture and technical design derived from the Requirements |
+| Plan documents | Delivery plans — order of work, milestones and exit criteria of one delivery; outside the derivation chain |
 
 `AGENTS.md` files (where present) outline rules for LLM-assisted development based on this structure.
 

@@ -172,7 +172,7 @@ describe('router — guard and dispatch', function (): void {
         assert_contains('No projects yet', $response->body());
     });
 
-    it('makes one API call for the dashboard read — no fan-out per row (§7 rule 13)', function (): void {
+    it('makes one API call for the dashboard read — no fan-out per row (§12 rule 13)', function (): void {
         sign_in();
         queue_shell();
         api_route('/api/v1/projects', [

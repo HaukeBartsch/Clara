@@ -201,7 +201,7 @@ final class AccountController extends Controller
 
         try {
             // Exactly the two attributes the endpoint accepts — an extra one is a 400
-            // (Plan/Web_Implementation.md §7 rule 1).
+            // (User_Interface_Design.md §12 rule 1).
             $answer = $this->api->put('/api/v1/users/me/password', [
                 'current_password' => $current,
                 'new_password' => $password,

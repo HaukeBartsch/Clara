@@ -4,7 +4,7 @@
 // the dependency allowlist (REQ-TECH-023/026), so this is the whole framework:
 // describe()/it(), four assertions, and a fake transport that answers in place of
 // the API — so dispatch, gating and message mapping are tested with no HTTP and no
-// database (Plan/Web_Implementation.md §8).
+// database (Design/Technology_Stack_Design.md §6).
 
 declare(strict_types=1);
 

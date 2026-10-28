@@ -37,7 +37,4 @@ rewritten app-config the engine loads (REQ-AI-003, ASM-AI-2). INSTALL.md gains t
 
 ## D4 — Tests
 
-Playwright (`e2e/tests/assistant.spec.ts`, REQ-TECH-028): the section renders for an admin with a
-"model not installed / WebGPU unavailable" state; the MCP endpoint is exercised from the page's own
-session — `tools/list` shape, a read tool round-trip, and the server-side refusal of a write tool in
-read-only mode (REQ-AI-006). Stats helpers are checked against hand-computed values.
+Moved on 2026-10-28 to `Design/AI_Assistant_Design.md` §8, where the test obligations outlast this delivery.

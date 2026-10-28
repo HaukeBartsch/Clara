@@ -15,7 +15,7 @@
 //     envelope, so the text is mapped onto the stable codes the rest of the layer uses;
 //   * unknown parameters are dropped rather than refused (REQ-API-017).
 //
-// Token discipline (§8.6, Plan §7 rule 7): the member's token comes from the self-service
+// Token discipline (§8.6, §12 rule 7): the member's token comes from the self-service
 // fetch `GET …/users/{uid}/token` (REQ-API-102), is cached in the session per project, and
 // on a 401 `Invalid token` — rotated or revoked since it was cached (REQ-AUTH-030) — is
 // discarded, fetched again and the call retried exactly once. A 403 is a permission result

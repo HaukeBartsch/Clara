@@ -201,5 +201,8 @@ Results are plain JSON numbers/strings; tool text summaries round to four signif
 
 ## 8. Tests
 
-Playwright per `Plan/AI_Assistant.md` D4; stats helpers verified against hand-computed values,
+Playwright (`e2e/tests/assistant.spec.ts`, REQ-TECH-028): the section renders for an admin with a
+"model not installed / WebGPU unavailable" state; the MCP endpoint is exercised from the page's own
+session — `tools/list` shape, a read tool round-trip, and the server-side refusal of a write tool in
+read-only mode (REQ-AI-006). Stats helpers are verified against hand-computed values,
 including the p-value against a known reference (e.g. t = 2.1, df = 18 → p ≈ 0.0489).

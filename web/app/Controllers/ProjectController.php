@@ -9,7 +9,7 @@
 // structure the counts come from, and the acting user's effective permissions
 // (REQ-API-126). The permissions block is disclosure only: it decides which panel entries
 // exist and which section opens, and every call behind them is re-checked by the API
-// (REQ-AUTH-033, Plan/Web_Implementation.md §7 rule 15).
+// (REQ-AUTH-033, User_Interface_Design.md §12 rule 15).
 //
 // Gating is the API's own — a member with no data access on any arm is refused by the
 // read itself (§4.5) and lands on the §3.4 refusal page; PHP adds no visibility rule of
@@ -190,7 +190,7 @@ final class ProjectController extends ProjectPageController
     /**
      * The read-only metadata block of §6.1 — editing it belongs to §5.2. Empty values
      * are dropped so the block holds only what the study actually recorded; dates and
-     * timestamps are passed through exactly as stored (Plan/Web_Implementation.md §7
+     * timestamps are passed through exactly as stored (User_Interface_Design.md §12
      * rule 9), which is also why nothing here formats them.
      *
      * @return array<string, string>

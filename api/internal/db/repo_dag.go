@@ -112,7 +112,7 @@ func (s *Store) CountRecordsByDAGGroup(ctx context.Context, projectID, groupID i
 // ListDAGMembershipsByProject returns every data-access-group membership held by
 // the project's members (REQ-API-141): one read for a whole members listing, so
 // showing who holds which group costs one query instead of one per member
-// (Plan/Web_Implementation.md §7 rule 13). Group names are not joined — the
+// (User_Interface_Design.md §12 rule 13). Group names are not joined — the
 // caller already has the project's groups from ListDAGGroups and pairs them by
 // id — and rows come back ordered by assignment then group, which is the order a
 // member row lists its groups in.

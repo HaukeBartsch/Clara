@@ -12,7 +12,7 @@
  * that read is refused or fails, nothing is emitted for it rather than a placeholder.
  *
  * Timestamps and dates are printed as the API returned them: system values are UTC and
- * clinical dates are stored as entered, offsets included (Plan/Web_Implementation.md §7
+ * clinical dates are stored as entered, offsets included (User_Interface_Design.md §12
  * rule 9). No locale reformatting happens anywhere in the web layer.
  */
 

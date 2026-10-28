@@ -155,7 +155,7 @@ php "$root/tests/php/run.php"
 
 # --- browser specs (REQ-TECH-028) ----------------------------------------------
 echo "==> Playwright browser specs (e2e/, REQ-TECH-028)"
-remedy="setup: cd e2e && npm ci && npx playwright install chromium (Plan/Web_Implementation.md §8)"
+remedy="setup: cd e2e && npm ci && npx playwright install chromium (Design/Technology_Stack_Design.md §6)"
 
 if ! command -v node >/dev/null 2>&1; then
 	echo "FAIL: node is not installed, so the browser specs cannot run — REQ-TECH-028 uncovered." >&2
@@ -238,7 +238,7 @@ read -r pw_expected pw_skipped < <(node -e '
 ' "$state/e2e.json")
 
 # The skip guard: every web spec calls test.skip(!process.env.CLARA_WEB_URL), and
-# Plan/Web_Implementation.md §8 wants those specs "skipped, not red" on a machine with
+# Design/Technology_Stack_Design.md §6 wants those specs "skipped, not red" on a machine with
 # no running application. REQ-TECH-028 says they run in CI, so inside this gate a skip
 # is uncovered coverage — the one way this script could otherwise report green while
 # testing nothing of the web layer.

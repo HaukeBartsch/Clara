@@ -11,7 +11,7 @@
 // user rather than one per web server (REQ-API-125).
 //
 // Two behaviours of the API are easy to get wrong from here and are worth
-// stating once (Plan/Web_Implementation.md §7 rules 1 and 12):
+// stating once (User_Interface_Design.md §12 rules 1 and 12):
 //   * administration writes answer 400 on an attribute outside their whitelist —
 //     send exactly the names the endpoint accepts, per area;
 //   * statuses are not uniform: DELETE answers 204, creates 201 (the member add

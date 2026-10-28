@@ -7,7 +7,7 @@
 // checked the CSRF token).
 //
 // Each write sends exactly the attributes its endpoint whitelists — the administration API
-// answers 400 to anything else (Plan/Web_Implementation.md §7 rule 1) — and every outcome is
+// answers 400 to anything else (User_Interface_Design.md §12 rule 1) — and every outcome is
 // one translated line (§3.4): success after a redirect (PRG), failure either as a re-rendered
 // form that keeps what was typed (create forms) or as a flashed line (row actions).
 
@@ -367,7 +367,7 @@ final class ControlPanelController extends Controller
         return $this->toSection('users');
     }
 
-    /** One `PUT /api/v1/users/{id}` row action with exactly one attribute (§7 rule 1). */
+    /** One `PUT /api/v1/users/{id}` row action with exactly one attribute (§12 rule 1). */
     private function userUpdate(array $body, string $successKey): Response
     {
         $id = $this->targetUserId();

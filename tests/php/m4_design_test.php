@@ -2,7 +2,7 @@
 // M4 — Setup and the Instrument Designer (Plan/Web_Implementation.md §6): §6.2 Setup, §7 the
 // designer, §6.6 the mode card, §6.7 staging, §6.8 analysis-mode acknowledgement. What is
 // asserted here is what review would otherwise check by hand: the project_admin gate, each
-// write's exact attribute set (§7 rule 1), the full ordered lists the order endpoints take,
+// write's exact attribute set (§12 rule 1), the full ordered lists the order endpoints take,
 // staging controls by mode, the breaking-change replay, and the mode card's is_admin gate.
 
 declare(strict_types=1);
@@ -529,7 +529,7 @@ describe('Instrument Designer (§7, REQ-UI-021…023)', function (): void {
         assert_not_contains('clara-fields', $response->body());
     });
 
-    it('accepts a provisional (negative) instrument id while staging is open (§7 rule 3)', function (): void {
+    it('accepts a provisional (negative) instrument id while staging is open (§12 rule 3)', function (): void {
         sign_in();
         m4_queue('production', true, instruments: array_merge(m4_instruments(),
             [['id' => -1, 'name' => 'staged', 'position' => 3, 'field_count' => 0]]));

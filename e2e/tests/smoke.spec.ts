@@ -47,7 +47,7 @@ test("vanilla ES2020 runs untranspiled in the browser", async ({ page }) => {
 })
 
 // Probe for the running PHP application; skipped until a base URL is supplied so the suite
-// stays green without `php -S` (Plan/Web_Implementation.md §8, integration + browser tiers).
+// stays green without `php -S` (Design/Technology_Stack_Design.md §6, integration + browser tiers).
 test("the web application answers at its base URL", async ({ request }) => {
   test.skip(!process.env.CLARA_WEB_URL, "CLARA_WEB_URL not set — no running web/ application")
   const response = await request.get("/")

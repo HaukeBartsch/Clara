@@ -106,7 +106,7 @@ abstract class Controller
      * (`User_Interface_Design.md` §4, REQ-AUTH-026).
      *
      * The project overview's grid is its only caller (§2.4 A): one call per render, and
-     * boxes are never enriched per box (Plan/Web_Implementation.md §7 rule 13). The page
+     * boxes are never enriched per box (User_Interface_Design.md §12 rule 13). The page
      * that needs one project's permissions asks for that project, which is why entering a
      * project resolves there rather than here (REQ-UI-017).
      *

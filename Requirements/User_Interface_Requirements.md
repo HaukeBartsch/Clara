@@ -1,7 +1,7 @@
 # User Interface — Requirements Analysis
 
 **Project:** Clinical Study Management System (REDCap API Replacement)\
-**Source plan:** `Plan/User_Interface.md`, `VISION_AND_REQUIREMENTS.md` (master spec)\
+**Source:** `VISION_AND_REQUIREMENTS.md` (master spec); seeded from the area plan `Plan/User_Interface.md`, retired 2026-10-28 and kept in history (`git show 2b0c371:Plan/User_Interface.md`)\
 **Status:** Approved for development handoff\
 **Date:** 2026-09-19
 

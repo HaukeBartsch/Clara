@@ -4,7 +4,7 @@
 // (§8.2), prefilled with the record's current values (§8.3), the completion control as the
 // last field (§8.5), and the record actions beside it (§8.7).
 //
-// Reads per render (Plan §7 rule 13): the project detail (permissions, arms and events), the
+// Reads per render (§12 rule 13): the project detail (permissions, arms and events), the
 // mode, the instruments (survey flag, instrument branching), the mapping, the record-status
 // read (this record's completion states, and whether it exists yet), the selected
 // instrument's fields, and the record history walked newest-first until every value the
@@ -870,7 +870,7 @@ final class RecordController extends DataEntryController
         }, $wanted);
         if ($walk['truncated']) {
             // Values older than the walk's ceiling would show as empty: say so in the log, where
-            // an operator measuring Plan §7 rule 14 will look.
+            // an operator measuring §12 rule 14 will look.
             $this->logger->warn('record history walk truncated', ['project' => $projectId, 'pages' => DataEntry::HISTORY_MAX_PAGES]);
         }
 

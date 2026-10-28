@@ -1,7 +1,7 @@
 <?php
 // The data-entry rules of User_Interface_Design.md §8 that are pure functions of what the API
 // returned and what the browser posted — kept apart from the controllers so each one is
-// testable without a page around it (Plan/Web_Implementation.md §8):
+// testable without a page around it (Design/Technology_Stack_Design.md §6):
 //
 //   * current values from the record history, walked most-recent-first (§8.3, REQ-API-137);
 //   * the form's render items — single fields, matrix groups, section headings (§8.2);
@@ -161,7 +161,7 @@ final class DataEntry
      * its most recent entry left — the `new` side of a create/update, nothing after a delete.
      * The history is read newest-first (`order=newest`, REQ-API-137) and the walk stops as
      * soon as every wanted key has been seen, so opening a form costs pages over the recent
-     * changes rather than the whole history (Plan §7 rule 14). `$fetch(?string $cursor)`
+     * changes rather than the whole history (§12 rule 14). `$fetch(?string $cursor)`
      * returns one decoded page: `{entries: […], next_cursor: string|null}`.
      *
      * Keys are `<unique_event_name>|<field_name>` for a form's first instance, and

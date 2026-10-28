@@ -1,7 +1,7 @@
 # Database Schema — Requirements Analysis
 
 **Project:** Clinical Study Management System (REDCap API Replacement)\
-**Source plan:** `Plan/Database_Schema.md`, `VISION_AND_REQUIREMENTS.md` (master spec)\
+**Source:** `VISION_AND_REQUIREMENTS.md` (master spec); seeded from the area plan `Plan/Database_Schema.md`, retired 2026-10-28 and kept in history (`git show 2b0c371:Plan/Database_Schema.md`)\
 **Status:** Approved for development handoff\
 **Date:** 2026-09-18
 

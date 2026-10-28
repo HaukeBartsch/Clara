@@ -3,7 +3,7 @@
 // Projects, Audits and Translations sections (§5.1/§5.2/§5.6/§5.7, REQ-UI-047) and the project
 // page's Members, Roles and Groups (§5.3/§5.4/§5.5). What is asserted here is what review
 // would otherwise have to check by hand: each write carries exactly its endpoint's attributes
-// (§7 rule 1), a token is shown once (§3.5), destructive actions confirm first, gates hold,
+// (§12 rule 1), a token is shown once (§3.5), destructive actions confirm first, gates hold,
 // and stored values come back escaped (§3.2).
 
 declare(strict_types=1);
@@ -129,7 +129,7 @@ describe('Control Panel — Users (§5.1, REQ-UI-011)', function (): void {
         assert_contains('an enabled account with this email already exists', $response->body());
     });
 
-    it('sends one attribute per row action (§7 rule 1)', function (): void {
+    it('sends one attribute per row action (§12 rule 1)', function (): void {
         sign_in(['is_admin' => 1]);
         queue_shell();
         api_route('/api/v1/users/9', m3_user(['enabled' => false]));

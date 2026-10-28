@@ -3,7 +3,7 @@
 // filtered by LOG_LEVEL_WEB (REQ-CFG-019). nginx/PHP-FPM capture it; there is
 // no log file of our own to rotate.
 //
-// Log hygiene (Plan/Web_Implementation.md §7 rule 11, REQ-API-005): tokens, the
+// Log hygiene (User_Interface_Design.md §12 rule 11, REQ-API-005): tokens, the
 // service secret, passwords and record values never appear at any level. The
 // redaction below is a backstop for a caller that passes too much — the rule is
 // still to pass an explicit, small context: identifiers and codes, not payloads.

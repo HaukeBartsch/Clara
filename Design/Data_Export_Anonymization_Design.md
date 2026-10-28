@@ -1,7 +1,7 @@
 # Data Export and Anonymization — Design
 
 **Project:** Clinical Study Management System (REDCap API Replacement)\
-**Implements:** `Requirements/Data_Export_Anonymization_Requirements.md` (REQ-EXP-…, which consolidates the distributed area requirements REQ-API-013/016/017/024…030/075/076/092, REQ-AUTH-017…019/023/045, REQ-DB-013/014/023, REQ-CFG-015/016/021/022, REQ-AUD-004/011/013/014/015, REQ-VAL-022/032, REQ-TECH-011, and charter BR-008/BR-009, success criterion 4) — source plan `Plan/Data_Export_Anonymization.md` (full traceability: §10)\
+**Implements:** `Requirements/Data_Export_Anonymization_Requirements.md` (REQ-EXP-…, which consolidates the distributed area requirements REQ-API-013/016/017/024…030/075/076/092, REQ-AUTH-017…019/023/045, REQ-DB-013/014/023, REQ-CFG-015/016/021/022, REQ-AUD-004/011/013/014/015, REQ-VAL-022/032, REQ-TECH-011, and charter BR-008/BR-009, success criterion 4) — seeded from the retired area plan `Plan/Data_Export_Anonymization.md` (`git show 2b0c371:Plan/Data_Export_Anonymization.md`), which the "plan" citations below quote (full traceability: §10)\
 **Date:** 2026-09-23
 
 ## 1. Purpose
@@ -259,7 +259,7 @@ No new variables — the canonical inventory is `System_Configuration_Design.md`
 | DEV-API-1 (`type=wide`) | §3.2 |
 | DEV-API-2 (ignored parameters) | §3.4 |
 | charter success criterion 4 | §4.2, §5 |
-| plan `Data_Export_Anonymization.md` (formats, rules, field-level anonymization, end provision) | §3, §4, §5, §7 |
+| retired area plan `Data_Export_Anonymization.md` at `2b0c371` (formats, rules, field-level anonymization, end provision) | §3, §4, §5, §7 |
 
 ## 11. Resolved Deferred Items
 

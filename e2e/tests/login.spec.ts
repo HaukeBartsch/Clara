@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test"
 
 // The browser half of Sequence I (Authentication_Authorization_Design.md §2.9) against a running
 // stack: what the source picker offers for a name, and how a directory behind that name changes the
-// answer the user reads (Plan/Web_Implementation.md §8, REQ-TECH-028).
+// answer the user reads (Design/Technology_Stack_Design.md §6, REQ-TECH-028).
 //
 // `e2e/dev-stack.sh` starts an installation with three names — "Ahus (Akerhus)" and "OUS (Oslo)"
 // (directories pointed at ports nothing listens on) and "Local" (the API's own account store). The

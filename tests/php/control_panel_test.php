@@ -114,7 +114,7 @@ describe('Control Panel (§5, REQ-UI-047)', function (): void {
         assert_contains('/login', $response->headers()['Location']);
     });
 
-    it('saves with exactly the three attributes and their declared types (§7 rule 1)', function (): void {
+    it('saves with exactly the three attributes and their declared types (§12 rule 1)', function (): void {
         sign_in(['is_admin' => 1]);
         queue_shell();
         api_route('/api/v1/settings', cp_settings());
