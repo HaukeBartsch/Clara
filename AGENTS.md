@@ -12,8 +12,8 @@ Rules for LLM-assisted development on CLARA — "Clinical Logbook for Automated 
 
 ## Repository layout
 
-- `api/` — Go API (module `csms/api`). Current packages under `api/internal/`: `config`, `db`, `migrations`, `dataapi`, `validate`.
-- `Design/Technology_Stack_Design.md` §4 defines the normative target layout (`cmd/server`, `httpapi`, `redcap`, `admin`, `authz`, `validation`, `audit`, …). Where the current tree differs, follow the design document and place new code accordingly.
+- `api/` — Go API (module `csms/api`). Packages under `api/internal/`: `httpapi` (routing, middleware), `dataapi` (REDCap-compatible `POST /api/`), `admin` (`/api/v1/`), `authz`, `validate`, `audit`, `db`, `migrations`, `config`, `metrics`, `mailer`, `passhash`, `totp`, and the test-only `testdb`.
+- `Design/Technology_Stack_Design.md` §4 defines the normative layout, and the tree matches it. Place new code according to that document.
 - `web/` — PHP web application: `app/` holds the framework-free application code (Router, Auth, the named-source credential race — `LdapRace`, `SubprocessLdap*` — I18n, controllers under `app/Controllers/`), `views/` the rendering templates, `public/` the entry point and `assets/` vendored frontend libraries. All data access from PHP goes exclusively through the API; PHP tests live in `tests/php/`.
 - `deploy/` — reverse-proxy reference configurations for production (`nginx/clara.conf`, `apache2/clara.conf`). They implement the normative routing rules of `Design/Technology_Stack_Design.md` §5; treat them as production code: a change to one lands in both, INSTALL.md §11 documents the same rules, and `e2e/tests/deployment.spec.ts` checks that all three still agree.
 - `assets/` — example data dictionaries and the historic FIONA user-management application (`table_based_authentication_plus_user_management/`); `AC.php` there is the authentication control script every FIONA page used to establish a session. When no requirement says otherwise, follow that example layout for interfacing PHP with the web application: pull JSON from the backend, populate rendering targets on the client.

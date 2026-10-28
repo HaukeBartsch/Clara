@@ -15,7 +15,7 @@ This document contains the **normative** logical schema and DDL. MariaDB is the 
 - Foreign keys declared everywhere (REQ-DB-004); MariaDB `ENGINE=InnoDB`, SQLite `PRAGMA foreign_keys=ON` on **every** connection — set through the driver DSN, never with a one-off statement after opening the pool, which enables it only on whichever connection answered (§10)
 - Identifiers: `snake_case`; string identifiers `VARCHAR(255)`; email `VARCHAR(254)`; UUIDs `CHAR(36)`
 - **Canonical value formats** (resolves ASM-VAL-1; GD-16, REQ-VAL-041): dates `YYYY-MM-DD±HH:MM`; date-times `YYYY-MM-DD HH:MM±HH:MM` — no seconds, **with the timezone of collection** (`±HH:MM`, UTC = `+00:00`); values are stored as collected, never converted to UTC (clinical data, not system timestamps — system timestamps remain UTC per REQ-DB-005/GD-7); choice lists use the REDCap encoding `code$label##code$label`; free-form text has **no application length cap** beyond the storage type (REQ-VAL-021), `LONGTEXT`/`TEXT`
-- **Migrations** (REQ-DB-003): a `schema_version` table records applied versions; migrations are numbered `NNN_name.up.sql`, applied in order, idempotent (`CREATE TABLE IF NOT EXISTS`, guarded `ALTER`); the API applies them at startup (the project modes of GD-20 arrive as one such migration: `projects.mode` + `project_staging`)
+- **Migrations** (REQ-DB-003): a `schema_version` table records applied versions; migrations are numbered `NNNN_name.sql`, one file per dialect under `api/internal/migrations/{sqlite,mariadb}/`, applied in order, idempotent (`CREATE TABLE IF NOT EXISTS`, guarded `ALTER`); the API applies them at startup (the project modes of GD-20 arrive as one such migration: `projects.mode` + `project_staging`)
 
 ## 2. Logical Type Map
 

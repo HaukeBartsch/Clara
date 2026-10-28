@@ -58,21 +58,25 @@ A vetted OAuth2/OIDC client is no longer among the candidates: it is admitted ab
 
 ```
 redcap-replacement/
-├── api/                            # Go API (single process)
+├── api/                            # Go API (single process, module csms/api)
 │   ├── cmd/server/main.go          # entry point: config → migrations → routes
 │   ├── internal/
 │   │   ├── config/                 # env parsing + startup validation (REQ-CFG-004)
-│   │   ├── httpapi/                # routing, middleware (service token, rate limit), docs
-│   │   ├── redcap/                 # /api/ protocol: content handlers, import/export
-│   │   ├── admin/                  # /api/v1/ handlers (one file per area)
+│   │   ├── httpapi/                # routing, middleware (service token, acting user, rate limit), health, docs mounts
+│   │   ├── dataapi/                # POST /api/ REDCap protocol: content handlers, record import/export/delete, survey links, transfer, IP rate limiter
+│   │   ├── admin/                  # /api/v1/ handlers (one file per area, incl. ODM interchange)
 │   │   ├── authz/                  # token lookup, per-arm levels, DAG visibility (ASM-AUTH-5)
-│   │   ├── validation/             # pipeline, grammars, content policy, expressions
+│   │   ├── validate/               # DB-free validation core: type validators + regex registry, choice codes, content policy, expression grammars
 │   │   ├── audit/                  # event catalog, same-transaction writer
-│   │   ├── db/                     # dialect switch, repositories, year-rollover checks
-│   │   └── metrics/                # in-memory performance counters + snapshot (REQ-API-163), stdlib only
-│   ├── migrations/                 # NNN_name.up.sql (REQ-DB-003)
-│   ├── openapi/openapi.json
-│   ├── docs/                       # vendored swagger-ui-dist
+│   │   ├── db/                     # single writer to the store: dialect switch, migration runner, repositories, year-rollover checks
+│   │   ├── migrations/             # embedded SQL per dialect: sqlite/ and mariadb/, NNNN_name.sql (REQ-DB-003)
+│   │   ├── metrics/                # in-memory performance counters + snapshot (REQ-API-163), stdlib only
+│   │   ├── mailer/                 # net/smtp sender: 2FA codes, invite/reset links (REQ-AUTH-057/060/062)
+│   │   ├── passhash/               # argon2id password hashing, PHC strings (GD-18, REQ-AUTH-050)
+│   │   ├── totp/                   # RFC 6238 TOTP + recovery codes (REQ-AUTH-054/059), stdlib only
+│   │   └── testdb/                 # test support only: fixtures on SQLite or MariaDB; never imported by the server
+│   ├── openapi/                    # openapi.json (hand-maintained) + openapi.go embedding it
+│   ├── docs/                       # vendored swagger-ui-dist, embedded by docs.go
 │   └── go.mod / go.sum
 ├── web/                            # PHP web application
 │   ├── public/index.php            # front controller (routes → app/)
