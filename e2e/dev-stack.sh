@@ -119,7 +119,9 @@ case "$db_engine" in
     ;;
 esac
 
-env APP_ENV=development \
+# Started from the state directory: the API reads .env relative to its working directory
+# (REQ-CFG-001), and the caller's — often the repository root — may hold a developer's .env.
+(cd "$state" && exec env APP_ENV=development \
   "${db_env[@]}" \
   API_ADDR="127.0.0.1:$api_port" \
   INTERNAL_SERVICE_TOKEN="$service_token" \
@@ -128,7 +130,7 @@ env APP_ENV=development \
   ADMIN_BOOTSTRAP_PASSWORD="$bootstrap_password" \
   LOG_LEVEL_API=info \
   WEB_PUBLIC_URL="http://127.0.0.1:$web_port" \
-  "$state/server" > "$state/api.log" 2>&1 &
+  "$state/server") > "$state/api.log" 2>&1 &
 api_pid=$!
 
 printf '==> waiting for the API on :%s ' "$api_port"
@@ -151,6 +153,10 @@ curl -s -o /dev/null "http://127.0.0.1:$api_port/api/v1/health" || {
 # --- the web layer -------------------------------------------------------------
 mkdir -p "$state/sessions" && chmod 700 "$state/sessions"
 
+# web/ reads CLARA_REPO_ROOT/.env (web/app/bootstrap.php), so the prepend file points that root at
+# the state directory, where no .env exists.
+printf '<?php\ndefine(%s, %s);\n' "'CLARA_REPO_ROOT'" "'$state'" > "$state/repo-root.php"
+
 # `php -S` with the front controller as router script: requests for paths that are not files under
 # web/public (every route, and /assets/*, which lives outside the document root) go to index.php.
 env APP_ENV=development \
@@ -169,7 +175,8 @@ env APP_ENV=development \
   LDAP_SERVER_2_URL="ldap://127.0.0.1:2" \
   LDAP_SERVER_2_SEARCH_BASE="dc=hospital2,dc=example,dc=org" \
   LDAP_SERVER_2_NAMES="OUS (Oslo)" \
-  php -S "127.0.0.1:$web_port" -t "$root/web/public" "$root/web/public/index.php" \
+  php -d auto_prepend_file="$state/repo-root.php" \
+    -S "127.0.0.1:$web_port" -t "$root/web/public" "$root/web/public/index.php" \
     > "$state/web.log" 2>&1 &
 web_pid=$!
 

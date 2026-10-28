@@ -40,10 +40,14 @@ test.describe("audit log filters (§5.6, REQ-UI-066)", () => {
     await log.selectOption("views")
     expect(await eventType.inputValue()).toBe("", "the events-only filter must not survive the switch")
 
-    // What the form submits is what the API accepts: the views log carries no event_type.
-    await page.locator('form.clara-audit-filters button[type="submit"]').click()
+    // What the form submits is what the API accepts: the views log carries no event type. A GET
+    // form names every field, so the cleared select still sends an empty `event_type=`, which
+    // the controller leaves out of the API query. The form's other submit button is Export CSV
+    // (`name="download"`, §5.6, REQ-UI-058).
+    await page.locator('form.clara-audit-filters button[type="submit"]:not([name="download"])').click()
     await expect(page).toHaveURL(/section=audits/)
-    expect(page.url()).not.toContain("event_type=")
+    expect(new URL(page.url()).searchParams.get("event_type") ?? "").toBe("")
     await expect(page.locator(".clara-audits")).toHaveCount(1)
+    await expect(page.getByRole("alert")).toHaveCount(0)
   })
 })

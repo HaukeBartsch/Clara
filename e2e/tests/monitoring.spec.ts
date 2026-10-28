@@ -28,7 +28,9 @@ test.describe("Monitoring in the Control Panel (REQ-UI-064)", () => {
     const labels = await nav.getByRole("link").allInnerTexts()
     expect(labels.indexOf("Monitoring")).toBeGreaterThan(-1)
     expect(labels.indexOf("Monitoring")).toBe(labels.indexOf("Settings") + 1)
-    expect(labels.indexOf("Configuration Check")).toBe(labels.indexOf("Monitoring") + 1)
+    // "Between Settings and Configuration Check" (REQ-UI-064), not directly before it: the
+    // Assistant (DEV-AI-1) and Authentication Test (REQ-UI-047) follow Monitoring first.
+    expect(labels.indexOf("Configuration Check")).toBeGreaterThan(labels.indexOf("Monitoring"))
   })
 
   test("renders the first paint and then polls: cards fill, charts draw, table shows its state", async ({ page }) => {
