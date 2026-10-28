@@ -23,6 +23,12 @@ async function signInAsAdmin(page: Page): Promise<void> {
 
 const success = (page: Page) => page.locator(".alert-success").last()
 
+// The record page wires its behaviour — branching, the required check, the history dialog —
+// from module scripts that run once the document is parsed (record.js, form.js); an input or
+// click that lands before them reaches no listener and is lost. They run before the
+// document's load event, so a step that needs them after a navigation waits for that load.
+const scriptsReady = (page: Page) => page.waitForLoadState("load")
+
 async function addField(page: Page, fill: () => Promise<void>, name: string): Promise<void> {
   await page.getByRole("link", { name: "Add field" }).click()
   await page.fill("#field-name", name)
@@ -104,6 +110,7 @@ test.describe("checkbox fields (REQ-DB-042)", () => {
     await page.fill("#new-record-id", "CB001")
     await page.getByRole("button", { name: "Create" }).click()
     await expect(page).toHaveURL(/\/records\/CB001/)
+    await scriptsReady(page)
 
     const form = page.locator("form[data-clara-record-form]")
     const habits = form.locator('[data-clara-field="habits"]')
@@ -139,6 +146,7 @@ test.describe("checkbox fields (REQ-DB-042)", () => {
     await expect(box("Drinking")).toBeChecked()
 
     // The checkbox's history is that of its boxes, each change naming its box (REQ-UI-026).
+    await scriptsReady(page)
     await habits.locator("[data-clara-history]").click()
     const history = page.locator("#clara-history")
     await expect(history).toBeVisible()

@@ -25,6 +25,12 @@ async function signInAsAdmin(page: Page): Promise<void> {
 
 const success = (page: Page) => page.locator(".alert-success").last()
 
+// The record page wires its behaviour — advisory hints, the required check, the history
+// dialog — from module scripts that run once the document is parsed (record.js, form.js); an
+// input or click that lands before them reaches no listener and is lost. They run before the
+// document's load event, so a step that needs them after a navigation waits for that load.
+const scriptsReady = (page: Page) => page.waitForLoadState("load")
+
 async function addField(page: Page, fill: () => Promise<void>, name: string): Promise<void> {
   await page.getByRole("link", { name: "Add field" }).click()
   await page.fill("#field-name", name)
@@ -130,6 +136,7 @@ test.describe("data entry and the record view (M5)", () => {
     await page.getByRole("button", { name: "Create" }).click()
     await expect(page).toHaveURL(/\/records\/M5001/)
     await expect(page.locator(".clara-record-new")).toBeVisible()
+    await scriptsReady(page)
 
     const form = page.locator("form[data-clara-record-form]")
     const field = (name: string) => form.locator(`[data-clara-field="${name}"]`)
@@ -204,6 +211,7 @@ test.describe("data entry and the record view (M5)", () => {
     await expect(page.locator("#record-completion")).toHaveValue("finished")
 
     // Per-field history (§8.3, REQ-UI-026): the route's `history` region in a read-only modal.
+    await scriptsReady(page)
     await field("age").locator("[data-clara-history]").click()
     const history = page.locator("#clara-history")
     await expect(history).toBeVisible()
