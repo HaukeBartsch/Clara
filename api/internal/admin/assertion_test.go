@@ -39,8 +39,14 @@ type testIdP struct {
 	kid              string
 	alg              string // signature algorithm the mint uses by default
 	jwksReqs         int32
+	userInfoReqs     int32
 	tokenClaims      map[string]any
 	expectedVerifier string
+	// The userinfo endpoint stays unpublished (404) until a case sets one of these, so the
+	// cases written before the REQ-AUTH-078 fallback describe exactly the provider they
+	// always did — including "this provider publishes no claims there".
+	userInfoClaims map[string]any
+	userInfoStatus int // forced status, for the outage and refusal cases
 }
 
 func newTestIdP(t *testing.T) *testIdP {
@@ -81,6 +87,29 @@ func newTestIdP(t *testing.T) *testIdP {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "test-access-token", "token_type": "Bearer", "id_token": idToken})
 	})
+	// The endpoint discovery advertises. A case opts in by setting userInfoClaims or
+	// userInfoStatus; until then it answers 404, which is a provider that publishes no
+	// claims there rather than an outage — the distinction the fallback has to get right.
+	mux.HandleFunc("/userinfo", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&p.userInfoReqs, 1)
+		if r.Header.Get("Authorization") != "Bearer test-access-token" {
+			http.Error(w, "expected the bearer token from this exchange", http.StatusUnauthorized)
+			return
+		}
+		status := p.userInfoStatus
+		switch {
+		case status == 0 && p.userInfoClaims == nil:
+			http.Error(w, "no userinfo claims published", http.StatusNotFound)
+			return
+		case status == 0:
+			status = http.StatusOK
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		if p.userInfoClaims != nil {
+			_ = json.NewEncoder(w).Encode(p.userInfoClaims)
+		}
+	})
 	p.srv = httptest.NewServer(mux)
 	t.Cleanup(p.srv.Close)
 	return p
@@ -91,6 +120,10 @@ func (p *testIdP) issuer() string { return p.srv.URL }
 // jwksRequests counts JWKS fetches, which is how the caching expectations are tested:
 // one verifier per issuer means one fetch across many logins (REQ-AUTH-077).
 func (p *testIdP) jwksRequests() int { return int(atomic.LoadInt32(&p.jwksReqs)) }
+
+// userInfoRequests counts userinfo fetches, which is how the tests hold the REQ-AUTH-078
+// fallback off the common path: a provider whose ID token carries the address is never asked.
+func (p *testIdP) userInfoRequests() int { return int(atomic.LoadInt32(&p.userInfoReqs)) }
 
 func (p *testIdP) jwk() map[string]any {
 	pub := &p.key.PublicKey
@@ -188,6 +221,202 @@ func TestOAuthLoginExchangesCodeWithPKCEAndVerifiesIDToken(t *testing.T) {
 	}
 	if !hasType(e.auditTypes(), "login_success") {
 		t.Errorf("audit types = %v, want login_success", e.auditTypes())
+	}
+}
+
+// beginOAuthTransaction runs Sequence A step 1 against the test provider, pins the PKCE
+// verifier it generated so the token endpoint accepts the redemption, and returns the values
+// a browser session would hold.
+func beginOAuthTransaction(t *testing.T, e *env, idp *testIdP) map[string]string {
+	t.Helper()
+	start := e.do("POST", "/api/v1/auth/oauth/start", map[string]any{"provider": 1}, nil)
+	if start.Code != http.StatusOK {
+		t.Fatalf("start status = %d, body = %s", start.Code, start.Body.String())
+	}
+	var flow map[string]string
+	if err := json.Unmarshal(start.Body.Bytes(), &flow); err != nil {
+		t.Fatalf("decode start response: %v", err)
+	}
+	idp.expectedVerifier = flow["code_verifier"]
+	return flow
+}
+
+// codeLoginBody is the Sequence C body an OIDC login carries: a code, the verifier, and the
+// nonce — no assertion and no address of PHP's (REQ-AUTH-076, REQ-AUTH-086).
+func codeLoginBody(flow map[string]string, issuer string) map[string]any {
+	return map[string]any{
+		"source": "oauth2", "provider": issuer, "source_name": "Hospital 1",
+		"authorization_code": "test-code", "code_verifier": flow["code_verifier"],
+		"assertion_nonce": flow["nonce"],
+	}
+}
+
+// TestSequenceJFallsBackToUserinfoForSplitClaimRelease is the PingFederate case REQ-AUTH-078
+// admits: this OAuth client releases its email claim to `/idp/userinfo.openid` and keeps the
+// ID token down to the subject, because the two releases are configured separately. Login
+// succeeds on the userinfo answer, while the account still binds to the subject the *verified
+// ID token* names — the unsigned response never gets to choose who someone is (REQ-AUTH-080).
+func TestSequenceJFallsBackToUserinfoForSplitClaimRelease(t *testing.T) {
+	e := newEnv(t)
+	idp, provider := e.useIdP(t)
+	user := e.mustUser("split@example.org")
+
+	flow := beginOAuthTransaction(t, e, idp)
+	idp.tokenClaims = map[string]any{"nonce": flow["nonce"]} // subject only: no address released
+	idp.userInfoClaims = map[string]any{
+		"sub": "subject-42", "email": "Split@Example.org", "email_verified": true, "name": "A. Test",
+	}
+
+	rec := e.do("POST", "/api/v1/auth/login", codeLoginBody(flow, provider.Issuer), nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var got UserObject
+	e.decode(rec, &got)
+	if got.ID != user.ID {
+		t.Errorf("user id = %d, want %d", got.ID, user.ID)
+	}
+	if idp.userInfoRequests() != 1 {
+		t.Errorf("userinfo requests = %d, want exactly one fallback read", idp.userInfoRequests())
+	}
+
+	details := lastAuditDetails(t, e, "login_success")
+	if details["address_source"] != addressFromUserinfo {
+		t.Errorf("audit address_source = %v, want %s", details["address_source"], addressFromUserinfo)
+	}
+	if details["provider_subject"] != "subject-42" {
+		t.Errorf("audit subject = %v, want the ID token's subject-42", details["provider_subject"])
+	}
+	if details["email_verified"] != true {
+		t.Errorf("audit email_verified = %v, want true from the userinfo response", details["email_verified"])
+	}
+}
+
+// TestSequenceJUserinfoAttestationIsStrictToo keeps finding F10 shut on the fallback path:
+// borrowing a response means inheriting its rules, so `email_verified` has to be the JSON
+// boolean true there exactly as it does in an ID token, and the address is judged by the
+// response that supplied it rather than by a claim stitched in from the other one
+// (REQ-AUTH-078).
+func TestSequenceJUserinfoAttestationIsStrictToo(t *testing.T) {
+	cases := []struct {
+		name    string
+		claims  map[string]any
+		wantErr string
+	}{
+		{"attestation absent", map[string]any{"sub": "subject-42", "email": "split@example.org"}, reasonEmailUnverified},
+		{"attestation a string", map[string]any{"sub": "subject-42", "email": "split@example.org", "email_verified": "true"}, reasonEmailUnverified},
+		{"attestation false", map[string]any{"sub": "subject-42", "email": "split@example.org", "email_verified": false}, reasonEmailUnverified},
+		{"address withheld as well", map[string]any{"sub": "subject-42"}, reasonEmailUnverified},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			idp, provider := e.useIdP(t)
+			e.mustUser("split@example.org")
+
+			flow := beginOAuthTransaction(t, e, idp)
+			idp.tokenClaims = map[string]any{"nonce": flow["nonce"]}
+			idp.userInfoClaims = tc.claims
+
+			rec := e.do("POST", "/api/v1/auth/login", codeLoginBody(flow, provider.Issuer), nil)
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want 401; body = %s", rec.Code, rec.Body.String())
+			}
+			var got map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			if got["error"] != tc.wantErr {
+				t.Errorf("error = %v, want %s", got["error"], tc.wantErr)
+			}
+			if hasType(e.auditTypes(), "login_success") {
+				t.Error("a refused fallback must not record a login success")
+			}
+		})
+	}
+}
+
+// TestSequenceJRejectsUserinfoAboutAnotherSubject closes the gap the unsigned response opens:
+// the access token is bound to this exchange, but a provider that answers about somebody else
+// would be handing out an address for a subject whose ID token was verified. Nothing from that
+// response is used, and login stops (REQ-AUTH-078, REQ-AUTH-080).
+func TestSequenceJRejectsUserinfoAboutAnotherSubject(t *testing.T) {
+	e := newEnv(t)
+	idp, provider := e.useIdP(t)
+	e.mustUser("split@example.org")
+
+	flow := beginOAuthTransaction(t, e, idp)
+	idp.tokenClaims = map[string]any{"nonce": flow["nonce"]}
+	idp.userInfoClaims = map[string]any{
+		"sub": "somebody-else", "email": "split@example.org", "email_verified": true,
+	}
+
+	rec := e.do("POST", "/api/v1/auth/login", codeLoginBody(flow, provider.Issuer), nil)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body = %s", rec.Code, rec.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if got["error"] != reasonAssertionInvalid {
+		t.Errorf("error = %v, want %s", got["error"], reasonAssertionInvalid)
+	}
+	if hasType(e.auditTypes(), "login_success") {
+		t.Error("a mismatched userinfo subject must not open a session")
+	}
+}
+
+// TestSequenceJUserinfoOutageIsNotACredentialFailure is REQ-AUTH-035's rule on the new call:
+// an endpoint that cannot be answered is an outage, so it reports `provider_unavailable` and
+// spends none of the address's brute-force budget.
+func TestSequenceJUserinfoOutageIsNotACredentialFailure(t *testing.T) {
+	e := newEnv(t)
+	idp, provider := e.useIdP(t)
+	e.mustUser("split@example.org")
+
+	flow := beginOAuthTransaction(t, e, idp)
+	idp.tokenClaims = map[string]any{"nonce": flow["nonce"]}
+	idp.userInfoClaims = map[string]any{"sub": "subject-42"} // so the endpoint is consulted
+	idp.userInfoStatus = http.StatusInternalServerError
+
+	rec := e.do("POST", "/api/v1/auth/login", codeLoginBody(flow, provider.Issuer), nil)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502; body = %s", rec.Code, rec.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if got["error"] != reasonProviderUnavail {
+		t.Errorf("error = %v, want %s", got["error"], reasonProviderUnavail)
+	}
+}
+
+// TestSequenceJDoesNotQueryUserinfoWhenIDTokenSaysIt keeps the fallback off the common path:
+// a provider that puts the address in the ID token is not asked twice, so login stays one
+// exchange and privacy stays where the operator configured it.
+func TestSequenceJDoesNotQueryUserinfoWhenIDTokenSaysIt(t *testing.T) {
+	e := newEnv(t)
+	idp, provider := e.useIdP(t)
+	e.mustUser("whole@example.org")
+
+	flow := beginOAuthTransaction(t, e, idp)
+	idp.tokenClaims = map[string]any{
+		"email": "whole@example.org", "email_verified": true, "nonce": flow["nonce"],
+	}
+	idp.userInfoClaims = map[string]any{"sub": "subject-42", "email": "whoever@example.org"}
+
+	rec := e.do("POST", "/api/v1/auth/login", codeLoginBody(flow, provider.Issuer), nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if idp.userInfoRequests() != 0 {
+		t.Errorf("userinfo requests = %d, want none beside a complete ID token", idp.userInfoRequests())
+	}
+	if details := lastAuditDetails(t, e, "login_success"); details["address_source"] != addressFromIDToken {
+		t.Errorf("audit address_source = %v, want %s", details["address_source"], addressFromIDToken)
 	}
 }
 

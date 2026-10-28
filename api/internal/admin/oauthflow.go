@@ -3,7 +3,11 @@ package admin
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
+	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -90,32 +94,46 @@ func randomOAuthValue(bytes int) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(value), nil
 }
 
-func (h *Handler) exchangeOAuthCode(r *http.Request, issuer, code, verifier string) (string, *assertionFailure) {
+// idTokenOf pulls the ID token out of a token response. A provider answering an `openid`
+// request without one proves nothing Sequence J can check, so the exchange refuses it rather
+// than letting an empty assertion reach the verifier.
+func idTokenOf(token *oauth2.Token) string {
+	if token == nil {
+		return ""
+	}
+	id, _ := token.Extra("id_token").(string)
+	return strings.TrimSpace(id)
+}
+
+// exchangeOAuthCode redeems one authorization code with its PKCE verifier and the
+// configured client credentials, returning the token response Sequence J works from: the ID
+// token it verifies, and the access token the userinfo fallback reads when that ID token
+// carries no address (REQ-AUTH-078, REQ-AUTH-086).
+func (h *Handler) exchangeOAuthCode(r *http.Request, issuer, code, verifier string) (*oauth2.Token, *assertionFailure) {
 	provider, ok := h.providerByIssuer(issuer)
 	if !ok {
-		return "", newFailure(reasonUnknownProvider, http.StatusUnauthorized,
+		return nil, newFailure(reasonUnknownProvider, http.StatusUnauthorized,
 			"this authentication provider is not configured")
 	}
 	if strings.TrimSpace(code) == "" || strings.TrimSpace(verifier) == "" {
-		return "", newFailure(reasonAssertionInvalid, http.StatusUnauthorized,
+		return nil, newFailure(reasonAssertionInvalid, http.StatusUnauthorized,
 			"the authorization response is incomplete")
 	}
 
 	runtime, err := h.oauthRuntime(r, provider)
 	if err != nil {
-		return "", discoveryFailure(err)
+		return nil, discoveryFailure(err)
 	}
 	token, err := runtime.oauth.Exchange(r.Context(), code, oauth2.VerifierOption(verifier))
 	if err != nil {
-		return "", newFailure(reasonProviderUnavail, http.StatusBadGateway,
+		return nil, newFailure(reasonProviderUnavail, http.StatusBadGateway,
 			"the authentication provider could not complete sign-in")
 	}
-	idToken, ok := token.Extra("id_token").(string)
-	if !ok || strings.TrimSpace(idToken) == "" {
-		return "", newFailure(reasonAssertionInvalid, http.StatusUnauthorized,
+	if idTokenOf(token) == "" {
+		return nil, newFailure(reasonAssertionInvalid, http.StatusUnauthorized,
 			"the provider did not return an ID token")
 	}
-	return idToken, nil
+	return token, nil
 }
 
 func (h *Handler) oauthTest(w http.ResponseWriter, r *http.Request) {
@@ -154,7 +172,7 @@ func (h *Handler) oauthTest(w http.ResponseWriter, r *http.Request) {
 		"discovery_status": 200, "token_status": 0, "userinfo_status": 0,
 		"userinfo_claims": map[string]any{}, "id_token_claims": map[string]any{},
 	}
-	idToken, failure := h.exchangeOAuthCode(r, provider.Issuer, body.Code, body.CodeVerifier)
+	token, failure := h.exchangeOAuthCode(r, provider.Issuer, body.Code, body.CodeVerifier)
 	if failure != nil {
 		report["ok"] = false
 		report["stage"] = "token_exchange"
@@ -163,16 +181,100 @@ func (h *Handler) oauthTest(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, report)
 		return
 	}
-	assertion, failure := h.verifyAssertion(r.Context(), provider.Issuer, idToken, body.Nonce)
+	report["token_status"] = 200
+
+	// The diagnostic reads the userinfo endpoint whether or not Sequence J needs it. An
+	// administrator debugging a provider that releases `email` to userinfo and not to the ID
+	// token has to see what that endpoint answered — an empty column with no reason is what
+	// made a split claim release invisible (REQ-AUTH-078, REQ-AUTH-085).
+	if claims, status, _ := h.userInfo(r.Context(), runtime.userinfo, token.AccessToken); status > 0 {
+		report["userinfo_status"] = status
+		report["userinfo_claims"] = safeDiagnosticClaims(claims)
+	}
+
+	assertion, failure := h.verifyAssertion(r.Context(), provider.Issuer, idTokenOf(token), body.Nonce, token.AccessToken)
 	if failure != nil {
 		report["ok"] = false
 		report["stage"] = "assertion"
 		report["error"] = failure.reason
-		report["token_status"] = 200
 		writeJSON(w, http.StatusOK, report)
 		return
 	}
-	report["token_status"] = 200
 	report["id_token_claims"] = assertion.auditDetails()
 	writeJSON(w, http.StatusOK, report)
+}
+
+// diagnosticClaimAllowlist is what the OAuth diagnostic may show an administrator: identity,
+// assurance and directory-membership claims, and nothing that could be mistaken for a
+// credential (REQ-AUTH-085, REQ-AUTH-036).
+var diagnosticClaimAllowlist = []string{
+	"iss", "sub", "aud", "exp", "iat", "auth_time", "email", "email_verified",
+	"name", "given_name", "family_name", "preferred_username", "groups", "roles",
+	"memberOf", "acr", "amr",
+}
+
+// diagnosticGroupClaim admits the membership claims a directory names however it likes,
+// which is the one pattern an allowlist cannot enumerate (REQ-AUTH-085).
+var diagnosticGroupClaim = regexp.MustCompile(`(?i)groups?$|roles?$|memberof`)
+
+const (
+	diagnosticValueLimit = 500
+	diagnosticListLimit  = 30
+	diagnosticNameLimit  = 200
+)
+
+// safeDiagnosticClaims projects a provider's claim set onto the allowlist, bounding every
+// name and value. The claims come from a server this installation trusts to authenticate
+// people but has no reason to trust for rendering, and the report is rendered (REQ-AUTH-085,
+// REQ-UI-008).
+func safeDiagnosticClaims(claims map[string]json.RawMessage) map[string]any {
+	out := map[string]any{}
+	for name, raw := range claims {
+		if !slices.Contains(diagnosticClaimAllowlist, name) && !diagnosticGroupClaim.MatchString(name) {
+			continue
+		}
+		var value any
+		if json.Unmarshal(raw, &value) != nil {
+			continue
+		}
+		key := truncateDiagnostic(name, diagnosticNameLimit)
+		switch typed := value.(type) {
+		case string:
+			out[key] = truncateDiagnostic(typed, diagnosticValueLimit)
+		case bool, float64:
+			out[key] = typed
+		case []any:
+			items := make([]string, 0, diagnosticListLimit)
+			for _, entry := range typed {
+				switch item := entry.(type) {
+				case string:
+					items = append(items, truncateDiagnostic(item, diagnosticValueLimit))
+				case bool:
+					items = append(items, strconv.FormatBool(item))
+				case float64:
+					items = append(items, strconv.FormatFloat(item, 'f', -1, 64))
+				}
+				if len(items) == diagnosticListLimit {
+					break
+				}
+			}
+			out[key] = items
+		default:
+			// Nested objects carry nothing the allowlist admits; dropping them keeps the
+			// report flat and bounded.
+		}
+	}
+	return out
+}
+
+// truncateDiagnostic cuts a provider-supplied string to a rune budget, never mid-rune.
+func truncateDiagnostic(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit])
 }

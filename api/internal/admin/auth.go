@@ -96,13 +96,13 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	// which is what "PHP vouches for it" used to mean (finding F8).
 	var assertion *verifiedAssertion
 	if body.Source == "oauth2" {
-		idToken, failure := h.exchangeOAuthCode(r, body.Provider, body.AuthorizationCode, body.CodeVerifier)
+		token, failure := h.exchangeOAuthCode(r, body.Provider, body.AuthorizationCode, body.CodeVerifier)
 		if failure != nil {
 			h.loginFailureExtra(ctx, &body, failure.reason, nil)
 			APIError(w, failure.status, failure.reason, failure.message)
 			return
 		}
-		a, af := h.verifyAssertion(ctx, body.Provider, idToken, body.AssertionNonce)
+		a, af := h.verifyAssertion(ctx, body.Provider, idTokenOf(token), body.AssertionNonce, token.AccessToken)
 		if af != nil {
 			h.loginFailureExtra(ctx, &body, af.reason, af.observed.auditDetails())
 			APIError(w, af.status, af.reason, af.message)
