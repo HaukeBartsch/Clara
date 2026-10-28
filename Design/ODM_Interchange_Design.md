@@ -55,6 +55,7 @@ Writing one dialect's shape under the other's `ODMVersion` fails that schema out
 Rules:
 
 - **Attribute values.** `FileOID` = `CLARA-<project_id>-<UTC creation stamp>` (unique per download, not reused); `CreationDateTime` UTC with the `Z` suffix (GD-7); `FileType="Snapshot"` always (ASM-ODM-1); `ODMVersion="1.3.2"` in the v1.3 namespace or `"2.0"` in the v2.0 namespace; `SourceSystem="CLARA"`. No `Granularity`, `Archival` or `PriorFileOID` is written. The export choice defaults to 1.3; `odm_version=1.3|2.0` selects the namespace and matching envelope version. Import accepts both namespaces.
+- **Contents (REQ-ODM-066).** `odm_content` says whether the file carries records. `project_and_data` — the default, an omitted value included — writes the envelope above. `project_only` stops after `</Study>`: ODM makes `ClinicalData` optional in both dialects, so a study definition is a complete document rather than one holding an empty element that promises values it does not have (the same reading REQ-ODM-020 asks of a project with no records). Nothing else about the document changes — same envelope, same metadata mapping, same §3.9 filtering by level, same filenames — except what cannot survive the absence of data: no `ClinicalData`, and no `X-CLARA-ODM-Key` response header, which speaks of record keys this file has none of. A project-only export reads no record, so it asks no data-access-group question (that scope bounds records, never columns) and cannot answer 403 for want of a readable one; §6.1 says how it is audited instead.
 - **OID scheme (O-1).** Every OID is derived from the CLARA name it stands for, never from a database id, so two exports of the same project agree and a partner's mappings survive a reload:
 
   | Object | OID | Name |
@@ -259,6 +260,8 @@ It is `streamExport` with `Enc="json"`, `Type=flat`, driven through a header-dis
 
 The audit row is written by the pipeline (`writeExportAudit`, `record_export.go:1235`) with one extra detail key the spec carries (§9), so an ODM download appears as `odm_export` and not as an anonymous `export`.
 
+**A document with no records audits itself.** `odm_content=project_only` (§2) starts no pipeline, so there is no pipeline row to carry it: the export handler inserts the same `odm_export` entry once the bytes are out — `records`, `items` and `skipped_columns` at 0, `content` naming the choice, and `sensitivity` naming the most protective level among the items the document declares (§3.9 still removes an item a level withholds, so the ladder shapes a design-only file too). It is written after the write rather than before it for the reason REQ-ODM-025 gives: a client that vanished mid-download still made a download.
+
 **Equivalence guard.** Because the format reaches the same data through a second door, a test asserts that for one fixture project the value under each `ItemData` equals the JSON export's value for the same (record, event, instance, column) — including hashed personal fields and shifted dates at a de-identified rank — so the two doors cannot drift apart unnoticed.
 
 ### 6.2 Import build order
@@ -280,7 +283,7 @@ Value semantics live in `validate`, storage in `db`, and the ODM importer orches
 
 | Route | Contract |
 |---|---|
-| `GET /api/v1/projects/{id}/export/odm` | `is_admin`; streamed `application/xml; charset=utf-8`, `Content-Disposition: attachment; filename="<project-slug>_odm_<YYYY-MM-DD>.xml"` (the dictionary export's sanitizer, REQ-API-153); no query options in this step — the file is the project, at the caller's level (REQ-ODM-026) |
+| `GET /api/v1/projects/{id}/export/odm` | `is_admin`; streamed `application/xml; charset=utf-8`, `Content-Disposition: attachment; filename="<project-slug>_odm_<YYYY-MM-DD>.xml"` (the dictionary export's sanitizer, REQ-API-153); two query options — `odm_version=1.3\|2.0` (§2) and `odm_content=project_and_data\|project_only` (REQ-ODM-066) — each defaulting when omitted and answering 400 to any other value; the file is the project, at the caller's level (REQ-ODM-026) |
 | `POST /api/v1/projects/import/odm` | `is_admin`; body `application/xml` (the document itself, not base64 in JSON — an XML upload has no reason to be wrapped); query parameters `project_name`, `organization`, `pi_name`, `pi_email`, `participant_names`, `dm_name`, `dm_email`, `rek_number`, `rek_start_date`, `rek_end_date`, `start_date`, and `end_date` (each optional; supplied values override document metadata, including empty optional values), plus `dry_run=1`; answer 201 with the report on success, 200 for a dry run |
 
 Report shape (both calls' import answer; mirrors the instrument import's `importNote` list, REQ-ODM-060):
@@ -315,7 +318,7 @@ Dropped **with a warning**, never silently (REQ-ODM-053): instrument completion 
 - **Output.** All XML is written with `encoding/xml` token writers (`xml.Encoder`/`Flush`), never string concatenation, so no value can escape its element or forge an attribute regardless of what a record holds.
 - **Conformance is checked offline, in this repository.** CDISC's own schemas are vendored under `tools/odm_schema/` (byte-copies of the published ones; re-downloading them changes what CLARA claims conformance to and goes through review like any dependency bump), together with `tools/odm_schema/clara_odm_ext.xsd`, which redefines the extension hooks 1.3.2 leaves empty so a validator can read a CLARA document at all (REQ-ODM-055). `tools/odm_conformance.py` runs them over real exports — dumped by the Go suite when `CLARA_ODM_DUMP_DIR` is set — and `ci/run.sh` runs it as an advisory step: findings print as WARN, a machine without lxml skips with a notice. Nothing in the running program validates a schema (ASM-ODM-5).
 - **Imported text is untrusted** from the moment it is stored: labels, notes and choice text pass `validate.ApplyContentPolicy` and render escaped (REQ-ODM-062).
-- **Audit.** `odm_export` — `{surface:"api", sensitivity:<ladder name>, records:N, items:N, skipped_columns:N}`; `odm_import` — `{project_id, dry_run, arms, events, instruments, fields, records_added, records_failed, problems:N}`. Never a value, a label, or any part of the document body (REQ-AUD-014); refused calls write nothing (REQ-AUD-004). Both codes join the catalog of `Audit_Logging_Design.md` §3.5.
+- **Audit.** `odm_export` — `{surface:"api", sensitivity:<ladder name>, odm_version:<1.3|2.0>, content:<project_and_data|project_only>, records:N, items:N, skipped_columns:N}` (a project-only file's counts are 0 and its row is written by the exporter rather than the pipeline, §6.1); `odm_import` — `{project_id, dry_run, arms, events, instruments, fields, records_added, records_failed, problems:N}`. Never a value, a label, or any part of the document body (REQ-AUD-014); refused calls write nothing (REQ-AUD-004). Both codes join the catalog of `Audit_Logging_Design.md` §3.5.
 - **No new configuration variables** — the inventory stays `System_Configuration_Design.md` §3 (REQ-CFG-003).
 
 ## 10. Decisions and Traceability
@@ -340,6 +343,7 @@ Dropped **with a warning**, never silently (REQ-ODM-053): instrument completion 
 | REQ-ODM-001…006 (surfaces, gating, UI metadata overrides) | §7, §9; web UI §5.2 and §6.4 in `User_Interface_Design.md` |
 | REQ-ODM-010…015 (dialect, per-dialect vocabulary, refusal, limits) | §2, §3.1, §4, §9 |
 | REQ-ODM-020…029 (export content, per-dialect vocabulary, SAS names) | §3, §4, §6.1 |
+| REQ-ODM-066 (`odm_content`: project with data, or project alone) | §2, §6.1, §7, §9 |
 | REQ-ODM-065 (text-typed carriers: `CheckValue`, `FormalExpression`/`Code`, `MethodSignature`) | §3.4, §3.8 |
 | REQ-ODM-030/031 (subject key) | §4.1 |
 | REQ-ODM-040…047 (import effects) | §6.2 |

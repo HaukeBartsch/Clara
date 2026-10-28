@@ -1308,11 +1308,12 @@ The endpoint writes one entry per call and returns no data: it discloses nothing
 
 ### 4.29 Project interchange — CDISC ODM XML (REQ-API-169…170)
 
-**`GET /api/v1/projects/{id}/export/odm`** — the project as one CDISC ODM document: a `Study` (named through `GlobalVariables` under 1.3 and through its own attributes under 2.0) with one `MetaDataVersion` describing the current structure, and `ClinicalData` for the records in scope — each dialect spelled as its own schema defines it (`ODM_Interchange_Design.md` §2–§4, REQ-ODM-015). Unknown query parameters are accepted and ignored except for the supported version selector (REQ-API-017). Gates on `is_admin` — not `project_admin`, since a whole-study file is bulk data movement (REQ-ODM-002); any other actor gets the uniform 403 of §4.2 and nothing is written (REQ-AUD-004).
+**`GET /api/v1/projects/{id}/export/odm`** — the project as one CDISC ODM document: a `Study` (named through `GlobalVariables` under 1.3 and through its own attributes under 2.0) with one `MetaDataVersion` describing the current structure, and `ClinicalData` for the records in scope — each dialect spelled as its own schema defines it (`ODM_Interchange_Design.md` §2–§4, REQ-ODM-015). Unknown query parameters are accepted and ignored except for the supported version and content selectors (REQ-API-017). Gates on `is_admin` — not `project_admin`, since a whole-study file is bulk data movement (REQ-ODM-002); any other actor gets the uniform 403 of §4.2 and nothing is written (REQ-AUD-004).
 
 | Parameter | Values | Default | Meaning |
 |---|---|---|---|
 | `odm_version` | `1.3`, `2.0` | `1.3` | Selects namespace and `ODMVersion`; any other value answers 400 (REQ-ODM-064). |
+| `odm_content` | `project_and_data`, `project_only` | `project_and_data` | Whether the document carries its records. `project_only` writes the `Study` and its `MetaDataVersion` and no `ClinicalData` element at all, reads no record, and so never answers 403 for want of a readable one; any other value answers 400 (REQ-ODM-066). |
 
 → 200 `application/xml; charset=utf-8`, `Content-Disposition: attachment; filename="<slug>_odm_<YYYY-MM-DD>.xml"` for 1.3 or `"<slug>_odm_v2.0_<YYYY-MM-DD>.xml"` for 2.0 (the dictionary export's filename sanitizer, REQ-API-153), streamed with metadata first and one `<SubjectData>` per record as it is produced (REQ-TECH-011, O-2). No byte-order mark (REQ-EXP-016). A store failure after the first byte truncates the stream, as CSV does — no synthesized closing element, so a partial file cannot pass as complete.
 

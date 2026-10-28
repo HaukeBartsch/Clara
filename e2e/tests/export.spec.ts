@@ -147,6 +147,17 @@ test.describe("export (M6)", () => {
     expect(odmXml).toContain('<ODM xmlns="http://www.cdisc.org/ns/odm/v1.3"')
     expect(odmXml).toContain("E001")
 
+    // The other content choice on the same card (REQ-ODM-066): the study definition alone,
+    // which is what an administrator hands out to review a CRF without any record leaving.
+    await page.selectOption("#export-odm-content", "project_only")
+    const [designOnly] = await Promise.all([page.waitForEvent("download"), page.locator("[data-clara-odm-download]").click()])
+    expect(designOnly.suggestedFilename()).toMatch(/\.xml$/)
+    const designBytes = await (await designOnly.createReadStream()).toArray().then((parts) => Buffer.concat(parts))
+    const designXml = designBytes.toString("utf8")
+    expect(designXml).toContain('<ItemDef OID="IT_age"') // the design is still described in full
+    expect(designXml).not.toContain("<ClinicalData")
+    expect(designXml).not.toContain("E001")
+
     const importedName = `M6 ODM imported ${tag}`
     await page.goto("/admin?section=projects")
     await page.locator("details.clara-project-import summary").click()

@@ -7,6 +7,7 @@ package admin
 import (
 	"context"
 	"encoding/xml"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -14,6 +15,7 @@ import (
 	"regexp"
 
 	"csms/api/internal/audit"
+	"csms/api/internal/authz"
 	"net/http"
 	"strings"
 	"testing"
@@ -519,6 +521,114 @@ func TestExportODMRejectsUnknownVersion(t *testing.T) {
 	}
 }
 
+// TestExportODMProjectOnly holds the second content choice to its word (REQ-ODM-066):
+// the same study definition as the default document and no record values — and not an
+// empty ClinicalData either, since a file that says "project only" promises none. The
+// design-only file is what an administrator hands a partner to review a CRF before any
+// data exists, so it must also import as a project with structure and no records.
+func TestExportODMProjectOnly(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("odm-project-only@example.org")
+	sourceID := e.seedInterchange()
+
+	design := e.do("GET", "/api/v1/projects/"+itoa(sourceID)+"/export/odm?odm_content=project_only", nil, admin)
+	if design.Code != http.StatusOK {
+		t.Fatalf("project_only status = %d: %s", design.Code, design.Body.String())
+	}
+	body := design.Body.String()
+	for _, want := range []string{
+		`<Study OID="CLARA-` + itoa(sourceID) + `"`,
+		`<FormDef OID="FRM_vitals"`,
+		`<ItemDef OID="IT_age"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the design-only document holds no %q", want)
+		}
+	}
+	for _, absent := range []string{"<ClinicalData", "<SubjectData", "<ItemData"} {
+		if strings.Contains(body, absent) {
+			t.Errorf("the design-only document holds %q (REQ-ODM-066)", absent)
+		}
+	}
+	// No records means no keys in play: the header that warns an operator a file
+	// numbers its records `S1`, `S2`, … would say something untrue of this one.
+	if k := design.Header().Get("X-CLARA-ODM-Key"); k != "" {
+		t.Errorf("X-CLARA-ODM-Key = %q on a document with no records", k)
+	}
+	var envelope struct {
+		XMLName xml.Name `xml:"ODM"`
+		Study   struct {
+			MetaDataVersion any `xml:"MetaDataVersion"`
+		} `xml:"Study"`
+	}
+	if err := xml.Unmarshal([]byte(body), &envelope); err != nil {
+		t.Fatalf("the design-only document does not parse: %v\n---\n%s", err, body)
+	}
+
+	full := e.do("GET", "/api/v1/projects/"+itoa(sourceID)+"/export/odm?odm_content=project_and_data", nil, admin)
+	if full.Code != http.StatusOK {
+		t.Fatalf("project_and_data status = %d: %s", full.Code, full.Body.String())
+	}
+	if b := full.Body.String(); !strings.Contains(b, "<ClinicalData") || !strings.Contains(b, `Value="40"`) {
+		t.Errorf("the named default dropped the records it holds (REQ-ODM-066):\n%.400s", b)
+	}
+
+	rec := e.do("POST", "/api/v1/projects/import/odm?project_name=ODM%20design%20only", body, admin)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("importing a design-only document: status %d: %s", rec.Code, rec.Body.String())
+	}
+	var report odmImportReport
+	e.decode(rec, &report)
+	if report.RecordsAdded != 0 || report.RecordsFailed != 0 {
+		t.Errorf("a design-only import added %d and failed %d records, want neither",
+			report.RecordsAdded, report.RecordsFailed)
+	}
+	wantDesign, gotDesign := e.designDump(sourceID), e.designDump(report.ProjectID)
+	if strings.Join(wantDesign, "\n") != strings.Join(gotDesign, "\n") {
+		t.Errorf("the design-only import lost design:\n source: %v\n copy:   %v", wantDesign, gotDesign)
+	}
+	if values := e.valueDump(report.ProjectID); len(values) != 0 {
+		t.Errorf("the design-only import stored records: %v", values)
+	}
+
+	// Both rows are `odm_export` and each states which document it was (REQ-ODM-061):
+	// the default's row comes from the pipeline, the design-only one from this format.
+	var details []map[string]any
+	for i := 0; i < 50 && len(details) < 2; i++ {
+		time.Sleep(20 * time.Millisecond)
+		details = e.auditDetails(audit.ODMExport, sourceID)
+	}
+	byContent := map[string]map[string]any{}
+	for _, d := range details {
+		byContent[fmt.Sprint(d["content"])] = d
+	}
+	if len(byContent) != 2 {
+		t.Fatalf("odm_export audit rows by content = %+v, want both contents", details)
+	}
+	if d := byContent[odmContentAll]; d == nil || d["records"] == 0 || d["items"] == 0 {
+		t.Errorf("the project_and_data row does not count what it delivered: %+v", d)
+	}
+	designRow := byContent[odmContentDesign]
+	if designRow == nil || designRow["sensitivity"] != authz.ExportName(authz.RankExportFull) {
+		t.Errorf("the project_only row names no applied level: %+v", designRow)
+	}
+	for _, key := range []string{"surface", "odm_version", "records", "items", "skipped_columns"} {
+		if _, ok := designRow[key]; !ok {
+			t.Errorf("the project_only row carries no %q, so it is not the catalog's odm_export shape: %+v", key, designRow)
+		}
+	}
+
+	// An unknown content name is refused rather than read as one of the two, and a
+	// refused call leaves nothing in the trail (REQ-AUD-004).
+	other := e.mustProject("Invalid ODM content")
+	if rec := e.do("GET", "/api/v1/projects/"+itoa(other)+"/export/odm?odm_content=records_only", nil, admin); rec.Code != http.StatusBadRequest {
+		t.Errorf("odm_content=records_only status = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+	if n := e.auditCount(audit.ODMExport, other); n != 0 {
+		t.Errorf("the refused content wrote %d audit rows", n)
+	}
+}
+
 // pairRepeating reads the stored repeating flag of one instrument↔event pair.
 func (e *env) pairRepeating(projectID int64, instrument, unique string) bool {
 	e.t.Helper()
@@ -548,19 +658,20 @@ func TestExportODMConformanceDump(t *testing.T) {
 	e := newEnv(t)
 	admin := e.mustAdmin("odm-conformance@example.org")
 	projectID := e.seedInterchange()
-	for _, version := range []string{"", "2.0"} {
-		path := "/api/v1/projects/" + itoa(projectID) + "/export/odm"
-		name := "project_odm_1.3.xml"
-		if version != "" {
-			path += "?odm_version=" + version
-			name = "project_odm_2.0.xml"
-		}
+	for _, variant := range []struct{ query, name string }{
+		{"", "project_odm_1.3.xml"},
+		{"?odm_version=2.0", "project_odm_2.0.xml"},
+		// The design-only document (REQ-ODM-066) is its own document rather than one of
+		// the above with lines deleted by hand, so the schema gets to see it too.
+		{"?odm_content=project_only", "project_odm_1.3_project_only.xml"},
+	} {
+		path := "/api/v1/projects/" + itoa(projectID) + "/export/odm" + variant.query
 		rec := e.do("GET", path, nil, admin)
 		if rec.Code != http.StatusOK {
-			t.Fatalf("export %q status = %d: %s", version, rec.Code, rec.Body.String())
+			t.Fatalf("export %q status = %d: %s", variant.query, rec.Code, rec.Body.String())
 		}
-		if err := os.WriteFile(filepath.Join(dir, name), rec.Body.Bytes(), 0o644); err != nil {
-			t.Fatalf("dump %s: %v", name, err)
+		if err := os.WriteFile(filepath.Join(dir, variant.name), rec.Body.Bytes(), 0o644); err != nil {
+			t.Fatalf("dump %s: %v", variant.name, err)
 		}
 	}
 }
@@ -588,7 +699,9 @@ func odmConformance(t *testing.T) (string, string) {
 // TestExportODMConformanceAgainstSchema holds a real export to the published CDISC schema,
 // which is the one judgment a round trip cannot make: exporter and importer can agree with
 // each other about a shape neither dialect defines, and the suite stays green (O-7). It runs
-// tools/odm_conformance.py over exports of both dialects.
+// tools/odm_conformance.py over exports of both dialects and over the design-only document,
+// whose validity a round trip also cannot establish — an importer that tolerated a stray
+// ClinicalData would hide it just as well as it hides a wrong nesting.
 //
 // Soft by decision: the validator is development tooling on the order of Playwright, so its
 // absence skips rather than fails, and REQ-ODM-055's build gate only warns. What it checks,
@@ -601,20 +714,18 @@ func TestExportODMConformanceAgainstSchema(t *testing.T) {
 	admin := e.mustAdmin("odm-schema@example.org")
 	projectID := e.seedInterchange()
 	for _, dialect := range []struct {
-		version string
+		query   string // the export's whole query string, dialect and content together
 		name    string
 		enforce bool
 	}{
 		{"", "project_odm_1.3.xml", true},
-		{"2.0", "project_odm_2.0.xml", true},
+		{"?odm_version=2.0", "project_odm_2.0.xml", true},
+		{"?odm_content=project_only", "project_odm_1.3_project_only.xml", true}, // REQ-ODM-066
 	} {
-		path := "/api/v1/projects/" + itoa(projectID) + "/export/odm"
-		if dialect.version != "" {
-			path += "?odm_version=" + dialect.version
-		}
+		path := "/api/v1/projects/" + itoa(projectID) + "/export/odm" + dialect.query
 		rec := e.do("GET", path, nil, admin)
 		if rec.Code != http.StatusOK {
-			t.Fatalf("export %q status = %d: %s", dialect.version, rec.Code, rec.Body.String())
+			t.Fatalf("export %q status = %d: %s", dialect.query, rec.Code, rec.Body.String())
 		}
 		file := filepath.Join(t.TempDir(), dialect.name)
 		if err := os.WriteFile(file, rec.Body.Bytes(), 0o644); err != nil {
@@ -624,11 +735,11 @@ func TestExportODMConformanceAgainstSchema(t *testing.T) {
 		out, err := exec.Command(python, tool, file).CombinedOutput()
 		report := strings.TrimSpace(string(out))
 		if dialect.enforce && err != nil {
-			t.Errorf("ODM 1.3 export does not conform to the published schema (REQ-ODM-055): %v\n%s",
-				err, report)
+			t.Errorf("the export %q does not conform to the published schema (REQ-ODM-055): %v\n%s",
+				dialect.query, err, report)
 		} else if err != nil {
-			t.Logf("ODM %s deviates from the published schema, pending its mapping decision:\n%s",
-				dialect.version, report)
+			t.Logf("export %q deviates from the published schema, pending its mapping decision:\n%s",
+				dialect.query, report)
 		} else {
 			t.Log(report)
 		}

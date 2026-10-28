@@ -11,7 +11,12 @@
  * only and no record values, so it carries none of the form's options (REQ-UI-020).
  *
  * Reads: $exportUrl, $arms (list of {arm_num, name, level, dropped}), $level, $dropped,
- * $formats, $values, $headers, $delimiters, $decimals, $csvDefaults, $isAdmin.
+ * $formats, $values, $headers, $delimiters, $decimals, $csvDefaults, $isAdmin,
+ * $odmVersions, $odmVersion, $odmContents, $odmContent.
+ *
+ * The administrator's interchange card carries two selectors of its own (REQ-ODM-064,
+ * REQ-ODM-066): the dialect to write and whether the file holds the project with its data
+ * or the project alone — a study definition to hand a partner, with no record values in it.
  */
 
 use Clara\View;
@@ -146,6 +151,16 @@ $multiArm = count($arms) > 1;
                 <select class="form-select form-select-sm" id="export-odm-version" name="odm_version">
                     <?php foreach ($odmVersions as $version): ?>
                         <option value="<?= View::e($version) ?>"<?= $version === $odmVersion ? ' selected' : '' ?>><?= View::e($view->t('export.odm_version.' . str_replace('.', '_', $version))) ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <!-- Which halves of the study the file holds (REQ-ODM-066): with its records, or the
+                 design alone for a partner who is only being shown the CRF. -->
+            <div>
+                <label class="form-label small mb-1" for="export-odm-content"><?= View::e($view->t('export.odm_content')) ?></label>
+                <select class="form-select form-select-sm" id="export-odm-content" name="odm_content">
+                    <?php foreach ($odmContents as $content): ?>
+                        <option value="<?= View::e($content) ?>"<?= $content === $odmContent ? ' selected' : '' ?>><?= View::e($view->t('export.odm_content.' . $content)) ?></option>
                     <?php endforeach; ?>
                 </select>
             </div>

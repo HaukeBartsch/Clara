@@ -367,6 +367,47 @@ describe('data dictionary download (REQ-UI-020, REQ-API-153)', function (): void
             assert_contains('odm_version=2.0', $odmCalls[0]['url']);
         });
 
+        it('asks which halves of the study the file holds, and sends the answer unchanged', function (): void {
+            sign_in(['is_admin' => 1]);
+            $xml = '<ODM xmlns="http://www.cdisc.org/ns/odm/v1.3"><Study/></ODM>';
+            api_route('/api/v1/projects/3/export/odm', $xml, 200, [
+                'Content-Type' => 'application/xml; charset=utf-8',
+                'Content-Disposition' => 'attachment; filename="8DISC_study_2026_odm_2026-10-24.xml"',
+            ]);
+            m6_queue(m6_detail([1 => ['view_edit', 'export_full']]));
+
+            $body = m6_get('/projects/3/export')->body();
+            assert_contains('name="odm_content"', $body);
+            assert_contains('value="project_and_data" selected', $body, 'the whole study stays the default (REQ-ODM-066)');
+            assert_contains('>Project only<', $body);
+
+            $sink = m6_stream(m6_get('/projects/3/export', ['download' => 'odm', 'odm_content' => 'project_only']));
+            assert_same(200, $sink->status);
+            $odmCalls = array_values(array_filter(
+                $GLOBALS['api_calls'],
+                static fn (array $call): bool => str_contains($call['url'], '/export/odm')
+            ));
+            assert_same(1, count($odmCalls));
+            assert_contains('odm_content=project_only', $odmCalls[0]['url']);
+        });
+
+        it('names no content when the form default stands, leaving it to the API', function (): void {
+            sign_in(['is_admin' => 1]);
+            api_route('/api/v1/projects/3/export/odm', '<ODM xmlns="http://www.cdisc.org/ns/odm/v1.3"><Study/></ODM>', 200, [
+                'Content-Type' => 'application/xml; charset=utf-8',
+            ]);
+            m6_queue(m6_detail([1 => ['view_edit', 'export_full']]));
+
+            m6_stream(m6_get('/projects/3/export', ['download' => 'odm']));
+
+            $odmCalls = array_values(array_filter(
+                $GLOBALS['api_calls'],
+                static fn (array $call): bool => str_contains($call['url'], '/export/odm')
+            ));
+            assert_same(1, count($odmCalls));
+            assert_same(false, str_contains($odmCalls[0]['url'], 'odm_content'), 'an unselected default is not a parameter');
+        });
+
         it('refuses a direct ODM download by a non-administrator', function (): void {
             sign_in();
             m6_queue(m6_detail([1 => ['view_edit', 'export_full']]));

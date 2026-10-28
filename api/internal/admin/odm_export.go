@@ -3,7 +3,9 @@ package admin
 // GET /api/v1/projects/{id}/export/odm (REQ-API-169, Design/ODM_Interchange_Design.md):
 // the project as one CDISC ODM document — Study + MetaDataVersion describing
 // the current design, then ClinicalData carrying the records — streamed, an
-// installation administrator's route (REQ-ODM-002).
+// installation administrator's route (REQ-ODM-002). `odm_content=project_only`
+// stops after the metadata and writes no ClinicalData (REQ-ODM-066); the default,
+// `project_and_data`, is the document this route always returned.
 //
 // Two halves, deliberately built differently. The metadata is a single pass over
 // the design tables (§3): small, and everything must be declared before any value
@@ -11,9 +13,11 @@ package admin
 // (dataapi.RunExportRows, O-6/REQ-ODM-021) — this file never reads the `data`
 // table and never transforms anything, so an ODM file holds exactly what a CSV of
 // the same call would hold: same per-pair levels, hashes, date shifts, checkbox
-// columns and record scope.
+// columns and record scope. Skipping that pipeline is therefore the one thing this
+// format does not get for free: a design-only export writes its own audit row.
 
 import (
+	"context"
 	"encoding/xml"
 	"net/http"
 	"strconv"
@@ -22,6 +26,7 @@ import (
 	"time"
 
 	"csms/api/internal/audit"
+	"csms/api/internal/authz"
 	"csms/api/internal/dataapi"
 	"csms/api/internal/db"
 )
@@ -43,6 +48,29 @@ const (
 	itemDataName = "ItemData"
 )
 
+// The two contents `odm_content` selects (REQ-ODM-066): the whole study as before,
+// or its design alone — one `Study` and one `MetaDataVersion`, no `ClinicalData`.
+// The default is the historical document, so a caller that names nothing gets what
+// it got before this option existed.
+const (
+	odmContentAll    = "project_and_data"
+	odmContentDesign = "project_only"
+)
+
+// odmContentFor reads the `odm_content` query parameter: an omitted value is the
+// default, and anything outside the two names answers 400 rather than quietly
+// widening or narrowing what left the installation (REQ-ODM-066).
+func odmContentFor(value string) (string, bool) {
+	switch value {
+	case "":
+		return odmContentAll, true
+	case odmContentAll, odmContentDesign:
+		return value, true
+	default:
+		return "", false
+	}
+}
+
 func (h *Handler) exportODM(w http.ResponseWriter, r *http.Request) {
 	u, ok := requireAdmin(w, r) // REQ-ODM-002: above project_admin, a whole study in one file
 	if !ok {
@@ -53,6 +81,12 @@ func (h *Handler) exportODM(w http.ResponseWriter, r *http.Request) {
 		errBadRequest(w, "odm_version must be 1.3 or 2.0")
 		return
 	}
+	content, ok := odmContentFor(r.URL.Query().Get("odm_content"))
+	if !ok {
+		errBadRequest(w, "odm_content must be project_and_data or project_only")
+		return
+	}
+	designOnly := content == odmContentDesign // the study's design, with no record values
 	projectID, ok := pathID(r, "id")
 	if !ok {
 		errNotFound(w)
@@ -95,37 +129,6 @@ func (h *Handler) exportODM(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The record scope is the data-access-group rule (REQ-API-092), as on the
-	// tabular export: the level governs transformation, the group governs records.
-	var groupID *int64
-	if asg, err := h.Store.GetAssignment(ctx, u.ID, projectID); err != nil {
-		errInternal(w)
-		return
-	} else if asg != nil {
-		ms, err := h.Store.ListDAGMembershipsByAssignment(ctx, asg.ID)
-		if err != nil {
-			errInternal(w)
-			return
-		}
-		for _, m := range ms {
-			if m.IsActive {
-				gid := m.GroupID
-				groupID = &gid
-				break
-			}
-		}
-	}
-
-	// Start the row stream before a byte is written: a scope holding no permitted
-	// pair answers as an error, not as a document that begins `<?xml` (§6.1).
-	eventNames := make([]string, 0, len(instruments))
-	candidateArms := make([]int, 0, len(arms))
-	for _, a := range arms {
-		candidateArms = append(candidateArms, a.ArmNum)
-		for _, e := range eventsByArm[a.ArmNum] {
-			eventNames = append(eventNames, e.UniqueEventName)
-		}
-	}
 	// The plan is built before the stream starts: it decides which items the
 	// document may declare, and a document that cannot name its records is refused
 	// here rather than after the pipeline has run and audited (REQ-AUD-004).
@@ -154,45 +157,112 @@ func (h *Handler) exportODM(w http.ResponseWriter, r *http.Request) {
 	// the response header says so — an operator must not read one export's `S17`
 	// as another's (REQ-ODM-031, O-5). A surrogate is never a hash of the stored
 	// identifier: §5.1's hash is a salt-recoverable pseudonym, which a level that
-	// deletes the identifier does not license.
-	if !plan.identifierDelivered {
+	// deletes the identifier does not license. A design-only document carries no
+	// records to key, so it makes no claim about keys at all (REQ-ODM-066).
+	if !plan.identifierDelivered && !designOnly {
 		w.Header().Set("X-CLARA-ODM-Key", "surrogate")
 	}
-	counts := newODMCounts(dialect.selection)
+	counts := newODMCounts(dialect.selection, content)
 
-	status, rows, err := h.Data.RunExportRows(ctx, dataapi.ExportSpec{
-		ProjectID:      projectID,
-		User:           u,
-		Surface:        audit.SourceAPI,
-		AuditAs:        audit.ODMExport, // REQ-ODM-061: distinguishable from a CSV of the same data
-		Arms:           candidateArms,
-		Events:         eventNames,
-		RestrictEvents: true,
-		GroupID:        groupID,
-		PairExport: func(eventID int64, armNum int, instrumentID int64) int {
-			return lv.PairOrArmDefault(eventID, instrumentID, armNum).ExportRankOf()
-		},
-		Enc:           "json", // the row layout; the ODM encoding is written from it (§6.1)
-		SurrogateKeys: true,   // needed only where the level removed the identifier (§4.1)
-		// The audit row is the pipeline's; these are this format's own keys (§9).
-		AuditExtra: counts.details,
-	})
-	if err != nil {
-		errInternal(w)
-		return
-	}
-	if status != http.StatusOK {
-		switch status {
-		case http.StatusForbidden:
-			errForbidden(w) // no permitted pair in scope (REQ-AUTH-069), nothing audited (REQ-AUD-004)
-		case http.StatusBadRequest:
-			errBadRequest(w, "the export request is not valid")
-		default:
+	// The row stream starts before a byte is written: a scope holding no permitted
+	// pair answers as an error, not as a document that begins `<?xml` (§6.1). A
+	// design-only document reads no records, so it starts nothing — and asks no
+	// data-access-group question either, which bounds records rather than columns
+	// (REQ-API-092, REQ-ODM-066).
+	var rows *dataapi.RowSource
+	if !designOnly {
+		// The record scope is the data-access-group rule (REQ-API-092), as on the
+		// tabular export: the level governs transformation, the group governs records.
+		var groupID *int64
+		if asg, err := h.Store.GetAssignment(ctx, u.ID, projectID); err != nil {
 			errInternal(w)
+			return
+		} else if asg != nil {
+			ms, err := h.Store.ListDAGMembershipsByAssignment(ctx, asg.ID)
+			if err != nil {
+				errInternal(w)
+				return
+			}
+			for _, m := range ms {
+				if m.IsActive {
+					gid := m.GroupID
+					groupID = &gid
+					break
+				}
+			}
 		}
-		return
+
+		eventNames := make([]string, 0, len(instruments))
+		candidateArms := make([]int, 0, len(arms))
+		for _, a := range arms {
+			candidateArms = append(candidateArms, a.ArmNum)
+			for _, e := range eventsByArm[a.ArmNum] {
+				eventNames = append(eventNames, e.UniqueEventName)
+			}
+		}
+
+		status, source, err := h.Data.RunExportRows(ctx, dataapi.ExportSpec{
+			ProjectID:      projectID,
+			User:           u,
+			Surface:        audit.SourceAPI,
+			AuditAs:        audit.ODMExport, // REQ-ODM-061: distinguishable from a CSV of the same data
+			Arms:           candidateArms,
+			Events:         eventNames,
+			RestrictEvents: true,
+			GroupID:        groupID,
+			PairExport: func(eventID int64, armNum int, instrumentID int64) int {
+				return lv.PairOrArmDefault(eventID, instrumentID, armNum).ExportRankOf()
+			},
+			Enc:           "json", // the row layout; the ODM encoding is written from it (§6.1)
+			SurrogateKeys: true,   // needed only where the level removed the identifier (§4.1)
+			// The audit row is the pipeline's; these are this format's own keys (§9).
+			AuditExtra: counts.details,
+		})
+		if err != nil {
+			errInternal(w)
+			return
+		}
+		if status != http.StatusOK {
+			switch status {
+			case http.StatusForbidden:
+				errForbidden(w) // no permitted pair in scope (REQ-AUTH-069), nothing audited (REQ-AUD-004)
+			case http.StatusBadRequest:
+				errBadRequest(w, "the export request is not valid")
+			default:
+				errInternal(w)
+			}
+			return
+		}
+		rows = source
+		defer rows.Close()
+	} else {
+		// Nothing runs the ladder for a document of no values, so this format writes
+		// its own `odm_export` row (REQ-ODM-061) — deferred to after the bytes went
+		// out, because a client that vanished mid-write still made a download that
+		// belongs in the trail (REQ-ODM-025).
+		floor := 0
+		for _, r := range ranks {
+			if r > 0 && (floor == 0 || r < floor) {
+				floor = r // most protective among the items the document declares (§3.9)
+			}
+		}
+		defer func() {
+			if h.Audit == nil {
+				return
+			}
+			details := counts.details()
+			details["sensitivity"] = authz.ExportName(floor)
+			auditCtx := context.WithoutCancel(ctx) // the trail outlives the response
+			_ = h.Audit.Insert(auditCtx, audit.Entry{
+				EventType: audit.ODMExport,
+				Source:    audit.SourceAPI,
+				UserID:    u.ID,
+				Email:     u.Email,
+				ProjectID: projectID,
+				Details:   details,
+			})
+		}()
 	}
-	defer rows.Close()
 
 	schema, err := h.Store.SchemaVersion(ctx)
 	if err != nil {
@@ -212,8 +282,13 @@ func (h *Handler) exportODM(w http.ResponseWriter, r *http.Request) {
 	if err := plan.writeMetadata(enc); err != nil {
 		return
 	}
-	if err := h.writeODMClinicalData(enc, plan, rows, counts); err != nil {
-		return // truncated on purpose: no synthesized close (REQ-ODM-025, O-2)
+	// A design-only document stops with the metadata: ODM 1.3.2 makes `ClinicalData`
+	// optional, so the study definition stands alone rather than carrying an empty
+	// element that promises records it does not hold (REQ-ODM-020, REQ-ODM-066).
+	if !designOnly {
+		if err := h.writeODMClinicalData(enc, plan, rows, counts); err != nil {
+			return // truncated on purpose: no synthesized close (REQ-ODM-025, O-2)
+		}
 	}
 	if err := enc.end("ODM"); err != nil {
 		return
@@ -229,13 +304,14 @@ func (h *Handler) exportODM(w http.ResponseWriter, r *http.Request) {
 type odmCounts struct {
 	mu      sync.Mutex
 	version string
+	content string // which of the two documents this was (REQ-ODM-066)
 	records int
 	items   int
 	skipped map[string]bool
 }
 
-func newODMCounts(version string) *odmCounts {
-	return &odmCounts{version: version, skipped: map[string]bool{}}
+func newODMCounts(version, content string) *odmCounts {
+	return &odmCounts{version: version, content: content, skipped: map[string]bool{}}
 }
 
 func (c *odmCounts) addRecord() { c.mu.Lock(); c.records++; c.mu.Unlock() }
@@ -258,6 +334,7 @@ func (c *odmCounts) details() map[string]any {
 	return map[string]any{
 		"surface":         "api", // the administration surface, as §3.5 spells it
 		"odm_version":     c.version,
+		"content":         c.content, // project_and_data | project_only (REQ-ODM-066)
 		"records":         c.records,
 		"items":           c.items,
 		"skipped_columns": len(c.skipped),

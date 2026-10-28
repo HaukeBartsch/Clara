@@ -12,6 +12,7 @@ This document outlines how a CLARA **project** — one study's structure and rec
 ## Surfaces
 - `GET /api/v1/projects/{id}/export/odm` — streamed download (REQ-ODM-025, REQ-TECH-011).
 - `odm_version=1.3|2.0` selects the export dialect; omitted values keep the existing 1.3 output (REQ-ODM-064).
+- `odm_content=project_and_data|project_only` selects what the file holds: the study with its records, or the study definition alone with no `ClinicalData` element at all — for handing a partner a CRF to review without a record value leaving the installation. Omitted means `project_and_data`, an unknown name is 400 (REQ-ODM-066).
 - `POST /api/v1/projects/import/odm` — creates a new project; `dry_run=1` answers the report without writing (REQ-ODM-046).
 - Administration API and web UI, `is_admin` only: a whole-study copy is bulk data movement, above what a project role takes or injects (REQ-ODM-001/002). The Export page offers the ODM download to installation administrators; the Control Panel's New Project flow accepts an ODM upload and metadata fields (REQ-ODM-005/006, DEV-ODM-6). The REDCap-compatible data API keeps its `csv`/`json` set untouched (REQ-ODM-003).
 

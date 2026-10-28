@@ -36,6 +36,8 @@ final class ExportController extends ProjectPageController
 {
     public const FORMATS = ['csv', 'json'];
     public const ODM_VERSIONS = ['1.3', '2.0'];
+    /** What an ODM file can hold: the study with its records, or the study alone (REQ-ODM-066). */
+    public const ODM_CONTENTS = ['project_and_data', 'project_only'];
     public const VALUES = ['raw', 'label'];
     public const HEADERS = ['raw', 'label', 'both'];
 
@@ -76,6 +78,12 @@ final class ExportController extends ProjectPageController
         $selectedODMVersion = in_array($requestedODMVersion, self::ODM_VERSIONS, true)
             ? $requestedODMVersion
             : '1.3';
+        // The selector's own default; an unknown name is not quietly read as one of the two,
+        // so it reaches the API and comes back as its refusal (REQ-ODM-066).
+        $requestedODMContent = $this->request->query('odm_content');
+        $selectedODMContent = in_array($requestedODMContent, self::ODM_CONTENTS, true)
+            ? $requestedODMContent
+            : self::ODM_CONTENTS[0];
         if ($this->request->query('download') === 'odm') {
             if (!Session::isAdmin()) {
                 throw new ApiException('forbidden', '', 403);
@@ -84,7 +92,8 @@ final class ExportController extends ProjectPageController
             return $this->downloadODM(
                 $projectId,
                 $this->projectName($detail),
-                $requestedODMVersion === '' ? '1.3' : $requestedODMVersion
+                $requestedODMVersion === '' ? '1.3' : $requestedODMVersion,
+                $requestedODMContent
             );
         }
         if ($this->request->query('download') === '1') {
@@ -99,6 +108,8 @@ final class ExportController extends ProjectPageController
             'isAdmin' => Session::isAdmin(),
             'odmVersions' => self::ODM_VERSIONS,
             'odmVersion' => $selectedODMVersion,
+            'odmContents' => self::ODM_CONTENTS,
+            'odmContent' => $selectedODMContent,
             'arms' => $arms,
             'level' => self::appliedLevel($arms),
             // Pairs the member may not export: stated on the card rather than hidden
@@ -338,12 +349,20 @@ final class ExportController extends ProjectPageController
         });
     }
 
-    /** The installation-admin-only project interchange download (REQ-ODM-005). */
-    private function downloadODM(int $projectId, string $projectName, string $version): Response
+    /**
+     * The installation-admin-only project interchange download (REQ-ODM-005). `$content` is the
+     * selector's value as it arrived: empty means the caller named nothing and the API's own
+     * default — project with its data — applies, and a name outside the two the form offers is
+     * forwarded for the API to refuse rather than guessed at here (REQ-ODM-066, REQ-AUTH-033).
+     */
+    private function downloadODM(int $projectId, string $projectName, string $version, string $content): Response
     {
         $back = '/projects/' . $projectId . '/export';
         $path = '/api/v1/projects/' . $projectId . '/export/odm';
         $query = ['odm_version' => $version];
+        if ($content !== '') {
+            $query['odm_content'] = $content;
+        }
 
         return Response::stream(function (StreamSink $sink) use ($path, $query, $back, $projectName): void {
             try {
