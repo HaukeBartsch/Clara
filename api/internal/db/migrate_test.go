@@ -103,9 +103,10 @@ func TestMigrateCreatesSchema(t *testing.T) {
 	}
 }
 
-// TestMigrateDataLookupIndexes checks the index set migration 0016 leaves on
-// `data` (REQ-DB-017) on either engine — on MariaDB the order of its statements
-// is what lets it apply at all, see the migration's own comment.
+// TestMigrateDataLookupIndexes checks the index set migrations 0016 and 0019
+// leave on `data` (REQ-DB-017) on either engine — on MariaDB the order of
+// 0016's statements is what lets it apply at all, see the migration's own
+// comment.
 func TestMigrateDataLookupIndexes(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
@@ -113,11 +114,12 @@ func TestMigrateDataLookupIndexes(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 
-	// Index name -> its columns in key order.
-	q := `SELECT m.name, ii.name FROM sqlite_master AS m JOIN pragma_index_info(m.name) AS ii
+	// Index name -> its columns in key order, and the indexes kept as a hash —
+	// which answer their full key only, never a prefix of it.
+	q := `SELECT m.name, ii.name, 'BTREE' FROM sqlite_master AS m JOIN pragma_index_info(m.name) AS ii
 	      WHERE m.type = 'index' AND m.tbl_name = 'data' ORDER BY m.name, ii.seqno`
 	if s.Dialect == DialectMariaDB {
-		q = `SELECT INDEX_NAME, COLUMN_NAME FROM information_schema.STATISTICS
+		q = `SELECT INDEX_NAME, COLUMN_NAME, INDEX_TYPE FROM information_schema.STATISTICS
 		     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'data' ORDER BY INDEX_NAME, SEQ_IN_INDEX`
 	}
 	rows, err := s.DB.QueryContext(ctx, q)
@@ -125,13 +127,15 @@ func TestMigrateDataLookupIndexes(t *testing.T) {
 		t.Fatalf("query data indexes: %v", err)
 	}
 	indexes := make(map[string][]string)
+	hashed := make(map[string]bool)
 	for rows.Next() {
-		var index, column string
-		if err := rows.Scan(&index, &column); err != nil {
+		var index, column, kind string
+		if err := rows.Scan(&index, &column, &kind); err != nil {
 			rows.Close()
 			t.Fatalf("scan data index: %v", err)
 		}
 		indexes[index] = append(indexes[index], column)
+		hashed[index] = kind == "HASH"
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -146,10 +150,14 @@ func TestMigrateDataLookupIndexes(t *testing.T) {
 			t.Errorf("obsolete data index %q still exists", name)
 		}
 	}
-	for index, wantColumns := range map[string][]string{
+	want := map[string][]string{
 		"idx_data_project_field": {"project_id", "field_name"},
 		"idx_data_project_event": {"project_id", "unique_event_name"},
-	} {
+	}
+	if s.Dialect == DialectMariaDB {
+		want["idx_data_project_record"] = []string{"project_id", "record_id"}
+	}
+	for index, wantColumns := range want {
 		gotColumns, ok := indexes[index]
 		if !ok {
 			t.Errorf("data index %q is missing", index)
@@ -160,16 +168,31 @@ func TestMigrateDataLookupIndexes(t *testing.T) {
 		}
 	}
 
-	// MariaDB commits each DDL statement on its own, so a run of 0016 that
-	// stopped halfway stays half done: every statement must apply again over
-	// its own result for the next start to finish it.
-	if s.Dialect == DialectMariaDB {
-		sqlBytes, err := migrations.Read(string(s.Dialect), "0016_data_lookup_indexes.sql")
-		if err != nil {
-			t.Fatalf("read 0016: %v", err)
+	// A single-record read (`WHERE project_id = ? AND record_id = ?`) needs an
+	// index led by those two columns that can answer a prefix: the unique key
+	// on SQLite, idx_data_project_record on MariaDB, whose unique key is a hash.
+	byRecord := false
+	for index, columns := range indexes {
+		if !hashed[index] && len(columns) >= 2 && slices.Equal(columns[:2], []string{"project_id", "record_id"}) {
+			byRecord = true
 		}
-		if _, err := s.DB.ExecContext(ctx, string(sqlBytes)); err != nil {
-			t.Errorf("0016 does not apply again over its own result: %v", err)
+	}
+	if !byRecord {
+		t.Errorf("no prefix-capable data index starts with (project_id, record_id): %v (hashed %v)", indexes, hashed)
+	}
+
+	// MariaDB commits each DDL statement on its own, so a run of 0016 or 0019
+	// that stopped halfway stays half done: every statement must apply again
+	// over its own result for the next start to finish it.
+	if s.Dialect == DialectMariaDB {
+		for _, name := range []string{"0016_data_lookup_indexes.sql", "0019_data_record_index.sql"} {
+			sqlBytes, err := migrations.Read(string(s.Dialect), name)
+			if err != nil {
+				t.Fatalf("read %s: %v", name, err)
+			}
+			if _, err := s.DB.ExecContext(ctx, string(sqlBytes)); err != nil {
+				t.Errorf("%s does not apply again over its own result: %v", name, err)
+			}
 		}
 	}
 }

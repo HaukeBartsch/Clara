@@ -267,8 +267,9 @@ CREATE TABLE IF NOT EXISTS data (                -- REQ-DB-015…020
     UNIQUE (project_id, record_id, unique_event_name,
             repeating_instrument, repeating_instance_number, field_name)   -- REQ-DB-016
 );
-CREATE INDEX IF NOT EXISTS idx_data_project ON data (project_id);          -- REQ-DB-017
-CREATE INDEX IF NOT EXISTS idx_data_record  ON data (record_id);           -- REQ-DB-017
+CREATE INDEX IF NOT EXISTS idx_data_project_field  ON data (project_id, field_name);         -- REQ-DB-017 (migration 0016)
+CREATE INDEX IF NOT EXISTS idx_data_project_event  ON data (project_id, unique_event_name);  -- REQ-DB-017 (migration 0016)
+CREATE INDEX IF NOT EXISTS idx_data_project_record ON data (project_id, record_id);          -- REQ-DB-017, MariaDB only (migration 0019, §9)
 
 CREATE TABLE IF NOT EXISTS record_entities (     -- REQ-DB-029 (GD-10)
     project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -417,8 +418,9 @@ Notes:
 
 | Access pattern | Index |
 |---|------|
-| all values of one project (exports, REQ-API-024) | `idx_data_project` |
-| all values of one record (data entry, history) | `idx_data_record` |
+| all values of one project (exports, REQ-API-024; the record-status scan) | the `project_id` prefix of `idx_data_project_field` / `idx_data_project_event` |
+| all values of one record (data entry, history, record rename and delete) | SQLite: the (`project_id`, `record_id`) prefix of the `data` unique key; MariaDB: `idx_data_project_record` (migration 0019) — the unique key is a hash there and answers no prefix (§10) |
+| one field's or one event's values (designer renames, deletes, breaking-change checks) | `idx_data_project_field`, `idx_data_project_event` |
 | upsert uniqueness (REQ-DB-016) | `data` unique key |
 | token → assignment (every API call) | `user_projects.token` unique |
 | record visibility under a DAG (REQ-AUTH-045) | `record_entities (project_id, dag_group_id)` — **add:** `CREATE INDEX idx_record_entities_dag ON record_entities (project_id, dag_group_id)` |
@@ -426,7 +428,7 @@ Notes:
 | calculated-field recomputation (REQ-VAL-037) | `calculated_dependencies` primary key |
 | survey link resolution (REQ-API-082) | `survey_links.token` unique |
 
-Reference scale (REQ-DB-025): 100 projects × 10,000 records × 200 fields × 10 events ≈ 20M EAV rows. Single-record read = `idx_data_record` lookup (< 500 ms target); full-project export streams via `idx_data_project` (REQ-TECH-011) — no full table scan at either. One connection per request, explicit transactions for multi-row writes (REQ-DB-026).
+Reference scale (REQ-DB-025): 100 projects × 10,000 records × 200 fields × 10 events ≈ 20M EAV rows. Single-record read = a (`project_id`, `record_id`) range over that record's rows only (< 500 ms target); full-project export streams over the `project_id` prefix (REQ-TECH-011) — neither walks another project's rows, though once one project holds most of the table the optimizer reads it with a table scan, the cheaper plan at that share. Checked with `EXPLAIN` on MariaDB 11.4 over 800,000 rows (2026-10-28): a single-record read and a record delete use `idx_data_project_record` on both columns; before migration 0019 they used `idx_data_project_field` on `project_id` alone and filtered the whole project. One connection per request, explicit transactions for multi-row writes (REQ-DB-026).
 
 ## 10. Dialect Exceptions (GD-6, REQ-DB-002)
 
@@ -437,7 +439,8 @@ Reference scale (REQ-DB-025): 100 projects × 10,000 records × 200 fields × 10
 | `DATE` | `TEXT` (`YYYY-MM-DD`) | `DATE` |
 | `DATETIME` | `TEXT` (UTC) | `DATETIME` |
 | `VARCHAR(n)` | `TEXT` (affinity check only) | `VARCHAR(n)` |
-| `IF NOT EXISTS` on indexes | not supported — create in a temp check or `CREATE INDEX` guarded by migration state | supported |
+| `IF [NOT] EXISTS` on indexes | `CREATE INDEX IF NOT EXISTS`, `DROP INDEX IF EXISTS name` | `CREATE INDEX IF NOT EXISTS`, `DROP INDEX IF EXISTS name ON table` — required, not cosmetic: each DDL statement commits on its own, so an index migration stopped halfway is not rolled back, and the guards let the next start finish it (migration 0016) |
+| unique key over 3072 bytes (`data`: four `VARCHAR(255)` utf8mb4 columns) | an ordinary B-tree; answers any leading prefix of the key | kept as a `HASH` "long unique" index: enforces uniqueness only — it answers no prefix lookup (hence `idx_data_project_record`, migration 0019) and cannot back a foreign key (hence an index led by `project_id` for `fk_data_project`, migration 0016) |
 | yearly audit rollover | per-year tables + `VIEW` (no partitions) | `PARTITION BY RANGE (YEAR(created_at))` |
 | append-only enforcement | application-level (no such operation exposed) | grant `INSERT, SELECT` only to the app account |
 | foreign keys | `PRAGMA foreign_keys=ON` on every connection (DSN pragma, verified at startup — see the note below) | enforced (InnoDB) |
