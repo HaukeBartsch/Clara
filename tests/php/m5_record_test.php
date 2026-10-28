@@ -67,6 +67,30 @@ function m5_fields(): array
     ];
 }
 
+/** One `content=metadata` row (REDCap's shape, choices as `code, label | …`). */
+function m5_meta(string $name, string $form, string $type, string $choices = ''): array
+{
+    return ['field_name' => $name, 'form_name' => $form, 'section_header' => '', 'field_type' => $type,
+        'field_label' => ucfirst($name), 'field_note' => '', 'select_choices_or_calculations' => $choices,
+        'validation_type' => '', 'validation_min' => '', 'validation_max' => '', 'required_field' => '',
+        'branching_logic' => '', 'matrix_group_name' => '', 'field_annotation' => '',
+        'record_identifier' => $name === 'record_id' ? 'Y' : ''];
+}
+
+/** The dictionary of m5_fields() and scores as the data API exports it. */
+function m5_metadata(): array
+{
+    return [
+        m5_meta('record_id', 'intake', 'text'),
+        m5_meta('age', 'intake', 'text'),
+        m5_meta('sex', 'intake', 'radio', '1, Male | 2, Female'),
+        m5_meta('preg', 'intake', 'dropdown', '0, No | 1, Yes'),
+        m5_meta('notes', 'intake', 'text'),
+        m5_meta('dbl', 'intake', 'calculated', '[baseline_arm_1][age] * 2'),
+        m5_meta('score', 'scores', 'text'),
+    ];
+}
+
 /** A history page in the §4.16 shape, newest first. */
 function m5_history(array $entries, ?string $next = null): array
 {
@@ -112,6 +136,9 @@ function m5_queue(string $level = 'view_edit', string $mode = 'development', boo
     // The self-service token fetch: a member gets one; a non-member — an administrator who
     // sees the project without belonging to it (REQ-API-102) — is answered 403.
     api_route('/api/v1/projects/3/users/7/token', $member ? ['token' => 'tok-1'] : ['error' => 'forbidden'], $member ? 200 : 403);
+    // The dictionary a form reads when its logic names fields outside it (§7.3): their
+    // choices and which of them are checkbox boxes.
+    api_route('data:content=metadata', m5_metadata());
     // The link report a survey pair's view reads on every render (§4.17, REQ-API-082): live by
     // default, so a test passes its own `state` when it needs another. Queued before the bare
     // project prefix below, which would otherwise answer it with a project detail.
@@ -661,6 +688,73 @@ describe('record view (§8, REQ-UI-025…027)', function (): void {
 
         $bad = m5_get('/projects/3/records/8DISC001', ['field' => 'x;drop'], json_headers());
         assert_same(400, $bad->status());
+    });
+});
+
+/** The record-context block the branching evaluator reads (§8.4). */
+function m5_context(string $body): array
+{
+    assert_true(preg_match('#<script type="application/json" data-clara-record-context>(.*?)</script>#s', $body, $m) === 1,
+        'the page carries the record context');
+
+    return json_decode($m[1], true);
+}
+
+/** Replaces one instrument's queued fields, keeping its place in the match order. */
+function m5_refield(int $iid, array $fields): void
+{
+    $GLOBALS['api_routes']['/api/v1/projects/3/instruments/' . $iid . '/fields'] = [];
+    api_route('/api/v1/projects/3/instruments/' . $iid . '/fields', $fields);
+}
+
+describe('branching over fields outside the form (§8.4, Data_Validation_Design.md §7.3)', function (): void {
+    it('hands the evaluator this record\'s values and the choices of the choice fields the logic names', function (): void {
+        sign_in();
+        m5_queue();
+        m5_refield(12, [m5_field(9, 'score', 'text',
+            ['branching_logic' => '[baseline_arm_1][sex] = "Female" and [age] > 18 or [follow_up_arm_1][visit] = "1"'])]);
+
+        $context = m5_context(m5_get('/projects/3/records/8DISC001', ['event' => 'baseline_arm_1', 'instrument' => 'scores'])->body());
+
+        // The values come from this record's history, the shorthand at the first event (GD-15).
+        assert_same(['baseline_arm_1|sex' => '2', 'baseline_arm_1|age' => '42', 'follow_up_arm_1|visit' => '1'], $context['values']);
+        // A label resolves only against its field's choices; a text field has none to send.
+        assert_same(['sex' => '1$Male##2$Female'], $context['choices']);
+        assert_same([], $context['boxes']);
+        assert_same(1, data_api_calls('content=metadata'), 'one dictionary read per render');
+    });
+
+    it('reads no dictionary when the logic names only the form\'s own fields', function (): void {
+        sign_in();
+        m5_queue();
+        m5_refield(7, array_map(static fn (array $f): array => $f['field_name'] === 'preg'
+            ? ['branching_logic' => '[sex] = "Female"'] + $f : $f, m5_fields()));
+
+        $body = m5_get('/projects/3/records/8DISC001', ['event' => 'baseline_arm_1', 'instrument' => 'intake'])->body();
+
+        // sex is an input of this form: its markup carries the choices the label needs.
+        assert_contains('data-clara-field="sex" data-clara-type="radio"', $body);
+        assert_contains('data-clara-choices="1$Male##2$Female"', $body);
+        $context = m5_context($body);
+        assert_same([], $context['values']);
+        assert_same([], $context['choices']);
+        assert_same(0, data_api_calls('content=metadata'));
+    });
+
+    it('still renders the form when the dictionary cannot be read, its labels left unresolved', function (): void {
+        sign_in();
+        m5_queue();
+        $GLOBALS['api_routes']['data:content=metadata'] = [];
+        api_route('data:content=metadata', ['error' => 'Rate limit exceeded'], 429);
+        m5_refield(12, [m5_field(9, 'score', 'text', ['branching_logic' => '[baseline_arm_1][sex] = "Female"'])]);
+
+        $response = m5_get('/projects/3/records/8DISC001', ['event' => 'baseline_arm_1', 'instrument' => 'scores']);
+
+        assert_same(200, $response->status());
+        $context = m5_context($response->body());
+        // The values still arrive — sex for the field, age for the instrument's own logic.
+        assert_same(['baseline_arm_1|sex' => '2', 'baseline_arm_1|age' => '42'], $context['values']);
+        assert_same([], $context['choices']);
     });
 });
 

@@ -132,8 +132,9 @@ $stateBadge = [
     <?php endif; ?>
 
     <!-- The branching evaluator's inputs (§8.4): this event, the project's first event for the
-         [field] shorthand, and the current values the logic reads outside this form. UI copy
-         travels in the data-i18n block; this block is data for the evaluator only. -->
+         [field] shorthand, and the current values the logic reads outside this form — with the
+         checkbox boxes and the choices of the fields they belong to. UI copy travels in the
+         data-i18n block; this block is data for the evaluator only. -->
     <script type="application/json" data-clara-record-context><?= json_encode($clientContext,
         JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?></script>
 

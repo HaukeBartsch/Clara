@@ -9,7 +9,9 @@
 //    and the instrument itself — while their logic is true; re-run on every change.
 //    Display-only: a hidden field is still submitted as it stands (DEV-VAL-5). A reference
 //    to a field of this form reads its input; any other reads the current value the server
-//    put in the record-context block. A form that knows only its own fields (the survey
+//    put in the record-context block, with its field's `choices` beside it, so a label
+//    constant and a bare choice reference read as they would on the field's own form
+//    (Data_Validation_Design.md §7.3). A form that knows only its own fields (the survey
 //    page) sets `anyEvent`, so a reference to one of them reads the input whatever event it
 //    names. A checkbox box `[field___code]` — or REDCap's `[field(code)]` — reads 1 while
 //    checked and 0 otherwise, as REDCap reads it (REQ-DB-042, REQ-VAL-044): the boxes of this
@@ -78,7 +80,7 @@ export function wireBranching(form, context) {
     choices: (event, field) => {
       if (onForm(event) && boxes.has(field)) return boxes.get(field).dataset.claraChoices || ""
       if (onForm(event) && fields.has(field)) return fields.get(field).dataset.claraChoices || ""
-      return ""
+      return (context.choices || {})[field] ?? ""
     },
     isBox: (event, field) => (onForm(event) && boxes.has(field)) || (context.boxes || []).includes(field),
   }

@@ -120,45 +120,50 @@ final class RecordController extends DataEntryController
     }
 
     /**
-     * The references outside this form that name a checkbox box (REQ-DB-042): an unchecked box
-     * reads 0 in the evaluator (REQ-VAL-044), and only the dictionary tells a box from a field
-     * whose own name contains `___`. The dictionary is read only when such a reference exists;
-     * when it cannot be read, no box is announced and an unchecked one reads as empty.
+     * What the evaluator needs to know about the references outside this form beyond their
+     * values (§7.3), read from the dictionary in one call when such a reference exists:
+     * which name a checkbox box (REQ-DB-042) — an unchecked box reads 0 (REQ-VAL-044), and only
+     * the dictionary tells a box from a field whose own name contains `___` — and the choices of
+     * each referenced choice field, so a label constant resolves to its code and a bare
+     * reference is 1 whenever a choice is selected, whatever its code (REQ-VAL-029). The form's
+     * own fields carry both in their markup. When the dictionary cannot be read, nothing is
+     * announced: an unchecked box reads as empty and a label compares as plain text.
      *
      * @param list<string> $keys `<event>|<field>` references
-     * @return list<string> field names
+     * @return array{boxes: list<string>, choices: array<string, string>} by field name
      */
-    private function boxReferences(int $projectId, array $keys): array
+    private function referenceDictionary(int $projectId, array $keys): array
     {
-        $candidates = [];
+        $names = [];
         foreach ($keys as $key) {
-            $field = substr($key, (int) strpos($key, '|') + 1);
-            if (str_contains($field, DataEntry::CHOICE_SEPARATOR)) {
-                $candidates[$field] = true;
-            }
+            $names[substr($key, (int) strpos($key, '|') + 1)] = true;
         }
-        if ($candidates === []) {
-            return [];
+        if ($names === []) {
+            return ['boxes' => [], 'choices' => []];
         }
         try {
             $rows = $this->dataCall($projectId, ['content' => 'metadata']);
         } catch (ApiException $e) {
-            $this->logger->info('metadata for box references unavailable', ['code' => $e->code()]);
+            $this->logger->info('metadata for outside references unavailable', ['code' => $e->code()]);
 
-            return [];
+            return ['boxes' => [], 'choices' => []];
         }
         $boxes = [];
+        $choices = [];
         foreach (SurveyController::fieldsFromMetadata($rows) as $field) {
+            $name = (string) ($field['field_name'] ?? '');
             if (($field['field_type'] ?? '') === 'checkbox') {
-                foreach (DataEntry::valueNames($field) as $name) {
-                    if (isset($candidates[$name])) {
-                        $boxes[] = $name;
+                foreach (DataEntry::valueNames($field) as $box) {
+                    if (isset($names[$box])) {
+                        $boxes[] = $box;
                     }
                 }
+            } elseif (isset($names[$name]) && ($field['choices'] ?? '') !== '') {
+                $choices[$name] = (string) $field['choices'];
             }
         }
 
-        return $boxes;
+        return ['boxes' => $boxes, 'choices' => $choices];
     }
 
     // --- writes -------------------------------------------------------------------------
@@ -560,11 +565,17 @@ final class RecordController extends DataEntryController
         // The form's own fields at this event are read from its inputs; the context carries
         // the rest — first instances everywhere else (REQ-VAL-045).
         $context = [];
+        $outside = [];
         foreach (array_unique($refs) as $key) {
-            if (!isset($ownNames[$key]) && isset($values[$key])) {
+            if (isset($ownNames[$key])) {
+                continue;
+            }
+            $outside[] = $key;
+            if (isset($values[$key])) {
                 $context[$key] = $values[$key];
             }
         }
+        $dictionary = $this->referenceDictionary($projectId, $outside);
 
         $analysis = $mode === 'analysis';
         // Entry is decided on the selected pair, not on the arm (REQ-AUTH-069).
@@ -673,7 +684,7 @@ final class RecordController extends DataEntryController
             'patterns' => $this->patternsFor($fields),
             'formats' => self::DEFAULT_FORMATS,
             'clientContext' => ['firstEvent' => $firstEvent, 'event' => $uen, 'values' => (object) $context,
-                'boxes' => $this->boxReferences($projectId, array_diff(array_unique($refs), $own))],
+                'boxes' => $dictionary['boxes'], 'choices' => (object) $dictionary['choices']],
             // The record view belongs to the Record Status Dashboard's entry of the left panel.
             'nav' => [
                 'headingKey' => 'nav.project_sections',
