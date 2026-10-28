@@ -110,8 +110,9 @@ application's Bootstrap 5.3 markup; it is theme-independent of the Bootswatch
 choice (§3.8 in `Design/User_Interface_Design.md`) and a page links it only
 when it renders a table. Neither file carries a fetch reference to an external
 host (verified against the CI ASM-TECH-2 pattern), so nothing reaches the
-network (`ASM-TECH-2`). The first table is the Control Panel's Translations
-key list (§5.7, `web/assets/js/translations.js`); its shared defaults live in
+network (`ASM-TECH-2`). The tables are the Control Panel's Translations key
+list (§5.7, `web/assets/js/translations.js`) and the Record Status Dashboard's
+grid (§6.3, `web/assets/js/record-status.js`); their shared defaults live in
 `web/assets/app.js` (`REQ-UI-045`, `User_Interface_Design.md` §3.7).
 
 ## Swagger UI (`swagger-ui-dist` bundle)

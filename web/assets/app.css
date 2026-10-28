@@ -564,6 +564,15 @@ h1 .clara-mode-badge {
   padding: 0.125rem 0.1875rem;
 }
 
+/* In the dashboard's virtually rendered grid every row keeps one height: a repeating cell's
+   dots stay on one line, and the column is as wide as the most a cell can show — five dots,
+   "+k" with a three-digit k, and "+" — so a row that only renders while scrolling is never
+   clipped (record-status.js). */
+.clara-record-status-grid .clara-instances {
+  flex-wrap: nowrap;
+  min-width: 11rem;
+}
+
 .clara-instance-more,
 .clara-instance-add {
   font-size: 0.75rem;

@@ -30,11 +30,9 @@ async function addField(page: Page, name: string, label: string): Promise<void> 
   await expect(success(page)).toContainText(`Field "${name}" added.`)
 }
 
-// The visits cell of one record on the dashboard.
-const visitsCell = (page: Page, record: string) => {
-  const table = page.locator("table.clara-record-status")
-  return table.locator(`tr[data-record="${record}"] td`).nth(1) // th record | td instrument | td visits
-}
+// The visits cell of one record on the dashboard's grid (the arm's only event is baseline).
+const visitsCell = (page: Page, record: string) =>
+  page.locator(`.clara-record-status [data-record="${record}"] [tabulator-field="baseline_arm_1|visits"]`)
 
 async function setRepeating(page: Page, on: boolean): Promise<void> {
   await page.locator("#clara-nav").getByRole("link", { name: "Design" }).click()
@@ -115,7 +113,7 @@ test.describe("repeating instruments (REQ-UI-054, REQ-UI-055)", () => {
 
     // --- the record and its first visit ---
     await page.locator("#clara-nav").getByRole("link", { name: "Record Status Dashboard" }).click()
-    await expect(page.locator('th[data-instrument="visits"]')).toHaveAttribute("data-repeating", "1")
+    await expect(page.locator('.clara-record-status [data-instrument="visits"]')).toHaveAttribute("data-repeating", "1")
     await page.fill("#new-record-id", "RP001")
     await page.getByRole("button", { name: "Create" }).click()
     await expect(page).toHaveURL(/\/records\/RP001/)
@@ -164,7 +162,7 @@ test.describe("repeating instruments (REQ-UI-054, REQ-UI-055)", () => {
     // --- off hides the second instance, on brings it back (REQ-DB-048) ---
     await setRepeating(page, false)
     await page.locator("#clara-nav").getByRole("link", { name: "Record Status Dashboard" }).click()
-    await expect(page.locator('th[data-instrument="visits"]')).not.toHaveAttribute("data-repeating", "1")
+    await expect(page.locator('.clara-record-status [data-instrument="visits"]')).not.toHaveAttribute("data-repeating", "1")
     await expect(visitsCell(page, "RP001").locator(".clara-state")).toHaveCount(1)
     await setRepeating(page, true)
     await page.locator("#clara-nav").getByRole("link", { name: "Record Status Dashboard" }).click()

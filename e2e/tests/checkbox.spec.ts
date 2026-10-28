@@ -156,7 +156,7 @@ test.describe("checkbox fields (REQ-DB-042)", () => {
 
     // A checked box is data of its instrument on the dashboard (§6.3).
     await page.getByRole("link", { name: "← Record Status Dashboard" }).click()
-    await expect(page.locator("tbody[data-region='records'] tr[data-record='CB001'] td[data-state]"))
+    await expect(page.locator("[data-region='records'] [data-record='CB001'] [data-state]"))
       .toHaveAttribute("data-state", "some_data")
 
     // --- export: one column per choice (REQ-EXP-053) ---

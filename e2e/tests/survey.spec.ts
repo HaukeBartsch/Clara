@@ -215,7 +215,7 @@ test.describe("public survey page (M6)", () => {
 
     // The participant is on the dashboard now — stored by the link, not by a save.
     await page.goto(`/projects/${project.id}/record-status`)
-    await expect(page.locator('tr[data-record="S002"]')).toBeVisible()
+    await expect(page.locator('.clara-record-status [data-record="S002"]')).toBeVisible()
 
     // --- and the link is a working survey for that participant ---
     const respondent = await (await browser.newContext()).newPage()

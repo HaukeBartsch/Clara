@@ -142,8 +142,7 @@ describe('repeating instruments on the dashboard and the record view (REQ-UI-055
         $body = m5_get('/projects/3/record-status')->body();
 
         assert_true(preg_match('/data-instrument="visits"\s+data-repeating="1" data-add="1"/', $body) === 1, 'repeating column');
-        assert_not_contains('data-instrument="intake"
-                                        data-repeating', $body);
+        assert_true(preg_match('/data-instrument="intake"\s+data-repeating/', $body) === 0, 'a column that does not repeat is not marked');
     });
 
     it('offers no "+" in analysis mode', function (): void {

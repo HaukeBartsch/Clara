@@ -3,11 +3,12 @@
  * Project page — the Record Status Dashboard (§6.3, REQ-UI-019): the participant overview.
  *
  * The page renders the structure — one tab per arm the member may read, its events as column
- * groups with their instruments in order — and an empty table body per arm; the rows are the
- * route's `records` data region, bound by record-status.js (REQ-UI-032/044). Each cell is a
- * link to the record view on that (record, event, instrument) carrying the three-state colour
- * code: grey no data, amber some data, green finished (§6.3). No field value is ever on this
- * page (REQ-API-074).
+ * groups with their instruments in order — as a table head per arm with a loading row; the rows
+ * are the route's `records` data region, bound by record-status.js (REQ-UI-032/044), which reads
+ * that head as the column structure and replaces the table with a virtually rendered Tabulator
+ * grid (AGENTS.md "use Tabulator"). Each cell is a link to the record view on that (record,
+ * event, instrument) carrying the three-state colour code: grey no data, amber some data, green
+ * finished (§6.3). No field value is ever on this page (REQ-API-074).
  *
  * New participant (§6.3): the control the project's naming mode offers — type a record ID, or
  * one click that assigns the next number (REQ-UI-052), never both; present only for a member
@@ -109,38 +110,42 @@ $activeArm = (int) ($arms[0]['arm_num'] ?? 0);
             <?php if ($events === []): ?>
                 <p class="clara-region-empty"><?= View::e($view->t('records.no_instruments')) ?></p>
             <?php else: ?>
-                <div class="table-responsive">
-                    <table class="table table-sm table-bordered align-middle clara-record-status" data-arm="<?= $num ?>">
-                        <thead>
-                        <tr>
-                            <th scope="col" rowspan="2" class="align-bottom"><?= View::e($view->t('records.record')) ?></th>
-                            <?php foreach ($events as $event): ?>
-                                <th scope="colgroup" colspan="<?= count($event['instruments']) ?>" class="text-center"
-                                    title="<?= View::e($event['unique_event_name']) ?>"><?= View::e($event['event_name']) ?></th>
-                            <?php endforeach; ?>
-                        </tr>
-                        <tr>
-                            <?php foreach ($events as $event): ?>
-                                <?php foreach ($event['instruments'] as $instrument): ?>
-                                    <!-- data-col keys the cell record-status.js puts under this header; a
-                                         repeating instrument's column also says so, and whether "+" is
-                                         offered in it (REQ-UI-055). -->
-                                    <th scope="col" class="small text-center clara-status-col"
-                                        data-col="<?= View::e($event['unique_event_name'] . '|' . $instrument['name']) ?>"
-                                        data-event="<?= View::e($event['unique_event_name']) ?>"
-                                        data-event-label="<?= View::e($event['event_name']) ?>"
-                                        data-instrument="<?= View::e($instrument['name']) ?>"
-                                        <?php if (!empty($instrument['repeating'])): ?>data-repeating="1"<?= !empty($instrument['canAdd']) ? ' data-add="1"' : '' ?>
-                                        title="<?= View::e($view->t('records.repeating_column', ['instrument' => $instrument['name']])) ?>"<?php endif; ?>><?= View::e($instrument['name']) ?><?php if (!empty($instrument['repeating'])): ?> <span aria-hidden="true">⟳</span><?php endif; ?></th>
+                <!-- The arm's `records` region: the table below is its column structure and loading
+                     state until record-status.js builds the grid in its place. -->
+                <div class="clara-record-status" data-arm="<?= $num ?>" data-region="records" data-source="<?= View::e($statusUrl) ?>"
+                     data-record-base="<?= View::e($recordBase) ?>" data-columns="<?= $columns ?>">
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered align-middle">
+                            <thead>
+                            <tr>
+                                <th scope="col" rowspan="2" class="align-bottom"><?= View::e($view->t('records.record')) ?></th>
+                                <?php foreach ($events as $event): ?>
+                                    <th scope="colgroup" colspan="<?= count($event['instruments']) ?>" class="text-center"
+                                        title="<?= View::e($event['unique_event_name']) ?>"><?= View::e($event['event_name']) ?></th>
                                 <?php endforeach; ?>
-                            <?php endforeach; ?>
-                        </tr>
-                        </thead>
-                        <tbody data-region="records" data-source="<?= View::e($statusUrl) ?>" data-record-base="<?= View::e($recordBase) ?>"
-                               data-columns="<?= $columns ?>">
-                        <tr class="clara-region-notice"><td colspan="<?= $columns ?>" class="clara-region-empty"><?= View::e($view->t('js.loading')) ?></td></tr>
-                        </tbody>
-                    </table>
+                            </tr>
+                            <tr>
+                                <?php foreach ($events as $event): ?>
+                                    <?php foreach ($event['instruments'] as $instrument): ?>
+                                        <!-- data-col keys the cell record-status.js puts under this header; a
+                                             repeating instrument's column also says so, and whether "+" is
+                                             offered in it (REQ-UI-055). -->
+                                        <th scope="col" class="small text-center clara-status-col"
+                                            data-col="<?= View::e($event['unique_event_name'] . '|' . $instrument['name']) ?>"
+                                            data-event="<?= View::e($event['unique_event_name']) ?>"
+                                            data-event-label="<?= View::e($event['event_name']) ?>"
+                                            data-instrument="<?= View::e($instrument['name']) ?>"
+                                            <?php if (!empty($instrument['repeating'])): ?>data-repeating="1"<?= !empty($instrument['canAdd']) ? ' data-add="1"' : '' ?>
+                                            title="<?= View::e($view->t('records.repeating_column', ['instrument' => $instrument['name']])) ?>"<?php endif; ?>><?= View::e($instrument['name']) ?><?php if (!empty($instrument['repeating'])): ?> <span aria-hidden="true">⟳</span><?php endif; ?></th>
+                                    <?php endforeach; ?>
+                                <?php endforeach; ?>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            <tr class="clara-region-notice"><td colspan="<?= $columns ?>" class="clara-region-empty"><?= View::e($view->t('js.loading')) ?></td></tr>
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             <?php endif; ?>
         </div>

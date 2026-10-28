@@ -328,6 +328,8 @@ describe('Record Status Dashboard (§6.3, REQ-UI-019)', function (): void {
         assert_contains('data-col="follow_up_arm_1|intake"', $body);
         assert_not_contains('follow_up_arm_1|scores', $body, 'an unmapped pair has no column');
         assert_contains('/assets/js/record-status.js', $body);
+        // The rows bind into a Tabulator grid, whose theme the page links (§3.8).
+        assert_contains('/assets/vendor/tabulator/tabulator_bootstrap5.min.css', $body);
         assert_contains('clara-state-finished', $body);
         // The entry is now built and allowed, and it is the page on screen.
         assert_contains('href="/projects/3/record-status"', $body);

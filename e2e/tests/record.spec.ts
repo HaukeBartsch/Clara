@@ -130,7 +130,7 @@ test.describe("data entry and the record view (M5)", () => {
 
     // --- Record Status Dashboard: rows are the route's data region (REQ-UI-044) ---
     await page.locator("#clara-nav").getByRole("link", { name: "Record Status Dashboard" }).click()
-    await expect(page.locator("tbody[data-region='records']")).toContainText("No records yet.")
+    await expect(page.locator("[data-region='records']")).toContainText("No records yet.")
     // Manual naming mode (the project default, REQ-UI-052): the record ID is typed in.
     await page.fill("#new-record-id", "M5001")
     await page.getByRole("button", { name: "Create" }).click()
@@ -194,7 +194,7 @@ test.describe("data entry and the record view (M5)", () => {
     // The dashboard derives "some data" (amber) from the stored values (§6.3), and its
     // cell opens this very form.
     await page.getByRole("link", { name: "← Record Status Dashboard" }).click()
-    const someData = page.locator("tbody[data-region='records'] tr[data-record='M5001'] td[data-state]")
+    const someData = page.locator("[data-region='records'] [data-record='M5001'] [data-state]")
     await expect(someData).toHaveAttribute("data-state", "some_data")
     await someData.locator("a").click()
     await expect(page).toHaveURL(/\/records\/M5001\?event=baseline_arm_1&instrument=instrument$/)
@@ -221,7 +221,7 @@ test.describe("data entry and the record view (M5)", () => {
 
     // --- the dashboard shows the user's completion assignment as green (§6.3) ---
     await page.getByRole("link", { name: "← Record Status Dashboard" }).click()
-    const cell = page.locator("tbody[data-region='records'] tr[data-record='M5001'] td[data-state]")
+    const cell = page.locator("[data-region='records'] [data-record='M5001'] [data-state]")
     await expect(cell).toHaveAttribute("data-state", "finished")
 
     // --- what is stored: the cleared value is gone, the untouched ones are intact (GD-14) ---

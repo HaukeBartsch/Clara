@@ -6,8 +6,9 @@
 //
 // The page renders the structure — arm tabs, the column headers, the new-participant form —
 // and the rows are the route's `records` data region, bound by `record-status.js` from the
-// same URL (REQ-UI-032/044). The region is the API's record-status read reshaped into cells;
-// like the read, it carries no field value (REQ-API-074).
+// same URL (REQ-UI-032/044) into a virtually rendered Tabulator grid, so only the rows in view
+// are in the DOM. The region is the API's record-status read reshaped into cells; like the
+// read, it carries no field value (REQ-API-074).
 //
 // A repeating instrument (REQ-UI-055) shows one dot per instance in its cell, then "+" that
 // opens the next instance in the record view; the column header marks it. Which pairs repeat
@@ -111,6 +112,8 @@ final class RecordStatusController extends DataEntryController
             'notMember' => $offer && !$member,
         ], [
             'scripts' => ['/assets/app.js', '/assets/js/record-status.js'],
+            // The rows bind into a virtually rendered Tabulator grid (AGENTS.md "use Tabulator").
+            'styles' => ['/assets/vendor/tabulator/tabulator_bootstrap5.min.css'],
             'jsKeys' => ['js.loading', 'js.load_failed', 'js.retry', 'records.empty',
                 'records.state.no_data', 'records.state.some_data', 'records.state.finished',
                 'records.open_cell', 'records.open_instance', 'records.add_instance', 'records.more_instances'],
