@@ -51,12 +51,13 @@ test.describe("API documentation in the Control Panel (REQ-UI-057)", () => {
     await expect(docs.locator(".info .title")).toContainText("CLARA API")
     await expect(docs.locator(".opblock").first()).toBeVisible()
 
-    // The Data API section comes first and is the only one open; the rest wait collapsed.
+    // The Data API section comes first and is the only one open; the rest wait collapsed. It
+    // holds POST /api/ alone — GET is refused with 405 (REQ-API-009, DEV-API-30).
     const sections = docs.locator(".opblock-tag-section")
     await expect(sections.first().locator(".opblock-tag")).toHaveAttribute("data-tag", "Data API")
     await expect(sections.first()).toHaveClass(/is-open/)
     await expect(docs.locator(".opblock-tag-section.is-open")).toHaveCount(1)
-    await expect(sections.first().locator('.opblock-summary-path[data-path="/api/"]')).toHaveCount(2)
+    await expect(sections.first().locator('.opblock-summary-path[data-path="/api/"]')).toHaveCount(1)
 
     // A collapsed section opens on its heading; an operation opens with its description, and
     // offers no way to send it.
