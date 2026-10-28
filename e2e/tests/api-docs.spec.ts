@@ -79,8 +79,8 @@ test.describe("API documentation in the Control Panel (REQ-UI-057)", () => {
     // The vendored d3 + d3-sankey pair renders the embedded structure: bands, nodes, labels.
     const canvas = page.locator("[data-clara-relevance-sankey]")
     await expect(canvas.locator("svg.clara-sankey path.clara-sankey-link").first()).toBeVisible()
-    // Every node of the three columns gets a rect and a label (the payload carries 44).
-    await expect(canvas.locator("g.clara-sankey-node")).toHaveCount(44)
+    // Every node of the three columns gets a rect and a label (the payload carries 52).
+    await expect(canvas.locator("g.clara-sankey-node")).toHaveCount(52)
     await expect(canvas.locator(".clara-sankey-label", { hasText: "Data exchange with study systems" })).toBeVisible()
 
     // Only the last column is pinned: the relevance classes keep the classification's order —

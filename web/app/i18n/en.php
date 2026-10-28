@@ -467,6 +467,7 @@ return [
     'admin.api.sankey.feature.data-export-anonymization' => 'Preparing study data for analysis',
     'admin.api.sankey.feature.data-validation' => 'Catching errors as data is entered',
     'admin.api.sankey.feature.database-schema' => 'How the data is stored',
+    'admin.api.sankey.feature.odm-interchange' => 'Exchanging whole studies with other clinical systems',
     'admin.api.sankey.feature.project-charter' => 'Ground rules for the whole system',
     'admin.api.sankey.feature.system-configuration' => 'Server and deployment settings',
     'admin.api.sankey.feature.technology-stack' => 'Technology choices and constraints',
