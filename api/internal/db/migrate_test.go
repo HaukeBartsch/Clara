@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"csms/api/internal/config"
@@ -102,6 +103,9 @@ func TestMigrateCreatesSchema(t *testing.T) {
 	}
 }
 
+// TestMigrateDataLookupIndexes checks the index set migration 0016 leaves on
+// `data` (REQ-DB-017) on either engine — on MariaDB the order of its statements
+// is what lets it apply at all, see the migration's own comment.
 func TestMigrateDataLookupIndexes(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
@@ -109,18 +113,25 @@ func TestMigrateDataLookupIndexes(t *testing.T) {
 		t.Fatalf("Migrate: %v", err)
 	}
 
-	rows, err := s.DB.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'data'`)
+	// Index name -> its columns in key order.
+	q := `SELECT m.name, ii.name FROM sqlite_master AS m JOIN pragma_index_info(m.name) AS ii
+	      WHERE m.type = 'index' AND m.tbl_name = 'data' ORDER BY m.name, ii.seqno`
+	if s.Dialect == DialectMariaDB {
+		q = `SELECT INDEX_NAME, COLUMN_NAME FROM information_schema.STATISTICS
+		     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'data' ORDER BY INDEX_NAME, SEQ_IN_INDEX`
+	}
+	rows, err := s.DB.QueryContext(ctx, q)
 	if err != nil {
 		t.Fatalf("query data indexes: %v", err)
 	}
-	indexes := make(map[string]bool)
+	indexes := make(map[string][]string)
 	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
+		var index, column string
+		if err := rows.Scan(&index, &column); err != nil {
 			rows.Close()
 			t.Fatalf("scan data index: %v", err)
 		}
-		indexes[name] = true
+		indexes[index] = append(indexes[index], column)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -131,48 +142,34 @@ func TestMigrateDataLookupIndexes(t *testing.T) {
 	}
 
 	for _, name := range []string{"idx_data_project", "idx_data_record"} {
-		if indexes[name] {
+		if _, ok := indexes[name]; ok {
 			t.Errorf("obsolete data index %q still exists", name)
 		}
 	}
-
 	for index, wantColumns := range map[string][]string{
 		"idx_data_project_field": {"project_id", "field_name"},
 		"idx_data_project_event": {"project_id", "unique_event_name"},
 	} {
-		if !indexes[index] {
+		gotColumns, ok := indexes[index]
+		if !ok {
 			t.Errorf("data index %q is missing", index)
 			continue
 		}
-		columnRows, err := s.DB.QueryContext(ctx, `SELECT name FROM pragma_index_info(?) ORDER BY seqno`, index)
-		if err != nil {
-			t.Fatalf("query columns for %s: %v", index, err)
-		}
-		var gotColumns []string
-		for columnRows.Next() {
-			var column string
-			if err := columnRows.Scan(&column); err != nil {
-				columnRows.Close()
-				t.Fatalf("scan columns for %s: %v", index, err)
-			}
-			gotColumns = append(gotColumns, column)
-		}
-		if err := columnRows.Err(); err != nil {
-			columnRows.Close()
-			t.Fatalf("iterate columns for %s: %v", index, err)
-		}
-		if err := columnRows.Close(); err != nil {
-			t.Fatalf("close columns for %s: %v", index, err)
-		}
-		if len(gotColumns) != len(wantColumns) {
+		if !slices.Equal(gotColumns, wantColumns) {
 			t.Errorf("columns for %s = %v, want %v", index, gotColumns, wantColumns)
-			continue
 		}
-		for i, column := range gotColumns {
-			if column != wantColumns[i] {
-				t.Errorf("columns for %s = %v, want %v", index, gotColumns, wantColumns)
-				break
-			}
+	}
+
+	// MariaDB commits each DDL statement on its own, so a run of 0016 that
+	// stopped halfway stays half done: every statement must apply again over
+	// its own result for the next start to finish it.
+	if s.Dialect == DialectMariaDB {
+		sqlBytes, err := migrations.Read(string(s.Dialect), "0016_data_lookup_indexes.sql")
+		if err != nil {
+			t.Fatalf("read 0016: %v", err)
+		}
+		if _, err := s.DB.ExecContext(ctx, string(sqlBytes)); err != nil {
+			t.Errorf("0016 does not apply again over its own result: %v", err)
 		}
 	}
 }

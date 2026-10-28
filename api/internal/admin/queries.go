@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"sort"
+	"slices"
 	"strconv"
 	"time"
 
@@ -74,63 +74,6 @@ type recordStatusRow struct {
 // read_only + project visibility; events of arms without read access are
 // omitted (GD-2). A record-status read is not a record view — no audit row is
 // written (§4.13, ASM-AUD-2).
-// checkboxDataCells reports every (record, event, instrument, instance) holding
-// a checked box: the derived "some data" half of record-status for values stored
-// under a checkbox's choice columns (REQ-DB-042, REQ-API-074). Like the join it
-// complements, it hands out positions only — never a value. repeating is the
-// stored repeating_instrument column — empty for a first instance (REQ-DB-048).
-func (h *Handler) checkboxDataCells(ctx context.Context, projectID int64, add func(record, event, instrument, repeating string, instance int)) error {
-	rows, err := h.Store.DB.QueryContext(ctx,
-		`SELECT f.field_name, f.choices, i.name
-		 FROM fields f JOIN instruments i ON i.id = f.instrument_id
-		 WHERE f.project_id = ? AND f.field_type = 'checkbox'`, projectID)
-	if err != nil {
-		return err
-	}
-	instrumentOf := map[string]string{} // choice column -> instrument name
-	for rows.Next() {
-		var name, instrument string
-		var choices sql.NullString
-		if err := rows.Scan(&name, &choices, &instrument); err != nil {
-			rows.Close()
-			return err
-		}
-		for _, code := range validate.ChoiceCodes(choices.String) {
-			instrumentOf[db.CheckboxSubName(name, code)] = instrument
-		}
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	rows.Close()
-	if len(instrumentOf) == 0 {
-		return nil
-	}
-	args := make([]any, 0, len(instrumentOf)+1)
-	args = append(args, projectID)
-	for name := range instrumentOf {
-		args = append(args, name)
-	}
-	cells, err := h.Store.DB.QueryContext(ctx,
-		`SELECT DISTINCT record_id, unique_event_name, field_name, repeating_instrument, repeating_instance_number
-		 FROM data
-		 WHERE project_id = ? AND value <> '' AND field_name IN (`+placeholders(len(instrumentOf))+`)`, args...)
-	if err != nil {
-		return err
-	}
-	defer cells.Close()
-	for cells.Next() {
-		var record, event, name, repeating string
-		var instance int
-		if err := cells.Scan(&record, &event, &name, &repeating, &instance); err != nil {
-			return err
-		}
-		add(record, event, instrumentOf[name], repeating, instance)
-	}
-	return cells.Err()
-}
-
 func (h *Handler) recordStatus(w http.ResponseWriter, r *http.Request) {
 	u, ok := actor(r)
 	if !ok {
@@ -208,188 +151,260 @@ func (h *Handler) recordStatus(w http.ResponseWriter, r *http.Request) {
 		errInternal(w)
 		return
 	}
-	mapped := map[int64]map[int64]bool{} // event id -> instrument ids
-	repeating := map[[2]int64]bool{}     // (event id, instrument id) designated repeating
+	repeatingPair := make(map[[2]int64]bool, len(pairs)) // every mapped (event, instrument): designated repeating?
 	for _, ie := range pairs {
-		if mapped[ie.EventID] == nil {
-			mapped[ie.EventID] = map[int64]bool{}
-		}
-		mapped[ie.EventID][ie.InstrumentID] = true
-		if ie.IsRepeating {
-			repeating[[2]int64{ie.EventID, ie.InstrumentID}] = true
-		}
+		repeatingPair[[2]int64{ie.EventID, ie.InstrumentID}] = ie.IsRepeating
 	}
 
-	// The derived half of the state, in one pass: a (record, event, instrument)
-	// holds some data when any stored value of one of the instrument's fields
-	// is non-empty at that event ("any field has a value vs. none"). A value
-	// belongs to an instrument through its field — the data row's
-	// repeating_instrument column names a repeat instance, and is empty for
-	// every value of a first instance, and names the instrument of a further
-	// instance (REQ-DB-048) — which is the same test the export's
-	// `<instrument>_complete` column applies (REQ-API-134). Values are
-	// aggregated away here — none leaves this function (REQ-API-074).
-	type cellKey struct {
-		record, event, instrument string
-		instance                  int
-	}
-	complete := map[cellKey]bool{}
-	// further collects, per (record, event, instrument), the numbers of the
-	// instances above 1 that hold something — the instances a repeating cell
-	// lists besides its first (REQ-API-156).
-	type pairKey struct{ record, event, instrument string }
-	further := map[pairKey]map[int]bool{}
-	note := func(record, event, instrument, repeatingInstrument string, n int) {
-		instance := db.DataValue{RepeatingInstrument: repeatingInstrument, RepeatingInstanceNumber: n}.Instance()
-		if instance > 1 && repeatingInstrument != instrument {
-			return // a further instance is stored under its own instrument's name
+	// The columns every row shares, resolved once instead of per record: the
+	// events of the arms the caller may read (GD-2), in CanonicalEvents order,
+	// each with its mapped instruments in position order. An event without a
+	// mapped instrument carries no state and is not listed.
+	var layout []statusEvent
+	for _, a := range arms {
+		if !u.IsAdmin && !lv.HasData(a.ArmNum, LvlReadOnly) {
+			continue // events of inaccessible arms are not disclosed (GD-2)
 		}
-		complete[cellKey{record, event, instrument, instance}] = true
-		if instance > 1 {
-			k := pairKey{record, event, instrument}
-			if further[k] == nil {
-				further[k] = map[int]bool{}
+		for _, ev := range eventsByArm[a.ArmNum] {
+			var columns []statusColumn
+			for _, in := range instruments {
+				if rep, mapped := repeatingPair[[2]int64{ev.ID, in.ID}]; mapped {
+					columns = append(columns, statusColumn{id: in.ID, name: in.Name, survey: in.IsSurvey, repeating: rep})
+				}
 			}
-			further[k][instance] = true
+			if len(columns) > 0 {
+				layout = append(layout, statusEvent{id: ev.ID, name: ev.UniqueEventName, columns: columns})
+			}
 		}
-	}
-	rows, err := h.Store.DB.QueryContext(ctx,
-		`SELECT DISTINCT d.record_id, d.unique_event_name, i.name, d.repeating_instrument, d.repeating_instance_number
-		 FROM data d
-		 JOIN fields f ON f.project_id = d.project_id AND f.field_name = d.field_name
-		 JOIN instruments i ON i.id = f.instrument_id
-		 WHERE d.project_id = ? AND d.value <> ''`, projectID)
-	if err != nil {
-		errInternal(w)
-		return
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var record, event, instrument, repeatingInstrument string
-		var n int
-		if err := rows.Scan(&record, &event, &instrument, &repeatingInstrument, &n); err != nil {
-			errInternal(w)
-			return
-		}
-		note(record, event, instrument, repeatingInstrument, n)
-	}
-	if err := rows.Err(); err != nil {
-		errInternal(w)
-		return
-	}
-	// A checkbox stores its values under its choice columns, which name no
-	// fields row (REQ-DB-042): they reach their instrument through the checkbox
-	// in a second pass that only a project with checkboxes pays for.
-	if err := h.checkboxDataCells(ctx, projectID, note); err != nil {
-		errInternal(w)
-		return
 	}
 
-	// The stored "finished" assignments (REQ-DB-036) — the sparse set, keyed by
-	// the ids the loop below already holds. Nothing here reveals a value.
-	type storedKey struct {
-		record            string
-		event, instrument int64
-		instance          int
-	}
-	finished := map[storedKey]bool{}
-	type storedPair struct {
-		record            string
-		event, instrument int64
-	}
-	finishedFurther := map[storedPair][]int{}
-	completions, err := h.Store.ListInstrumentCompletions(ctx, projectID)
+	marks, err := h.statusMarksOf(ctx, projectID, visible, instruments)
 	if err != nil {
 		errInternal(w)
 		return
-	}
-	for _, c := range completions {
-		instance := max(c.Instance, 1)
-		finished[storedKey{c.RecordID, c.EventID, c.InstrumentID, instance}] = true
-		if instance > 1 {
-			k := storedPair{c.RecordID, c.EventID, c.InstrumentID}
-			finishedFurther[k] = append(finishedFurther[k], instance)
-		}
 	}
 
 	out := make([]recordStatusRow, 0, len(visible))
-	for _, re := range visible {
-		row := recordStatusRow{RecordID: re.RecordID, Events: []recordStatusEvent{}}
-		for _, a := range arms { // CanonicalEvents order: arms, then GD-15
-			if !u.IsAdmin && !lv.HasData(a.ArmNum, LvlReadOnly) {
-				continue // events of inaccessible arms are not disclosed (GD-2)
-			}
-			for _, ev := range eventsByArm[a.ArmNum] {
-				instrs := []recordStatusInstrument{}
-				anyMapped := false
-				for _, in := range instruments { // instrument order (position)
-					if !mapped[ev.ID][in.ID] {
-						continue
-					}
-					anyMapped = true
-					// Derived first, then overridden by the user's assignment:
-					// finished wins over both, never the other way round, so
-					// the badge cannot claim less than the data shows and
-					// grey/amber can never contradict it (REQ-API-074). A
-					// survey instrument reports finished automatically — its
-					// completion info is filled in without an assignment
-					// (GD-9; master spec "Instrument level completion info").
-					stateOf := func(instance int) string {
-						state := StateNoData
-						if complete[cellKey{re.RecordID, ev.UniqueEventName, in.Name, instance}] {
-							state = StateSomeData
-						}
-						if in.IsSurvey || finished[storedKey{re.RecordID, ev.ID, in.ID, instance}] {
-							state = StateFinished
-						}
-						return state
-					}
-					state := stateOf(1)
-					if !repeating[[2]int64{ev.ID, in.ID}] {
-						// A pair that does not repeat shows its first instance only:
-						// further instances it held while it did stay stored, hidden
-						// until the pair repeats again (REQ-DB-048).
-						if state == StateNoData {
-							continue // the listed event already says it (REQ-API-149)
-						}
-						instrs = append(instrs, recordStatusInstrument{
-							Name: in.Name, State: state,
-						})
-						continue
-					}
-					numbers := map[int]bool{}
+	for i, re := range visible {
+		row := recordStatusRow{RecordID: re.RecordID, Events: make([]recordStatusEvent, 0, len(layout))}
+		for _, ev := range layout {
+			instrs := []recordStatusInstrument{}
+			for _, col := range ev.columns {
+				first := statusCell{record: int32(i), instance: 1, event: ev.id, instrument: col.id}
+				state := marks.state(first, col.survey)
+				if !col.repeating {
+					// A pair that does not repeat shows its first instance only:
+					// further instances it held while it did stay stored, hidden
+					// until the pair repeats again (REQ-DB-048).
 					if state != StateNoData {
-						numbers[1] = true
+						instrs = append(instrs, recordStatusInstrument{Name: col.name, State: state})
 					}
-					for n := range further[pairKey{re.RecordID, ev.UniqueEventName, in.Name}] {
-						numbers[n] = true
-					}
-					for _, n := range finishedFurther[storedPair{re.RecordID, ev.ID, in.ID}] {
-						numbers[n] = true
-					}
-					if len(numbers) == 0 {
-						continue // no instance holds anything (REQ-API-149)
-					}
-					instances := make([]recordStatusInstance, 0, len(numbers))
-					for n := range numbers {
-						instances = append(instances, recordStatusInstance{Instance: n, State: stateOf(n)})
-					}
-					sort.Slice(instances, func(i, j int) bool { return instances[i].Instance < instances[j].Instance })
-					instrs = append(instrs, recordStatusInstrument{
-						Name: in.Name, State: state, Instances: instances,
-					})
+					continue // no_data: the listed event already says it (REQ-API-149)
 				}
-				if !anyMapped {
-					continue // events without mapped instruments carry no state
+				// A repeating pair lists every instance holding a state, ascending,
+				// and is left out when none does (REQ-API-156, REQ-API-149).
+				further := marks.further[statusPair{record: int32(i), event: ev.id, instrument: col.id}]
+				instances := make([]recordStatusInstance, 0, len(further)+1)
+				if state != StateNoData {
+					instances = append(instances, recordStatusInstance{Instance: 1, State: state})
 				}
-				row.Events = append(row.Events, recordStatusEvent{
-					UniqueEventName: ev.UniqueEventName, Instruments: instrs,
-				})
+				slices.Sort(further)
+				for _, n := range further {
+					cell := first
+					cell.instance = n
+					instances = append(instances, recordStatusInstance{Instance: int(n), State: marks.state(cell, col.survey)})
+				}
+				if len(instances) == 0 {
+					continue
+				}
+				instrs = append(instrs, recordStatusInstrument{Name: col.name, State: state, Instances: instances})
 			}
+			row.Events = append(row.Events, recordStatusEvent{UniqueEventName: ev.name, Instruments: instrs})
 		}
 		out = append(out, row)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// statusEvent and statusColumn are one listed event of the dashboard and one
+// of its mapped instruments — the column layout recordStatus resolves once and
+// every row shares.
+type statusEvent struct {
+	id      int64
+	name    string
+	columns []statusColumn
+}
+
+type statusColumn struct {
+	id                int64
+	name              string
+	survey, repeating bool
+}
+
+// statusCell names one (record, event, instrument, instance) by the record's
+// index among the visible rows and the event and instrument ids, so the scans
+// key their marks without keeping a string per stored value.
+type statusCell struct {
+	record     int32
+	instance   int32
+	event      int64
+	instrument int64
+}
+
+// statusPair is a cell without its instance: the (record, event, instrument)
+// a repeating column lists instances under (REQ-API-156).
+type statusPair struct {
+	record     int32
+	event      int64
+	instrument int64
+}
+
+// The marks a cell can carry: a field of the instrument holds a value there
+// (derived), and the user assigned finished (stored, REQ-DB-036).
+const (
+	markData uint8 = 1 << iota
+	markFinished
+)
+
+// statusMarks is what the stored rows say about each cell — and, per pair, the
+// instances above 1 that carry any mark. Positions only: no value is kept
+// (REQ-API-074).
+type statusMarks struct {
+	cells   map[statusCell]uint8
+	further map[statusPair][]int32
+}
+
+func (m *statusMarks) mark(c statusCell, bit uint8) {
+	before := m.cells[c]
+	if before == 0 && c.instance > 1 {
+		p := statusPair{record: c.record, event: c.event, instrument: c.instrument}
+		m.further[p] = append(m.further[p], c.instance)
+	}
+	m.cells[c] = before | bit
+}
+
+// state is a cell's three-state completion. Finished wins over the derived
+// state, never the other way round, so the badge cannot claim less than the
+// data shows and grey/amber can never contradict it (REQ-API-074); a survey
+// instrument reports finished automatically — its completion info is filled
+// in without an assignment (GD-9; master spec "Instrument level completion
+// info").
+func (m *statusMarks) state(c statusCell, survey bool) string {
+	marks := m.cells[c]
+	switch {
+	case survey || marks&markFinished != 0:
+		return StateFinished
+	case marks&markData != 0:
+		return StateSomeData
+	}
+	return StateNoData
+}
+
+// statusMarksOf reads the marks of the visible records. The derived half: a
+// (record, event, instrument, instance) holds some data when any stored value
+// of one of the instrument's fields is non-empty there ("any field has a value
+// vs. none") — the same test the export's `<instrument>_complete` column
+// applies (REQ-API-134). It is one scan of the project's non-empty values, with
+// no join and no DISTINCT for the database to sort: a value reaches its
+// instrument through its field in memory — a checked box through its choice
+// column, which names no fields row (REQ-DB-042) and never shares a name with
+// one, the designer refuses that — and a value of a record the caller does not
+// see, at an event or under a name the design no longer has, is skipped as it
+// streams past. Values are aggregated away here; none leaves this function
+// (REQ-API-074). The stored half is the sparse set of finished assignments
+// (REQ-DB-036).
+func (h *Handler) statusMarksOf(ctx context.Context, projectID int64, visible []db.RecordEntity,
+	instruments []db.Instrument) (*statusMarks, error) {
+	recordAt := make(map[string]int32, len(visible))
+	for i, re := range visible {
+		recordAt[re.RecordID] = int32(i)
+	}
+	events, err := h.Store.ListEvents(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	eventID := make(map[string]int64, len(events))
+	for _, ev := range events {
+		eventID[ev.UniqueEventName] = ev.ID
+	}
+	nameOf := make(map[int64]string, len(instruments))
+	for _, in := range instruments {
+		nameOf[in.ID] = in.Name
+	}
+	fields, err := h.Store.ListFields(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	type owner struct {
+		id   int64
+		name string
+	}
+	ownerOf := make(map[string]owner, len(fields)) // stored value name -> instrument
+	for _, f := range fields {
+		o := owner{id: f.InstrumentID, name: nameOf[f.InstrumentID]}
+		ownerOf[f.FieldName] = o
+		if f.FieldType == "checkbox" {
+			for _, code := range validate.ChoiceCodes(f.Choices.String) {
+				ownerOf[db.CheckboxSubName(f.FieldName, code)] = o
+			}
+		}
+	}
+
+	m := &statusMarks{cells: map[statusCell]uint8{}, further: map[statusPair][]int32{}}
+	rows, err := h.Store.DB.QueryContext(ctx,
+		`SELECT record_id, unique_event_name, field_name, repeating_instrument, repeating_instance_number
+		 FROM data WHERE project_id = ? AND value <> ''`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	// RawBytes: the map lookups below read the bytes in place, so a row costs
+	// no string of its own.
+	var record, event, field, repeating sql.RawBytes
+	var n int
+	for rows.Next() {
+		if err := rows.Scan(&record, &event, &field, &repeating, &n); err != nil {
+			return nil, err
+		}
+		at, ok := recordAt[string(record)]
+		if !ok {
+			continue
+		}
+		ev, ok := eventID[string(event)]
+		if !ok {
+			continue
+		}
+		o, ok := ownerOf[string(field)]
+		if !ok {
+			continue
+		}
+		// The instance as db.DataValue.Instance reads it: the first instance is
+		// stored with an empty repeating_instrument (REQ-DB-048), and a further
+		// one under its own instrument's name — a value stored under another
+		// name is not this instrument's instance.
+		instance := 1
+		if len(repeating) > 0 && n > 1 {
+			if string(repeating) != o.name {
+				continue
+			}
+			instance = n
+		}
+		m.mark(statusCell{record: at, instance: int32(instance), event: ev, instrument: o.id}, markData)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	completions, err := h.Store.ListInstrumentCompletions(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range completions {
+		if at, ok := recordAt[c.RecordID]; ok {
+			m.mark(statusCell{record: at, instance: int32(max(c.Instance, 1)), event: c.EventID, instrument: c.InstrumentID}, markFinished)
+		}
+	}
+	return m, nil
 }
 
 // --- GET /api/v1/audit (§4.15, REQ-API-077/078) ---
