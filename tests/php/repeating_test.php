@@ -24,6 +24,11 @@ function rep_record_queue(array $history = [], string $mode = 'development'): vo
 {
     $visits = ['id' => 15, 'name' => 'visits', 'position' => 3, 'field_count' => 2, 'is_survey' => false,
         'branching_logic' => '', 'repeating_events' => ['baseline_arm_1']];
+    // Every instrument's fields ahead of the instruments list below, whose fragment would
+    // otherwise answer them: the record identifier is found by reading the earlier instruments'
+    // fields (GD-8), and intake's record_id must win over visits' first field.
+    api_route('/api/v1/projects/3/instruments/7/fields', m5_fields());
+    api_route('/api/v1/projects/3/instruments/12/fields', [m5_field(9, 'score', 'text')]);
     api_route('/api/v1/projects/3/instruments/15/fields', [
         m5_field(20, 'visit_note', 'text'),
         m5_field(21, 'visit_score', 'text', ['validation_type' => 'integer']),
