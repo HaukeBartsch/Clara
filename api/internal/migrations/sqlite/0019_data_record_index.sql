@@ -1,0 +1,7 @@
+-- Single-record reads of `data` (REQ-DB-017) ask for
+-- `WHERE project_id = ? AND record_id = ?`. On SQLite the unique key of `data`
+-- (project_id, record_id, unique_event_name, field_name, repeating_instrument,
+-- repeating_instance_number) is a B-tree whose prefix answers that lookup, so
+-- this version adds no index. MariaDB keeps the same unique key as a HASH index,
+-- which cannot, and adds idx_data_project_record (mariadb/0019); the file is
+-- here so both dialects number their history alike.

@@ -11,6 +11,7 @@ import (
 
 	"csms/api/internal/db"
 	"csms/api/internal/metrics"
+	"csms/api/internal/testdb"
 )
 
 // GET /api/v1/system/metrics is is_admin only (REQ-API-163): anonymous and
@@ -75,8 +76,12 @@ func TestSystemMetricsSnapshotForAdmin(t *testing.T) {
 	if snap.DB.Pool == nil {
 		t.Fatal("pool section missing — the endpoint must fill it from sql.DB.Stats()")
 	}
-	if snap.DB.Pool.Open < 1 || snap.DB.Pool.MaxOpen != 10 {
-		t.Errorf("pool = %+v, want open ≥ 1 and max_open 10 (db.Open limits)", snap.DB.Pool)
+	wantMaxOpen := 10 // db.configurePool: SQLite keeps its pool modest
+	if testdb.Engine() == "mariadb" {
+		wantMaxOpen = 25
+	}
+	if snap.DB.Pool.Open < 1 || snap.DB.Pool.MaxOpen != wantMaxOpen {
+		t.Errorf("pool = %+v, want open ≥ 1 and max_open %d (db.Open limits)", snap.DB.Pool, wantMaxOpen)
 	}
 	if snap.Process.HeapAllocBytes == 0 {
 		t.Error("process.heap_alloc_bytes = 0")

@@ -3,6 +3,8 @@ package admin
 import (
 	"net/http"
 	"testing"
+
+	"csms/api/internal/testdb"
 )
 
 // REQ-AUD-003 / DEV-AUD-1: no data change commits without its audit entry.
@@ -12,12 +14,19 @@ import (
 // the two shapes — a passing "the entry exists" test cannot.
 
 // blockAuditWrites makes every insert into an audit table fail, the way a dead
-// tablespace or a revoked INSERT grant would in production. SQLite is what the
-// suite runs on, so a RAISE(ABORT) trigger expresses it.
+// tablespace or a revoked INSERT grant would in production. A trigger expresses
+// it: RAISE(ABORT) on SQLite's per-year tables, SIGNAL on MariaDB's single
+// partitioned table.
 func (e *env) blockAuditWrites(t *testing.T) {
 	t.Helper()
-	rows, err := e.Store.DB.Query(
-		`SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'audit_events%'`)
+	listSQL := `SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'audit_events%'`
+	blockBody := ` BEGIN SELECT RAISE(ABORT, 'test: audit write blocked'); END`
+	if testdb.Engine() == "mariadb" {
+		listSQL = `SELECT TABLE_NAME FROM information_schema.TABLES
+			WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE' AND TABLE_NAME LIKE 'audit_events%'`
+		blockBody = ` FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'test: audit write blocked'`
+	}
+	rows, err := e.Store.DB.Query(listSQL)
 	if err != nil {
 		t.Fatalf("list audit tables: %v", err)
 	}
@@ -36,8 +45,7 @@ func (e *env) blockAuditWrites(t *testing.T) {
 	}
 	for _, tbl := range tables {
 		if _, err := e.Store.DB.Exec(
-			`CREATE TRIGGER ` + tbl + `_block BEFORE INSERT ON ` + tbl +
-				` BEGIN SELECT RAISE(ABORT, 'test: audit write blocked'); END`); err != nil {
+			`CREATE TRIGGER ` + tbl + `_block BEFORE INSERT ON ` + tbl + blockBody); err != nil {
 			t.Fatalf("block inserts on %s: %v", tbl, err)
 		}
 	}

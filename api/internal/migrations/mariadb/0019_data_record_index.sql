@@ -1,0 +1,11 @@
+-- Single-record reads of `data` (REQ-DB-017): data entry, record history,
+-- rename and delete all ask for `WHERE project_id = ? AND record_id = ?`.
+--
+-- The unique key of `data` starts with (project_id, record_id), but on MariaDB
+-- it is a HASH index — four VARCHAR(255) utf8mb4 columns exceed InnoDB's
+-- 3072-byte key limit (see 0016) — and a hash answers only the full key, not a
+-- prefix. Since 0016 dropped idx_data_record, such a read used
+-- idx_data_project_field on project_id alone and walked the whole project per
+-- record. This index restores the per-record range. SQLite needs none: its
+-- unique key is a B-tree and serves the prefix (sqlite/0019).
+CREATE INDEX IF NOT EXISTS idx_data_project_record ON data (project_id, record_id);

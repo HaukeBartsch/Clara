@@ -131,11 +131,17 @@ func (s *Store) GetRecordEntityTx(ctx context.Context, tx *sql.Tx, projectID int
 
 // CreateRecordEntityTx inserts a record identity row inside tx; the DAG
 // assignment comes from the importing holder's active group (REQ-API-093).
+// An unset CreatedAt is stamped now, as CreateRecordEntity does: SQLite would
+// store the empty string silently, MariaDB rejects it as an invalid datetime.
 func (s *Store) CreateRecordEntityTx(ctx context.Context, tx *sql.Tx, re *RecordEntity) error {
+	createdAt := re.CreatedAt
+	if createdAt == "" {
+		createdAt = nowUTC()
+	}
 	_, err := tx.ExecContext(ctx,
 		`INSERT INTO record_entities (project_id, record_id, dag_group_id, created_by, created_at)
 		 VALUES (?, ?, ?, ?, ?)`,
-		re.ProjectID, re.RecordID, nullInt64(re.DagGroupID), nullInt64(re.CreatedBy), re.CreatedAt)
+		re.ProjectID, re.RecordID, nullInt64(re.DagGroupID), nullInt64(re.CreatedBy), createdAt)
 	return err
 }
 
