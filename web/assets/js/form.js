@@ -20,7 +20,7 @@
 //    once with the list — a checkbox is empty while none of its boxes is checked; the second
 //    click saves anyway — partial records are first-class (GD-14, ASM-VAL-3).
 // 4. Small things: clearing a radio, the browser timezone for date values (GD-16), and the
-//    "now" shortcut beside a date/date-time field (REQ-UI-065).
+//    "now" shortcut beside a date/date-time field (REQ-UI-072).
 
 import { compileBranching } from "./branching.js"
 import { t } from "../app.js"
@@ -227,7 +227,7 @@ export function wireRadioReset(form) {
 
 const two = (n) => String(n).padStart(2, "0")
 
-/** The current date-time in a field's own format tokens — `Y-m-d`, `Y-m-d H:i` (REQ-UI-065). */
+/** The current date-time in a field's own format tokens — `Y-m-d`, `Y-m-d H:i` (REQ-UI-072). */
 const nowIn = (format) => {
   const now = new Date()
   const parts = { Y: String(now.getFullYear()), m: two(now.getMonth() + 1), d: two(now.getDate()), H: two(now.getHours()), i: two(now.getMinutes()) }
@@ -235,7 +235,7 @@ const nowIn = (format) => {
 }
 
 /**
- * The "now" button beside a date/date-time input (REQ-UI-065): it fills the control with the
+ * The "now" button beside a date/date-time input (REQ-UI-072): it fills the control with the
  * current date — and the time, for a `datetime-local` — in the format the field validates
  * against, which a text field with a non-default format needs as much as the native control.
  * The button ships hidden (a form without this module offers nothing it cannot do) and is

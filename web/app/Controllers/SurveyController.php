@@ -81,7 +81,7 @@ final class SurveyController extends Controller
             $fields = self::fieldsFromMetadata($metadata);
             $was = DataEntry::withoutReadonly($was, $fields);
             // The date controls of §8.2 post the browser's value form; a field the respondent did
-            // not change goes back as stored (REQ-UI-065).
+            // not change goes back as stored (REQ-UI-072).
             $values = DataEntry::nativeDateValues(DataEntry::withoutReadonly($values, $fields), $was, $fields);
             // The record identifier is the link's to name, never the respondent's (GD-8).
             $params = ['content' => 'record', 'action' => 'import',

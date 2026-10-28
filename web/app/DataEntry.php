@@ -7,7 +7,7 @@
 //   * the form's render items — single fields, matrix groups, section headings (§8.2);
 //   * the submission policy (GD-14, REQ-UI-031): exactly the fields that carry a value plus
 //     the fields whose stored value the user removed;
-//   * the native date controls of the form (§8.2, REQ-UI-065) and the values they post;
+//   * the native date controls of the form (§8.2, REQ-UI-072) and the values they post;
 //   * the per-field detail of a rejected import (§3.7.2, §8.6 step 4).
 
 declare(strict_types=1);
@@ -27,7 +27,7 @@ final class DataEntry
 
     /**
      * The validation types entered through a native date control, with the only format each one
-     * can carry (REQ-UI-065): the browser's control shows `YYYY-MM-DD` and `YYYY-MM-DD HH:MM`
+     * can carry (REQ-UI-072): the browser's control shows `YYYY-MM-DD` and `YYYY-MM-DD HH:MM`
      * and accepts no other, so a field with another `validation_format` keeps its text input.
      */
     public const NATIVE_DATE_FORMATS = ['date' => 'Y-m-d', 'datetime' => 'Y-m-d H:i'];
@@ -310,7 +310,7 @@ final class DataEntry
     }
 
     /**
-     * The native control a field's value is entered with (§8.2, REQ-UI-065): `date` or
+     * The native control a field's value is entered with (§8.2, REQ-UI-072): `date` or
      * `datetime-local` for the two built-in date types in their default format, and '' for
      * everything else — a field whose `validation_format` is another pattern keeps the text
      * input, because the browser control cannot express it (and would refuse its values).
@@ -326,7 +326,7 @@ final class DataEntry
     }
 
     /**
-     * The stored value as the native control shows it (REQ-UI-065): the canonical form of
+     * The stored value as the native control shows it (REQ-UI-072): the canonical form of
      * §4.1 of `Data_Validation_Design.md` without its collection offset — which the control has
      * nowhere to put — and with `T` between day and time where the grammar has a space. Null
      * for a value the control cannot hold (a stored value in no recognizable shape): the field
@@ -348,7 +348,7 @@ final class DataEntry
     }
 
     /**
-     * What the native date controls posted (REQ-UI-065) in the form the import takes: the
+     * What the native date controls posted (REQ-UI-072) in the form the import takes: the
      * `datetime-local` value's `T` becomes the storage grammar's space, and a field whose
      * control still shows the value it was opened with goes back **exactly as stored** — offset
      * included. The second rule is what keeps GD-14 honest (REQ-UI-031): an untouched field is

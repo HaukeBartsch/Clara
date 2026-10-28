@@ -223,7 +223,7 @@ describe('M5 data-entry rules (DataEntry)', function (): void {
     });
 });
 
-describe('date and date-time entry controls (§8.2, REQ-UI-065)', function (): void {
+describe('date and date-time entry controls (§8.2, REQ-UI-072)', function (): void {
     it('gives the native control to the two default formats only', function (): void {
         assert_same('date', DataEntry::nativeDateControl(m5_field(1, 'visit', 'text', ['validation_type' => 'date']), 'Y-m-d'));
         assert_same('datetime-local', DataEntry::nativeDateControl(m5_field(2, 'drawn', 'text', ['validation_type' => 'datetime']), 'Y-m-d H:i'));

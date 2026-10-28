@@ -56,7 +56,7 @@ return array (
       'column' => 0,
       'order' => 1,
       'area' => 'api-endpoints',
-      'codes' => 201,
+      'codes' => 202,
     ),
     5 => 
     array (
@@ -83,7 +83,7 @@ return array (
       'order' => 12,
       'prefix' => 'DEV-API',
       'kind' => 'dev',
-      'codes' => 30,
+      'codes' => 31,
     ),
     8 => 
     array (
@@ -126,7 +126,7 @@ return array (
       'column' => 0,
       'order' => 3,
       'area' => 'authentication-authorization',
-      'codes' => 97,
+      'codes' => 108,
     ),
     13 => 
     array (
@@ -135,7 +135,7 @@ return array (
       'order' => 30,
       'prefix' => 'REQ-AUTH',
       'kind' => 'req',
-      'codes' => 75,
+      'codes' => 84,
     ),
     14 => 
     array (
@@ -144,7 +144,7 @@ return array (
       'order' => 31,
       'prefix' => 'ASM-AUTH',
       'kind' => 'asm',
-      'codes' => 5,
+      'codes' => 6,
     ),
     15 => 
     array (
@@ -153,7 +153,7 @@ return array (
       'order' => 32,
       'prefix' => 'DEV-AUTH',
       'kind' => 'dev',
-      'codes' => 17,
+      'codes' => 18,
     ),
     16 => 
     array (
@@ -292,7 +292,7 @@ return array (
       'column' => 0,
       'order' => 8,
       'area' => 'system-configuration',
-      'codes' => 42,
+      'codes' => 44,
     ),
     32 => 
     array (
@@ -301,7 +301,7 @@ return array (
       'order' => 80,
       'prefix' => 'REQ-CFG',
       'kind' => 'req',
-      'codes' => 33,
+      'codes' => 35,
     ),
     33 => 
     array (
@@ -362,7 +362,7 @@ return array (
       'column' => 0,
       'order' => 10,
       'area' => 'user-interface',
-      'codes' => 91,
+      'codes' => 92,
     ),
     40 => 
     array (
@@ -371,7 +371,7 @@ return array (
       'order' => 100,
       'prefix' => 'REQ-UI',
       'kind' => 'req',
-      'codes' => 67,
+      'codes' => 68,
     ),
     41 => 
     array (
@@ -397,7 +397,7 @@ return array (
       'column' => 2,
       'order' => 0,
       'class' => 'security',
-      'codes' => 397,
+      'codes' => 411,
     ),
     44 => 
     array (
@@ -413,7 +413,7 @@ return array (
       'column' => 2,
       'order' => 2,
       'class' => 'workflow',
-      'codes' => 354,
+      'codes' => 357,
     ),
     46 => 
     array (
@@ -429,7 +429,7 @@ return array (
       'column' => 2,
       'order' => 4,
       'class' => 'resilience',
-      'codes' => 148,
+      'codes' => 151,
     ),
   ),
   'links' => 
@@ -570,13 +570,13 @@ return array (
     array (
       'source' => 'a-api-endpoints',
       'target' => 'g-api-endpoints-dev',
-      'value' => 36,
+      'value' => 38,
     ),
     23 => 
     array (
       'source' => 'g-api-endpoints-dev',
       'target' => 'c-security',
-      'value' => 13,
+      'value' => 14,
     ),
     24 => 
     array (
@@ -588,7 +588,7 @@ return array (
     array (
       'source' => 'g-api-endpoints-dev',
       'target' => 'c-workflow',
-      'value' => 15,
+      'value' => 16,
     ),
     26 => 
     array (
@@ -684,13 +684,13 @@ return array (
     array (
       'source' => 'a-authentication-authorization',
       'target' => 'g-authentication-authorization-req',
-      'value' => 106,
+      'value' => 118,
     ),
     42 => 
     array (
       'source' => 'g-authentication-authorization-req',
       'target' => 'c-security',
-      'value' => 74,
+      'value' => 83,
     ),
     43 => 
     array (
@@ -702,7 +702,7 @@ return array (
     array (
       'source' => 'g-authentication-authorization-req',
       'target' => 'c-workflow',
-      'value' => 19,
+      'value' => 20,
     ),
     45 => 
     array (
@@ -714,19 +714,19 @@ return array (
     array (
       'source' => 'g-authentication-authorization-req',
       'target' => 'c-resilience',
-      'value' => 4,
+      'value' => 6,
     ),
     47 => 
     array (
       'source' => 'a-authentication-authorization',
       'target' => 'g-authentication-authorization-asm',
-      'value' => 6,
+      'value' => 7,
     ),
     48 => 
     array (
       'source' => 'g-authentication-authorization-asm',
       'target' => 'c-security',
-      'value' => 5,
+      'value' => 6,
     ),
     49 => 
     array (
@@ -738,13 +738,13 @@ return array (
     array (
       'source' => 'a-authentication-authorization',
       'target' => 'g-authentication-authorization-dev',
-      'value' => 22,
+      'value' => 23,
     ),
     51 => 
     array (
       'source' => 'g-authentication-authorization-dev',
       'target' => 'c-security',
-      'value' => 16,
+      'value' => 17,
     ),
     52 => 
     array (
@@ -1062,13 +1062,13 @@ return array (
     array (
       'source' => 'a-system-configuration',
       'target' => 'g-system-configuration-req',
-      'value' => 42,
+      'value' => 44,
     ),
     105 => 
     array (
       'source' => 'g-system-configuration-req',
       'target' => 'c-security',
-      'value' => 19,
+      'value' => 21,
     ),
     106 => 
     array (
@@ -1218,7 +1218,7 @@ return array (
     array (
       'source' => 'a-user-interface',
       'target' => 'g-user-interface-req',
-      'value' => 107,
+      'value' => 109,
     ),
     131 => 
     array (
@@ -1236,7 +1236,7 @@ return array (
     array (
       'source' => 'g-user-interface-req',
       'target' => 'c-workflow',
-      'value' => 54,
+      'value' => 55,
     ),
     134 => 
     array (
@@ -1248,7 +1248,7 @@ return array (
     array (
       'source' => 'g-user-interface-req',
       'target' => 'c-resilience',
-      'value' => 14,
+      'value' => 15,
     ),
     136 => 
     array (

@@ -256,7 +256,7 @@ $fieldAttrs = static function (array $field, ?string $staticValue = null) use ($
                     $format = in_array($vt, ['date', 'datetime'], true) ? (string) (($field['validation_format'] ?? '') ?: $formats[$vt]) : '';
                     $mode = ['integer' => 'numeric', 'floating point' => 'decimal'][$vt] ?? 'text';
                     // A date/date-time field the browser control can hold is entered by picking it
-                    // rather than typing it (REQ-UI-065): the control carries no offset, so the
+                    // rather than typing it (REQ-UI-072): the control carries no offset, so the
                     // stored value shows without its one (§4.1 of Data_Validation_Design.md) and
                     // goes back as stored if left alone — nativeDateValues() in DataEntry.php. A
                     // field with another format, or a stored value in no recognizable shape,
