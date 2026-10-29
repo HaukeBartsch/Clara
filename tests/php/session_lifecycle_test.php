@@ -175,6 +175,40 @@ describe('session lifecycle in the router (§3.1)', function (): void {
         assert_true($_SESSION['last_seen_at'] >= time() - 1, 'last_seen_at moves to now');
     });
 
+    it('does not count a page’s background refresh as activity (REQ-UI-073)', function (): void {
+        $lastSeen = time() - 600;
+        sign_in(['last_seen_at' => $lastSeen]);
+        queue_shell();
+        queue_sidebar_projects();
+
+        $response = router_for(http_request('GET', '/', json_headers() + ['x-clara-refresh' => '1']))->dispatch();
+
+        assert_same(200, $response->status(), 'the refresh is served like any data read');
+        assert_same($lastSeen, $_SESSION['last_seen_at'], 'the idle clock stays where the user left it');
+    });
+
+    it('still ends an idle session on a background refresh, answering the data read with 403', function (): void {
+        sign_in(['issued_at' => time() - 3600, 'last_seen_at' => time() - 1801, 'rotated_at' => time() - 1801]);
+
+        $response = router_for(http_request('GET', '/', json_headers() + ['x-clara-refresh' => '1']))->dispatch();
+
+        assert_same(403, $response->status());
+        assert_true(!Session::isAuthenticated(), 'the identity is gone');
+        assert_contains('period of inactivity', Session::takeFlash()[0]['text'] ?? '',
+            'the reason waits for the reload that takes the page to the login form');
+    });
+
+    it('counts the refresh header only on a data read, never on a page render', function (): void {
+        $lastSeen = time() - 600;
+        sign_in(['last_seen_at' => $lastSeen]);
+        queue_shell();
+        queue_sidebar_projects();
+
+        router_for(http_request('GET', '/account/password', browser_headers() + ['x-clara-refresh' => '1']))->dispatch();
+
+        assert_true($_SESSION['last_seen_at'] >= time() - 1, 'a navigation is the user’s own');
+    });
+
     it('reports a replayed id to the API as that account and ends the presenting session', function (): void {
         $_SESSION = ['tombstone' => ['successor' => str_repeat('b', 32), 'at' => time() - 600, 'user_id' => 7]];
         api_route('/api/v1/auth/session-replay', ['status' => 'ok']);

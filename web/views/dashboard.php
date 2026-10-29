@@ -16,10 +16,11 @@ use Clara\View;
 <h1 class="h4 mb-3"><?= View::e($view->displayName()) ?></h1>
 
 <div class="d-flex align-items-baseline gap-2 mb-2">
-    <h2 class="h6 mb-0"><?= View::e($view->t('nav.projects')) ?> (<?= count($projects) ?>)</h2>
+    <h2 class="h6 mb-0"><?= View::e($view->t('nav.projects')) ?> (<span data-clara-project-count><?= count($projects) ?></span>)</h2>
 </div>
 
-<!-- Populated by assets/js/dashboard.js from GET / with Accept: application/json. The role stays on
+<!-- Populated by assets/js/dashboard.js from GET / with Accept: application/json, and re-read every
+     two seconds while the page is visible, together with the count above (REQ-UI-073). The role stays on
      the list because app.css removes its bullets, and Safari drops the list semantics of a bulleted
      list once it has none — the count of projects is what a listener is there to hear. -->
 <ul class="clara-projects" role="list" data-region="projects">

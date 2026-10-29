@@ -161,9 +161,13 @@ final class Session
      * to the API — the two things that need more than the session. For REPLAYED,
      * `user_id` names the account whose old id came back; it is 0 otherwise.
      *
+     * `$activity` is false for a page's own background refresh (REQ-UI-073): the bounds
+     * and rotation apply as to any request, but `last_seen_at` stays where the user left
+     * it, so a page left open still reaches SESSION_IDLE_TIMEOUT (REQ-AUTH-015).
+     *
      * @return array{verdict: string, user_id: int}
      */
-    public static function lifecycle(Config $config, int $now): array
+    public static function lifecycle(Config $config, int $now, bool $activity = true): array
     {
         $verdict = self::verdict($config, $now);
 
@@ -196,7 +200,7 @@ final class Session
                 break;
         }
 
-        if (self::isAuthenticated()) {
+        if ($activity && self::isAuthenticated()) {
             $_SESSION['last_seen_at'] = $now;
         }
 

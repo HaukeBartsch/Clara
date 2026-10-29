@@ -36,11 +36,19 @@ export function csrfToken() {
  * GETs one of this application's routes and reads its data region — the same URL
  * that served the page, selected by Accept (REQ-UI-044). Throws with the API's
  * stable error code so a caller can render the translated line for it.
+ *
+ * `{ refresh: true }` marks a read the page's own timer makes rather than the user
+ * (REQ-UI-073): the router does not count it as activity, so a page left open still
+ * reaches the session's idle bound (REQ-AUTH-015).
  */
-export async function fetchJson(path) {
+export async function fetchJson(path, options) {
+  const headers = { Accept: "application/json" }
+  if (options && options.refresh) {
+    headers["X-Clara-Refresh"] = "1"
+  }
   const response = await fetch(path, {
     method: "GET",
-    headers: { Accept: "application/json" },
+    headers,
     credentials: "same-origin",
   })
 

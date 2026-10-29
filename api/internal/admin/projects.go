@@ -282,7 +282,9 @@ func (h *Handler) listProjects(w http.ResponseWriter, r *http.Request) {
 		if visible != nil && !visible[p.ID] {
 			continue
 		}
-		records, err := h.Store.ListRecordEntities(ctx, p.ID)
+		// Counted, not read: the overview re-reads this list every two seconds while it is
+		// open (REQ-UI-073), and loading every record to take its length would be its cost.
+		records, err := h.Store.CountRecordEntities(ctx, p.ID)
 		if err != nil {
 			errInternal(w)
 			return
@@ -304,7 +306,7 @@ func (h *Handler) listProjects(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, projectSummary{
 			ID: p.ID, ProjectName: p.ProjectName, Organization: p.Organization,
-			RecordCount: len(records), InstrumentCount: len(instruments),
+			RecordCount: records, InstrumentCount: len(instruments),
 			FieldCount: len(fields), LastAccessedAt: lastAccessed,
 		})
 	}

@@ -311,6 +311,18 @@ final class Request
     }
 
     /**
+     * Whether this is a page's own timer re-reading its data region (`X-Clara-Refresh: 1`,
+     * REQ-UI-073) rather than something the user did. Such a read does not count as activity
+     * for the idle bound (REQ-AUTH-015). The header can only make a session end sooner, never
+     * keep one open, so trusting the client with it gives nothing away; a page render or a POST
+     * is always the user's own.
+     */
+    public function isBackgroundRefresh(): bool
+    {
+        return !$this->isPost() && $this->wantsJson() && $this->header('x-clara-refresh') === '1';
+    }
+
+    /**
      * The caller's address, derived by the same rule the API applies to its own direct peer
      * (REQ-API-125, `dataapi.SourceIP`): REMOTE_ADDR is the answer, and a proxy inside
      * TRUSTED_PROXY_CIDRS may replace it with the X-Real-IP it received from that caller — no one

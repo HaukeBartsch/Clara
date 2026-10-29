@@ -223,7 +223,7 @@ The session is owned by the PHP web application: PHP-native session, file storag
 | `auth_source` | login | `oauth2`/`ldap`/`local` | |
 | `auth_source_name` | `/login` selection (§2.9) | the user-selected source name (REQ-AUTH-067); updated at each login | |
 | `issued_at` | login | unix timestamp — start of the absolute bound (§3.1) | |
-| `last_seen_at` | login; every request | unix timestamp — start of the idle bound (§3.1) | |
+| `last_seen_at` | login; every request except a page's background refresh (`User_Interface_Design.md` §3.7) | unix timestamp — start of the idle bound (§3.1) | |
 | `rotated_at` | login; every id rotation | unix timestamp (§3.1) | |
 | `session_epoch` | login (the user object's `session_epoch`) | integer (REQ-AUTH-074) — sent as `X-Internal-Session-Epoch` | replaced when the session adopts its own account's raised epoch (§3.1) |
 | `csrf_token` | session start | 32-byte random hex | session regeneration |
@@ -242,7 +242,7 @@ The reference application's `AC.php` (master spec, "Details"; `assets/table_base
 
 The session stays an opaque, server-side PHP session. What this section adds is how long one id lives, how a copied id is noticed, and how the API ends sessions it never stored. The router runs the lifecycle once per request — after the session starts, before the guard or anything else reads identity (`Session::lifecycle()`; the translator loads the user's language only on its first line, for the same reason).
 
-**Bounds (REQ-AUTH-015).** `issued_at + SESSION_LIFETIME` (default 8 h) is absolute; `last_seen_at + SESSION_IDLE_TIMEOUT` (default 30 min, `0` = off) is the idle bound, and every request of a signed-in session moves `last_seen_at`. A session past either bound ends: the identity is dropped, the id regenerated with its file removed, a fresh CSRF token set, the flash line `session.ended.expired` or `session.ended.idle` queued, and the guard sends the browser to `/login?next=…`. A signed-in session without `session_epoch` predates this design and ends the same way.
+**Bounds (REQ-AUTH-015).** `issued_at + SESSION_LIFETIME` (default 8 h) is absolute; `last_seen_at + SESSION_IDLE_TIMEOUT` (default 30 min, `0` = off) is the idle bound, and every request of a signed-in session moves `last_seen_at` — except a page's background refresh (`X-Clara-Refresh: 1` on a `GET` data read, `User_Interface_Design.md` §3.7, REQ-UI-073), which is the page's timer rather than the user and would otherwise hold an open page's session alive until `SESSION_LIFETIME`. Such a read still meets the bounds, so it is often the request that finds an idle session and ends it. A session past either bound ends: the identity is dropped, the id regenerated with its file removed, a fresh CSRF token set, the flash line `session.ended.expired` or `session.ended.idle` queued, and the guard sends the browser to `/login?next=…`. A signed-in session without `session_epoch` predates this design and ends the same way.
 
 **Rotation (REQ-AUTH-072).** On the first request after `rotated_at + SESSION_ROTATE_INTERVAL` (default 15 min, `0` = off, at least 120 s):
 

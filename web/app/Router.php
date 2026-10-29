@@ -393,11 +393,12 @@ final class Router
      * Runs Session::lifecycle() and does the two parts it cannot: telling the user why they
      * are being asked to sign in, and reporting a replayed id to the API so every other
      * session of the account ends (REQ-AUTH-073). The guard that follows sends an ended
-     * session to the login page, remembering the page it asked for.
+     * session to the login page, remembering the page it asked for. A page's background
+     * refresh is not activity (REQ-UI-073), so it never holds an idle session open.
      */
     private function applySessionLifecycle(): void
     {
-        $outcome = Session::lifecycle($this->config, time());
+        $outcome = Session::lifecycle($this->config, time(), !$this->request->isBackgroundRefresh());
 
         $notice = match ($outcome['verdict']) {
             Session::IDLE => ['info', 'session.ended.idle'],

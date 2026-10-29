@@ -39,6 +39,8 @@ describe('router — guard and dispatch', function (): void {
 
         assert_same(200, $response->status());
         assert_contains('data-region="projects"', $response->body());
+        // The heading's count is a target of its own, so the refresh can keep it current (REQ-UI-073).
+        assert_contains('<span data-clara-project-count>1</span>', $response->body());
     });
 
     it('renders the project overview as a single panel with no left panel (§2.4 A, REQ-UI-009)', function (): void {

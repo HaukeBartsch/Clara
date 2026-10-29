@@ -4,12 +4,18 @@
 // record, instrument and field counts) plus when the acting user last worked there; which way round
 // they sit follows the shape of the box, in CSS, so a wide box reads across and a narrow one stacks.
 // The server renders the grid with its loading line and this module fills it from the same route's
-// JSON (REQ-UI-032, REQ-UI-044). One module for one surface (REQ-UI-045); no UI string appears here
-// — every label comes from the injected data-i18n block (REQ-UI-008).
+// JSON (REQ-UI-032, REQ-UI-044), then re-reads it while the page is visible so the grid stays
+// current (REQ-UI-073). One module for one surface (REQ-UI-045); no UI string appears here — every
+// label comes from the injected data-i18n block (REQ-UI-008).
 
 import { el, fetchJson, fill, ready, t } from "../app.js"
 
 const DAY = 86400000
+
+// How often the overview re-reads its region while visible (REQ-UI-073): often enough that a project
+// someone else created, or records added to one, appear without a reload; seldom enough that an open
+// tab costs the API one list read per two seconds.
+const REFRESH_MS = 2000
 
 // Box size follows when a project was last used (REQ-UI-071): within a week it takes the wide box,
 // within a month the middle one, and older or never-opened projects the compact one. The tiers order
@@ -156,27 +162,108 @@ function message(text, withRetry) {
   const line = el("p", { class: "clara-region-empty mb-0" }, text)
   if (withRetry) {
     const retry = el("button", { type: "button", class: "btn btn-sm btn-outline-secondary ms-2" }, t("js.retry"))
-    retry.addEventListener("click", loadProjects)
+    retry.addEventListener("click", () => loadProjects(false))
     line.appendChild(retry)
   }
 
   return el("li", { class: "clara-project-cell clara-project-cell--message" }, line)
 }
 
-async function loadProjects() {
+// What the grid draws now: the list as read plus the day it was ranked on — "today", "yesterday" and
+// the box tiers move at midnight even when the list does not — or FAILED for the failure line. A read
+// that brings the same thing leaves the DOM alone, so hover and focus survive a refresh.
+const FAILED = "failed"
+let drawn = null
+// Whether this page has shown the list once: only then does a refused refresh mean the session ended.
+let listed = false
+
+/** Draws the boxes and the heading's count, keeping keyboard focus on the project that had it. */
+function render(grid, projects) {
+  const ranked = rank(projects)
+  const focused = grid.contains(document.activeElement) ? document.activeElement.getAttribute("href") : null
+  // Only an administrator reaches this page with an empty list (a member with no projects gets the
+  // no-access page, §2.3): an installation with no projects yet.
+  fill(grid, ranked.length ? ranked.map(projectBox) : [message(t("dashboard.empty"), false)])
+  if (focused) {
+    const link = Array.from(grid.querySelectorAll(".clara-project-open")).find((open) => open.getAttribute("href") === focused)
+    if (link) {
+      link.focus()
+    }
+  }
+  const count = document.querySelector("[data-clara-project-count]")
+  if (count) {
+    count.textContent = String(ranked.length)
+  }
+}
+
+/**
+ * Reads the region and redraws the grid when it changed; `refresh` marks the timer's reads
+ * (REQ-UI-073). Resolves false once the page should stop refreshing.
+ */
+async function loadProjects(refresh) {
   const grid = document.querySelector("[data-region='projects']")
   if (!grid) {
-    return
+    return false
   }
 
+  let projects
   try {
-    const projects = await fetchJson("/")
-    // Only an administrator reaches this page with an empty list (a member with no projects gets the
-    // no-access page, §2.3): an installation with no projects yet.
-    const ranked = rank(projects)
-    fill(grid, ranked.length ? ranked.map(projectBox) : [message(t("dashboard.empty"), false)])
+    projects = await fetchJson("/", { refresh })
   } catch (error) {
-    fill(grid, [message(t("js.load_failed"), true)])
+    if (refresh && error.message === "forbidden") {
+      // The session ended — idle, over age, revoked — or access was withdrawn: a reload lets the guard
+      // decide, which shows the login page with its reason (REQ-AUTH-015) or the no-access page. A page
+      // that never listed anything just stops, so a refusal cannot become a reload loop.
+      if (listed) {
+        window.location.reload()
+      }
+      return false
+    }
+    // A failed refresh keeps the boxes last read — still the best answer there is — and the next tick
+    // tries again; only a grid with nothing to show takes the failure line.
+    if (!listed && drawn !== FAILED) {
+      drawn = FAILED
+      fill(grid, [message(t("js.load_failed"), true)])
+    }
+    return true
+  }
+
+  listed = true
+  // A tapped box is mid-animation on its way to the project page; a redraw would cut it off.
+  if (grid.querySelector(".clara-project-cell--opening")) {
+    return true
+  }
+  const shape = JSON.stringify(projects) + "|" + new Date().toDateString()
+  if (shape !== drawn) {
+    drawn = shape
+    render(grid, projects)
+  }
+
+  return true
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** Resolves as soon as the document is visible — refreshing pauses while the tab is hidden. */
+function whenVisible() {
+  if (!document.hidden) {
+    return Promise.resolve()
+  }
+
+  return new Promise((resolve) => document.addEventListener("visibilitychange", () => resolve(), { once: true }))
+}
+
+/**
+ * Keeps the overview current (REQ-UI-073): a read every REFRESH_MS while the page is visible, and one
+ * at a time — the next waits for the one before it, so a slow API never has reads stacking up.
+ */
+async function keepCurrent() {
+  for (;;) {
+    await sleep(REFRESH_MS)
+    await whenVisible()
+    if (!(await loadProjects(true))) {
+      return
+    }
   }
 }
 
@@ -184,8 +271,8 @@ async function loadProjects() {
  * A tapped project box plays a short bounce, then zooms out to double its size while fading away,
  * and only then does the browser follow the link (User_Interface_Design.md §4). The animation is a
  * presentation concern, so it lives here with the grid; the link itself stays a plain GET. Delegation
- * on the region — not a listener per box — means a retry re-render (which replaces the boxes) keeps
- * working without re-binding.
+ * on the region — not a listener per box — means a retry or refresh re-render (which replaces the
+ * boxes) keeps working without re-binding.
  */
 function bindProjectOpen() {
   // If the dashboard is restored from the back/forward cache, any box still carrying the opening
@@ -248,6 +335,10 @@ function bindProjectOpen() {
 ready(() => {
   // The server-rendered placeholder says "loading"; the region is filled from the JSON the same
   // route serves, and navigation stays a plain GET (§3.7).
-  loadProjects()
+  loadProjects(false).then((going) => {
+    if (going) {
+      keepCurrent()
+    }
+  })
   bindProjectOpen()
 })
