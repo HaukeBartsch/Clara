@@ -1493,6 +1493,21 @@
         }
       }
     },
+    "/api/v1/projects/{id}/record-completeness": {
+      "get": {
+        "tags": ["Admin: Records"],
+        "operationId": "getRecordCompleteness",
+        "summary": "Record completeness count (REQ-API-171)",
+        "description": "The same access, record-visibility (REQ-AUTH-045) and arm rules as `record-status`, which stays unchanged. Per visible record, the events where it holds a value of a counted field and, under them, the cells holding one, each with `filled` of `visible`: `visible` counts the instrument's enterable fields (text, notes, dropdown, radio, checkbox, yesno, matrix rows — never the record identifier or a `@READONLY` field) that branching shows at that position; `filled` how many of those hold a value. A field hidden by branching counts toward neither; an instrument hidden by its own logic is named in `hidden` and counts toward nothing. The record's `filled`/`visible` sum every mapped, shown instrument of the listed events. Branching is evaluated as the form evaluates it (REQ-VAL-048): `[field]` names the cell's event, a reference to a pair the caller cannot read is empty. The response MUST NOT contain field values; the read writes no audit entry.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "responses": {
+          "200": { "description": "The completeness count.", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/RecordCompleteness" } }, "example": [ { "record_id": "8DISC042", "filled": 31, "visible": 48, "events": [ { "unique_event_name": "baseline_arm_1", "hidden": ["pregnancy"], "instruments": [ { "name": "intake", "filled": 12, "visible": 14 }, { "name": "visits", "filled": 5, "visible": 9, "instances": [ { "instance": 1, "filled": 5, "visible": 9 }, { "instance": 2, "filled": 3, "visible": 9 } ] } ] } ] }, { "record_id": "8DISC043", "filled": 0, "visible": 0, "events": [] } ] } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
     "/api/v1/projects/{id}/records/{record}/events/{event}/instruments/{iid}/completion": {
       "put": {
         "tags": ["Admin: Records"],
@@ -3200,6 +3215,16 @@
         "properties": {
           "record_id": { "type": "string" },
           "events": { "type": "array", "items": { "type": "object", "required": ["unique_event_name", "instruments"], "properties": { "unique_event_name": { "type": "string" }, "instruments": { "type": "array", "description": "Only the cells that are not `no_data` (REQ-API-149); a mapped instrument absent here is `no_data`.", "items": { "type": "object", "required": ["name", "state"], "properties": { "name": { "type": "string" }, "state": { "type": "string", "enum": ["no_data", "some_data", "finished"], "description": "The first instance's state; `no_data` only on a repeating instrument whose further instances hold something." }, "instances": { "type": "array", "description": "A repeating instrument only (REQ-API-156): every instance whose state is not `no_data`, ascending.", "items": { "type": "object", "required": ["instance", "state"], "properties": { "instance": { "type": "integer", "minimum": 1 }, "state": { "type": "string", "enum": ["some_data", "finished"] } } } } } } } } } }
+        }
+      },
+      "RecordCompleteness": {
+        "type": "object",
+        "required": ["record_id", "filled", "visible", "events"],
+        "properties": {
+          "record_id": { "type": "string" },
+          "filled": { "type": "integer", "minimum": 0, "description": "Summed over every mapped, shown instrument of the listed events — an instrument without values adds its `visible` with nothing filled." },
+          "visible": { "type": "integer", "minimum": 0 },
+          "events": { "type": "array", "description": "Only the events where the record holds a value of a counted field.", "items": { "type": "object", "required": ["unique_event_name", "hidden", "instruments"], "properties": { "unique_event_name": { "type": "string" }, "hidden": { "type": "array", "items": { "type": "string" }, "description": "Mapped instruments whose instrument-level logic is false at this event (REQ-VAL-040)." }, "instruments": { "type": "array", "description": "Only the cells holding a counted value.", "items": { "type": "object", "required": ["name", "filled", "visible"], "properties": { "name": { "type": "string" }, "filled": { "type": "integer", "minimum": 0, "description": "The first instance's count." }, "visible": { "type": "integer", "minimum": 0 }, "instances": { "type": "array", "description": "A repeating instrument only (REQ-API-156): every instance holding a counted value, ascending.", "items": { "type": "object", "required": ["instance", "filled", "visible"], "properties": { "instance": { "type": "integer", "minimum": 1 }, "filled": { "type": "integer", "minimum": 0 }, "visible": { "type": "integer", "minimum": 0 } } } } } } } } } }
         }
       },
       "AuditPage": {

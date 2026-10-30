@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"strconv"
+	"strings"
 )
 
 // MaxRecordID returns the lexicographically greatest record id that holds at
@@ -195,6 +196,54 @@ func (s *Store) ListDataValuesByRecordTx(ctx context.Context, tx *sql.Tx, projec
 		out = append(out, dv)
 	}
 	return out, rows.Err()
+}
+
+// valuesOfFieldsChunk bounds the IN list of ForEachValueOfFields: well below
+// the bound-parameter limit of either dialect (SQLite's default 32,766, older
+// builds 999), so a design with many referenced fields reads in a few queries.
+const valuesOfFieldsChunk = 500
+
+// ForEachValueOfFields streams the project's non-empty stored values of the
+// named value columns (field names, checkbox boxes as `base___code`) to fn,
+// across every record — the narrow read of a caller that needs a few fields'
+// values project-wide, such as the operands of the completeness count's
+// branching logic (REQ-API-171), served by idx_data_project_field. fn runs
+// while the rows are open and must not query the store itself.
+func (s *Store) ForEachValueOfFields(ctx context.Context, projectID int64, names []string, fn func(DataValue) error) error {
+	for start := 0; start < len(names); start += valuesOfFieldsChunk {
+		part := names[start:min(start+valuesOfFieldsChunk, len(names))]
+		args := make([]any, 0, len(part)+1)
+		args = append(args, projectID)
+		for _, n := range part {
+			args = append(args, n)
+		}
+		rows, err := s.DB.QueryContext(ctx,
+			`SELECT record_id, unique_event_name, repeating_instrument,
+				repeating_instance_number, field_name, value
+			 FROM data WHERE project_id = ? AND value <> ''
+			   AND field_name IN (?`+strings.Repeat(", ?", len(part)-1)+`)`, args...)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			dv := DataValue{ProjectID: projectID}
+			if err := rows.Scan(&dv.RecordID, &dv.UniqueEventName, &dv.RepeatingInstrument,
+				&dv.RepeatingInstanceNumber, &dv.FieldName, &dv.Value); err != nil {
+				rows.Close()
+				return err
+			}
+			if err := fn(dv); err != nil {
+				rows.Close()
+				return err
+			}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // RecordHasAnyDataTx reports whether the record still holds any value.

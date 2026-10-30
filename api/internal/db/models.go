@@ -11,6 +11,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -171,6 +172,19 @@ type Field struct {
 	DirectIdentifier    bool // user-set on any field; preset for email/MRN/phone types (REQ-EXP-020)
 	ExportApproved      bool
 	Position            int
+}
+
+// readOnlyTag finds the `@READONLY` action tag in a field annotation as a
+// whole tag, in any letter case: not inside a longer word, and not REDCap's
+// `@READONLY-FORM` or `@READONLY-SURVEY`, which are other tags. RE2 has no
+// lookaround, so the boundary characters are matched instead — the rule the
+// web layer's DataEntry::isReadOnly writes as a lookbehind/lookahead pair.
+var readOnlyTag = regexp.MustCompile(`(?i)(?:^|[^\w@-])@READONLY(?:[^\w-]|$)`)
+
+// IsReadOnly reports whether the field's annotation carries `@READONLY`
+// (REQ-DB-046): the form shows its value and takes no input for it.
+func (f Field) IsReadOnly() bool {
+	return f.FieldAnnotation.Valid && readOnlyTag.MatchString(f.FieldAnnotation.String)
 }
 
 // ValidationType is one validation_types row (REQ-DB-033): a named regular

@@ -18,11 +18,12 @@ import (
 )
 
 // registerQueries mounts the query surface of §4: the record-status dashboard
-// (§4.13, REQ-API-074), the audit log read (§4.15, REQ-API-077/078), and the
+// and its completeness count (§4.13, REQ-API-074/171), the audit log read (§4.15, REQ-API-077/078), and the
 // per-record history (§4.16, REQ-API-079…081). All three are read-only; no
 // endpoint here writes, updates, or deletes audit data (REQ-API-077).
 func (h *Handler) registerQueries(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/projects/{id}/record-status", h.recordStatus)
+	mux.HandleFunc("GET /api/v1/projects/{id}/record-completeness", h.recordCompleteness)
 	mux.HandleFunc("GET /api/v1/audit", h.listAudit)
 	mux.HandleFunc("GET /api/v1/audit/export", h.exportAudit)
 	mux.HandleFunc("GET /api/v1/projects/{id}/records/{record}/history", h.recordHistory)
@@ -75,108 +76,11 @@ type recordStatusRow struct {
 // omitted (GD-2). A record-status read is not a record view — no audit row is
 // written (§4.13, ASM-AUD-2).
 func (h *Handler) recordStatus(w http.ResponseWriter, r *http.Request) {
-	u, ok := actor(r)
+	sc, ok := h.loadStatusScope(w, r)
 	if !ok {
-		errForbidden(w)
 		return
 	}
-	ctx := r.Context()
-	projectID, ok := pathID(r, "id")
-	if !ok {
-		errBadRequest(w, "invalid project id")
-		return
-	}
-	p, err := h.Store.GetProject(ctx, projectID)
-	if err != nil {
-		errInternal(w)
-		return
-	}
-	if p == nil {
-		errNotFound(w)
-		return
-	}
-	lv, err := h.access(ctx, u, projectID)
-	if err != nil {
-		errInternal(w)
-		return
-	}
-	if !h.requireMember(w, r, lv) {
-		return
-	}
-	if !u.IsAdmin && !lv.AnyData(LvlReadOnly) {
-		errForbidden(w)
-		return
-	}
-
-	// Visible records under the DAG rule (REQ-AUTH-045): an administrator
-	// sees all; a member with an active group sees only the records assigned
-	// to it (unassigned records are not visible); a member without a group
-	// sees all — the bulk form of authz.RecordVisible.
-	entities, err := h.Store.ListRecordEntities(ctx, projectID)
-	if err != nil {
-		errInternal(w)
-		return
-	}
-	group := int64(0)
-	if !u.IsAdmin {
-		group, err = authz.ActiveGroup(ctx, h.Store, u.ID, projectID)
-		if err != nil {
-			errInternal(w)
-			return
-		}
-	}
-	visible := make([]db.RecordEntity, 0, len(entities))
-	for _, re := range entities {
-		if group != 0 && !(re.DagGroupID.Valid && re.DagGroupID.Int64 == group) {
-			continue
-		}
-		visible = append(visible, re)
-	}
-
-	// Structure: canonical event listing per GD-15 (arms in order, events in
-	// canonical order), instruments in position order, and the checked
-	// (instrument, event) pairs.
-	arms, eventsByArm, err := h.CanonicalEvents(ctx, projectID)
-	if err != nil {
-		errInternal(w)
-		return
-	}
-	instruments, err := h.Store.ListInstruments(ctx, projectID)
-	if err != nil {
-		errInternal(w)
-		return
-	}
-	pairs, err := h.Store.ListInstrumentEvents(ctx, projectID)
-	if err != nil {
-		errInternal(w)
-		return
-	}
-	repeatingPair := make(map[[2]int64]bool, len(pairs)) // every mapped (event, instrument): designated repeating?
-	for _, ie := range pairs {
-		repeatingPair[[2]int64{ie.EventID, ie.InstrumentID}] = ie.IsRepeating
-	}
-
-	// The columns every row shares, resolved once instead of per record: the
-	// events of the arms the caller may read (GD-2), in CanonicalEvents order,
-	// each with its mapped instruments in position order. An event without a
-	// mapped instrument carries no state and is not listed.
-	var layout []statusEvent
-	for _, a := range arms {
-		if !u.IsAdmin && !lv.HasData(a.ArmNum, LvlReadOnly) {
-			continue // events of inaccessible arms are not disclosed (GD-2)
-		}
-		for _, ev := range eventsByArm[a.ArmNum] {
-			var columns []statusColumn
-			for _, in := range instruments {
-				if rep, mapped := repeatingPair[[2]int64{ev.ID, in.ID}]; mapped {
-					columns = append(columns, statusColumn{id: in.ID, name: in.Name, survey: in.IsSurvey, repeating: rep})
-				}
-			}
-			if len(columns) > 0 {
-				layout = append(layout, statusEvent{id: ev.ID, name: ev.UniqueEventName, columns: columns})
-			}
-		}
-	}
+	ctx, projectID, visible, instruments, layout := r.Context(), sc.projectID, sc.visible, sc.instruments, sc.layout
 
 	marks, err := h.statusMarksOf(ctx, projectID, visible, instruments)
 	if err != nil {
@@ -224,6 +128,146 @@ func (h *Handler) recordStatus(w http.ResponseWriter, r *http.Request) {
 		out = append(out, row)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// statusScope is what the dashboard's two reads share (§4.13): the project,
+// the caller's access, the records visible under the DAG rule, and the column
+// layout of the arms the caller may read — record-status and
+// record-completeness answer for exactly the same rows and events
+// (REQ-API-074, REQ-API-171).
+type statusScope struct {
+	user        *db.User
+	levels      *authz.Levels
+	projectID   int64
+	visible     []db.RecordEntity
+	instruments []db.Instrument
+	layout      []statusEvent
+	// events holds every event of the project, readable arm or not, by
+	// unique_event_name — what a branching reference names (REQ-VAL-029).
+	events map[string]scopeEvent
+	// pairs holds every mapped (event id, instrument id) pair: whether it is
+	// designated repeating (REQ-DB-047).
+	pairs map[[2]int64]bool
+}
+
+// scopeEvent is one event of the project with the arm it belongs to.
+type scopeEvent struct {
+	id     int64
+	armNum int
+}
+
+// loadStatusScope resolves the statusScope of one request, answering the
+// refusal itself when there is none: an unknown project is 404; a non-member,
+// or a member without data access ≥ read_only anywhere, the uniform 403 (GD-2).
+func (h *Handler) loadStatusScope(w http.ResponseWriter, r *http.Request) (*statusScope, bool) {
+	u, ok := actor(r)
+	if !ok {
+		errForbidden(w)
+		return nil, false
+	}
+	ctx := r.Context()
+	projectID, ok := pathID(r, "id")
+	if !ok {
+		errBadRequest(w, "invalid project id")
+		return nil, false
+	}
+	p, err := h.Store.GetProject(ctx, projectID)
+	if err != nil {
+		errInternal(w)
+		return nil, false
+	}
+	if p == nil {
+		errNotFound(w)
+		return nil, false
+	}
+	lv, err := h.access(ctx, u, projectID)
+	if err != nil {
+		errInternal(w)
+		return nil, false
+	}
+	if !h.requireMember(w, r, lv) {
+		return nil, false
+	}
+	if !u.IsAdmin && !lv.AnyData(LvlReadOnly) {
+		errForbidden(w)
+		return nil, false
+	}
+
+	// Visible records under the DAG rule (REQ-AUTH-045): an administrator
+	// sees all; a member with an active group sees only the records assigned
+	// to it (unassigned records are not visible); a member without a group
+	// sees all — the bulk form of authz.RecordVisible.
+	entities, err := h.Store.ListRecordEntities(ctx, projectID)
+	if err != nil {
+		errInternal(w)
+		return nil, false
+	}
+	group := int64(0)
+	if !u.IsAdmin {
+		group, err = authz.ActiveGroup(ctx, h.Store, u.ID, projectID)
+		if err != nil {
+			errInternal(w)
+			return nil, false
+		}
+	}
+	visible := make([]db.RecordEntity, 0, len(entities))
+	for _, re := range entities {
+		if group != 0 && !(re.DagGroupID.Valid && re.DagGroupID.Int64 == group) {
+			continue
+		}
+		visible = append(visible, re)
+	}
+
+	// Structure: canonical event listing per GD-15 (arms in order, events in
+	// canonical order), instruments in position order, and the checked
+	// (instrument, event) pairs.
+	arms, eventsByArm, err := h.CanonicalEvents(ctx, projectID)
+	if err != nil {
+		errInternal(w)
+		return nil, false
+	}
+	instruments, err := h.Store.ListInstruments(ctx, projectID)
+	if err != nil {
+		errInternal(w)
+		return nil, false
+	}
+	pairs, err := h.Store.ListInstrumentEvents(ctx, projectID)
+	if err != nil {
+		errInternal(w)
+		return nil, false
+	}
+	repeatingPair := make(map[[2]int64]bool, len(pairs)) // every mapped (event, instrument): designated repeating?
+	for _, ie := range pairs {
+		repeatingPair[[2]int64{ie.EventID, ie.InstrumentID}] = ie.IsRepeating
+	}
+
+	// The columns every row shares, resolved once instead of per record: the
+	// events of the arms the caller may read (GD-2), in CanonicalEvents order,
+	// each with its mapped instruments in position order. An event without a
+	// mapped instrument carries no state and is not listed.
+	var layout []statusEvent
+	events := map[string]scopeEvent{}
+	for _, a := range arms {
+		for _, ev := range eventsByArm[a.ArmNum] {
+			events[ev.UniqueEventName] = scopeEvent{id: ev.ID, armNum: a.ArmNum}
+		}
+		if !u.IsAdmin && !lv.HasData(a.ArmNum, LvlReadOnly) {
+			continue // events of inaccessible arms are not disclosed (GD-2)
+		}
+		for _, ev := range eventsByArm[a.ArmNum] {
+			var columns []statusColumn
+			for _, in := range instruments {
+				if rep, mapped := repeatingPair[[2]int64{ev.ID, in.ID}]; mapped {
+					columns = append(columns, statusColumn{id: in.ID, name: in.Name, survey: in.IsSurvey, repeating: rep})
+				}
+			}
+			if len(columns) > 0 {
+				layout = append(layout, statusEvent{id: ev.ID, name: ev.UniqueEventName, columns: columns})
+			}
+		}
+	}
+	return &statusScope{user: u, levels: lv, projectID: projectID, visible: visible,
+		instruments: instruments, layout: layout, events: events, pairs: repeatingPair}, true
 }
 
 // statusEvent and statusColumn are one listed event of the dashboard and one

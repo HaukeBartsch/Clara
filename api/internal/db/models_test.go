@@ -1,6 +1,7 @@
 package db
 
 import (
+	"database/sql"
 	"testing"
 	"time"
 )
@@ -91,5 +92,34 @@ func TestTemporalLayoutsRoundTrip(t *testing.T) {
 	// The normalizers are idempotent: what they emit scans back unchanged.
 	if again, _ := datetimeString(dts); again != dts {
 		t.Errorf("datetimeString is not idempotent: %q then %q", dts, again)
+	}
+}
+
+// TestFieldIsReadOnly: @READONLY is found as a whole tag in any letter case
+// (REQ-DB-046) — the rule the web layer's DataEntry::isReadOnly applies — and
+// REDCap's @READONLY-FORM / @READONLY-SURVEY are other tags.
+func TestFieldIsReadOnly(t *testing.T) {
+	cases := []struct {
+		annotation string
+		want       bool
+	}{
+		{"@READONLY", true},
+		{"@readonly", true},
+		{`@DEFAULT="1" @READONLY`, true},
+		{"note\n@READONLY\nmore", true},
+		{"@READONLY,0032", true},
+		{"", false},
+		{"@READONLY-FORM", false},
+		{"@READONLY-SURVEY", false},
+		{"@READONLYX", false},
+		{"x@READONLY", false},
+		{"@@READONLY", false},
+		{"-@READONLY", false},
+	}
+	for _, c := range cases {
+		f := Field{FieldAnnotation: sql.NullString{String: c.annotation, Valid: c.annotation != ""}}
+		if got := f.IsReadOnly(); got != c.want {
+			t.Errorf("IsReadOnly(%q) = %v, want %v", c.annotation, got, c.want)
+		}
 	}
 }

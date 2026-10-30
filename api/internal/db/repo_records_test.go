@@ -2,6 +2,8 @@ package db
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"testing"
 )
 
@@ -166,5 +168,56 @@ func TestRecordIDsAreUniqueAcrossArms(t *testing.T) {
 	}
 	if err := s.CreateRecordEntity(ctx, &RecordEntity{ProjectID: pid, RecordID: "7"}); err == nil {
 		t.Errorf("second CreateRecordEntity for the same record id succeeded, want a primary key violation")
+	}
+}
+
+// TestForEachValueOfFields: the narrow read of the completeness count
+// (REQ-API-171) returns the non-empty values of exactly the named columns,
+// across records, and reads a name list longer than one IN chunk in several
+// queries without losing any of it.
+func TestForEachValueOfFields(t *testing.T) {
+	s := migrateTestStore(t)
+	ctx := context.Background()
+	projectID := seedProject(t, s, ctx)
+	for _, r := range []string{"R1", "R2"} {
+		if err := s.CreateRecordEntity(ctx, &RecordEntity{ProjectID: projectID, RecordID: r}); err != nil {
+			t.Fatalf("CreateRecordEntity: %v", err)
+		}
+	}
+	put := func(record, field, value string) {
+		t.Helper()
+		if err := s.AddDataValue(ctx, &DataValue{ProjectID: projectID, RecordID: record,
+			UniqueEventName: "v1_arm_1", FieldName: field, Value: value}); err != nil {
+			t.Fatalf("AddDataValue: %v", err)
+		}
+	}
+	// Names in the first, second and third chunk, an empty value, and a
+	// column nobody asked for.
+	put("R1", "f0001", "a")
+	put("R2", "f0700", "b")
+	put("R1", "f1199", "c")
+	put("R1", "f0002", "")
+	put("R1", "other", "d")
+
+	names := make([]string, 1200)
+	for i := range names {
+		names[i] = fmt.Sprintf("f%04d", i)
+	}
+	var got []string
+	if err := s.ForEachValueOfFields(ctx, projectID, names, func(dv DataValue) error {
+		got = append(got, dv.RecordID+"|"+dv.FieldName+"|"+dv.Value)
+		return nil
+	}); err != nil {
+		t.Fatalf("ForEachValueOfFields: %v", err)
+	}
+	slices.Sort(got)
+	if want := []string{"R1|f0001|a", "R1|f1199|c", "R2|f0700|b"}; !slices.Equal(got, want) {
+		t.Fatalf("values = %v, want %v", got, want)
+	}
+
+	// No names, no query and no values.
+	calls := 0
+	if err := s.ForEachValueOfFields(ctx, projectID, nil, func(DataValue) error { calls++; return nil }); err != nil || calls != 0 {
+		t.Fatalf("empty name list: %d calls, err %v", calls, err)
 	}
 }
