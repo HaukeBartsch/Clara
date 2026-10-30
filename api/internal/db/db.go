@@ -99,7 +99,16 @@ func Open(cfg *config.Config, reg *metrics.Registry) (*Store, error) {
 		//   busy_timeout  SQLite serializes writers; without a timeout a write that
 		//                 meets a concurrent reader fails immediately (transient
 		//                 500s under load before WAL).
-		dsn = cfg.DBDatabase + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)"
+		//   _txlock       immediate: BeginTx takes the write lock up front. A
+		//                 deferred transaction that reads before its first write
+		//                 holds a WAL snapshot; once another connection commits,
+		//                 the write fails at once with SQLITE_BUSY_SNAPSHOT (517),
+		//                 which busy_timeout cannot wait out (an instrument delete
+		//                 failed this way during a stress run). Taken up front,
+		//                 the lock waits under busy_timeout like any writer.
+		//                 Read-only transactions (sql.TxOptions.ReadOnly) still
+		//                 begin deferred.
+		dsn = cfg.DBDatabase + "?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_txlock=immediate"
 	case "mariadb":
 		// No parseTime: DATE/DATETIME then scan as text in the same canonical
 		// layout SQLite returns ("2006-01-02 15:04:05", REQ-DB-005), instead of

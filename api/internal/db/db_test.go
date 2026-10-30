@@ -60,6 +60,60 @@ func TestOpenSQLiteSelectsDialect(t *testing.T) {
 	}
 }
 
+// A write transaction that reads before its first write must survive a
+// commit on another connection in between. Begun deferred, it held a WAL
+// snapshot that the commit made stale, and the write failed at once with
+// SQLITE_BUSY_SNAPSHOT (517) — busy_timeout cannot wait that out — which an
+// instrument delete surfaced as a 500 during a stress run.
+func TestSQLiteWriteTxSurvivesConcurrentCommit(t *testing.T) {
+	cfg := &config.Config{
+		AppEnv:       "development",
+		DBConnection: "sqlite",
+		DBDatabase:   filepath.Join(t.TempDir(), "txlock.sqlite"),
+		AnonSalt:     "test-salt",
+	}
+	s, err := Open(cfg, nil)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+	ctx := context.Background()
+	if _, err := s.DB.ExecContext(ctx, `CREATE TABLE t (v INTEGER)`); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	defer tx.Rollback()
+	var n int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM t`).Scan(&n); err != nil {
+		t.Fatalf("read inside tx: %v", err)
+	}
+	// The concurrent writer queues behind the transaction instead of
+	// committing under its snapshot.
+	other := make(chan error, 1)
+	go func() {
+		_, err := s.DB.ExecContext(ctx, `INSERT INTO t (v) VALUES (2)`)
+		other <- err
+	}()
+	select {
+	case err := <-other:
+		t.Fatalf("concurrent insert committed inside the transaction's window (err %v); BeginTx did not take the write lock", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO t (v) VALUES (1)`); err != nil {
+		t.Fatalf("write after read inside tx: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if err := <-other; err != nil {
+		t.Fatalf("concurrent insert after commit: %v", err)
+	}
+}
+
 func TestConfigureMariaDBPool(t *testing.T) {
 	db, err := sql.Open("mysql", "user:password@tcp(127.0.0.1:3306)/clara")
 	if err != nil {
