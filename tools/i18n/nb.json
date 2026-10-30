@@ -994,6 +994,8 @@
     "records.open_instance": "{record} — {instrument} #{instance} ved {event}: {state}",
     "records.add_instance": "Ny forekomst #{instance} av {instrument} ved {event} for {record}",
     "records.more_instances": "{count} forekomster til",
+    "records.loading_count": "{count} registreringer lastet så langt…",
+    "records.load_incomplete": "Lastingen stoppet etter {count} registreringer, så listen er ufullstendig.",
     "records.repeating_column": "{instrument} gjentas her: én prikk per forekomst, + legger til en",
     "record.delete.instance": "Slett forekomst #{instance}",
     "record.delete.confirm.instance": "Slette alle verdiene for {instrument} #{instance} ved {event} for registrering {record}? De andre forekomstene blir værende. Slettede verdier blir værende i revisjonssporet.",

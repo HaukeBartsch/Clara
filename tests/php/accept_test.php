@@ -54,6 +54,28 @@ describe('Accept parsing (REQ-UI-044)', function (): void {
     });
 });
 
+describe('Accept parsing for a streamed region (REQ-UI-044, REQ-UI-074)', function (): void {
+    it('prefers NDJSON when it is named and not outranked', function (): void {
+        foreach (['application/x-ndjson', 'application/x-ndjson, application/json;q=0.9',
+            'application/json;q=0.5, application/x-ndjson', 'Application/X-NDJSON; q=0.8'] as $accept) {
+            $request = request_with_accept($accept);
+            assert_true($request->prefersNdjson(), $accept);
+            assert_true($request->wantsJson(), $accept . ' is a data request');
+        }
+    });
+
+    it('never reads a wildcard, a refusal or an outranked NDJSON as a preference', function (): void {
+        foreach (['*/*', 'application/*', 'application/json', 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'application/x-ndjson;q=0', 'application/json, application/x-ndjson;q=0.5',
+            'text/html, application/x-ndjson;q=0.5'] as $accept) {
+            assert_true(!request_with_accept($accept)->prefersNdjson(), $accept);
+        }
+        // Refused NDJSON leaves the request what the rest of its Accept makes it.
+        assert_true(!request_with_accept('application/x-ndjson;q=0')->wantsJson());
+        assert_true(request_with_accept('application/json, application/x-ndjson;q=0.5')->wantsJson());
+    });
+});
+
 describe('Request basics', function (): void {
     it('reads the mutation name from ?action=', function (): void {
         $request = new Request('POST', '/login', [], ['action' => 'credentials'], []);

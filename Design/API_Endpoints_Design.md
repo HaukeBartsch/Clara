@@ -893,7 +893,7 @@ Each array lists the events an instrument is mapped to; an empty array = mapped 
 
 An instrument is active for data entry once it is mapped to at least one event (REQ-DB-012). **Unmapping never deletes anything:** the pair's `data` rows and its `instrument_completion` rows stay in place (REQ-DB-036 creates none while the pair is unmapped, and removes none), and they become visible again — in the form, on the record-status dashboard, and in exports — as soon as the pair is mapped back. Unmapping a pair that holds values is therefore non-breaking and needs no acknowledgement in any mode (§4.21). 200. Audit `mapping_updated`.
 
-### 4.13 Record status (REQ-API-074, REQ-API-110, REQ-API-149, REQ-API-156, REQ-API-171)
+### 4.13 Record status (REQ-API-074, REQ-API-110, REQ-API-149, REQ-API-156, REQ-API-171, REQ-API-172)
 
 **`GET /api/v1/projects/{id}/record-status`** — data access ≥ `read_only` + record visibility (REQ-AUTH-045). 200 — all visible records, with their instruments per event in the instrument order of each arm and a **three-state** completion state per (record, event, instrument), listed **sparsely** (REQ-API-149, DEV-API-26):
 
@@ -951,9 +951,28 @@ The response MUST NOT contain field values (REQ-API-074). A record-status read i
 - **Counts, not ratios.** Two integers let a client map a cell exactly onto its nine dots and let PHP and JavaScript round the same way; `visible` 0 means nothing to fill.
 - **Branching** is evaluated as REQ-VAL-048 states (`Data_Validation_Design.md` §7.3): `[field]` names the cell's event (DEV-VAL-13); a reference to the cell's own repeating instrument reads the cell's instance, any other reads first instances (REQ-VAL-045); an expression that does not compile is true. A reference to an (event, instrument) pair the caller does not hold at `read_only` or above (`authz.Levels.PairOrArmDefault`) reads as empty, so the count discloses nothing of a pair the caller cannot open.
 
-**Cost.** The count is computed on each request and stored nowhere, so it needs no migration, and `record-status` keeps its single position scan unchanged (REQ-API-171); the dashboard draws its grid from `record-status` and fills in the dots from this read when it arrives. The handler reads the same non-empty positions `record-status` reads, plus — in a second, narrow query served by `idx_data_project_field` — the values of only the fields some branching expression references (`validate.LogicProgram.Refs`). Expressions compile once per request — microseconds against the two scans, and no cache to keep in step with designer writes. Each expression is evaluated once per (record, event holding a value), and once per instance only when it reads its own repeating instrument. The work therefore grows with stored values and with the events records have reached, never with mapped (event, instrument) pairs that hold nothing — the growth DEV-API-26 removed from `record-status`. Branching never reads another record (REQ-VAL-029), so if measurement calls for it, a per-record cache keyed by the structure generation and cleared by any write to that record would be exact.
+**Cost.** The count is computed on each request and stored nowhere, so it needs no migration, and `record-status` does not pay for it (REQ-API-171); the dashboard draws its grid from `record-status` and fills in the dots from this read when it arrives. Per chunk of records (Streaming, below) the handler reads the same non-empty rows `record-status` reads, with their `value`, and keeps the values of only the fields some branching expression references (`validate.LogicProgram.Refs`). Expressions compile once per request — microseconds against the read, and no cache to keep in step with designer writes. Each expression is evaluated once per (record, event holding a value), and once per instance only when it reads its own repeating instrument. The work therefore grows with stored values and with the events records have reached, never with mapped (event, instrument) pairs that hold nothing — the growth DEV-API-26 removed from `record-status`. Branching never reads another record (REQ-VAL-029), so if measurement calls for it, a per-record cache keyed by the structure generation and cleared by any write to that record would be exact.
 
 The response MUST NOT contain field values (REQ-API-171). A completeness read is not a record view (`Audit_Logging_Design.md` §8, ASM-AUD-2).
+
+**Streaming (REQ-API-172).** Both reads are produced in chunks of 1,000 visible records, taken in the order the records are listed (`record_entities` by `record_id`, REQ-API-074). Before this, a read scanned every non-empty value of the project into memory before writing its first byte — 28 s and 285 MB of `record-status` for the 400,000-record Incoming project (`stress/incoming_stress.py`), longer than the web layer waits for a buffered call.
+
+- **Once per request**, before any byte: the scope — access, the visible records (ids only), the column layout — and, for the count, the compiled design. A refusal therefore still answers the §4.2 error with its status.
+- **Per chunk**: the chunk's non-empty positions — `… WHERE project_id = ? AND value <> '' AND record_id IN (…)`, served by the (`project_id`, `record_id`) prefix of the `data` unique key on SQLite and by `idx_data_project_record` on MariaDB (`Database_Schema_Design.md` §9) — and its `finished` assignments (the `instrument_completion` primary key prefix); the count reads the same rows with their `value` and keeps the referenced fields' values as the branching operands. One query, not a second one filtered by `field_name` as well: SQLite serves `field_name IN (…) AND record_id IN (…)` from `idx_data_project_field`, which would read the referenced fields of every record once per chunk. Marks and operands live for one chunk; a record's rows are complete once its chunk is read, since branching never reads another record (REQ-VAL-029).
+- **First byte**: the first chunk is computed before the status line, so a store failure there is the usual 500. Each later chunk is written as it is finished and flushed.
+- **Formats**, chosen on `Accept`. A request listing `application/x-ndjson` (q > 0) receives `Content-Type: application/x-ndjson`: each record object of the shapes above on its own line, then the end line:
+
+  ```
+  {"record_id":"MOBA042","events":[…]}
+  {"record_id":"MOBA043","events":[…]}
+  {"end":true,"records":2}
+  ```
+
+  Any other request receives `application/json`: the array exactly as before — `[`, the record objects separated by `,`, `]`, a newline — the bytes the buffered encoder wrote, so no caller changes.
+- **Failure after the first byte** is logged and ends the response where it stands: no end line, no closing `]`. A caller that stops reading ends the loop at the next write.
+- **No transaction across chunks.** Each chunk reads what is committed when it is reached, so a record written to mid-stream is reported as it stood when its chunk was read; holding one read transaction for the length of a stream would hold back SQLite's WAL checkpoints for as long.
+
+Measured on the same Incoming project (SQLite, 2026-10-30), both reads answer byte for byte what the buffered reads answered. The first records arrive after 0.33 s instead of 28–30 s, and the server's peak resident memory falls from 2.9 GB to 230 MB. The whole read takes longer: 40 s instead of 28 s for `record-status`, 45 s instead of 30 s for the count. Rows reached through the (`project_id`, `record_id`) prefix are fetched out of storage order, at about twice the page reads of the one project scan they replace. A larger SQLite page cache or `mmap_size` does not change that ratio.
 
 ### 4.14 Export (UI) (REQ-API-075…076)
 

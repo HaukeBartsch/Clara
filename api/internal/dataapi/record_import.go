@@ -215,7 +215,7 @@ func (h *Handler) contentRecordImport(w http.ResponseWriter, r *http.Request, en
 				// nothing of this row was stored.
 				writeError(w, enc, http.StatusGone, "Survey already submitted")
 			default:
-				h.storeError(w, enc, err) // a store failure fails the call (500)
+				h.storeError(w, enc, fatal) // a store failure fails the call (500)
 			}
 			return
 		}

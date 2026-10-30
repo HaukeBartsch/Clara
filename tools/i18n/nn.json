@@ -994,6 +994,8 @@
     "records.open_instance": "{record} — {instrument} #{instance} ved {event}: {state}",
     "records.add_instance": "Ny førekomst #{instance} av {instrument} ved {event} for {record}",
     "records.more_instances": "{count} førekomstar til",
+    "records.loading_count": "{count} registreringar lasta så langt…",
+    "records.load_incomplete": "Lastinga stoppa etter {count} registreringar, så lista er ufullstendig.",
     "records.repeating_column": "{instrument} blir gjenteke her: éin prikk per førekomst, + legg til ein",
     "record.delete.instance": "Slett førekomst #{instance}",
     "record.delete.confirm.instance": "Slette alle verdiane for {instrument} #{instance} ved {event} for registrering {record}? Dei andre førekomstane blir verande. Sletta verdiar blir verande i revisjonssporet.",

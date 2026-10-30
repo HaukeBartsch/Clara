@@ -18,6 +18,7 @@ use Clara\Logger;
 use Clara\Oauth;
 use Clara\Request;
 use Clara\Router;
+use Clara\StreamSink;
 use Clara\Transport;
 use Clara\View;
 
@@ -215,6 +216,32 @@ function queue_sidebar_projects(?array $projects = null): void
         ['id' => 3, 'project_name' => '8DISC', 'organization' => 'NAT EU',
             'record_count' => 42, 'instrument_count' => 2, 'field_count' => 30],
     ]);
+}
+
+/** A sink that keeps what a streamed response sends, for assertions. */
+final class RecordingSink implements StreamSink
+{
+    public int $status = 0;
+    /** @var array<string, string> */
+    public array $headers = [];
+    /** @var list<string> */
+    public array $chunks = [];
+
+    public function begin(int $status, array $headers): void
+    {
+        $this->status = $status;
+        $this->headers = $headers;
+    }
+
+    public function write(string $chunk): void
+    {
+        $this->chunks[] = $chunk;
+    }
+
+    public function body(): string
+    {
+        return implode('', $this->chunks);
+    }
 }
 
 final class FakeTransport implements Transport

@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"strings"
 )
 
 // InstrumentCompletion is one user-assigned "finished" assignment of a
@@ -71,15 +72,36 @@ func (s *Store) ClearInstrumentCompletionTx(ctx context.Context, tx *sql.Tx, pro
 }
 
 // ListInstrumentCompletions returns every finished assignment of a project —
-// the whole sparse set, which the record-status dashboard joins in memory per
-// (record, event, instrument) (REQ-API-074). Served by the primary key's
+// the whole sparse set, which the record export joins in memory per
+// (record, event, instrument) (REQ-API-134). Served by the primary key's
 // project_id prefix (REQ-DB-025).
 func (s *Store) ListInstrumentCompletions(ctx context.Context, projectID int64) ([]InstrumentCompletion, error) {
+	return s.listInstrumentCompletions(ctx, `project_id = ?`, projectID)
+}
+
+// ListInstrumentCompletionsOf returns the finished assignments of the named
+// records only — one chunk of the record-status dashboard's streamed read
+// (REQ-API-172). Served by the primary key's (project_id, record_id) prefix;
+// no records, no query.
+func (s *Store) ListInstrumentCompletionsOf(ctx context.Context, projectID int64, recordIDs []string) ([]InstrumentCompletion, error) {
+	if len(recordIDs) == 0 {
+		return nil, nil
+	}
+	args := make([]any, 0, len(recordIDs)+1)
+	args = append(args, projectID)
+	for _, id := range recordIDs {
+		args = append(args, id)
+	}
+	return s.listInstrumentCompletions(ctx,
+		`project_id = ? AND record_id IN (?`+strings.Repeat(", ?", len(recordIDs)-1)+`)`, args...)
+}
+
+func (s *Store) listInstrumentCompletions(ctx context.Context, where string, args ...any) ([]InstrumentCompletion, error) {
 	rows, err := s.DB.QueryContext(ctx,
 		`SELECT project_id, record_id, event_id, instrument_id, repeat_instance, completed_by, completed_at
-		 FROM instrument_completion WHERE project_id = ?
+		 FROM instrument_completion WHERE `+where+`
 		 ORDER BY record_id, event_id, instrument_id, repeat_instance`,
-		projectID)
+		args...)
 	if err != nil {
 		return nil, err
 	}

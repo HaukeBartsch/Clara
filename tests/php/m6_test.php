@@ -16,35 +16,8 @@ use Clara\Logger;
 use Clara\Messages;
 use Clara\ApiException;
 use Clara\Router;
-use Clara\StreamSink;
 
 const M6_CSRF = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-
-/** A sink that keeps what a streamed response sends, for assertions. */
-final class RecordingSink implements StreamSink
-{
-    public int $status = 0;
-    /** @var array<string, string> */
-    public array $headers = [];
-    /** @var list<string> */
-    public array $chunks = [];
-
-    public function begin(int $status, array $headers): void
-    {
-        $this->status = $status;
-        $this->headers = $headers;
-    }
-
-    public function write(string $chunk): void
-    {
-        $this->chunks[] = $chunk;
-    }
-
-    public function body(): string
-    {
-        return implode('', $this->chunks);
-    }
-}
 
 /**
  * Project 3 with two arms; `$arms` maps arm_num => [data level, export level], and `$grants`

@@ -32,7 +32,11 @@ final class Router
      * A row marked `'session' => false` runs without the PHP session — no cookie, no CSRF
      * token (the public survey page, §8.8).
      *
-     * @var list<array{method: string, pattern: string, controller: class-string, handler: string, guard: string, action?: string, region?: string, session?: bool}>
+     * A row marked `'streams' => true` also serves its region as newline-delimited JSON,
+     * written as it is produced, to a request preferring it — its controller's `stream()`
+     * beside `data()` (REQ-UI-074, the Record Status Dashboard's rows).
+     *
+     * @var list<array{method: string, pattern: string, controller: class-string, handler: string, guard: string, action?: string, region?: string, streams?: bool, session?: bool}>
      */
     private const ROUTES = [
         ['method' => 'GET', 'pattern' => '/login', 'controller' => Controllers\LoginController::class,
@@ -186,9 +190,10 @@ final class Router
         // M5 — the Record Status Dashboard (§6.3) and the record view (§8). Both need data access
         // ≥ read_only on some arm, which is a per-project permission the API discloses
         // (REQ-API-126): the guard needs a session, the controllers refuse anyone else. The
-        // dashboard's region is its rows; the record view's is the per-field history (§8.3).
+        // dashboard's region is its rows, streamed as they arrive (REQ-UI-074); the record
+        // view's is the per-field history (§8.3).
         ['method' => 'GET', 'pattern' => '/projects/{id}/record-status', 'controller' => Controllers\RecordStatusController::class,
-            'handler' => 'index', 'guard' => 'login', 'region' => 'records'],
+            'handler' => 'index', 'guard' => 'login', 'region' => 'records', 'streams' => true],
         ['method' => 'POST', 'pattern' => '/projects/{id}/record-status', 'controller' => Controllers\RecordStatusController::class,
             'handler' => 'create', 'guard' => 'login', 'action' => 'new_record'],
         ['method' => 'POST', 'pattern' => '/projects/{id}/record-status', 'controller' => Controllers\RecordStatusController::class,
@@ -448,8 +453,11 @@ final class Router
             if (($route['region'] ?? null) === null) {
                 return Response::notAcceptable();
             }
+            // A region that streams answers a request preferring NDJSON as it is produced
+            // (REQ-UI-074); every other data request receives the region as one JSON body.
+            $streams = ($route['streams'] ?? false) && $this->request->prefersNdjson();
 
-            return $this->invoke($route, 'data', $pathParams);
+            return $this->invoke($route, $streams ? 'stream' : 'data', $pathParams);
         }
 
         return $this->invoke($route, $route['handler'], $pathParams);

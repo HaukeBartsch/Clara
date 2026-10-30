@@ -418,8 +418,9 @@ Notes:
 
 | Access pattern | Index |
 |---|------|
-| all values of one project (exports, REQ-API-024; the record-status scan) | the `project_id` prefix of `idx_data_project_field` / `idx_data_project_event` |
-| all values of one record (data entry, history, record rename and delete) | SQLite: the (`project_id`, `record_id`) prefix of the `data` unique key; MariaDB: `idx_data_project_record` (migration 0019) — the unique key is a hash there and answers no prefix (§10) |
+| all values of one project (exports, REQ-API-024) | the `project_id` prefix of `idx_data_project_field` / `idx_data_project_event` |
+| all values of one record (data entry, history, record rename and delete), and of one chunk of records (`record_id IN (…)`: the dashboard's streamed reads, REQ-API-172) | SQLite: the (`project_id`, `record_id`) prefix of the `data` unique key; MariaDB: `idx_data_project_record` (migration 0019) — the unique key is a hash there and answers no prefix (§10) |
+| the `finished` assignments of one chunk of records (REQ-API-172) | the (`project_id`, `record_id`) prefix of the `instrument_completion` primary key |
 | one field's or one event's values (designer renames, deletes, breaking-change checks) | `idx_data_project_field`, `idx_data_project_event` |
 | upsert uniqueness (REQ-DB-016) | `data` unique key |
 | token → assignment (every API call) | `user_projects.token` unique |

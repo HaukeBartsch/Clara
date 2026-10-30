@@ -1119,6 +1119,8 @@ return [
     'records.open_instance' => '{record} — {instrument} #{instance} at {event}: {state}',
     'records.add_instance' => 'New instance #{instance} of {instrument} at {event} for {record}',
     'records.more_instances' => '{count} more instances',
+    'records.loading_count' => '{count} records loaded so far…',
+    'records.load_incomplete' => 'Loading stopped after {count} records, so this list is incomplete.',
     'records.repeating_column' => '{instrument} repeats here: one dot per instance, + adds one',
     'records.new.label' => 'New participant (record ID)',
     'records.new.arm' => 'Arm',

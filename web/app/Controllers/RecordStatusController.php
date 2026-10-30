@@ -8,7 +8,9 @@
 // and the rows are the route's `records` data region, bound by `record-status.js` from the
 // same URL (REQ-UI-032/044) into a virtually rendered Tabulator grid, so only the rows in view
 // are in the DOM. The region is the API's record-status read reshaped into cells; like the
-// read, it carries no field value (REQ-API-074).
+// read, it carries no field value (REQ-API-074). The page asks for it as newline-delimited
+// JSON, relayed line by line as the API streams it (REQ-UI-074), so the first rows show while
+// the rest of a large project is still being read.
 //
 // A repeating instrument (REQ-UI-055) shows one dot per instance in its cell, then "+" that
 // opens the next instance in the record view; the column header marks it. Which pairs repeat
@@ -32,6 +34,8 @@ use Clara\DataEntry;
 use Clara\Permissions;
 use Clara\Response;
 use Clara\Session;
+use Clara\SessionRevoked;
+use Clara\StreamSink;
 
 final class RecordStatusController extends DataEntryController
 {
@@ -116,7 +120,8 @@ final class RecordStatusController extends DataEntryController
             'styles' => ['/assets/vendor/tabulator/tabulator_bootstrap5.min.css'],
             'jsKeys' => ['js.loading', 'js.load_failed', 'js.retry', 'records.empty',
                 'records.state.no_data', 'records.state.some_data', 'records.state.finished',
-                'records.open_cell', 'records.open_instance', 'records.add_instance', 'records.more_instances'],
+                'records.open_cell', 'records.open_instance', 'records.add_instance', 'records.more_instances',
+                'records.loading_count', 'records.load_incomplete'],
         ], $mode);
     }
 
@@ -173,28 +178,132 @@ final class RecordStatusController extends DataEntryController
 
         $records = [];
         foreach ($this->api->get('/api/v1/projects/' . $projectId . '/record-status') as $row) {
-            if (!is_array($row) || !isset($row['record_id'])) {
-                continue;
+            $record = is_array($row) ? self::regionRow($row) : null;
+            if ($record !== null) {
+                $records[] = $record;
             }
-            $events = [];
-            $cells = [];
-            $instances = [];
-            foreach ((is_array($row['events'] ?? null) ? $row['events'] : []) as $event) {
-                $uen = (string) ($event['unique_event_name'] ?? '');
-                $events[] = $uen;
-                foreach ((is_array($event['instruments'] ?? null) ? $event['instruments'] : []) as $instrument) {
-                    $key = $uen . '|' . (string) ($instrument['name'] ?? '');
-                    $cells[$key] = self::knownState($instrument['state'] ?? '');
-                    if (is_array($instrument['instances'] ?? null)) {
-                        $instances[$key] = self::instanceStates($instrument['instances']);
-                    }
-                }
-            }
-            $records[] = ['record_id' => (string) $row['record_id'], 'events' => $events, 'cells' => (object) $cells,
-                'instances' => (object) $instances];
         }
 
         return Response::json(['records' => $records]);
+    }
+
+    /**
+     * The `records` region as newline-delimited JSON (REQ-UI-074, §6.3 Progressive load): the
+     * API's streamed record-status read (REQ-API-172) relayed line by line, each record
+     * reshaped into the row data() serves, then the API's end line. Authorized like data()
+     * before anything is sent, so a refusal is still the region's JSON error; PHP holds one
+     * chunk of the transfer and its unfinished line, never the read.
+     */
+    public function stream(): Response
+    {
+        $detail = $this->projectDetail();
+        $this->requireDataAccess($detail);
+        $path = '/api/v1/projects/' . $this->projectIdOf($detail) . '/record-status';
+
+        return Response::stream(function (StreamSink $sink) use ($path): void {
+            $tail = '';
+            try {
+                $this->api->stream($path, [],
+                    static function () use ($sink): void {
+                        // The session lock would block the user's other pages for as long as
+                        // the read runs (Session::close). The relay's own work grows with the
+                        // project, and the transfer has no overall limit, only the stalled-
+                        // transfer one of the transport (REQ-UI-074).
+                        Session::close();
+                        if (function_exists('set_time_limit')) {
+                            set_time_limit(0);
+                        }
+                        $sink->begin(200, [
+                            'Content-Type' => 'application/x-ndjson; charset=UTF-8',
+                            'Cache-Control' => 'no-store',
+                            // Asks nginx not to buffer the relayed lines (INSTALL.md §11).
+                            'X-Accel-Buffering' => 'no',
+                        ]);
+                    },
+                    static function (string $chunk) use ($sink, &$tail): void {
+                        // A chunk may end inside a line; that tail waits for the next chunk.
+                        $lines = explode("\n", $tail . $chunk);
+                        $tail = (string) array_pop($lines);
+                        $out = '';
+                        foreach ($lines as $line) {
+                            $out .= self::relayLine($line);
+                        }
+                        if ($out !== '') {
+                            $sink->write($out);
+                        }
+                    },
+                    'application/x-ndjson'
+                );
+            } catch (ApiException $e) {
+                // Refused before the first byte. The producer runs after the router has
+                // returned, so it answers the region's failure itself (§3.4).
+                self::fail($sink, Response::apiError($e->code(), $this->apiFailureMessage($e), $e->status(),
+                    $this->request->ref()));
+            } catch (SessionRevoked) {
+                // As the router answers a revocation surfaced mid-request (REQ-AUTH-074): the
+                // session is over, and a data request learns it as a refusal.
+                Session::flash('warning', $this->i18n->t('session.ended.revoked'));
+                self::fail($sink, Response::apiError('forbidden', $this->i18n->t('error.forbidden'), 403));
+            }
+        });
+    }
+
+    /** Sends an ordinary failure response through a stream's sink, before its first byte. */
+    private static function fail(StreamSink $sink, Response $error): void
+    {
+        $sink->begin($error->status(), $error->headers());
+        $sink->write($error->body());
+    }
+
+    /**
+     * One line of the API's streamed read as the region relays it: a record as its region row,
+     * the end line with the API's count. A line that does not decode is dropped — the count
+     * then no longer matches what arrived, and the client reports a failed load rather than a
+     * complete list (REQ-UI-074).
+     */
+    private static function relayLine(string $line): string
+    {
+        $item = json_decode($line, true);
+        if (!is_array($item)) {
+            return '';
+        }
+        $out = ($item['end'] ?? false) === true
+            ? ['end' => true, 'records' => is_int($item['records'] ?? null) ? $item['records'] : -1]
+            : self::regionRow($item);
+
+        return $out === null ? '' : json_encode($out, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n";
+    }
+
+    /**
+     * One record of the read as the region's row: the events the API reported for it, the
+     * cells holding a state other than no data keyed `<unique_event_name>|<instrument>`, and
+     * a repeating cell's instances; null for an entry without a record id.
+     *
+     * @param array<mixed> $row
+     * @return array{record_id: string, events: list<string>, cells: object, instances: object}|null
+     */
+    private static function regionRow(array $row): ?array
+    {
+        if (!isset($row['record_id'])) {
+            return null;
+        }
+        $events = [];
+        $cells = [];
+        $instances = [];
+        foreach ((is_array($row['events'] ?? null) ? $row['events'] : []) as $event) {
+            $uen = (string) ($event['unique_event_name'] ?? '');
+            $events[] = $uen;
+            foreach ((is_array($event['instruments'] ?? null) ? $event['instruments'] : []) as $instrument) {
+                $key = $uen . '|' . (string) ($instrument['name'] ?? '');
+                $cells[$key] = self::knownState($instrument['state'] ?? '');
+                if (is_array($instrument['instances'] ?? null)) {
+                    $instances[$key] = self::instanceStates($instrument['instances']);
+                }
+            }
+        }
+
+        return ['record_id' => (string) $row['record_id'], 'events' => $events, 'cells' => (object) $cells,
+            'instances' => (object) $instances];
     }
 
     /** A state the dashboard knows, or no_data. */

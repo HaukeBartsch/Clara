@@ -18,6 +18,8 @@
 # SERVICE_TOKEN / ADMIN_EMAIL / ADMIN_PASSWORD) and pass --no-server:
 #
 #   BASE_URL=http://127.0.0.1:8080 ./run_stress.sh --no-server
+#
+# STRESS_SCRIPT picks another client for the same server (run_incoming.sh sets it).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -78,7 +80,7 @@ else
   curl -fsS "$BASE_URL/healthz" >/dev/null  # fail loudly if it never came up
 fi
 
-python3 "$HERE/stress_api.py" "$@"
+python3 "$HERE/${STRESS_SCRIPT:-stress_api.py}" "$@"
 
 # Report the size the database grew to (only meaningful for the throwaway run).
 if [[ -n "$SERVER_PID" ]]; then

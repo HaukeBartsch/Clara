@@ -55,18 +55,26 @@ type completenessRow struct {
 // branching shows hold a value, per cell and per record (REQ-API-171): the
 // input of the dashboard's 3×3 dots. It is a read of its own, so record-status
 // keeps its cost (REQ-API-074). Counts only — no value leaves this handler —
-// and, like record-status, no audit row (ASM-AUD-2).
+// and, like record-status, no audit row (ASM-AUD-2). The design is read and
+// compiled once; the counts stream chunk by chunk (REQ-API-172).
 func (h *Handler) recordCompleteness(w http.ResponseWriter, r *http.Request) {
 	sc, ok := h.loadStatusScope(w, r)
 	if !ok {
 		return
 	}
-	out, err := h.completenessOf(r.Context(), sc)
+	fields, err := h.Store.ListFields(r.Context(), sc.projectID)
 	if err != nil {
 		errInternal(w)
 		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	dict := newComplDict(fields, sc.instruments)
+	nameOf := make(map[int64]string, len(sc.instruments))
+	for _, in := range sc.instruments {
+		nameOf[in.ID] = in.Name
+	}
+	streamStatus(w, r, sc.visible, func(ctx context.Context, chunk []db.RecordEntity) ([]completenessRow, error) {
+		return h.completenessOf(ctx, sc, dict, nameOf, chunk)
+	})
 }
 
 // countedTypes are the field types a person fills in on the form — the web
@@ -92,8 +100,8 @@ type complDict struct {
 	// which names are boxes — an unchecked one reads 0 (REQ-VAL-044).
 	choices map[string]string
 	boxes   map[string]bool
-	// refs names, sorted, every value column some expression reads.
-	refs []string
+	// refs names every value column some expression reads.
+	refs map[string]bool
 }
 
 // complInstrument is one instrument: its own branching and its counted
@@ -129,6 +137,7 @@ func newComplDict(fields []db.Field, instruments []db.Instrument) *complDict {
 		owner:       make(map[string]int64, len(fields)),
 		choices:     make(map[string]string, len(fields)),
 		boxes:       map[string]bool{},
+		refs:        map[string]bool{},
 	}
 	// Every value name first: whether a reference names the field's own
 	// instrument is known only once all of them are.
@@ -154,7 +163,6 @@ func newComplDict(fields []db.Field, instruments []db.Instrument) *complDict {
 		}
 	}
 
-	refs := map[string]bool{}
 	compile := func(expr string) *validate.LogicProgram {
 		if strings.TrimSpace(expr) == "" {
 			return nil
@@ -164,7 +172,7 @@ func newComplDict(fields []db.Field, instruments []db.Instrument) *complDict {
 			return nil // shown, as the form shows it: never hide by accident
 		}
 		for _, ref := range prog.Refs() {
-			refs[ref.Field] = true
+			d.refs[ref.Field] = true
 		}
 		return prog
 	}
@@ -194,16 +202,11 @@ func newComplDict(fields []db.Field, instruments []db.Instrument) *complDict {
 			}
 		}
 	}
-	d.refs = make([]string, 0, len(refs))
-	for name := range refs {
-		d.refs = append(d.refs, name)
-	}
-	slices.Sort(d.refs)
 	return d
 }
 
-// complValueKey names one referenced value: record (its index among the
-// visible rows), instance, event and value column.
+// complValueKey names one referenced value: record (its index in the chunk),
+// instance, event and value column.
 type complValueKey struct {
 	record   int32
 	instance int32
@@ -211,13 +214,13 @@ type complValueKey struct {
 	field    string
 }
 
-// recordEvent is one (record, event) of the visible rows.
+// recordEvent is one (record, event) of the chunk's rows.
 type recordEvent struct {
 	record int32
 	event  int64
 }
 
-// completeness holds one request's reads: the counted fields each cell holds
+// completeness holds one chunk's reads: the counted fields each cell holds
 // (a bitset over the instrument's counted fields), the further instances
 // holding one, the (record, event) pairs holding one, and the values branching
 // reads. No value leaves it (REQ-API-171).
@@ -229,62 +232,56 @@ type completeness struct {
 	values   map[complValueKey]string
 }
 
-// completenessOf computes the count for every visible record. Two reads: the
-// positions of the project's non-empty values — record-status's scan, kept
-// per field here — and, narrowly, the values of the fields some expression
-// references (db.Store.ForEachValueOfFields). Expressions compile once per
-// request and are evaluated per (record, event holding a value), per instance
-// only where they read their own repeating instrument, so the work follows
-// the data rather than the mapped pairs (DEV-API-26).
-func (h *Handler) completenessOf(ctx context.Context, sc *statusScope) ([]completenessRow, error) {
-	fields, err := h.Store.ListFields(ctx, sc.projectID)
-	if err != nil {
-		return nil, err
-	}
+// completenessOf computes the count for one chunk of visible records
+// (REQ-API-172). One read of the chunk's non-empty values gives both what the
+// count needs: the positions — record-status's read, kept per field here — and
+// the values of the fields some expression references. Expressions compile
+// once per request and are evaluated per (record, event holding a value), per
+// instance only where they read their own repeating instrument, so the work
+// follows the data rather than the mapped pairs (DEV-API-26).
+func (h *Handler) completenessOf(ctx context.Context, sc *statusScope, dict *complDict,
+	nameOf map[int64]string, chunk []db.RecordEntity) ([]completenessRow, error) {
 	c := &completeness{
-		dict:     newComplDict(fields, sc.instruments),
+		dict:     dict,
 		filled:   map[statusCell][]uint64{},
 		further:  map[statusPair][]int32{},
 		withData: map[recordEvent]bool{},
 		values:   map[complValueKey]string{},
 	}
-	recordAt := make(map[string]int32, len(sc.visible))
-	for i, re := range sc.visible {
-		recordAt[re.RecordID] = int32(i)
-	}
-	nameOf := make(map[int64]string, len(sc.instruments))
-	for _, in := range sc.instruments {
-		nameOf[in.ID] = in.Name
-	}
-	if err := c.readPositions(ctx, h.Store, sc, recordAt, nameOf); err != nil {
+	if err := c.read(ctx, h.Store, sc, chunk, nameOf); err != nil {
 		return nil, err
 	}
-	if err := c.readOperands(ctx, h.Store, sc, recordAt, nameOf); err != nil {
-		return nil, err
-	}
-	return c.rows(sc), nil
+	return c.rows(sc, chunk), nil
 }
 
-// readPositions marks which counted fields hold a value in each shown cell.
-// A value counts where record-status would show it: at a mapped pair, its
-// first instance, or a further instance of a pair designated repeating — one
-// kept from a time the pair repeated stays hidden (REQ-DB-048). A value of a
-// field the count leaves out — the identifier, a calculated or @READONLY
-// field — marks nothing, so it alone never makes an event count (REQ-API-171).
-func (c *completeness) readPositions(ctx context.Context, store *db.Store, sc *statusScope,
-	recordAt map[string]int32, nameOf map[int64]string) error {
+// read marks which counted fields hold a value in each shown cell, and keeps
+// the values branching reads. A value counts where record-status would show
+// it: at a mapped pair, its first instance, or a further instance of a pair
+// designated repeating — one kept from a time the pair repeated stays hidden
+// (REQ-DB-048). A value of a field the count leaves out — the identifier, a
+// calculated or @READONLY field — marks nothing, so it alone never makes an
+// event count (REQ-API-171). An operand is kept as the caller may read it: a
+// value at an (event, instrument) pair whose data access the caller does not
+// hold at read_only or above is left out, so it reads as empty and the count
+// discloses nothing of it (REQ-API-171).
+func (c *completeness) read(ctx context.Context, store *db.Store, sc *statusScope,
+	chunk []db.RecordEntity, nameOf map[int64]string) error {
+	recordAt := recordIndexOf(chunk)
+	readable := map[[2]int64]bool{} // (event id, instrument id) -> may read, memoized
+	in, args := inRecords(chunk)
 	rows, err := store.DB.QueryContext(ctx,
-		`SELECT record_id, unique_event_name, field_name, repeating_instrument, repeating_instance_number
-		 FROM data WHERE project_id = ? AND value <> ''`, sc.projectID)
+		`SELECT record_id, unique_event_name, field_name, repeating_instrument, repeating_instance_number, value
+		 FROM data WHERE project_id = ? AND value <> '' AND `+in, append([]any{sc.projectID}, args...)...)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
-	// RawBytes, as in statusMarksOf: the lookups read the bytes in place.
-	var record, event, field, repeating sql.RawBytes
+	// RawBytes, as in statusMarksOf: the lookups read the bytes in place, and
+	// only an operand's value becomes a string of its own.
+	var record, event, field, repeating, value sql.RawBytes
 	var n int
 	for rows.Next() {
-		if err := rows.Scan(&record, &event, &field, &repeating, &n); err != nil {
+		if err := rows.Scan(&record, &event, &field, &repeating, &n, &value); err != nil {
 			return err
 		}
 		at, ok := recordAt[string(record)]
@@ -295,18 +292,34 @@ func (c *completeness) readPositions(ctx context.Context, store *db.Store, sc *s
 		if !ok {
 			continue
 		}
-		sl, ok := c.dict.slot[string(field)]
-		if !ok {
+		sl, counted := c.dict.slot[string(field)]
+		operand := c.dict.refs[string(field)]
+		if !counted && !operand {
 			continue
 		}
 		// The instance as db.DataValue.Instance reads it; a further instance
-		// counts only under its own instrument's name (statusMarksOf).
+		// belongs to an instrument only under its name (statusMarksOf).
 		instance := 1
 		if len(repeating) > 0 && n > 1 {
-			if string(repeating) != nameOf[sl.instrument] {
-				continue
-			}
 			instance = n
+		}
+		instanceOf := func(instrument int64) bool {
+			return instance == 1 || string(repeating) == nameOf[instrument]
+		}
+		if owner := c.dict.owner[string(field)]; operand && instanceOf(owner) {
+			pair := [2]int64{ev.id, owner}
+			may, seen := readable[pair]
+			if !seen {
+				may = sc.user.IsAdmin ||
+					sc.levels.PairOrArmDefault(ev.id, owner, ev.armNum).DataRankOf() >= LvlReadOnly
+				readable[pair] = may
+			}
+			if may {
+				c.values[complValueKey{record: at, instance: int32(instance), event: string(event), field: string(field)}] = string(value)
+			}
+		}
+		if !counted || !instanceOf(sl.instrument) {
+			continue
 		}
 		rep, mapped := sc.pairs[[2]int64{ev.id, sl.instrument}]
 		if !mapped || (instance > 1 && !rep) {
@@ -326,41 +339,6 @@ func (c *completeness) readPositions(ctx context.Context, store *db.Store, sc *s
 		c.withData[recordEvent{record: at, event: ev.id}] = true
 	}
 	return rows.Err()
-}
-
-// readOperands loads the values branching reads, as the caller may read them:
-// a value at an (event, instrument) pair whose data access the caller does not
-// hold at read_only or above is left out, so it reads as empty and the count
-// discloses nothing of it (REQ-API-171).
-func (c *completeness) readOperands(ctx context.Context, store *db.Store, sc *statusScope,
-	recordAt map[string]int32, nameOf map[int64]string) error {
-	readable := map[[2]int64]bool{} // (event id, instrument id) -> may read, memoized
-	return store.ForEachValueOfFields(ctx, sc.projectID, c.dict.refs, func(dv db.DataValue) error {
-		at, ok := recordAt[dv.RecordID]
-		if !ok {
-			return nil
-		}
-		ev, ok := sc.events[dv.UniqueEventName]
-		if !ok {
-			return nil
-		}
-		instrument := c.dict.owner[dv.FieldName]
-		instance := dv.Instance()
-		if instance > 1 && dv.RepeatingInstrument != nameOf[instrument] {
-			return nil // not this instrument's instance
-		}
-		pair := [2]int64{ev.id, instrument}
-		may, seen := readable[pair]
-		if !seen {
-			may = sc.user.IsAdmin ||
-				sc.levels.PairOrArmDefault(ev.id, instrument, ev.armNum).DataRankOf() >= LvlReadOnly
-			readable[pair] = may
-		}
-		if may {
-			c.values[complValueKey{record: at, instance: int32(instance), event: dv.UniqueEventName, field: dv.FieldName}] = dv.Value
-		}
-		return nil
-	})
 }
 
 // env is the evaluator over one record's values as the form at (event,
@@ -420,14 +398,14 @@ func tally(shown []bool, bits []uint64) (filled, visible int) {
 	return filled, visible
 }
 
-// rows assembles the response. Per record, only the events of the layout
+// rows assembles the chunk's rows, in its order. Per record, only the events of the layout
 // where it holds a counted value are listed and summed (REQ-API-171): there
 // every mapped instrument counts — hidden ones excepted — its first instance,
 // and each further instance of a repeating pair that holds a value; an
 // instrument without values adds its visible fields with none filled.
-func (c *completeness) rows(sc *statusScope) []completenessRow {
-	out := make([]completenessRow, 0, len(sc.visible))
-	for i, re := range sc.visible {
+func (c *completeness) rows(sc *statusScope, chunk []db.RecordEntity) []completenessRow {
+	out := make([]completenessRow, 0, len(chunk))
+	for i, re := range chunk {
 		at := int32(i)
 		row := completenessRow{RecordID: re.RecordID, Events: []completenessEvent{}}
 		for _, ev := range sc.layout {

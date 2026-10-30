@@ -284,10 +284,15 @@ final class Request
      * A bare wildcard Accept — what a browser sends and what curl sends when
      * told nothing — is deliberately NOT a data request: only an explicit
      * `application/json` outranking `text/html` is. That is exactly the signal
-     * the shared runtime in assets/app.js puts on the wire.
+     * the shared runtime in assets/app.js puts on the wire. A request preferring
+     * newline-delimited JSON (prefersNdjson()) is a data request as well, so its
+     * refusals take the data shape too.
      */
     public function wantsJson(): bool
     {
+        if ($this->prefersNdjson()) {
+            return true;
+        }
         $accept = $this->header('accept');
         if ($accept === null) {
             return false;
@@ -308,6 +313,30 @@ final class Request
         }
 
         return $jsonQuality > 0.0;
+    }
+
+    /**
+     * Whether this request prefers the data region as newline-delimited JSON, written as it
+     * is produced (REQ-UI-044, REQ-UI-074): `application/x-ndjson` listed by name — a wildcard
+     * never asks for it — with a quality above zero that neither `application/json` nor
+     * `text/html` outranks. The router serves it where the region streams.
+     */
+    public function prefersNdjson(): bool
+    {
+        $accept = $this->header('accept');
+        if ($accept === null) {
+            return false;
+        }
+        $named = array_filter(explode(',', $accept), static fn (string $range): bool =>
+            strtolower(trim(explode(';', $range, 2)[0])) === 'application/x-ndjson');
+        if ($named === []) {
+            return false;
+        }
+        [$ndjson] = self::quality(implode(',', $named), 'application/x-ndjson');
+        [$json] = self::quality($accept, 'application/json');
+        [$html] = self::quality($accept, 'text/html');
+
+        return $ndjson > 0.0 && $ndjson >= $json && $ndjson >= $html;
     }
 
     /**

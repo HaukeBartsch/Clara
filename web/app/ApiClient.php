@@ -100,7 +100,8 @@ final class ApiClient
 
     /**
      * A GET whose response body is passed to `$onChunk` as it arrives rather than collected
-     * — the project export (REQ-TECH-011, `User_Interface_Design.md` §6.4). `$onStart` runs
+     * — the project export (REQ-TECH-011, `User_Interface_Design.md` §6.4), the dashboard's
+     * newline-delimited read (REQ-UI-074, asked for with `$accept`). `$onStart` runs
      * once a 2xx status is known, before the first body byte, and receives the response
      * headers (names lower-cased); nothing has been handed on before it returns.
      *
@@ -113,7 +114,7 @@ final class ApiClient
      * @param callable(int, array<string, string>): void $onStart
      * @param callable(string): void $onChunk
      */
-    public function stream(string $path, array $query, callable $onStart, callable $onChunk): void
+    public function stream(string $path, array $query, callable $onStart, callable $onChunk, string $accept = '*/*'): void
     {
         $url = $this->config->apiBaseUrl . $path;
         $encoded = self::queryString($query);
@@ -121,7 +122,7 @@ final class ApiClient
             $url .= '?' . $encoded;
         }
 
-        $response = $this->transport->stream('GET', $url, $this->boundaryHeaders('*/*'),
+        $response = $this->transport->stream('GET', $url, $this->boundaryHeaders($accept),
             static function (int $status, array $headers) use ($onStart): bool {
                 if ($status < 200 || $status >= 300) {
                     return false; // keep the error body to read it below

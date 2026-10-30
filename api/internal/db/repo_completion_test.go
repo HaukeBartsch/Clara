@@ -182,6 +182,30 @@ func TestClearInstrumentCompletionTx(t *testing.T) {
 	}
 }
 
+// TestListInstrumentCompletionsOf: one chunk of the dashboard's streamed read
+// (REQ-API-172) sees the named records' assignments and no other record's.
+func TestListInstrumentCompletionsOf(t *testing.T) {
+	s := migrateTestStore(t)
+	ctx := context.Background()
+	projectID, userID, eventID, instrumentID, recordID := seedCompletionCell(t, s, ctx)
+	if err := s.CreateRecordEntity(ctx, &RecordEntity{ProjectID: projectID, RecordID: "R2"}); err != nil {
+		t.Fatalf("CreateRecordEntity: %v", err)
+	}
+	setCommitted(t, s, ctx, projectID, recordID, eventID, instrumentID, userID)
+	setCommitted(t, s, ctx, projectID, "R2", eventID, instrumentID, userID)
+
+	list, err := s.ListInstrumentCompletionsOf(ctx, projectID, []string{"R2", "R9"})
+	if err != nil {
+		t.Fatalf("ListInstrumentCompletionsOf: %v", err)
+	}
+	if len(list) != 1 || list[0].RecordID != "R2" || list[0].EventID != eventID || list[0].InstrumentID != instrumentID {
+		t.Fatalf("assignments of R2 = %+v, want R2's one", list)
+	}
+	if list, err := s.ListInstrumentCompletionsOf(ctx, projectID, nil); err != nil || len(list) != 0 {
+		t.Fatalf("no records: %+v, err %v", list, err)
+	}
+}
+
 // TestInstrumentCompletionCascades covers the REQ-DB-036 cascade: dropping the
 // event, the instrument or the whole project takes the assignment with it, so
 // no row can outlive the cell it annotates.

@@ -74,22 +74,31 @@ type recordStatusRow struct {
 // mapped instruments however little data exists. Requires data access ≥
 // read_only + project visibility; events of arms without read access are
 // omitted (GD-2). A record-status read is not a record view — no audit row is
-// written (§4.13, ASM-AUD-2).
+// written (§4.13, ASM-AUD-2). It streams one chunk of records at a time
+// (REQ-API-172).
 func (h *Handler) recordStatus(w http.ResponseWriter, r *http.Request) {
 	sc, ok := h.loadStatusScope(w, r)
 	if !ok {
 		return
 	}
-	ctx, projectID, visible, instruments, layout := r.Context(), sc.projectID, sc.visible, sc.instruments, sc.layout
-
-	marks, err := h.statusMarksOf(ctx, projectID, visible, instruments)
+	owners, err := h.statusOwnersOf(r.Context(), sc)
 	if err != nil {
 		errInternal(w)
 		return
 	}
+	streamStatus(w, r, sc.visible, func(ctx context.Context, chunk []db.RecordEntity) ([]recordStatusRow, error) {
+		marks, err := h.statusMarksOf(ctx, sc, owners, chunk)
+		if err != nil {
+			return nil, err
+		}
+		return statusRowsOf(sc.layout, chunk, marks), nil
+	})
+}
 
-	out := make([]recordStatusRow, 0, len(visible))
-	for i, re := range visible {
+// statusRowsOf lays one chunk's marks out as its rows, in the chunk's order.
+func statusRowsOf(layout []statusEvent, chunk []db.RecordEntity, marks *statusMarks) []recordStatusRow {
+	out := make([]recordStatusRow, 0, len(chunk))
+	for i, re := range chunk {
 		row := recordStatusRow{RecordID: re.RecordID, Events: make([]recordStatusEvent, 0, len(layout))}
 		for _, ev := range layout {
 			instrs := []recordStatusInstrument{}
@@ -127,7 +136,7 @@ func (h *Handler) recordStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, row)
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out
 }
 
 // statusScope is what the dashboard's two reads share (§4.13): the project,
@@ -286,8 +295,8 @@ type statusColumn struct {
 }
 
 // statusCell names one (record, event, instrument, instance) by the record's
-// index among the visible rows and the event and instrument ids, so the scans
-// key their marks without keeping a string per stored value.
+// index in its chunk and the event and instrument ids, so the reads key their
+// marks without keeping a string per stored value.
 type statusCell struct {
 	record     int32
 	instance   int32
@@ -344,48 +353,29 @@ func (m *statusMarks) state(c statusCell, survey bool) string {
 	return StateNoData
 }
 
-// statusMarksOf reads the marks of the visible records. The derived half: a
-// (record, event, instrument, instance) holds some data when any stored value
-// of one of the instrument's fields is non-empty there ("any field has a value
-// vs. none") — the same test the export's `<instrument>_complete` column
-// applies (REQ-API-134). It is one scan of the project's non-empty values, with
-// no join and no DISTINCT for the database to sort: a value reaches its
-// instrument through its field in memory — a checked box through its choice
-// column, which names no fields row (REQ-DB-042) and never shares a name with
-// one, the designer refuses that — and a value of a record the caller does not
-// see, at an event or under a name the design no longer has, is skipped as it
-// streams past. Values are aggregated away here; none leaves this function
-// (REQ-API-074). The stored half is the sparse set of finished assignments
-// (REQ-DB-036).
-func (h *Handler) statusMarksOf(ctx context.Context, projectID int64, visible []db.RecordEntity,
-	instruments []db.Instrument) (*statusMarks, error) {
-	recordAt := make(map[string]int32, len(visible))
-	for i, re := range visible {
-		recordAt[re.RecordID] = int32(i)
-	}
-	events, err := h.Store.ListEvents(ctx, projectID)
-	if err != nil {
-		return nil, err
-	}
-	eventID := make(map[string]int64, len(events))
-	for _, ev := range events {
-		eventID[ev.UniqueEventName] = ev.ID
-	}
-	nameOf := make(map[int64]string, len(instruments))
-	for _, in := range instruments {
+// statusOwner is the instrument a stored value name belongs to: its id, and
+// the name a further instance of it is stored under (REQ-DB-048).
+type statusOwner struct {
+	id   int64
+	name string
+}
+
+// statusOwnersOf maps every stored value name of the design to its
+// instrument — a checked box through its choice column, which names no fields
+// row (REQ-DB-042) and never shares a name with one, the designer refuses
+// that. Read once per request; every chunk shares it.
+func (h *Handler) statusOwnersOf(ctx context.Context, sc *statusScope) (map[string]statusOwner, error) {
+	nameOf := make(map[int64]string, len(sc.instruments))
+	for _, in := range sc.instruments {
 		nameOf[in.ID] = in.Name
 	}
-	fields, err := h.Store.ListFields(ctx, projectID)
+	fields, err := h.Store.ListFields(ctx, sc.projectID)
 	if err != nil {
 		return nil, err
 	}
-	type owner struct {
-		id   int64
-		name string
-	}
-	ownerOf := make(map[string]owner, len(fields)) // stored value name -> instrument
+	ownerOf := make(map[string]statusOwner, len(fields))
 	for _, f := range fields {
-		o := owner{id: f.InstrumentID, name: nameOf[f.InstrumentID]}
+		o := statusOwner{id: f.InstrumentID, name: nameOf[f.InstrumentID]}
 		ownerOf[f.FieldName] = o
 		if f.FieldType == "checkbox" {
 			for _, code := range validate.ChoiceCodes(f.Choices.String) {
@@ -393,11 +383,28 @@ func (h *Handler) statusMarksOf(ctx context.Context, projectID int64, visible []
 			}
 		}
 	}
+	return ownerOf, nil
+}
 
+// statusMarksOf reads the marks of one chunk of visible records, keyed by
+// each record's index in the chunk (REQ-API-172). The derived half: a
+// (record, event, instrument, instance) holds some data when any stored value
+// of one of the instrument's fields is non-empty there ("any field has a value
+// vs. none") — the same test the export's `<instrument>_complete` column
+// applies (REQ-API-134). It is one read of the chunk's non-empty values, with
+// no join and no DISTINCT for the database to sort: a value reaches its
+// instrument through its field in memory (owners), and a value at an event or
+// under a name the design no longer has is skipped as it streams past. Values
+// are aggregated away here; none leaves this function (REQ-API-074). The
+// stored half is the chunk's finished assignments (REQ-DB-036).
+func (h *Handler) statusMarksOf(ctx context.Context, sc *statusScope, owners map[string]statusOwner,
+	chunk []db.RecordEntity) (*statusMarks, error) {
+	recordAt := recordIndexOf(chunk)
 	m := &statusMarks{cells: map[statusCell]uint8{}, further: map[statusPair][]int32{}}
+	in, args := inRecords(chunk)
 	rows, err := h.Store.DB.QueryContext(ctx,
 		`SELECT record_id, unique_event_name, field_name, repeating_instrument, repeating_instance_number
-		 FROM data WHERE project_id = ? AND value <> ''`, projectID)
+		 FROM data WHERE project_id = ? AND value <> '' AND `+in, append([]any{sc.projectID}, args...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -414,11 +421,11 @@ func (h *Handler) statusMarksOf(ctx context.Context, projectID int64, visible []
 		if !ok {
 			continue
 		}
-		ev, ok := eventID[string(event)]
+		ev, ok := sc.events[string(event)]
 		if !ok {
 			continue
 		}
-		o, ok := ownerOf[string(field)]
+		o, ok := owners[string(field)]
 		if !ok {
 			continue
 		}
@@ -433,13 +440,13 @@ func (h *Handler) statusMarksOf(ctx context.Context, projectID int64, visible []
 			}
 			instance = n
 		}
-		m.mark(statusCell{record: at, instance: int32(instance), event: ev, instrument: o.id}, markData)
+		m.mark(statusCell{record: at, instance: int32(instance), event: ev.id, instrument: o.id}, markData)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
-	completions, err := h.Store.ListInstrumentCompletions(ctx, projectID)
+	completions, err := h.Store.ListInstrumentCompletionsOf(ctx, sc.projectID, recordIDsOf(chunk))
 	if err != nil {
 		return nil, err
 	}

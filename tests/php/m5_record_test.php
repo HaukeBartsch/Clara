@@ -147,6 +147,58 @@ function m5_queue(string $level = 'view_edit', string $mode = 'development', boo
     api_route('/api/v1/projects/3', m5_detail($level, $projectAdmin, $rights, $naming));
 }
 
+/** The API's streamed record-status read (REQ-API-172): a line per row, then the end line. */
+function m5_ndjson(array $rows, ?int $end): string
+{
+    $lines = array_map(static fn (array $row): string => json_encode($row) . "\n", $rows);
+
+    return implode('', $lines) . ($end === null ? '' : json_encode(['end' => true, 'records' => $end]) . "\n");
+}
+
+/**
+ * Answers the dashboard's read with `$body`. Set in place, so the fragment keeps its place ahead
+ * of the sidebar's `/api/v1/projects` prefix in the fake transport's match order.
+ */
+function m5_status_stream(string $body, int $status = 200): void
+{
+    $GLOBALS['api_routes']['/api/v1/projects/3/record-status'] = [['status' => $status, 'body' => $body,
+        'headers' => ['Content-Type' => $status === 200 ? 'application/x-ndjson' : 'application/json']]];
+}
+
+/** What record-status.js sends: NDJSON first, the region's one JSON body accepted too. */
+function ndjson_headers(): array
+{
+    return ['accept' => 'application/x-ndjson, application/json;q=0.9'];
+}
+
+/** Two records of the read: a plain cell, and a repeating one with its instances out of order. */
+function m5_stream_rows(): array
+{
+    return [
+        ['record_id' => '8DISC001', 'events' => [
+            ['unique_event_name' => 'baseline_arm_1', 'instruments' => [['name' => 'intake', 'state' => 'some_data']]],
+        ]],
+        ['record_id' => '8DISC002', 'events' => [
+            ['unique_event_name' => 'baseline_arm_1', 'instruments' => [['name' => 'intake', 'state' => 'finished',
+                'instances' => [['instance' => 2, 'state' => 'some_data'], ['instance' => 1, 'state' => 'finished']]]]],
+        ]],
+    ];
+}
+
+/** The two rows of m5_stream_rows() as the region relays them, a line each. */
+const M5_STREAM_LINES = '{"record_id":"8DISC001","events":["baseline_arm_1"],"cells":{"baseline_arm_1|intake":"some_data"},"instances":{}}' . "\n"
+    . '{"record_id":"8DISC002","events":["baseline_arm_1"],"cells":{"baseline_arm_1|intake":"finished"},'
+    . '"instances":{"baseline_arm_1|intake":[[1,"finished"],[2,"some_data"]]}}' . "\n";
+
+function m5_stream(\Clara\Response $response): RecordingSink
+{
+    assert_true($response->isStream(), 'the region streams');
+    $sink = new RecordingSink();
+    $response->sendTo($sink);
+
+    return $sink;
+}
+
 function m5_get(string $path, array $query = [], ?array $headers = null): \Clara\Response
 {
     return router_for(http_request('GET', $path, $headers ?? browser_headers(), [], $query))->dispatch();
@@ -399,6 +451,90 @@ describe('Record Status Dashboard (§6.3, REQ-UI-019)', function (): void {
                 'cells' => ['baseline_arm_1|intake' => 'some_data'], 'instances' => []],
             ['record_id' => '8DISC002', 'events' => ['baseline_arm_1'], 'cells' => [], 'instances' => []],
         ], $payload['records']);
+    });
+
+    it('streams the rows as NDJSON, each line as soon as it is complete (REQ-UI-074)', function (): void {
+        sign_in();
+        m5_queue();
+        m5_status_stream(m5_ndjson(m5_stream_rows(), 2));
+
+        $sink = m5_stream(m5_get('/projects/3/record-status', [], ndjson_headers()));
+
+        assert_same(200, $sink->status);
+        assert_same('application/x-ndjson; charset=UTF-8', $sink->headers['Content-Type']);
+        assert_same('no', $sink->headers['X-Accel-Buffering'], 'nginx must not buffer the relay (INSTALL.md §11)');
+        assert_same('no-store', $sink->headers['Cache-Control']);
+        assert_same(M5_STREAM_LINES . '{"end":true,"records":2}' . "\n", $sink->body());
+        // The fake API hands its body on in pieces that end inside lines: the relay writes as
+        // lines complete, whole lines only, not once at the end.
+        assert_true(count($sink->chunks) > 2, 'written in more than one piece');
+        foreach ($sink->chunks as $chunk) {
+            assert_true(str_ends_with($chunk, "\n"), 'every write is whole lines');
+        }
+        // The API was asked for its line-per-record read (REQ-API-172).
+        assert_true(in_array('Accept: application/x-ndjson', api_headers_for('/record-status'), true));
+    });
+
+    it('streams to a request that accepts NDJSON alone', function (): void {
+        sign_in();
+        m5_queue();
+        m5_status_stream(m5_ndjson(m5_stream_rows(), 2));
+
+        $sink = m5_stream(m5_get('/projects/3/record-status', [], ['accept' => 'application/x-ndjson']));
+
+        assert_same(M5_STREAM_LINES . '{"end":true,"records":2}' . "\n", $sink->body());
+    });
+
+    it('passes a cut stream on without an end line, so it never reads as the whole list', function (): void {
+        sign_in();
+        m5_queue();
+        // The API broke off inside its third line.
+        m5_status_stream(m5_ndjson(m5_stream_rows(), null) . '{"record_id":"8DISC0');
+
+        $sink = m5_stream(m5_get('/projects/3/record-status', [], ndjson_headers()));
+
+        assert_same(200, $sink->status);
+        assert_same(M5_STREAM_LINES, $sink->body(), 'the rows that arrived, no partial line, no end line');
+    });
+
+    it('drops a line it cannot read and passes the API count on, so the client sees the gap', function (): void {
+        sign_in();
+        m5_queue();
+        m5_status_stream(json_encode(m5_stream_rows()[0]) . "\n" . "{not json\n" . '{"end":true,"records":2}' . "\n");
+
+        $sink = m5_stream(m5_get('/projects/3/record-status', [], ndjson_headers()));
+
+        $lines = explode("\n", rtrim($sink->body(), "\n"));
+        assert_same(2, count($lines));
+        assert_same('{"end":true,"records":2}', $lines[1]);
+    });
+
+    it('answers an API failure before the first row as the region error (§3.4)', function (): void {
+        sign_in();
+        m5_queue();
+        m5_status_stream((string) json_encode(['error' => 'internal', 'message' => 'store gone']), 500);
+
+        $sink = m5_stream(m5_get('/projects/3/record-status', [], ndjson_headers()));
+
+        assert_same(500, $sink->status);
+        assert_contains('application/json', $sink->headers['Content-Type']);
+        $body = json_decode($sink->body(), true);
+        assert_same('internal', $body['error']);
+        // The same failure line the buffered region answers.
+        $buffered = json_decode(m5_get('/projects/3/record-status', [], json_headers())->body(), true);
+        assert_same($buffered['message'], $body['message']);
+    });
+
+    it('refuses a streamed read without data access before any row is read', function (): void {
+        sign_in();
+        m5_queue('no_access');
+
+        $response = m5_get('/projects/3/record-status', [], ndjson_headers());
+
+        assert_true(!$response->isStream());
+        assert_same(403, $response->status());
+        assert_same('forbidden', json_decode($response->body(), true)['error']);
+        assert_same(0, api_calls_to('/record-status'));
     });
 
     it('opens the record view on a valid new name and keeps an invalid one in the field', function (): void {
