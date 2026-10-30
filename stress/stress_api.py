@@ -21,7 +21,8 @@ Phases (timed individually):
              instrument's dictionary covers every kind the §1 vocabulary offers
              — text, notes, validated text (integer, floating point, date,
              datetime), choice fields (dropdown, radio, checkbox, yesno,
-             matrix), display rows (description, header), a calculated field
+             matrix — a group of questions under one introduction), display
+             rows (description, header), a calculated field
              and a transfer field — as far as its field count reaches, and fills
              up on a weighted mix. Transfer fields are designed in a second pass
              over the finished projects, since their copy instructions resolve
@@ -201,16 +202,18 @@ class API:
 LETTERS = string.ascii_lowercase
 ALNUM = string.ascii_lowercase + string.digits
 
-# Every field kind of the §1 dictionary vocabulary (sums to 100), weighted
+# Every field kind of the §1 dictionary vocabulary (sums to 110), weighted
 # towards what a real dictionary looks like: plain text keeps the bulk, the
 # validated kinds exercise the validation pipeline on import, the choice kinds
 # add label rendering on export. A kind is a field_type — or, for validated
 # text, its validation_type. instrument_kinds() puts one of each at the head of
 # an instrument's field list, so even a short instrument reaches every
 # validator, and fills the rest on these weights. `transfer` is not here: it is
-# designed in a second pass, once the project it copies into exists.
+# designed in a second pass, once the project it copies into exists. A matrix
+# draw is a whole group of MATRIX_ROWS rows, so its small weight — on top of the
+# group every instrument starts with — still comes to about one field in twelve.
 FIELD_MIX = [
-    ("text", 24),
+    ("text", 28),
     ("notes", 8),
     ("integer", 13),
     ("floating point", 9),
@@ -220,7 +223,7 @@ FIELD_MIX = [
     ("radio", 9),
     ("checkbox", 7),
     ("yesno", 5),
-    ("matrix", 5),
+    ("matrix", 1),
     ("description", 3),   # display row: no value on import
     ("header", 2),        # display row: no value on import
     ("calculated", 2),    # read-only, computed from a numeric sibling
@@ -244,32 +247,90 @@ BOX_CODES = ("1", "")
 EPOCH = datetime.date(2018, 1, 1)
 DATE_SPAN = 3200  # days from EPOCH — stays well inside the calendar
 
+# A matrix group (REQ-DB-014) is generated the way a questionnaire asks one: an
+# introduction states the topic and the scale, every row asks one specific
+# question under it, and all rows share the coding. Each theme is (introduction,
+# (code, label) scale, questions); a group asks MATRIX_ROWS of the questions in
+# the theme's order, so every theme carries at least MATRIX_ROWS[1] of them.
+MATRIX_ROWS = (2, 5)
+MATRIX_THEMES = [
+    ("Now we ask some questions about your levels of pain, from 0 (no pain) "
+     "to 10 (worst pain imaginable).",
+     [("0", "No pain")] + [(str(c), str(c)) for c in range(1, 10)] + [("10", "Worst pain")],
+     ["Pain in shoulder", "Pain in arm", "Pain in hand", "Pain in back",
+      "Pain in hip", "Pain in knee", "Pain in neck"]),
+    ("How much do you agree with the following statements about the past week?",
+     [("1", "Strongly disagree"), ("2", "Disagree"), ("3", "Neutral"),
+      ("4", "Agree"), ("5", "Strongly agree")],
+     ["I slept well", "I felt rested in the morning", "I had enough energy for the day",
+      "I could concentrate on my work", "I enjoyed my free time", "I felt calm"]),
+    ("In the past month, how often did you have the following symptoms?",
+     [("1", "Never"), ("2", "Rarely"), ("3", "Sometimes"), ("4", "Often"), ("5", "Always")],
+     ["Headache", "Dizziness", "Nausea", "Shortness of breath", "Trouble sleeping",
+      "Loss of appetite"]),
+    ("How satisfied are you with the following parts of your visit today?",
+     [("1", "Very dissatisfied"), ("2", "Dissatisfied"), ("3", "Neither"),
+      ("4", "Satisfied"), ("5", "Very satisfied")],
+     ["Waiting time", "Information given by the staff", "Friendliness of the staff",
+      "Cleanliness of the clinic", "Overall treatment"]),
+]
+
 
 def instrument_kinds(rnd, n):
-    """The kind of each of one instrument's n fields: every mixed kind once in
-    random order, then weighted-random fill. A calculated field moves to the
-    end, because its expression names a sibling and a bulk call validates its
-    entries in order; the numeric that expression reads is guaranteed alongside
-    it."""
+    """One instrument's n fields as (kind, rows) entries: every mixed kind once
+    in random order, then weighted-random fill. A matrix entry is one group of
+    MATRIX_ROWS rows, each counting against n — never a single row, which would
+    be no matrix at all — and every other entry is one field. A calculated
+    field moves to the end, because its expression names a sibling and a bulk
+    call validates its entries in order; the numeric that expression reads is
+    guaranteed alongside it."""
+    entries, left = [], n
+
+    def take(kind):
+        nonlocal left
+        rows = min(rnd.randint(*MATRIX_ROWS), left) if kind == "matrix" else 1
+        if rows < (MATRIX_ROWS[0] if kind == "matrix" else 1):
+            return  # no room left for a group: the slot goes to another kind
+        entries.append((kind, rows))
+        left -= rows
+
     head = MIX_KINDS[:]
     rnd.shuffle(head)
-    if n <= len(head):
-        kinds = head[:n]
-    else:
-        fill = [rnd.choices(MIX_KINDS, weights=MIX_WEIGHTS)[0]
-                for _ in range(n - len(head))]
-        kinds = head + fill
+    for kind in head:
+        if left == 0:
+            break
+        take(kind)
+    while left > 0:
+        take(rnd.choices(MIX_KINDS, weights=MIX_WEIGHTS)[0])
+    kinds = [k for k, _ in entries]
     if "calculated" in kinds and not any(k in ("integer", "floating point") for k in kinds):
-        kinds[0] = "integer"  # the expression needs a number to read
-    return [k for k in kinds if k != "calculated"] + ["calculated"] * kinds.count("calculated")
+        first = next(i for i, (_, rows) in enumerate(entries) if rows == 1)
+        entries[first] = ("integer", 1)  # the expression needs a number to read
+    return ([e for e in entries if e[0] != "calculated"]
+            + [e for e in entries if e[0] == "calculated"])
 
 
-def make_field_spec(rnd, name, kind=None):
-    """One bulk-creatable field dictionary entry of a random kind. Only keys the
+def make_matrix_group(rnd, names):
+    """One matrix group with a row per name (REQ-DB-014) on a random theme. The
+    theme's introduction is the first row's section header, which the form shows
+    above the matrix (DataEntry::layout); each row's label is one question of
+    the theme. The rows share the group name and the coding."""
+    intro, scale, questions = rnd.choice(MATRIX_THEMES)
+    asked = sorted(rnd.sample(range(len(questions)), len(names)))
+    choices = "##".join(f"{code}${label}" for code, label in scale)
+    specs = [{"field_name": name, "field_type": "matrix", "field_label": questions[q],
+              "matrix_group": f"group_{names[0]}", "choices": choices}
+             for name, q in zip(names, asked)]
+    specs[0]["section_header"] = intro
+    return specs
+
+
+def make_field_spec(rnd, name, kind):
+    """One bulk-creatable field dictionary entry of the given kind — any but a
+    matrix, whose rows make_matrix_group creates together. Only keys the
     §4.11 field body accepts are emitted (unknown attributes are rejected
     by the API); a yesno field needs no choices, as the API stores its fixed
     1$Yes##0$No coding itself."""
-    kind = kind or rnd.choices(MIX_KINDS, weights=MIX_WEIGHTS)[0]
     spec = {"field_name": name}
     if kind in ("dropdown", "radio"):
         codes = list(range(1, rnd.randint(3, 9)))  # 2..8 numeric codes
@@ -279,11 +340,6 @@ def make_field_spec(rnd, name, kind=None):
         codes = list(range(1, rnd.randint(2, 6)))  # 1..5 boxes
         spec["field_type"] = "checkbox"
         spec["choices"] = "##".join(f"{c}$Box {c}" for c in codes)
-    elif kind == "matrix":
-        codes = list(range(1, rnd.randint(3, 6)))  # 2..5 response levels
-        spec["field_type"] = "matrix"
-        spec["matrix_group"] = f"group_{name}"
-        spec["choices"] = "##".join(f"{c}$Level {c}" for c in codes)
     elif kind in ("description", "header"):
         spec["field_type"] = kind  # display rows carry no value
     elif kind == "calculated":
@@ -502,7 +558,11 @@ def build_project(api, cfg, rnd, i, name, existing, xfer_slots):
             # The record identifier stays a plain text field.
             specs.append({"field_name": "record_id", "field_type": "text"})
         numeric = ""   # the numeric sibling a calculated field reads
-        for kind in instrument_kinds(rnd, max(counts[j] - len(specs) - xfer_slots, 0)):
+        for kind, rows in instrument_kinds(rnd, max(counts[j] - len(specs) - xfer_slots, 0)):
+            if kind == "matrix":
+                specs += make_matrix_group(rnd, [f"{instr}_f{len(specs) + r:05d}"
+                                                 for r in range(rows)])
+                continue
             spec = make_field_spec(rnd, f"{instr}_f{len(specs):05d}", kind)
             if kind == "calculated":
                 spec["calculation"] = f"[baseline_arm_1][{numeric}] * 2"
