@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
@@ -15,6 +16,60 @@ import (
 
 	"csms/api/internal/config"
 )
+
+// The stages the OAuth diagnostic reports by, and the reason codes it names a failure
+// with. Both travel to the web layer as machine identifiers and are translated there
+// (REQ-AUTH-085).
+const (
+	stageDiscovery     = "discovery"
+	stageTokenExchange = "token_exchange"
+	stageAssertion     = "assertion"
+)
+
+// discoveryPathSuffix is what go-oidc appends to the configured issuer, and what marks a
+// response as belonging to discovery rather than to a later call on the same client.
+const discoveryPathSuffix = "/.well-known/openid-configuration"
+
+// discoveryRecorder observes the HTTP status of the discovery request go-oidc makes on our
+// behalf, so that a failed discovery reaches the administrator as the 404 or 503 it was
+// instead of as "no information" — REQ-AUTH-085's useful connection stages, and the
+// technical stage/status information Design §2.11 allows a failure to carry. Pointing at a
+// root that serves no discovery document answers 404 here and a filtered host never answers
+// at all: telling those two apart is the whole difference between fixing configuration and
+// phoning the network team (Authentication_Authorization_Design.md §2.10, REQ-AUTH-082).
+//
+// The recorder is attached only by the diagnostic. Login needs no status beyond success, so
+// that path keeps go-oidc's own client untouched; golang.org/x/oauth2 documents
+// oauth2.HTTPClient as the context key a caller hands one over with, and go-oidc honours it.
+type discoveryRecorder struct {
+	status int
+}
+
+func (d *discoveryRecorder) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := http.DefaultTransport.RoundTrip(req)
+	if resp != nil && d != nil && strings.HasSuffix(req.URL.Path, discoveryPathSuffix) {
+		d.status = resp.StatusCode
+	}
+	return resp, err
+}
+
+// observed is the status the discovery request got, 0 when no response arrived — a name that
+// does not resolve, a refused connection, a TLS handshake that did not complete, a timeout.
+func (d *discoveryRecorder) observed() int {
+	if d == nil {
+		return 0
+	}
+	return d.status
+}
+
+// withDiscoveryRecorder returns a context whose discovery request is observed and the
+// recorder holding what it saw. A successful discovery hands this same context to the key
+// set, so its JWKS responses are excluded by the request path rather than by luck; one
+// recorder serves one diagnostic, on its caller's goroutine, which is why no lock is held.
+func withDiscoveryRecorder(ctx context.Context) (context.Context, *discoveryRecorder) {
+	recorder := &discoveryRecorder{}
+	return context.WithValue(ctx, oauth2.HTTPClient, &http.Client{Transport: recorder}), recorder
+}
 
 type oauthStartRequest struct {
 	Provider int `json:"provider"`
@@ -150,12 +205,17 @@ func (h *Handler) oauthTest(w http.ResponseWriter, r *http.Request) {
 		APIError(w, http.StatusBadRequest, "unknown_provider", "this authentication provider is not configured")
 		return
 	}
+	// Discovery is observed before it runs: an issuer that disagrees with the discovery
+	// document, a document that is not there, and a host that does not answer are three
+	// different faults and used to be reported as one number.
+	ctx, discovery := withDiscoveryRecorder(r.Context())
+	r = r.WithContext(ctx)
 	runtime, err := h.oauthRuntime(r, provider)
 	if err != nil {
 		failure := discoveryFailure(err)
 		writeJSON(w, http.StatusOK, map[string]any{
-			"ok": false, "stage": "discovery", "issuer": provider.Issuer,
-			"discovery_status": 0, "token_status": 0, "userinfo_status": 0,
+			"ok": false, "stage": stageDiscovery, "issuer": provider.Issuer,
+			"discovery_status": discovery.observed(), "token_status": 0, "userinfo_status": 0,
 			"userinfo_claims": map[string]any{}, "id_token_claims": map[string]any{},
 			"error": failure.reason,
 		})
@@ -169,13 +229,17 @@ func (h *Handler) oauthTest(w http.ResponseWriter, r *http.Request) {
 			"token":     runtime.oauth.Endpoint.TokenURL,
 			"userinfo":  runtime.userinfo,
 		},
-		"discovery_status": 200, "token_status": 0, "userinfo_status": 0,
+		// The one status this side asserts rather than measures: a runtime exists only if
+		// discovery answered 200, since go-oidc accepts nothing else. It may have been
+		// fetched on an earlier request of the same flow — runtimes are cached per issuer
+		// (REQ-AUTH-077) — which is why the recorder is not consulted here.
+		"discovery_status": http.StatusOK, "token_status": 0, "userinfo_status": 0,
 		"userinfo_claims": map[string]any{}, "id_token_claims": map[string]any{},
 	}
 	token, failure := h.exchangeOAuthCode(r, provider.Issuer, body.Code, body.CodeVerifier)
 	if failure != nil {
 		report["ok"] = false
-		report["stage"] = "token_exchange"
+		report["stage"] = stageTokenExchange
 		report["error"] = failure.reason
 		report["token_status"] = failure.status
 		writeJSON(w, http.StatusOK, report)
@@ -195,7 +259,7 @@ func (h *Handler) oauthTest(w http.ResponseWriter, r *http.Request) {
 	assertion, failure := h.verifyAssertion(r.Context(), provider.Issuer, idTokenOf(token), body.Nonce, token.AccessToken)
 	if failure != nil {
 		report["ok"] = false
-		report["stage"] = "assertion"
+		report["stage"] = stageAssertion
 		report["error"] = failure.reason
 		writeJSON(w, http.StatusOK, report)
 		return

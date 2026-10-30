@@ -99,31 +99,66 @@ $oauth = ($report['kind'] ?? '') === 'oauth' ? $report : [];
 <?php endif; ?>
 
 <?php if ($oauth !== []): ?>
+    <?php
+    // Stage and reason arrive as machine identifiers and are translated here. One this page
+    // has never seen renders as itself rather than as a missing-string fault, because the API
+    // and the web layer are deployed independently (REQ-AUTH-085).
+    $oauthStages = ['discovery', 'exchange', 'token_exchange', 'assertion'];
+    $oauthReasons = [
+        'unknown_provider', 'provider_unavailable', 'provider_issuer_mismatch',
+        'assertion_invalid', 'email_unverified', 'assurance_insufficient', 'nonce_mismatch',
+        'state_mismatch',
+    ];
+    $oauthStage = (string) ($oauth['stage'] ?? '');
+    $oauthReason = (string) ($oauth['error'] ?? '');
+    $oauthClaimSets = [
+        'userinfo_claims' => (string) $view->t('admin.auth.userinfo_claims'),
+        'id_token_claims' => (string) $view->t('admin.auth.id_token_claims'),
+    ];
+    ?>
     <section aria-labelledby="clara-auth-result">
         <h2 class="h6" id="clara-auth-result"><?= View::e($view->t('admin.auth.result')) ?></h2>
         <p class="small text-body-secondary"><?= View::e($view->t('admin.auth.oauth_notice')) ?></p>
         <?php if (empty($oauth['ok'])): ?>
-            <div class="alert alert-warning" role="status"><?= View::e($view->t('admin.auth.oauth_failed')) ?></div>
-            <p class="small"><?= View::e($view->t('admin.auth.oauth_status', [
-                'discovery' => (string) ($oauth['discovery_status'] ?? 0),
-                'token' => (string) ($oauth['token_status'] ?? 0),
-                'userinfo' => (string) ($oauth['userinfo_status'] ?? 0),
-            ])) ?></p>
-            <?php if (isset($oauth['endpoints'])): ?>
-                <pre class="small bg-body-tertiary p-3 rounded"><?= View::e((string) json_encode($oauth['endpoints'], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)) ?></pre>
-            <?php endif; ?>
-        <?php else: ?>
-            <p class="small"><?= View::e($view->t('admin.auth.oauth_status', [
-                'discovery' => (string) $oauth['discovery_status'],
-                'token' => (string) $oauth['token_status'],
-                'userinfo' => (string) $oauth['userinfo_status'],
-            ])) ?></p>
-            <pre class="small bg-body-tertiary p-3 rounded"><?= View::e((string) json_encode([
-                'issuer' => $oauth['issuer'],
-                'endpoints' => $oauth['endpoints'],
-                'userinfo_claims' => $oauth['userinfo_claims'],
-                'id_token_claims' => $oauth['id_token_claims'],
-            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)) ?></pre>
+            <div class="alert alert-warning" role="status">
+                <?= View::e($view->t('admin.auth.oauth_failed')) ?>
+                <?php if ($oauthStage !== '' || $oauthReason !== ''): ?>
+                    <div class="small mt-1">
+                        <?php if ($oauthStage !== ''): ?>
+                            <strong><?= View::e(in_array($oauthStage, $oauthStages, true)
+                                ? $view->t('admin.auth.stage.' . $oauthStage)
+                                : $oauthStage) ?></strong>
+                        <?php endif; ?>
+                        <?php if ($oauthReason !== ''): ?>
+                            &mdash; <?= View::e(in_array($oauthReason, $oauthReasons, true)
+                                ? $view->t('admin.auth.reason.' . $oauthReason)
+                                : $oauthReason) ?>
+                        <?php endif; ?>
+                    </div>
+                <?php endif; ?>
+            </div>
         <?php endif; ?>
+        <p class="small"><?= View::e($view->t('admin.auth.oauth_status', [
+            'discovery' => (string) ($oauth['discovery_status'] ?? 0),
+            'token' => (string) ($oauth['token_status'] ?? 0),
+            'userinfo' => (string) ($oauth['userinfo_status'] ?? 0),
+        ])) ?></p>
+        <?php $oauthEndpoints = is_array($oauth['endpoints'] ?? null) ? $oauth['endpoints'] : []; ?>
+        <?php if ($oauthEndpoints !== []): ?>
+            <pre class="small bg-body-tertiary p-3 rounded"><?= View::e((string) json_encode($oauthEndpoints, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE)) ?></pre>
+        <?php endif; ?>
+        <?php foreach ($oauthClaimSets as $oauthClaimKey => $oauthClaimLabel): ?>
+            <?php
+            // Claims render whether or not the test ended well: the run that fails at
+            // verification after a userinfo endpoint answered is exactly the split claim
+            // release an administrator needs to see, and hiding it there was the bug
+            // REQ-AUTH-078 was written against.
+            $oauthClaims = is_array($oauth[$oauthClaimKey] ?? null) ? $oauth[$oauthClaimKey] : [];
+            ?>
+            <?php if ($oauthClaims !== []): ?>
+                <h3 class="h6"><?= View::e($oauthClaimLabel) ?></h3>
+                <pre class="small bg-body-tertiary p-3 rounded"><?= View::e((string) json_encode($oauthClaims, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE)) ?></pre>
+            <?php endif; ?>
+        <?php endforeach; ?>
     </section>
 <?php endif; ?>

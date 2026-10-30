@@ -159,4 +159,101 @@ describe('OAuth2 authorization code through the Go API (Sequence A)', function (
         assert_true(!isset($_SESSION['_oauth_txn']), 'the callback transaction is single-use');
         assert_same(0, api_calls_to('/api/v1/auth/login'));
     });
+
+    /**
+     * Renders the Control Panel's authentication section around one stored diagnostic report,
+     * which is what the callback leaves behind (§2.11). The page is where a report becomes an
+     * explanation — and where fields the API had already computed used to be dropped.
+     */
+    $renderAuthReport = static function (array $report): string {
+        sign_in(['is_admin' => 1]);
+        queue_shell();
+        Session::setAuthTestReport(array_merge(['kind' => 'oauth'], $report));
+
+        $response = router_for(http_request('GET', '/admin', browser_headers(), [], ['section' => 'auth']))->dispatch();
+
+        return $response->body();
+    };
+
+    it('names the stage and reason a provider test failed at, and keeps showing what userinfo answered', function () use ($renderAuthReport): void {
+        $body = $renderAuthReport([
+            'ok' => false, 'issuer' => 'https://idp.example.org',
+            'stage' => 'assertion', 'error' => 'email_unverified',
+            'discovery_status' => 200, 'token_status' => 200, 'userinfo_status' => 200,
+            'endpoints' => [
+                'authorize' => 'https://idp.example.org/as/authorization.oauth2',
+                'token' => 'https://idp.example.org/as/token.oauth2',
+                'userinfo' => 'https://idp.example.org/idp/userinfo.openid',
+            ],
+            // The split claim release REQ-AUTH-078 admits: the address came from userinfo, and
+            // that answer is the evidence about the provider configuration an administrator is
+            // reading a failed run for.
+            'userinfo_claims' => ['sub' => 'subject-42', 'email' => 'split@example.org', 'groups' => ['nephrology']],
+            'id_token_claims' => [],
+        ]);
+
+        assert_contains('ID-token verification', $body);
+        assert_contains('No verified e-mail address came back', $body);
+        assert_contains('/idp/userinfo.openid', $body);
+        assert_contains('split@example.org', $body, 'claims render on a failed run too');
+        assert_contains('nephrology', $body);
+    });
+
+    it('reports the status each endpoint answered with, so a 404 is not read as an outage', function () use ($renderAuthReport): void {
+        $body = $renderAuthReport([
+            'ok' => false, 'issuer' => 'https://idp.example.org/idp',
+            'stage' => 'discovery', 'error' => 'provider_unavailable',
+            'discovery_status' => 404, 'token_status' => 0, 'userinfo_status' => 0,
+            'userinfo_claims' => [], 'id_token_claims' => [],
+        ]);
+
+        assert_contains('Discovery HTTP 404', $body);
+        // A host that never answers is the same report with 0, which is what the status line now
+        // says out loud beside this sentence.
+        assert_contains('not be reached', $body);
+        assert_contains('A 0 means no response arrived', $body);
+    });
+
+    it('names an issuer mismatch as configuration rather than as an outage', function () use ($renderAuthReport): void {
+        $body = $renderAuthReport([
+            'ok' => false, 'issuer' => 'https://idp.example.org',
+            'stage' => 'discovery', 'error' => 'provider_issuer_mismatch',
+            'discovery_status' => 200, 'token_status' => 0, 'userinfo_status' => 0,
+            'userinfo_claims' => [], 'id_token_claims' => [],
+        ]);
+
+        assert_contains('Discovery HTTP 200', $body);
+        assert_contains('Copy the value from that document into OAUTH2_n_ISSUER', $body);
+    });
+
+    it('shows both claim sets of a successful run, each under its own heading', function () use ($renderAuthReport): void {
+        $body = $renderAuthReport([
+            'ok' => true, 'issuer' => 'https://idp.example.org',
+            'discovery_status' => 200, 'token_status' => 200, 'userinfo_status' => 200,
+            'endpoints' => ['authorize' => 'https://idp.example.org/as/authorization.oauth2'],
+            'userinfo_claims' => ['sub' => 'subject-42', 'email' => 'sso@example.org'],
+            'id_token_claims' => ['provider_subject' => 'subject-42', 'address_source' => 'id_token'],
+        ]);
+
+        assert_contains('Discovery HTTP 200; token endpoint HTTP 200; userinfo endpoint HTTP 200', $body);
+        assert_contains('Claims from the userinfo endpoint', $body);
+        assert_contains('Identity from the verified ID token', $body);
+        assert_contains('subject-42', $body);
+        // Nothing on an unsuccessful run's page, and nothing here either: the report is the
+        // only thing rendered, stage and statuses aside.
+        assert_not_contains('did not complete', $body);
+    });
+
+    it('renders a stage or reason this page has never seen as itself instead of failing the page', function () use ($renderAuthReport): void {
+        // Development mode throws on a missing UI string, so an untranslated identifier reaching
+        // t() would take the whole Control Panel down on a newer API.
+        $body = $renderAuthReport([
+            'ok' => false, 'stage' => 'revoked_gracefully', 'error' => 'provider_sent_a_twist',
+            'discovery_status' => 200, 'token_status' => 200, 'userinfo_status' => 0,
+            'userinfo_claims' => [], 'id_token_claims' => [],
+        ]);
+
+        assert_contains('revoked_gracefully', $body);
+        assert_contains('provider_sent_a_twist', $body);
+    });
 });

@@ -1001,6 +1001,7 @@ Each audit table has one partition per year (`p2026`, `p2027`, …). The API cre
 | Users report "signed out everywhere" | A session id was used again after it had been replaced: either a copied cookie, or a response that never reached the browser followed by more than a minute without a request. Each case is in the audit log as `session_replay_detected` with the address. Repeated cases from one address warrant a closer look. |
 | `413 Request Entity Too Large` on an import | Body over `client_max_body_size` (32 MiB, the API's own limit). |
 | LDAP login always says the sign-in service cannot be reached | Network/firewall towards the directory, untrusted `ldaps` CA, `php-cli` missing, or `proc_open` disabled in `php.ini`. |
+| An OIDC provider test stops at Discovery | Control Panel → Authentication Test shows the status the discovery request got. `404` means `OAUTH2_n_ISSUER` names a place with no `.well-known/openid-configuration`: copy the `issuer` value out of the provider's own document instead of typing a server root (PingFederate serves it under its IdP root, not `/`). `0` means nothing answered — DNS, TLS, firewall. A mismatch between configured and published issuer is reported as its own reason, with both values in the API log (`oauth discovery issuer mismatch`). |
 | Anything works with `setenforce 0` but not with SELinux on | `ausearch -m AVC -ts recent`; re-run the labels and booleans of section 7. |
 
 ---

@@ -115,8 +115,11 @@ final class LoginController extends Controller
                     $this->request->query('error') === '' ? $this->request->query('code') : '',
                     $this->request->query('state')
                 );
-            } catch (ApiException) {
-                $report = ['ok' => false];
+            } catch (ApiException $e) {
+                // No report came back at all, which is itself the finding: name the stage that
+                // produced nothing and the API's own code, rather than handing the administrator
+                // three zeroes and a shrug (REQ-AUTH-085).
+                $report = ['ok' => false, 'stage' => 'exchange', 'error' => $e->code()];
             }
             Session::setAuthTestReport(['kind' => 'oauth'] + $report);
 
