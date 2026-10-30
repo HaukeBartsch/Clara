@@ -1,9 +1,10 @@
 <?php
 /**
- * The login page (§2.2). What it offers depends on the selected source name: the email +
- * password form where a local account or a directory can verify it — the only path on a
- * first installation without an identity provider (GD-18, REQ-AUTH-051) — and one button
- * per OAuth2 provider whose login needs a browser round trip (REQ-AUTH-066).
+ * The login page (§2.2). What it offers depends on the selected source name: the credentials
+ * form — an e-mail address or the username in front of one, plus a password — where a local
+ * account or a directory can verify it (GD-18, REQ-AUTH-051), the only path on a first
+ * installation without an identity provider (REQ-AUTH-087); and one button per OAuth2 provider
+ * whose login needs a browser round trip (REQ-AUTH-066).
  *
  * The source picker appears only when more than one distinct name is configured
  * (REQ-UI-042); with one name, or none named anywhere, that name applies implicitly and
@@ -93,10 +94,16 @@ use Clara\View;
         <?= $view->csrfField() ?>
         <input type="hidden" name="next" value="<?= View::e($next ?? '/') ?>">
 
+        <!-- One field takes an address or the login name in front of the "@", which the
+             API expands to the account it belongs to (REQ-AUTH-087). That is why it is not
+             type="email": a browser would reject a bare username before submitting, and no
+             server-side check needs the shape. It stays named "email" because that is what
+             it usually holds and what the API calls the value. -->
         <div class="mb-3">
-            <label class="form-label" for="login-email"><?= View::e($view->t('login.email')) ?></label>
-            <input class="form-control" type="email" id="login-email" name="email" required
-                   autocomplete="username" value="<?= View::e($email ?? '') ?>">
+            <label class="form-label" for="login-email"><?= View::e($view->t('login.identifier')) ?></label>
+            <input class="form-control" type="text" id="login-email" name="email" required
+                   autocomplete="username" autocapitalize="none" spellcheck="false"
+                   value="<?= View::e($email ?? '') ?>">
         </div>
 
         <div class="mb-3">

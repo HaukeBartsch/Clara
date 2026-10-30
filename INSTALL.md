@@ -314,7 +314,7 @@ grep -c CHANGE_ME /opt/clara/.env     # must print 0
 Then edit by hand:
 
 - **`WEB_PUBLIC_URL`**: the public `https://` address. OAuth2 redirect URIs and survey links are built from it, so it must match what users type.
-- **`ADMIN_BOOTSTRAP_EMAIL`**: the first administrator's email address.
+- **`ADMIN_BOOTSTRAP_EMAIL`**: the first administrator's email address. The login page also takes just the part before the `@` (REQ-AUTH-087), but that is short for an account that exists — on a first installation there is none yet, so the first sign-in uses the full address.
 - **`APP_TIMEZONE`**: the collection time zone (an IANA name such as `Europe/Oslo`). It applies to date/time values imported without an explicit zone (REQ-CFG-026).
 
 Things to know about the values:

@@ -59,6 +59,31 @@ type loginRequest struct {
 	CodeVerifier      string `json:"code_verifier"`
 }
 
+// resolveLoginIdentifier canonicalizes what the credential form was given. An
+// address is the identity already and passes through untouched; a login name —
+// the part before "@", which the sign-in page accepts beside an address
+// (REQ-AUTH-087) — is expanded to the single stored address it belongs to.
+//
+// Canonicalizing here, before the lockout check and the audit entry, is the
+// point: keyed on the raw string a caller typed, `hbar` would be a second
+// budget for someone already locked out of `hbar@institution.edu`, and the
+// guessing trail would name a spelling instead of an account.
+//
+// An unknown or ambiguous name resolves to itself, which matches no row, so it
+// is refused exactly as an unknown address is — the shorthand adds no way to
+// ask whether an account exists (§2.6).
+func (h *Handler) resolveLoginIdentifier(ctx context.Context, raw string) string {
+	id := strings.ToLower(strings.TrimSpace(raw))
+	if id == "" || strings.Contains(id, "@") {
+		return raw
+	}
+	u, err := h.Store.GetUserByLocalPart(ctx, id)
+	if err != nil || u == nil {
+		return id
+	}
+	return u.Email
+}
+
 // login implements POST /api/v1/auth/login with the processing order of
 // Authentication_Authorization_Design.md §2.3 (Sequence C, step 0 for local).
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
@@ -78,6 +103,14 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+
+	// The credential form accepts a login name in place of an address
+	// (REQ-AUTH-087). Expand it before anything keys on it — the lockout below,
+	// the audit entry, the account lookup — so the shorthand is one identity and
+	// not a spare guessing budget.
+	if body.Source != "oauth2" && body.Email != "" {
+		body.Email = h.resolveLoginIdentifier(ctx, body.Email)
+	}
 
 	// A browser login knows its email before credential verification on local and
 	// LDAP paths. For OIDC, only the verified ID token supplies the identity, so its
@@ -381,6 +414,11 @@ func (h *Handler) verifyPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+
+	// Same canonicalization as login (REQ-AUTH-087): this endpoint carries the
+	// lockout for the credential race, so a login name has to reach it already
+	// expanded to the address it is short for.
+	body.Email = h.resolveLoginIdentifier(ctx, body.Email)
 
 	// Sequence E before any credential probing (security finding F1): the
 	// web login fires this endpoint first, so without the check here an

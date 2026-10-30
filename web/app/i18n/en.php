@@ -62,10 +62,13 @@ return [
     // A name whose sources all need a browser round trip has no password form to show.
     'login.no_credentials' => 'This institution signs in through one of the providers above.',
     'login.email' => 'E-mail address',
+    // The credential form takes either (REQ-AUTH-087); /password-reset still asks for
+    // the address alone, so it keeps login.email rather than this one.
+    'login.identifier' => 'E-mail address or username',
     'login.password' => 'Password',
     'login.submit' => 'Sign in',
     'login.forgot' => 'Forgot password?',
-    'login.failure.credentials' => 'That e-mail address and password combination is not recognised.',
+    'login.failure.credentials' => 'That e-mail address or username and password combination is not recognised.',
     'login.failure.disabled' => 'This account is disabled — an administrator must enable it again before you can sign in.',
     'login.failure.expired' => 'This account’s validity period has ended — an administrator must extend it.',
     'login.failure.mfa_code' => 'That code is wrong or has expired.',

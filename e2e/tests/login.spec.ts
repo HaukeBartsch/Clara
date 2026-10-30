@@ -12,6 +12,8 @@ import { expect, test, type Page } from "@playwright/test"
 
 const AHUS = "Ahus (Akerhus)"
 const OUS = "OUS (Oslo)"
+// The dev stack's own bootstrap account (dev-stack.sh: "${stack_seed}-pw"), development only.
+const ADMIN_PASSWORD = "clara-dev-481516-pw"
 
 const credentialForm = (page: Page) => page.locator('form[action="/login?action=credentials"]')
 const alertLine = (page: Page) => page.locator('[role="alert"]')
@@ -96,6 +98,41 @@ test.describe("login through a named source (§2.9)", () => {
     // Same page, same form, different reason: the name selected decides which source answered, and
     // a local rejection is the credential line rather than the outage line.
     await expect(alertLine(page)).toContainText("not recognised")
+  })
+
+  test("takes a username where an address would go, and submits it", async ({ page }) => {
+    // REQ-AUTH-050: the field is deliberately not type="email". As it was, the browser refused a
+    // bare username before the form could be submitted, so the shorthand existed only in the copy.
+    await page.goto("/login")
+    await chooseSource(page, "Local")
+
+    await expect(page.locator("#login-email")).toHaveAttribute("type", "text")
+    await expect(page.locator('label[for="login-email"]')).toContainText("username")
+
+    // A fresh name per run: repeated failures lock an identifier out (REQ-AUTH-035).
+    await page.fill("#login-email", `nobody-${Date.now()}`)
+    await page.fill("#login-password", "not the answer")
+    await credentialForm(page).locator('button[type="submit"]').click()
+
+    // The submission is what this asserts: an answer from the server, not a validation bubble.
+    // Which account the name expands to is the API's business, and it answers with the same
+    // credential line an unknown address draws.
+    await expect(alertLine(page)).toContainText("not recognised")
+  })
+
+  test("signs the bootstrap administrator in by username alone", async ({ page }) => {
+    // The positive half of REQ-AUTH-087, against an account the dev stack always has: `admin`
+    // is short for admin@example.org, and the session that follows is that account's — the
+    // shorthand is a way in, not a second identity.
+    await page.goto("/login")
+    await chooseSource(page, "Local")
+
+    await page.fill("#login-email", "admin")
+    await page.fill("#login-password", ADMIN_PASSWORD)
+    await credentialForm(page).locator('button[type="submit"]').click()
+
+    await expect(page.locator("header a[href='/admin']")).toBeVisible()
+    await expect(alertLine(page)).toHaveCount(0)
   })
 
   test("preselects nothing and waits for a choice; choosing applies at once", async ({ page }) => {

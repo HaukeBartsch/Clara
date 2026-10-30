@@ -337,6 +337,28 @@ describe('login — the local credential path (Sequences F + C)', function (): v
         assert_true(!array_key_exists('password', $reported), 'the failure report carries no password (REQ-API-135)');
     });
 
+    it('carries a username with no @ through to the API, and offers the field again (REQ-AUTH-050)', function (): void {
+        $_SESSION = ['csrf_token' => str_repeat('c', 64)];
+        api_route('/auth/verify-password', ['error' => 'account_not_found', 'message' => 'no account for this email', 'status' => 401], 401);
+        api_route('/auth/login', ['error' => 'account_not_found', 'message' => 'no account for this email', 'status' => 401], 401);
+
+        $response = router_for(http_request(
+            'POST', '/login', browser_headers(),
+            ['csrf_token' => str_repeat('c', 64), 'email' => 'researcher', 'password' => 'wrong'], ['action' => 'credentials']
+        ))->dispatch();
+
+        // PHP holds no user list: expanding a login name into the address it stands for is
+        // the API's decision, so nothing here may reshape or refuse the value en route.
+        assert_same('researcher', api_request_body('/auth/verify-password')['email']);
+
+        // The field has to stay one that takes a username. As type="email" it was the
+        // browser that decided, before the form could be submitted at all.
+        preg_match('/<input[^>]*id="login-email"[^>]*>/s', $response->body(), $field);
+        assert_true($field !== [], 'a rejected attempt re-renders the credential field');
+        assert_contains('type="text"', $field[0]);
+        assert_contains('E-mail address or username', $response->body());
+    });
+
     it('names the account state when the account is disabled, not a password failure', function (): void {
         $_SESSION = ['csrf_token' => str_repeat('c', 64)];
         api_route('/auth/verify-password', ['error' => 'account_disabled', 'message' => 'this account is disabled', 'status' => 403], 403);

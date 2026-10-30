@@ -621,3 +621,133 @@ func TestVerifyPasswordLockoutAndAudit(t *testing.T) {
 		t.Error("unexpected login_success for rejected attempts")
 	}
 }
+
+// TestAuthLoginNameSignIn covers the login-name shorthand at the credential
+// form (REQ-AUTH-050): the part before "@" is accepted beside an address, and
+// everything downstream — the user object, the session, the audit trail — names
+// the account's real address rather than the abbreviation that was typed.
+func TestAuthLoginNameSignIn(t *testing.T) {
+	e := newEnv(t)
+	mustLocalUser(t, e, "user@example.org", "hunter2")
+
+	rec := e.do("POST", "/api/v1/auth/login", map[string]any{
+		"email": "user", "source": "local", "password": "hunter2",
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var obj UserObject
+	e.decode(rec, &obj)
+	if obj.Email != "user@example.org" {
+		t.Errorf("email = %q, want the canonical address", obj.Email)
+	}
+
+	// Mixed case is the same login name: addresses are stored lowercase and the
+	// shorthand is compared the same way.
+	rec = e.do("POST", "/api/v1/auth/login", map[string]any{
+		"email": "  USER ", "source": "local", "password": "hunter2",
+	}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("mixed-case login name = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAuthLoginNameUnresolvable checks that the shorthand is only a convenience
+// and never an oracle (§2.6): a login name no address has, and one two
+// addresses share, both answer exactly as a wrong password does, and neither
+// stops the full address from working.
+func TestAuthLoginNameUnresolvable(t *testing.T) {
+	e := newEnv(t)
+	mustLocalUser(t, e, "shared@a.example.org", "hunter2")
+	mustLocalUser(t, e, "shared@b.example.org", "hunter3")
+
+	// An unresolvable shorthand is refused exactly as an unknown address is: the
+	// same reason a login with a full, never-seen address draws.
+	for _, name := range []string{"shared", "nobody"} {
+		rec := e.do("POST", "/api/v1/auth/login", map[string]any{
+			"email": name, "source": "local", "password": "hunter2",
+		}, nil)
+		if rec.Code != http.StatusUnauthorized || decodeError(t, rec) != "account_not_found" {
+			t.Errorf("login name %q = %d %s, want 401 account_not_found", name, rec.Code, rec.Body.String())
+		}
+	}
+
+	for _, attempt := range []struct{ email, password string }{
+		{"shared@a.example.org", "hunter2"},
+		{"shared@b.example.org", "hunter3"},
+	} {
+		rec := e.do("POST", "/api/v1/auth/login", map[string]any{
+			"email": attempt.email, "source": "local", "password": attempt.password,
+		}, nil)
+		if rec.Code != http.StatusOK {
+			t.Errorf("%s = %d, want the full address to still work: %s",
+				attempt.email, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// TestAuthLoginNameSharesTheLockoutWithItsAddress is the reason the shorthand
+// is expanded before the lockout is consulted: were the lock keyed on the
+// string that arrived, `shared` would be a fresh budget for someone already
+// locked out of `shared@a.example.org` (security finding F1).
+func TestAuthLoginNameSharesTheLockoutWithItsAddress(t *testing.T) {
+	e := newEnv(t)
+	mustLocalUser(t, e, "shared@a.example.org", "hunter2")
+
+	for i := 0; i < lockoutThreshold; i++ {
+		rec := e.do("POST", "/api/v1/auth/verify-password", map[string]any{
+			"email": "shared", "password": "wrong",
+		}, nil)
+		if rec.Code == http.StatusTooManyRequests {
+			t.Fatalf("locked out after %d attempts, want %d", i+1, lockoutThreshold)
+		}
+	}
+
+	rec := e.do("POST", "/api/v1/auth/verify-password", map[string]any{
+		"email": "shared@a.example.org", "password": "hunter2",
+	}, nil)
+	if rec.Code != http.StatusTooManyRequests || decodeError(t, rec) != "rate_limited" {
+		t.Errorf("full address after name lockout = %d %s, want 429 rate_limited",
+			rec.Code, rec.Body.String())
+	}
+}
+
+// TestGetUserByLocalPart pins the repository lookup behind the shorthand,
+// including that a login name holding LIKE punctuation is matched literally.
+func TestGetUserByLocalPart(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	for _, email := range []string{
+		"ada@example.org", "bob@x.example.org", "bob@y.example.org",
+		"100%_done@example.org", "a_b@example.org", "Zoe@X.Example.ORG",
+	} {
+		e.mustUser(email)
+	}
+
+	cases := []struct {
+		local string
+		want  string // "" = resolves to nothing
+	}{
+		{"ada", "ada@example.org"},
+		{"bob", ""},                            // two addresses: ambiguous
+		{"nobody", ""},                         // no such account
+		{"100%_done", "100%_done@example.org"}, // "%" and "_" are literal
+		{"a_b", "a_b@example.org"},
+		{"zoe", "Zoe@X.Example.ORG"}, // LIKE matches case-insensitively in both dialects
+		{"%", ""},                    // a wildcard is not a login name
+		{"", ""},
+	}
+	for _, c := range cases {
+		u, err := e.Store.GetUserByLocalPart(ctx, c.local)
+		if err != nil {
+			t.Fatalf("GetUserByLocalPart(%q): %v", c.local, err)
+		}
+		got := ""
+		if u != nil {
+			got = u.Email
+		}
+		if got != c.want {
+			t.Errorf("GetUserByLocalPart(%q) = %q, want %q", c.local, got, c.want)
+		}
+	}
+}

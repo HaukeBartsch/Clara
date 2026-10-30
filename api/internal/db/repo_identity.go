@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 )
 
 // --- users (REQ-DB-008) ---
@@ -173,6 +174,71 @@ func (s *Store) GetUserByEmail(ctx context.Context, email string) (*User, error)
 		return nil, err
 	}
 	return &u, nil
+}
+
+// likeEscape quotes the LIKE wildcards out of a user-supplied pattern. The
+// escape character is "!" rather than the backslash because the two dialects
+// disagree about it: MariaDB treats a backslash as the default LIKE escape and
+// also eats one inside a string literal, SQLite treats neither specially. An
+// explicit ESCAPE '!' says the same thing in both.
+func likeEscape(s string) string {
+	return strings.NewReplacer("!", "!!", "%", "!%", "_", "!_").Replace(s)
+}
+
+// localPartOf returns the part of an address before its first "@".
+func localPartOf(email string) string {
+	if i := strings.IndexByte(email, '@'); i >= 0 {
+		return email[:i]
+	}
+	return email
+}
+
+// GetUserByLocalPart resolves the login-name shorthand the sign-in page accepts
+// alongside an address (REQ-AUTH-087): the part before "@", for someone who
+// knows their login name but not their domain.
+//
+// It returns nil both when no stored address has that local part and when more
+// than one does. An ambiguous shorthand is not a hint about which accounts
+// exist, so it resolves to nothing and the caller rejects it exactly as an
+// unknown account (§2.6 indistinguishability). Two people sharing a login name
+// across domains are then served by typing the whole address.
+//
+// The LIKE narrows on an index prefix; the comparison in Go is what actually
+// decides, so a wildcard that survived quoting or an unusual stored value can
+// only ever make this return nil, never the wrong account. LIKE and its match
+// are case-insensitive for ASCII in both dialects, so the comparison is too —
+// otherwise a mixed-case stored address would be found by the query and then
+// discarded by it.
+func (s *Store) GetUserByLocalPart(ctx context.Context, local string) (*User, error) {
+	if local == "" {
+		return nil, nil
+	}
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT `+userColumns+` FROM users WHERE email LIKE ? ESCAPE '!' ORDER BY email LIMIT 2`,
+		likeEscape(local+"@")+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var match *User
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		if !strings.EqualFold(localPartOf(u.Email), local) {
+			continue
+		}
+		if match != nil {
+			return nil, nil // two addresses answer to this name: not resolvable
+		}
+		match = &u
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return match, nil
 }
 
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
