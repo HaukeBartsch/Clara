@@ -27,12 +27,18 @@ test.describe("project overview refresh (REQ-UI-073)", () => {
     await signInAsAdmin(page)
     await page.goto("/")
     const grid = page.locator("[data-region='projects']")
-    await expect(grid.locator(".clara-project-cell").first()).toBeVisible()
+    // A project's link, not just a cell: the server-rendered loading line is a cell too.
+    await expect(grid.locator(".clara-project-open").first()).toBeVisible()
     await expect(grid).not.toContainText(projectName)
     const before = Number(await page.locator("[data-clara-project-count]").textContent())
 
-    // A reload would also show the project; this flag tells the two apart.
-    await page.evaluate(() => { (window as unknown as { claraNoReload: boolean }).claraNoReload = true })
+    // A reload would also show the project; this flag tells the two apart. The box held beside it tells
+    // an update in place from a rebuilt grid, which made Safari jump the page back to the top.
+    await page.evaluate(() => {
+      const held = window as unknown as { claraNoReload: boolean, claraBox: Element | null }
+      held.claraNoReload = true
+      held.claraBox = document.querySelector("[data-region='projects'] .clara-project-open")
+    })
 
     const other = await context.newPage()
     await other.goto("/admin?section=projects")
@@ -54,5 +60,7 @@ test.describe("project overview refresh (REQ-UI-073)", () => {
     await expect.poll(async () => Number(await count.textContent()))
       .toBe(await grid.locator(".clara-project-open").count())
     expect(await page.evaluate(() => (window as unknown as { claraNoReload?: boolean }).claraNoReload)).toBe(true)
+    // Projects are never deleted, so the box held before the refresh is still on the page — the same node.
+    expect(await page.evaluate(() => (window as unknown as { claraBox: Element }).claraBox.isConnected)).toBe(true)
   })
 })

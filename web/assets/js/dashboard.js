@@ -124,37 +124,62 @@ function stat(label, value) {
   ])
 }
 
-/**
- * One project's box. The DOM order is the same in every box — name, organization, last used, then the
- * three counts — and `app.css` lays those out down or across by the box's own width, which is why a
- * wide box and a narrow one can hold identical markup: the head group and the count group simply
- * change from stacked to side by side. Nothing here knows which tier it is rendering.
- */
-function projectBox(entry) {
-  const head = [
-    el("p", { class: "clara-project-name" },
-      el("a", { class: "clara-project-open stretched-link", href: "/projects/" + entry.project.id },
-        entry.project.project_name)),
-  ]
-  if (entry.project.organization) {
-    head.push(el("p", { class: "clara-project-org" }, entry.project.organization))
-  }
-  head.push(el("p", { class: "clara-project-used" }, usedText(entry)))
+const TIER_CLASSES = ["recent", "active", "idle"].map((tier) => "clara-project-cell--" + tier)
 
+/**
+ * One project's box, empty of the facts that can change — paint() writes those. The DOM order is the
+ * same in every box — name, organization, last used, then the three counts — and `app.css` lays those
+ * out down or across by the box's own width, which is why a wide box and a narrow one can hold
+ * identical markup: the head group and the count group simply change from stacked to side by side.
+ * Nothing here knows which tier it is rendering.
+ */
+function projectBox(project) {
   // el() takes its children as one array; extra arguments would be dropped.
-  return el("li", { class: "clara-project-cell clara-project-cell--" + entry.tier },
+  return el("li", { class: "clara-project-cell" },
     el("article", { class: "clara-project" }, [
-      el("div", { class: "clara-project-head" }, head),
+      el("div", { class: "clara-project-head" }, [
+        el("p", { class: "clara-project-name" },
+          el("a", { class: "clara-project-open stretched-link", href: "/projects/" + project.id })),
+        el("p", { class: "clara-project-org" }),
+        el("p", { class: "clara-project-used" }),
+      ]),
       el("div", { class: "clara-project-tail" }, [
         el("div", { class: "clara-project-stats" }, [
-          stat(t("dashboard.project.records"), entry.project.record_count),
-          stat(t("dashboard.project.instruments"), entry.project.instrument_count),
-          stat(t("dashboard.project.fields"), entry.project.field_count),
+          stat(t("dashboard.project.records"), ""),
+          stat(t("dashboard.project.instruments"), ""),
+          stat(t("dashboard.project.fields"), ""),
         ]),
         // The wide box has room to name what the stretched link does; a narrow one has the link alone.
         el("p", { class: "clara-project-go" }, t("dashboard.project.open")),
       ]),
     ]))
+}
+
+/** Writes a text only where it differs, so a refresh leaves an unchanged fact untouched. */
+function setText(node, text) {
+  if (node.textContent !== text) {
+    node.textContent = text
+  }
+}
+
+/**
+ * Brings a box up to date with its project: tier, name, organization (hidden where there is none),
+ * last used and the three counts.
+ */
+function paint(box, entry) {
+  const tier = "clara-project-cell--" + entry.tier
+  if (!box.classList.contains(tier)) {
+    box.classList.remove(...TIER_CLASSES)
+    box.classList.add(tier)
+  }
+  setText(box.querySelector(".clara-project-open"), String(entry.project.project_name))
+  const org = box.querySelector(".clara-project-org")
+  setText(org, entry.project.organization ? String(entry.project.organization) : "")
+  org.hidden = !entry.project.organization
+  setText(box.querySelector(".clara-project-used"), usedText(entry))
+  const values = box.querySelectorAll(".clara-project-stat-value")
+  const counts = [entry.project.record_count, entry.project.instrument_count, entry.project.field_count]
+  counts.forEach((value, index) => setText(values[index], String(value)))
 }
 
 /** A grid-wide line — loading, empty, or failed — in place of boxes. */
@@ -176,23 +201,66 @@ const FAILED = "failed"
 let drawn = null
 // Whether this page has shown the list once: only then does a refused refresh mean the session ended.
 let listed = false
+// The box each project id is drawn in. A project keeps its box across refreshes, so a redraw rewrites
+// what changed instead of rebuilding the grid — which made Safari jump the page back to the top.
+let boxes = new Map()
 
-/** Draws the boxes and the heading's count, keeping keyboard focus on the project that had it. */
+/**
+ * Brings the grid and the heading's count to the list in place (REQ-UI-073): each project's box is
+ * reused and repainted, a box moves only where the order changed, a new project gets a new box, and
+ * whatever is left over — a project no longer visible, the loading or failure line — goes. The
+ * scroll position stays where the reader left it, and keyboard focus on the project that had it.
+ */
 function render(grid, projects) {
   const ranked = rank(projects)
-  const focused = grid.contains(document.activeElement) ? document.activeElement.getAttribute("href") : null
-  // Only an administrator reaches this page with an empty list (a member with no projects gets the
-  // no-access page, §2.3): an installation with no projects yet.
-  fill(grid, ranked.length ? ranked.map(projectBox) : [message(t("dashboard.empty"), false)])
-  if (focused) {
-    const link = Array.from(grid.querySelectorAll(".clara-project-open")).find((open) => open.getAttribute("href") === focused)
-    if (link) {
-      link.focus()
-    }
-  }
+  const focused = grid.contains(document.activeElement) ? document.activeElement : null
   const count = document.querySelector("[data-clara-project-count]")
   if (count) {
-    count.textContent = String(ranked.length)
+    setText(count, String(ranked.length))
+  }
+
+  // Only an administrator reaches this page with an empty list (a member with no projects gets the
+  // no-access page, §2.3): an installation with no projects yet.
+  if (!ranked.length) {
+    boxes = new Map()
+    fill(grid, [message(t("dashboard.empty"), false)])
+    return
+  }
+
+  const kept = new Map()
+  const wanted = ranked.map((entry) => {
+    const box = boxes.get(entry.project.id) || projectBox(entry.project)
+    paint(box, entry)
+    kept.set(entry.project.id, box)
+    return box
+  })
+  boxes = kept
+
+  // Whatever is not a box to show — a project no longer visible, the loading or failure line — goes
+  // first, so it cannot stand in the way of the boxes after it.
+  const shown = new Set(wanted)
+  Array.from(grid.children).filter((child) => !shown.has(child)).forEach((child) => child.remove())
+
+  // Then the boxes into order, moving only those an ordering change moved: a box that went forward is
+  // inserted where it now belongs, and one that went back steps out until its turn comes. Safari drops
+  // the scroll position when a redraw moves most of the grid, which moving every box after it would.
+  let cursor = grid.firstElementChild
+  for (const box of wanted) {
+    if (cursor && box !== cursor && cursor.nextElementSibling === box) {
+      const later = cursor
+      cursor = box
+      later.remove()
+    }
+    if (box === cursor) {
+      cursor = cursor.nextElementSibling
+    } else {
+      grid.insertBefore(box, cursor)
+    }
+  }
+
+  // A box that moved lost focus on the way; give it back without scrolling the page to it.
+  if (focused && focused.isConnected && document.activeElement !== focused) {
+    focused.focus({ preventScroll: true })
   }
 }
 
@@ -271,8 +339,8 @@ async function keepCurrent() {
  * A tapped project box plays a short bounce, then zooms out to double its size while fading away,
  * and only then does the browser follow the link (User_Interface_Design.md §4). The animation is a
  * presentation concern, so it lives here with the grid; the link itself stays a plain GET. Delegation
- * on the region — not a listener per box — means a retry or refresh re-render (which replaces the
- * boxes) keeps working without re-binding.
+ * on the region — not a listener per box — means boxes a retry or refresh adds keep working without
+ * re-binding.
  */
 function bindProjectOpen() {
   // If the dashboard is restored from the back/forward cache, any box still carrying the opening
