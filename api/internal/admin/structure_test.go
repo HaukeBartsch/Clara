@@ -179,10 +179,11 @@ func TestDeleteArm(t *testing.T) {
 	}
 }
 
-// TestBranchingBareFieldReference: design-time branching validation resolves
-// a bare [field] reference against the project's first event in canonical
-// order (§3.6.3) — a field active there validates; a field that is not does
-// not, even when it exists at another event.
+// TestBranchingBareFieldReference: a bare [field] reference names the event of
+// the form it is evaluated on (Data_Validation_Design.md §7.1, DEV-VAL-13), not
+// a fixed event, so design-time validation holds it to existence and
+// value-carrying only (§7.2 rule 2) — a field mapped at another event than the
+// first validates. An event-qualified reference keeps the active-at-event rule.
 func TestBranchingBareFieldReference(t *testing.T) {
 	e := newEnv(t)
 	admin := e.mustAdmin("admin@example.org")
@@ -228,27 +229,35 @@ func TestBranchingBareFieldReference(t *testing.T) {
 	}
 	addField(intakeID, "age")       // active at the first event
 	addField(laterID, "later_only") // active only at followup
+	if _, err := e.Store.AddField(ctx, &db.Field{
+		ProjectID: projectID, InstrumentID: laterID, FieldName: "intro", FieldType: "description",
+	}); err != nil {
+		t.Fatalf("AddField intro: %v", err)
+	}
 
-	// Bare [field] resolves against baseline_arm_1 — age is active there.
-	rec := e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/instruments/"+itoa(intakeID)+"/fields",
-		map[string]any{"field_name": "flag", "field_type": "text",
-			"branching_logic": `[age] = "x"`}, admin)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("bare ref at first event: %d %s, want 201", rec.Code, rec.Body.String())
+	post := func(name, logic string) (int, string) {
+		t.Helper()
+		rec := e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/instruments/"+itoa(laterID)+"/fields",
+			map[string]any{"field_name": name, "field_type": "text", "branching_logic": logic}, admin)
+		return rec.Code, rec.Body.String()
 	}
-	// later_only is not active at the first event → rejected with the reason.
-	rec = e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/instruments/"+itoa(intakeID)+"/fields",
-		map[string]any{"field_name": "bad", "field_type": "text",
-			"branching_logic": `[later_only] = "x"`}, admin)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("bare ref elsewhere: %d %s, want 400", rec.Code, rec.Body.String())
-	}
-	// The event-qualified form keeps working unchanged.
-	rec = e.do("POST", "/api/v1/projects/"+itoa(projectID)+"/instruments/"+itoa(intakeID)+"/fields",
-		map[string]any{"field_name": "ok_qualified", "field_type": "text",
-			"branching_logic": `[followup_arm_1][later_only] = "x"`}, admin)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("qualified ref: %d %s, want 201", rec.Code, rec.Body.String())
+	for _, c := range []struct {
+		name, logic string
+		want        int
+	}{
+		// Bare references name the form's own event, whichever that is.
+		{"own_event", `[later_only] = "x"`, http.StatusCreated},
+		{"other_instrument", `[age] = "x"`, http.StatusCreated},
+		// …but still a field that exists and carries a value (§7.2 rule 2).
+		{"unknown", `[nope] = "x"`, http.StatusBadRequest},
+		{"not_value", `[intro] = "x"`, http.StatusBadRequest},
+		// An event-qualified reference keeps the active-at-event rule.
+		{"qualified_active", `[followup_arm_1][later_only] = "x"`, http.StatusCreated},
+		{"qualified_inactive", `[baseline_arm_1][later_only] = "x"`, http.StatusBadRequest},
+	} {
+		if code, body := post("f_"+c.name, c.logic); code != c.want {
+			t.Errorf("%s (%s): %d %s, want %d", c.name, c.logic, code, body, c.want)
+		}
 	}
 }
 

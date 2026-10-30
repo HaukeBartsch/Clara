@@ -91,8 +91,9 @@ type token struct {
 // unterminated string, a malformed reference, or an unexpected character.
 // bareRefs selects the branching-logic allowance of API_Endpoints_Design.md
 // §3.6.3: a single-segment [field] reference (empty Event — callers resolve
-// it against the project's first event in canonical order GD-15), which is
-// the minimum normative filterLogic form callers like Fiona send. The calc
+// it: branching logic to the form's own event, DEV-VAL-13; filterLogic to the
+// project's first event in canonical order GD-15), which is the minimum
+// normative filterLogic form callers like Fiona send. The calc
 // grammar keeps the event-qualified [event][field] shape of §6.1.
 //
 // The branching grammar also reads REDCap's own spellings (REQ-VAL-044):

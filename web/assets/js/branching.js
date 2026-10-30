@@ -95,8 +95,8 @@ function tokenize(source) {
         tokens.push({ kind: "ref", ref: { event, field: boxField(field) }, text: `[${event}][${field}]` })
         i = close2 + 1
       } else {
-        // Single-segment [field]: names no event; the caller resolves it
-        // against the project's first event in canonical order (GD-15).
+        // Single-segment [field]: names no event; the caller resolves it —
+        // to the form's own event in branching logic (DEV-VAL-13).
         tokens.push({ kind: "ref", ref: { event: "", field: boxField(event) }, text: `[${event}]` })
         i = j
       }
@@ -465,8 +465,9 @@ function evalNode(node, env) {
  * when absent), choices(event, field) the code$label##… encoding ("" for
  * non-choice fields), and the optional isBox(event, field) whether the
  * reference names a checkbox box — an unchecked one reads "0" (REQ-VAL-044). A reference with an empty event is the [field] shorthand
- * — the caller resolves it to the project's first event in canonical order
- * (GD-15) before lookup. Throws on a malformed expression (§7.2 rules 1/3).
+ * — the caller resolves it before lookup: to the form's own event in branching
+ * logic (DEV-VAL-13), to the project's first event in canonical order in
+ * filterLogic (GD-15). Throws on a malformed expression (§7.2 rules 1/3).
  */
 export function compileBranching(expr) {
   const root = parse(tokenize(expr))

@@ -183,7 +183,7 @@ final class SurveyController extends Controller
             'formNote' => $note,
             'patterns' => [],
             'formats' => self::DEFAULT_FORMATS,
-            'clientContext' => ['firstEvent' => '', 'event' => '', 'anyEvent' => true, 'values' => (object) []],
+            'clientContext' => ['event' => '', 'anyEvent' => true, 'values' => (object) []],
         ], [
             'scripts' => ['/assets/app.js', '/assets/js/survey.js'],
             'jsKeys' => self::JS_KEYS,

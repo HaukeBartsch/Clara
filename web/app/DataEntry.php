@@ -219,14 +219,14 @@ final class DataEntry
 
     /**
      * The field references of a branching expression — `[event][field]` as written,
-     * `[field]` resolved to the project's first event in canonical order (Data_Validation_Design
-     * §7.1, GD-15). Only used to decide which values outside the form the evaluator needs;
+     * `[field]` resolved to the event of the form being rendered (Data_Validation_Design §7.1,
+     * DEV-VAL-13). Only used to decide which values outside the form the evaluator needs;
      * string literals are skipped so a bracket inside quotes is not read as a reference, and
      * collecting one candidate too many costs nothing.
      *
      * @return list<string> `<event>|<field>` keys
      */
-    public static function references(string $expression, string $firstEvent): array
+    public static function references(string $expression, string $event): array
     {
         // String literals are text — double-quoted, or single-quoted in REDCap's spelling
         // (REQ-VAL-044).
@@ -237,7 +237,7 @@ final class DataEntry
         foreach ($matches as $m) {
             $key = isset($m[2]) && $m[2] !== ''
                 ? $m[1] . '|' . self::boxField($m[2])
-                : $firstEvent . '|' . self::boxField($m[1]);
+                : $event . '|' . self::boxField($m[1]);
             $keys[$key] = true;
         }
 

@@ -8,8 +8,9 @@
 // 1. Branching (§8.4, GD-13): the shared evaluator of branching.js shows and hides fields —
 //    and the instrument itself — while their logic is true; re-run on every change.
 //    Display-only: a hidden field is still submitted as it stands (DEV-VAL-5). A reference
-//    to a field of this form reads its input; any other reads the current value the server
-//    put in the record-context block, with its field's `choices` beside it, so a label
+//    written without an event names this form's event (DEV-VAL-13), so `[field]` on a form
+//    at event B reads `[B][field]`. A reference to a field of this form reads its input; any
+//    other reads the current value the server put in the record-context block, with its field's `choices` beside it, so a label
 //    constant and a bare choice reference read as they would on the field's own form
 //    (Data_Validation_Design.md §7.3). A form that knows only its own fields (the survey
 //    page) sets `anyEvent`, so a reference to one of them reads the input whatever event it
@@ -68,11 +69,11 @@ export function wireBranching(form, context) {
   for (const box of form.querySelectorAll("[data-clara-choice]")) {
     boxes.set(box.dataset.claraChoice, box)
   }
-  const onForm = (event) => context.anyEvent || (event || context.firstEvent) === context.event
+  const onForm = (event) => context.anyEvent || (event || context.event) === context.event
 
   const env = {
     value: (event, field) => {
-      const ev = event || context.firstEvent
+      const ev = event || context.event
       if (onForm(event) && boxes.has(field)) return boxValue(boxes.get(field))
       if (onForm(event) && fields.has(field)) return fieldValue(form, fields.get(field))
       return (context.values || {})[ev + "|" + field] ?? ""

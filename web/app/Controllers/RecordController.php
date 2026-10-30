@@ -469,7 +469,6 @@ final class RecordController extends DataEntryController
         [$armNum, $event, $instrument] = $this->selection($arms);
         $status = $this->recordStates($projectId, $record);
         $exists = $status !== null;
-        $firstEvent = self::firstEvent($detail);
         $uen = $event['unique_event_name'] ?? '';
         // A repeating instrument shows one instance at a time (REQ-UI-055): the requested one,
         // the first when none is named. Any other form has only its first.
@@ -549,10 +548,10 @@ final class RecordController extends DataEntryController
                     $ownNames[$uen . '|' . $valueName] = true;
                 }
             }
-            $refs = array_merge($refs, DataEntry::references((string) ($field['branching_logic'] ?? ''), $firstEvent));
+            $refs = array_merge($refs, DataEntry::references((string) ($field['branching_logic'] ?? ''), $uen));
         }
         foreach ($event['instruments'] ?? [] as $candidate) {
-            $refs = array_merge($refs, DataEntry::references((string) ($candidate['branching_logic'] ?? ''), $firstEvent));
+            $refs = array_merge($refs, DataEntry::references((string) ($candidate['branching_logic'] ?? ''), $uen));
         }
         $values = $exists ? $this->currentValues($projectId, $record, array_values(array_unique(array_merge($own, $refs)))) : [];
 
@@ -683,7 +682,7 @@ final class RecordController extends DataEntryController
             'groups' => $permissions->projectAdmin && $exists ? self::listOf($this->api->get($base . '/data-access-groups')) : null,
             'patterns' => $this->patternsFor($fields),
             'formats' => self::DEFAULT_FORMATS,
-            'clientContext' => ['firstEvent' => $firstEvent, 'event' => $uen, 'values' => (object) $context,
+            'clientContext' => ['event' => $uen, 'values' => (object) $context,
                 'boxes' => $dictionary['boxes'], 'choices' => (object) $dictionary['choices']],
             // The record view belongs to the Record Status Dashboard's entry of the left panel.
             'nav' => [

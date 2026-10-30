@@ -222,8 +222,8 @@ describe('M5 data-entry rules (DataEntry)', function (): void {
         assert_same('event_name CONTENT_INVALID odd', $errors['']);
     });
 
-    it('collects branching references, resolving [field] to the first event (§7.1)', function (): void {
-        assert_same(['first|sex', 'e2|visit'], DataEntry::references('[sex] = "[not|a ref]" && [e2][visit] = "1" || [sex] = "2"', 'first'));
+    it('collects branching references, resolving [field] to the form\'s event (§7.1, DEV-VAL-13)', function (): void {
+        assert_same(['e1|sex', 'e2|visit'], DataEntry::references('[sex] = "[not|a ref]" && [e2][visit] = "1" || [sex] = "2"', 'e1'));
     });
 
     it('groups consecutive matrix fields into one item and keeps section headers', function (): void {
@@ -718,12 +718,29 @@ describe('branching over fields outside the form (§8.4, Data_Validation_Design.
 
         $context = m5_context(m5_get('/projects/3/records/8DISC001', ['event' => 'baseline_arm_1', 'instrument' => 'scores'])->body());
 
-        // The values come from this record's history, the shorthand at the first event (GD-15).
+        // The values come from this record's history, the shorthand at the form's event (DEV-VAL-13).
         assert_same(['baseline_arm_1|sex' => '2', 'baseline_arm_1|age' => '42', 'follow_up_arm_1|visit' => '1'], $context['values']);
         // A label resolves only against its field's choices; a text field has none to send.
         assert_same(['sex' => '1$Male##2$Female'], $context['choices']);
         assert_same([], $context['boxes']);
         assert_same(1, data_api_calls('content=metadata'), 'one dictionary read per render');
+    });
+
+    it('reads a [field] reference at the form\'s own event, not the first event (DEV-VAL-13)', function (): void {
+        sign_in();
+        m5_queue(status: [['record_id' => '8DISC001', 'events' => [
+            ['unique_event_name' => 'baseline_arm_1', 'instruments' => [['name' => 'intake', 'state' => 'some_data']]],
+            ['unique_event_name' => 'follow_up_arm_1', 'instruments' => [['name' => 'intake', 'state' => 'some_data']]],
+        ]]]);
+
+        // intake is mapped to both events; preg's logic is [sex] = "2" && [follow_up_arm_1][visit] = "1".
+        $context = m5_context(m5_get('/projects/3/records/8DISC001', ['event' => 'follow_up_arm_1', 'instrument' => 'intake'])->body());
+
+        // [sex] names follow_up_arm_1|sex — an input of this form, read by the evaluator from the
+        // page — so baseline's stored sex never travels; only the qualified visit does.
+        assert_same(['follow_up_arm_1|visit' => '1'], $context['values']);
+        assert_same('follow_up_arm_1', $context['event']);
+        assert_true(!array_key_exists('firstEvent', $context), 'the evaluator no longer needs the first event');
     });
 
     it('reads no dictionary when the logic names only the form\'s own fields', function (): void {

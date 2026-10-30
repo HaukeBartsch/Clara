@@ -132,25 +132,6 @@ abstract class DataEntryController extends ProjectPageController
     }
 
     /**
-     * The project's first event in canonical order — what a `[field]` reference resolves to
-     * (Data_Validation_Design.md §7.1, GD-15): arm 1's first event, from the detail read.
-     *
-     * @param array<string, mixed> $detail
-     */
-    protected static function firstEvent(array $detail): string
-    {
-        foreach ((is_array($detail['arms'] ?? null) ? $detail['arms'] : []) as $arm) {
-            foreach ((is_array($arm['events'] ?? null) ? $arm['events'] : []) as $event) {
-                if (is_array($event) && ($event['unique_event_name'] ?? '') !== '') {
-                    return (string) $event['unique_event_name'];
-                }
-            }
-        }
-
-        return '';
-    }
-
-    /**
      * The line for a failed data-API call (§3.4, §8.6): the two states the data API reports
      * that are not permission refusals get their own text — the project is in analysis mode
      * (GD-20), or the acting user holds no token because they are not a member (an

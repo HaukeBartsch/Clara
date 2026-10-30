@@ -120,8 +120,10 @@ type designCtx struct {
 	deps     []db.CalculatedDependency
 	// firstEvent is the project's first event in canonical order (GD-15:
 	// arm_num ascending, then per arm timepoint events by period, ties and
-	// no-timepoint events by position). A bare [field] reference resolves as
-	// if it named this event (§7.1).
+	// no-timepoint events by position) — the event a REDCap calculation's bare
+	// [field] is qualified with on import (API_Endpoints_Design.md §4.10).
+	// Branching logic does not use it: there a bare [field] names the form's
+	// own event (§7.1, DEV-VAL-13).
 	firstEvent string
 	// imported names the fields an instrument import is creating (REQ-API-152),
 	// box columns included. The import maps no instrument to an event, so a
@@ -158,9 +160,9 @@ func (h *Handler) loadDesign(ctx context.Context, projectID int64) (*designCtx, 
 		activeAt: map[string]map[int64]bool{},
 		deps:     deps,
 	}
-	// The first event in canonical order (GD-15) — the fallback target of a
-	// bare [field] reference. Arms come from ListArms in arm order; within an
-	// arm SortEventsCanonical is the GD-15 order.
+	// The first event in canonical order (GD-15) — what an imported REDCap
+	// calculation's bare [field] is qualified with. Arms come from ListArms in
+	// arm order; within an arm SortEventsCanonical is the GD-15 order.
 	byArm := map[int64][]db.Event{}
 	for _, e := range events {
 		byArm[e.ArmID] = append(byArm[e.ArmID], e)
@@ -226,17 +228,18 @@ func (h *Handler) designForFields(ctx context.Context, projectID int64, fs []*db
 
 // resolves reports whether a reference names an existing, value-carrying
 // field that is active at the referenced event (§6.2 rule 2, §7.2). A bare
-// [field] reference (empty Event) falls back to the project's first event —
-// the branching-logic allowance of API_Endpoints_Design.md §3.6.3.
+// [field] reference (empty Event) names the event of the form it is evaluated
+// on — whichever event that is (§7.1, DEV-VAL-13) — so it is held to existence
+// and value-carrying only; where its field is not active it reads as absent.
 func (d *designCtx) resolves(r validate.Ref) bool {
-	if r.Event == "" {
-		r.Event = d.firstEvent
-	}
-	if _, ok := d.events[r.Event]; !ok {
-		return false
-	}
 	f, ok := d.fields[r.Field]
 	if !ok || !valueCarrying(f.FieldType) {
+		return false
+	}
+	if r.Event == "" {
+		return true
+	}
+	if _, ok := d.events[r.Event]; !ok {
 		return false
 	}
 	return d.activeAt[r.Event][f.InstrumentID] || d.imported[r.Field]

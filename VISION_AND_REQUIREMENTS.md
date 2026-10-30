@@ -1257,10 +1257,6 @@ svg.counter-8 .index-2 {
 </svg>
 ```
 
-## Project screen updates
+## Metrics
 
-The project list is loaded once but does not update (if new projects or records are added to a project). At a low frequency (every 10seconds) the project page should try to update its information.
-
-## Matrix field type
-
-The examples generated during stress test all seem to be a single row without a field label and without a row questions. The field label should be displayed before the matrix field (inform the user what its about in general, like Now we ask some questions about your levels of pain from 1 to 10. Each row in the table should ask more specifically "Pain in sholder", "Pain in arm", etc.).
+Does the stress test answer the question how many requests per seconds can be run?
