@@ -1211,6 +1211,9 @@ final class ControlPanelController extends Controller
                 // The one string that explains a CSP refusal has to reach the page to be read: an
                 // unregistered key renders as itself, which is what an administrator saw here.
                 'admin.assistant.error.wasm_blocked',
+                // Read once the GPU is gone: the first names the event and the reload that fixes
+                // it, the second answers a send that arrives after the engine was retired (§5).
+                'admin.assistant.error.device_lost', 'admin.assistant.error.model_not_loaded',
                 'admin.assistant.diagnostics.title',
             ],
         ]);

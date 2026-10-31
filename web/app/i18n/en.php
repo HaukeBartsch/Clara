@@ -496,6 +496,8 @@ return [
     'admin.assistant.error.mcp' => 'The tool endpoint refused this session — sign in again as an administrator.',
     'admin.assistant.error.too_many_rounds' => 'Stopped after too many tool steps without an answer — try narrowing the question.',
     'admin.assistant.error.repeat_stopped' => 'The model asked to run {tool} a second time with the same arguments and did not use the answer it had already been given, so this stopped here. Rephrase the question, or ask for one step at a time.',
+    'admin.assistant.error.device_lost' => 'This page lost its GPU while the model was loaded, and the model went with it — a browser takes the device back from an idle or backgrounded tab. Reload this page to load the model again; if it keeps happening, install a smaller context (CONTEXT_WINDOW_SIZE=4096 for tools/fetch_assistant_model.sh) or a smaller model.',
+    'admin.assistant.error.model_not_loaded' => 'The model this page loaded is no longer usable, so nothing sent here could be answered. Reload the page to use the assistant again.',
     'admin.assistant.diagnostics.title' => 'Technical details',
     // The API documentation section (§5.9): the OpenAPI document of both API surfaces.
     'admin.api.title' => 'API documentation',

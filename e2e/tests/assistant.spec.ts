@@ -207,6 +207,59 @@ test.describe("clara assistant (AI_Assistant)", () => {
     await expect(details).toContainText("messages=2")
   })
 
+  test("a GPU the browser took back is named as that, and the dead model stops being offered", async ({ page }) => {
+    // A real sequence on Safari/macOS: the tab idles, the WebGPU device is released, WebLLM
+    // unloads the pipeline — and its dispose() deletes the wasm grammar matcher without clearing
+    // the field that holds it (vendored web-llm v0.2.86: dispose at 11962, the truthiness test
+    // that then passes at 12193), so the next request surfaces an embind `BindingError` about a
+    // `GrammarMatcher` instead of a device loss. Two rules are under test: an administrator is
+    // told what went away and what to do (reload), in words, not about a matcher they have never
+    // heard of — and the page stops accepting messages for a model that cannot generate again.
+    await signInAsAdmin(page)
+    await page.route("**/vendor/webllm/web-llm.mjs", (route) =>
+      route.fulfill({
+        contentType: "text/javascript",
+        body: `
+          export async function CreateMLCEngine() {
+            return {
+              chat: { completions: { create() {
+                const failure = new Error("Cannot pass deleted object as a pointer of type GrammarMatcher")
+                failure.name = "BindingError"
+                throw failure
+              } } },
+            }
+          }
+        `,
+      }),
+    )
+    await page.addInitScript(() => {
+      Object.defineProperty(window.navigator, "gpu", { value: {}, configurable: true })
+    })
+    await page.goto("/admin?section=assistant")
+
+    const status = page.locator("[data-clara-as-status]")
+    // The model reports ready first: the device only goes once a turn is asked of it, which is
+    // exactly why the failure cannot be caught at load time.
+    await expect(status).toContainText("Model ready:")
+
+    const input = page.locator("[data-clara-as-input]")
+    await input.fill("list the projects")
+    await input.press("Enter")
+
+    await expect(status).toContainText("This page lost its GPU")
+    // The embind wording belongs in the report below, not in the line that is read aloud.
+    await expect(status).not.toContainText("GrammarMatcher")
+    await expect(status).not.toContainText("admin.assistant.error")
+    await expect(input).toBeDisabled()
+
+    const details = page.locator("[data-clara-as-diagnostics]")
+    await expect(details).toHaveCount(1)
+    await details.locator("summary").click()
+    // Retired rather than merely errored: the next turn would have met the same dead handle.
+    await expect(details).toContainText("engine=absent")
+    await expect(details).toContainText("GrammarMatcher")
+  })
+
   test("the tool loop speaks the shape the Hermes engine answers in", async ({ page }) => {
     // The engine is replaced, not skipped: web-llm's Hermes path has three rules this client exists
     // to satisfy — a request carrying `system` throws CustomSystemPromptError, a request carrying

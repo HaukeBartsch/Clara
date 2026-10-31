@@ -130,6 +130,17 @@ Results are plain JSON numbers/strings; tool text summaries round to four signif
     `ContextWindowSizeExceededError`, thrown mid-turn after the tool work was already done — from a
     model that simply misbehaves. It holds counts and identifiers only, never conversation text: record
     values are data the model reports on, not something to paste into a bug report (REQ-AI-002).
+  * **A GPU the browser took back is reported as that, not as its symptom.** An idle or backgrounded
+    tab loses its WebGPU device; `MLCEngine` then unloads the pipeline, and the bundle's
+    `LLMChatPipeline.dispose()` deletes the wasm grammar matcher without clearing the field holding
+    it (vendored web-llm v0.2.86: dispose at 11962, the truthiness reuse test that therefore passes
+    at 12193, the sampling call that throws at 13653), so the next token reaches embind with a
+    freed handle and fails as `BindingError: Cannot pass deleted object as a pointer of type
+    GrammarMatcher`. `DEVICE_LOST_SIGNALS` matches that wording and the engine's own "Device was
+    lost" line, the status says `admin.assistant.error.device_lost` — reload, then a smaller
+    context or model — and `retireEngine()` drops the engine and disables the field: every later
+    request would meet the same dead handle, so the page stops offering one (REQ-AI-014). The
+    collapsed report still carries the original message, the only trace of the device loss.
 * **Policy needed to compile the model**: `Response::CSP` carries `'wasm-unsafe-eval'` in `script-src`.
   Fetching `model_lib` and the shards is `connect-src 'self'`, but *compiling* WebAssembly is judged
   against `script-src`, so a bare `'self'` policy fails inside the engine with "Refused to create a
@@ -237,6 +248,7 @@ Why the assistant takes the shape of §1, and what each choice costs. The decisi
 | The CSP lacks `'wasm-unsafe-eval'` | The engine fails with "Refused to create a WebAssembly object"; the client names the header (`admin.assistant.error.wasm_blocked`) instead of blaming the artifacts | §5 |
 | The configured model is not one the bundle allows tools for | It loads and reports "Model ready", then every question fails with `UnsupportedModelIdError`; the fetch script offers only supported ids to prevent this | §7 |
 | The model or its context window does not fit the GPU | web-llm does not refuse the install; the load dies as `DeviceLostError`. `vram_required_MB` states the need so an administrator can tell this from a broken artifact | §7 |
+| The browser releases the GPU after the model loaded (idle or backgrounded tab) | The engine unloads itself and the next token fails over a freed grammar matcher (`BindingError`); the client recognises that as device loss, reports it as such and retires the engine, so no further turn is offered against it | §5, REQ-AI-014 |
 | A conversation outgrows the context window | `ContextWindowSizeExceededError` mid-turn, not a truncation; the failure details show the configured window and the size of the last request | §5, §7 |
 | Model files are absent or incomplete | A supported state: the section reports it, and re-running the fetch script completes an interrupted download | §5, §7 |
 | A model file is changed after install | The browser's integrity check fails with `IntegrityError`, and nothing executes | §7 |

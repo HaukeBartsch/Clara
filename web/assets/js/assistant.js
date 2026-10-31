@@ -27,6 +27,7 @@ const SYSTEM_PROMPT = [
 ].join(" ")
 
 let engine = null // WebLLM engine once loaded; null until then (input stays disabled before)
+let engineRetired = false // true once a lost device took the loaded model away (see retireEngine)
 let toolDefs = [] // MCP definitions from tools/list
 let messages = [{ role: "system", content: SYSTEM_PROMPT }]
 let busy = false
@@ -42,6 +43,17 @@ let requestChars = 0 // size of the last request handed to the engine, character
 
 const log = () => document.querySelector("[data-clara-as-log]")
 const statusLine = () => document.querySelector("[data-clara-as-status]")
+
+/**
+ * The chat field, enabled or not. A module-level helper rather than the setup closure's own,
+ * because a failure deep inside a turn has to take the field away too.
+ */
+const setInputEnabled = (on) => {
+  const field = document.querySelector("[data-clara-as-input]")
+  if (field) {
+    field.disabled = !on
+  }
+}
 
 function setStatus(key, params) {
   const node = statusLine()
@@ -67,6 +79,21 @@ function describe(error) {
 }
 
 const clipped = (text, limit) => (text.length > limit ? text.slice(0, limit) + " [...]" : text)
+
+/**
+ * Failures that all say one thing: this page's GPU is gone. WebLLM frees the model as soon as the
+ * device reports loss (`MLCEngine.unload()` → `LLMChatPipeline.dispose()`), and that dispose
+ * deletes the wasm grammar matcher without clearing the pipeline's field for it — so the next
+ * token hands a deleted handle to embind, and what reaches this page names a `GrammarMatcher`
+ * rather than the device (vendored web-llm v0.2.86: the un-cleared dispose at 11962, the
+ * truthiness test that then passes on the dead object at 12193, the sampling call that throws at
+ * 13653). A browser takes the device back from a backgrounded or idle tab, so this appears between
+ * two turns with nothing else changed. Both wordings are matched: the engine's own line when it
+ * arrives first, and the freed-object error that usually hides it.
+ */
+const DEVICE_LOST_SIGNALS = [/device was lost/i, /cannot pass deleted object/i]
+
+const deviceLost = (detail) => DEVICE_LOST_SIGNALS.some((signal) => signal.test(detail))
 
 /**
  * Which GPU the model runs on: an out-of-memory and a driver bug are only tellable apart from here.
@@ -140,6 +167,22 @@ function diagnosticsBlock(context, error) {
 }
 
 /**
+ * The loaded model is unusable from here on, and only a reload makes it usable again: the engine
+ * offers no "loaded but dead" state to ask about, and after a lost device every request meets the
+ * same freed handles. So the field goes back to its pre-load state while the status line says what
+ * happened — an administrator should not have to discover it by sending again. Reloading costs no
+ * download (the weights are served by this installation), only a new engine and context window.
+ */
+function retireEngine() {
+  // The flag is what stops further sends, not the null: `engine === null` is also true before the
+  // first load, and a message typed while the model was still arriving is an ordinary turn that
+  // fails ordinarily — only a model this page had, and lost, counts as gone.
+  engineRetired = true
+  engine = null
+  setInputEnabled(false)
+}
+
+/**
  * One failure, said three ways: the console gets the Error itself, the status line one translated
  * clause naming it, and the chat the whole context collapsed out of the way. Each channel is for a
  * different reader — the administrator at the screen, whoever debugs it afterwards.
@@ -147,7 +190,16 @@ function diagnosticsBlock(context, error) {
 function reportFailure(error) {
   const context = turnContext()
   console.error("[clara-as] " + context.stage + " failed", error)
-  setStatus("admin.assistant.error.turn_detail", { detail: clipped(describe(error), DETAIL_LIMIT) })
+  const detail = clipped(describe(error), DETAIL_LIMIT)
+  // A GPU the browser took back is not a badly phrased question, and the message that reports it
+  // names a grammar matcher no administrator has ever seen. Say what went away and how to get it
+  // back, then retire the engine: every later turn would fail on the same dead handle.
+  if (deviceLost(detail)) {
+    retireEngine()
+    setStatus("admin.assistant.error.device_lost")
+  } else {
+    setStatus("admin.assistant.error.turn_detail", { detail })
+  }
   diagnosticsBlock(context, error)
 }
 
@@ -598,10 +650,7 @@ ready(() => {
     return
   }
 
-  const setEnabled = (on) => {
-    input.disabled = !on
-  }
-  setEnabled(false)
+  setInputEnabled(false)
 
   // The adapter identity is read here, once, before anything can fail: fire-and-forget so it never
   // delays the model, and early because a device that dies mid-turn still has to be identifiable.
@@ -630,7 +679,7 @@ ready(() => {
 
           return loadEngine(config).then(() => {
             setStatus("admin.assistant.status.model_ready", { model: config.model_id })
-            setEnabled(true)
+            setInputEnabled(true)
           })
         })
     })
@@ -654,6 +703,13 @@ ready(() => {
         setStatus("admin.assistant.error.wasm_blocked")
         return
       }
+      // A device already gone at load time is the same event as mid-turn, only earlier: the page
+      // never had a working model, so there is nothing to retire — reload advice still applies.
+      if (deviceLost(detail)) {
+        setStatus("admin.assistant.error.device_lost")
+        diagnosticsBlock(startupContext, error)
+        return
+      }
       setStatus("admin.assistant.error.engine_detail", { detail })
       diagnosticsBlock(startupContext, error)
     })
@@ -674,6 +730,12 @@ ready(() => {
     event.preventDefault()
     const text = input.value.trim()
     if (text === "" || busy) {
+      return
+    }
+    if (engineRetired) {
+      // The model this page loaded is gone for good, so a turn here would only meet the same freed
+      // handle. Say so instead — the field is already disabled, and this catches a scripted send.
+      setStatus("admin.assistant.error.model_not_loaded")
       return
     }
     bubble("user", text)

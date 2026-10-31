@@ -54,6 +54,7 @@ Go layers from data the API already exposes.
 |---|---|
 | REQ-AI-008 | Read tools MUST cover the master spec's questions: `list_projects`, `get_project_setup` (arms, events, instruments, mapping), `get_record_status`, `export_records` (bounded rows), `marginal_stats(project, field)` and `ttest(project, value_field, group_field)` (Welch). Cross-project questions are answered by composing these calls. |
 | REQ-AI-009 | Write tools MUST cover the master spec's actions: `create_records` (bulk rows, data-API import semantics of `User_Interface_Design.md` §8.6), `add_event`, `add_instrument`, `set_instrument_survey`, `set_instrument_repeatable`, and `assign_instruments_to_events`. Each MUST map 1:1 onto an existing administration/data API call — the assistant adds no new write path to the API. |
+| REQ-AI-015 | **Draft — decided, not implemented.** The assistant MUST be able to create a project: a `create_project` write tool mapping 1:1 onto `POST /api/v1/projects` (REQ-API-050), carrying that call's attributes and answering with the new project id, so that asking for five projects is five confirmations rather than work the administrator does by hand. It inherits REQ-AI-006 and REQ-AI-007 unchanged — write mode on the session, one confirmation per project naming its name and organization — and no permission beyond what the endpoint already applies (REQ-AI-009's 1:1 rule). |
 
 ## 6. Statistics and presentation
 
@@ -63,6 +64,7 @@ Go layers from data the API already exposes.
 | REQ-AI-011 | Tool results MUST be presented as text and Bootstrap `table-sm` tables plus d3.js charts (the already-admitted library, REQ-UI-064's precedent) rendered in the browser from the structured result; the server MUST NOT render images. The master spec's ggplot2/matplotlib graphics stay deferred with DEV-AI-3. |
 | REQ-AI-012 | Model output MUST stream token by token into the chat, and every tool call MUST show as an execution line (name, running, succeeded/failed) so the administrator sees what the model did. A browser without WebGPU, or an installation without fetched model artifacts, MUST render an explanatory state instead of a broken page (REQ-UI-003). |
 | REQ-AI-013 | The assistant's UI strings MUST be translated server-side and injected like every other page's (REQ-UI-008); the page MUST render in the application shell with the Control Panel's left panel (REQ-UI-046). |
+| REQ-AI-014 | A model that stops being usable while the page holds it MUST be reported as that event, not as its symptom. The case that happens is a **WebGPU device the browser releases** from an idle or backgrounded tab: the engine frees the model on device loss, and the next request then fails over a deleted grammar matcher whose wording names nothing an administrator can act on. The page MUST stop offering the dead model — no further turn from that engine — and say that reloading recovers it, without losing the report of what failed (REQ-AI-012's explanatory state covers a running model too). |
 
 ## 7. Assumptions
 

@@ -47,15 +47,15 @@ relevance into five categories. A code appears under every category that applies
 - **resilience** — correct behavior under failure and protection of data integrity: transactions and atomicity, idempotence, immutability, health checks, enforced invariants.
 
 
-Totals across all documents: security 444, performance 44, workflow 408, scalability 67, resilience 174 (codes may carry more than one category).
+Totals across all documents: security 444, performance 44, workflow 409, scalability 67, resilience 175 (codes may carry more than one category).
 
 | Relevance | Codes |
 |---|------|
 | `Requirements/AI_Assistant_Requirements.md` ||
 | security | REQ-AI-002, REQ-AI-004, REQ-AI-006, REQ-AI-007, DEV-AI-2 |
 | performance | REQ-AI-010 |
-| workflow | REQ-AI-001, REQ-AI-008, REQ-AI-009, REQ-AI-011, REQ-AI-013, ASM-AI-1, DEV-AI-1, DEV-AI-3 |
-| resilience | REQ-AI-003, REQ-AI-005, REQ-AI-012, ASM-AI-2 |
+| workflow | REQ-AI-001, REQ-AI-008, REQ-AI-009, REQ-AI-011, REQ-AI-013, REQ-AI-015, ASM-AI-1, DEV-AI-1, DEV-AI-3 |
+| resilience | REQ-AI-003, REQ-AI-005, REQ-AI-012, REQ-AI-014, ASM-AI-2 |
 | `Requirements/API_Endpoints_Requirements.md` ||
 | security | REQ-API-005, REQ-API-006, REQ-API-007, REQ-API-010, REQ-API-011, REQ-API-024, REQ-API-026, REQ-API-029, REQ-API-030, REQ-API-033, REQ-API-035, REQ-API-036, REQ-API-038, REQ-API-039, REQ-API-040, REQ-API-041, REQ-API-043, REQ-API-044, REQ-API-045, REQ-API-046, REQ-API-047, REQ-API-048, REQ-API-049, REQ-API-053, REQ-API-054, REQ-API-055, REQ-API-056, REQ-API-057, REQ-API-058, REQ-API-068, REQ-API-074, REQ-API-075, REQ-API-076, REQ-API-077, REQ-API-078, REQ-API-079, REQ-API-082, REQ-API-083, REQ-API-084, REQ-API-085, REQ-API-086, REQ-API-087, REQ-API-088, REQ-API-089, REQ-API-090, REQ-API-091, REQ-API-092, REQ-API-093, REQ-API-096, REQ-API-102, REQ-API-105, REQ-API-109, REQ-API-112, REQ-API-113, REQ-API-114, REQ-API-115, REQ-API-116, REQ-API-117, REQ-API-118, REQ-API-119, REQ-API-120, REQ-API-121, REQ-API-123, REQ-API-125, REQ-API-126, REQ-API-131, REQ-API-135, REQ-API-136, REQ-API-140, REQ-API-143, REQ-API-144, REQ-API-145, REQ-API-146, REQ-API-147, REQ-API-148, REQ-API-152, REQ-API-158, REQ-API-159, REQ-API-160, REQ-API-162, REQ-API-164, REQ-API-165, REQ-API-166, REQ-API-167, REQ-API-168, REQ-API-169, REQ-API-170, ASM-API-2, ASM-API-5, DEV-API-3, DEV-API-8, DEV-API-9, DEV-API-13, DEV-API-14, DEV-API-15, DEV-API-16, DEV-API-17, DEV-API-18, DEV-API-19, DEV-API-21, DEV-API-22, DEV-API-25, DEV-API-30 |
 | performance | REQ-API-029, REQ-API-075, REQ-API-080, REQ-API-132, REQ-API-137, REQ-API-144, REQ-API-149, REQ-API-158, REQ-API-163, REQ-API-169, DEV-API-20, DEV-API-23, DEV-API-26 |
