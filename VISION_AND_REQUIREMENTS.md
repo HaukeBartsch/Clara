@@ -1285,3 +1285,8 @@ Each of the hospital regions can have hundreds of projects. A user that uses Cla
 
 If an administrator assigns a user to a project that administrators preferred region can serve as the first placeholder for the users preferred region.
 
+
+## Record display
+
+If a record instrument is displayed the top shows a dropdown for selecting another event and a list of instrument buttons (for the current event). Rearrange both the dropdown and the list of buttons into a table where the rows are the instruments and the columns are the events (in order). Each cell in the table should display the completeness marker from the record status dashboard with the same color scheme. Selecting one of the completness markers should load that instrument (for the current record).
+
