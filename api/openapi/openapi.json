@@ -4,7 +4,7 @@
     "title": "CLARA API",
     "version": "1.0.0",
     "summary": "Clinical Logbook for Automated Research Assistance — REDCap API replacement",
-    "description": "Two surfaces (REQ-API-001): the REDCap-compatible data API at `POST /api/` (and `GET /api/`) with the caller token as the `token` parameter in the request body or query string (never an `Authorization` header, REQ-API-010), and the administration API under `/api/v1/`. The administration surface is reachable only from the trusted internal path (REQ-TECH-018): every request carries a valid `X-Internal-Service-Token` and — except for the pre-authentication endpoints of §4.3 — the authoritative `X-Internal-User-Id` of the acting user. The browser MUST NOT call `/api/v1/*` directly (GD-1).\n\nConventions (`Design/API_Endpoints_Design.md` §1): UTC and UTF-8; system timestamps are `YYYY-MM-DD HH:MM:SS` in UTC; absent optionals are `null`. Administration errors share the shape `{ \"error\": <stable code>, \"message\": <human-readable>, \"status\": <http status> }`; data-API errors are rendered in the requested response format (`json`: `{ \"error\": \"…\" }`, `csv`: a single line).\n\nThis document is hand-maintained (REQ-TECH-004, REQ-API-002) and served at `GET /openapi.json`; the interactive UI is the vendored Swagger UI bundle at `GET /docs`."
+    "description": "Two surfaces (REQ-API-001): the REDCap-compatible data API at `POST /api/` (`GET /api/` is refused as 405, REQ-API-009) with the caller token as the `token` parameter in the request body only — a token in the query string is refused as 400 and an `Authorization` header is never read (REQ-API-010), and the administration API under `/api/v1/`. The administration surface is reachable only from the trusted internal path (REQ-TECH-018): every request carries a valid `X-Internal-Service-Token` and — except for the pre-authentication endpoints of §4.3 — the authoritative `X-Internal-User-Id` of the acting user. The browser MUST NOT call `/api/v1/*` directly (GD-1).\n\nConventions (`Design/API_Endpoints_Design.md` §1): UTC and UTF-8; system timestamps are `YYYY-MM-DD HH:MM:SS` in UTC; absent optionals are `null`. Administration errors share the shape `{ \"error\": <stable code>, \"message\": <human-readable>, \"status\": <http status> }`; data-API errors are rendered in the requested response format (`json`: `{ \"error\": \"…\" }`, `csv`: a single line).\n\nThis document is hand-maintained (REQ-TECH-004, REQ-API-002) and served at `GET /openapi.json`; the interactive UI is the vendored Swagger UI bundle at `GET /docs`."
   },
   "servers": [
     {
@@ -429,10 +429,10 @@
         "tags": ["Admin: Session"],
         "operationId": "authLogin",
         "summary": "Login (§4.3, REQ-API-044/045)",
-        "description": "Called by the PHP application after successful OAuth2/LDAP authentication, or with `source: \"local\"` and the password for table-based login (GD-18). Exempt from `X-Internal-User-Id` (DEV-API-16); it still requires the service token. The API reports success and audit-logs it but MUST NOT create or store a session (GD-1).\n\nProcessing order: local credential check (or an unexpired `first_factor` handle standing in for the hash check where a second factor guards the account, REQ-API-131) → account-active rule (`account_expired` / `account_disabled`) → two-factor gate (`mfa_required`, `bad_mfa_code`, `tfa_enrollment_required`) → bootstrap-admin promotion → `auth_source`/`last_login_at` update → audit `login_success`. The returned user object carries the account's `session_epoch`, which the web layer keeps in the session it establishes (REQ-AUTH-074).",
+        "description": "Called by the PHP application after a successful LDAP bind, after the OAuth2 provider's callback, or with `source: \"local\"` and the password for table-based login (GD-18). Exempt from `X-Internal-User-Id` (DEV-API-16); it still requires the service token. The API reports success and audit-logs it but MUST NOT create or store a session (GD-1).\n\nProcessing order: local credential check (or an unexpired `first_factor` handle standing in for the hash check where a second factor guards the account, REQ-API-131) → account-active rule (`account_expired` / `account_disabled`) → two-factor gate (`mfa_required`, `bad_mfa_code`, `tfa_enrollment_required`) → bootstrap-admin promotion → `auth_source`/`last_login_at` update → audit `login_success`. The returned user object carries the account's `session_epoch`, which the web layer keeps in the session it establishes (REQ-AUTH-074).\n\n`source: \"oauth2\"` (REQ-API-044, REQ-AUTH-076…082/086): the body carries no identity, only the issuer in `provider` and the browser transaction's `authorization_code`, `code_verifier` and `assertion_nonce`. Before any account lookup the API redeems the code at the provider's token endpoint and verifies the returned ID token (Sequence J); the identity is the verified address, and the account is resolved by its (`iss`, `sub`) link first (REQ-AUTH-080). The two-factor gate does not apply to this source (REQ-AUTH-055).",
         "security": [ { "InternalServiceToken": [] } ],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoginRequest" }, "examples": {
-          "oauth2": { "value": { "email": "user@example.org", "source": "oauth2", "provider": "https://idp.example.org" } },
+          "oauth2": { "summary": "OAuth2 / OpenID Connect: the API redeems the code and verifies the ID token itself (REQ-AUTH-086)", "value": { "source": "oauth2", "provider": "https://idp.example.org", "source_name": "Hospital 1", "authorization_code": "…", "code_verifier": "…", "assertion_nonce": "…" } },
           "local": { "value": { "email": "user@example.org", "source": "local", "password": "***" } },
           "local_mfa": { "value": { "email": "user@example.org", "source": "local", "password": "***", "mfa_code": "492817" } },
           "handle_mfa": { "summary": "Second call of a two-factor challenge with the handle from verify-password (REQ-API-131)", "value": { "email": "user@example.org", "source": "local", "first_factor": "eyJ2IjoiZmYxIiw…", "mfa_code": "492817" } },
@@ -444,11 +444,43 @@
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/User" } } }
           },
           "401": {
-            "description": "`account_not_found` — no user row for the email (REQ-AUTH-006); `bad_password` — no stored hash or mismatch (the two are not distinguished, GD-18); `mfa_required` `{\"error\":\"mfa_required\",\"method\":\"totp|email\"}`; `bad_mfa_code`; `tfa_enrollment_required` `{\"error\":\"tfa_enrollment_required\",\"user_id\":<id>}` under `AUTH_REQUIRE_2FA`; `first_factor_expired` (REQ-API-131). All audit `login_failure` where applicable.",
+            "description": "`account_not_found` — no user row for the email (REQ-AUTH-006); `bad_password` — no stored hash or mismatch (the two are not distinguished, GD-18); `mfa_required` `{\"error\":\"mfa_required\",\"method\":\"totp|email\"}`; `bad_mfa_code`; `tfa_enrollment_required` `{\"error\":\"tfa_enrollment_required\",\"user_id\":<id>}` under `AUTH_REQUIRE_2FA`; `first_factor_expired` (REQ-API-131). On `source: \"oauth2\"` additionally: `unknown_provider`; `assertion_invalid` — incomplete authorization response, no ID token, or a token failing the algorithm pin, key, signature, `iss`/`aud`/`exp`/`nbf` checks; `nonce_mismatch`; `email_unverified` (REQ-AUTH-076…079). All audit `login_failure` where applicable.",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } }
           },
-          "403": { "$ref": "#/components/responses/AdminForbidden", "description": "`account_disabled` (including auto-disable by the inactivity rule) or `account_expired` (`valid_until` passed) — REQ-AUTH-052/053." },
-          "429": { "$ref": "#/components/responses/RateLimited" }
+          "403": { "$ref": "#/components/responses/AdminForbidden", "description": "`account_disabled` (including auto-disable by the inactivity rule) or `account_expired` (`valid_until` passed) — REQ-AUTH-052/053. On `source: \"oauth2\"` additionally `assurance_insufficient` (REQ-AUTH-081) and `subject_conflict` — the subject link and the verified address name different accounts (REQ-AUTH-080)." },
+          "429": { "$ref": "#/components/responses/RateLimited" },
+          "502": { "description": "`source: \"oauth2\"` only: `provider_issuer_mismatch` — the discovery document names a different issuer (REQ-AUTH-082); `provider_unavailable` — discovery or userinfo unreachable or unusable, or the token endpoint did not redeem the code. Audited `login_failure`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } } }
+        }
+      }
+    },
+    "/api/v1/auth/oauth/start": {
+      "post": {
+        "tags": ["Admin: Session"],
+        "operationId": "authOAuthStart",
+        "summary": "Begin the OAuth2 authorization-code round trip (Sequence A, REQ-API-173)",
+        "description": "Pre-authentication: service token only (DEV-API-32). Resolves the provider's discovery document (REQ-AUTH-082) and returns the authorization URL — PKCE S256 challenge, `state`, `nonce`, scopes `openid email profile` — with the `state`, `code_verifier` and `nonce` themselves. The web layer keeps the three in its single-use browser transaction and sends them back on the login call; the API stores none of them (GD-1, REQ-AUTH-079, REQ-AUTH-086).",
+        "security": [ { "InternalServiceToken": [] } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["provider"], "properties": { "provider": { "type": "integer", "minimum": 1, "maximum": 3, "description": "The N of the OAUTH2_N_* settings." } } }, "example": { "provider": 1 } } } },
+        "responses": {
+          "200": { "description": "The authorization request.", "content": { "application/json": { "schema": { "type": "object", "required": ["authorize_url", "state", "code_verifier", "nonce"], "properties": { "authorize_url": { "type": "string", "format": "uri" }, "state": { "type": "string" }, "code_verifier": { "type": "string" }, "nonce": { "type": "string" } } } } } },
+          "400": { "description": "`invalid_request` — malformed JSON body; `unknown_provider` — no provider is configured under that number.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "502": { "description": "`provider_issuer_mismatch` or `provider_unavailable` — discovery failed (REQ-AUTH-082).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } } }
+        }
+      }
+    },
+    "/api/v1/auth/oauth/test": {
+      "post": {
+        "tags": ["Admin: Session"],
+        "operationId": "authOAuthTest",
+        "summary": "OAuth connection diagnostic (REQ-API-174, REQ-AUTH-085)",
+        "description": "`is_admin`. Runs discovery, the code exchange, a userinfo read, and the ID-token verification of REQ-AUTH-076…082 for the Control Panel's Authentication Test, without resolving an account, writing an audit event, or establishing a login. Answers 200 with a report whatever the outcome. `stage` and `error` appear only when `ok` is false; `endpoints` is absent when discovery failed. Claims are restricted to an allowlist of identity, assurance and group/role claims, each value cut to 500 characters and each list to 30 entries; no code, token, signature or client secret is ever included (REQ-AUTH-036).",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["provider", "code", "code_verifier", "nonce"], "properties": { "provider": { "type": "integer", "minimum": 1, "maximum": 3 }, "code": { "type": "string", "writeOnly": true }, "code_verifier": { "type": "string", "writeOnly": true }, "nonce": { "type": "string" } } } } } },
+        "responses": {
+          "200": { "description": "The diagnostic report.", "content": { "application/json": { "schema": { "type": "object", "required": ["ok", "issuer", "discovery_status", "token_status", "userinfo_status", "userinfo_claims", "id_token_claims"], "properties": { "ok": { "type": "boolean" }, "stage": { "type": "string", "enum": ["discovery", "token_exchange", "assertion"] }, "error": { "type": "string" }, "issuer": { "type": "string" }, "endpoints": { "type": "object", "properties": { "authorize": { "type": "string" }, "token": { "type": "string" }, "userinfo": { "type": "string" } } }, "discovery_status": { "type": "integer", "description": "Provider HTTP status; 0 = no response." }, "token_status": { "type": "integer", "description": "200 after a successful exchange, otherwise the status the login call would have answered." }, "userinfo_status": { "type": "integer", "description": "Provider HTTP status; 0 = not reached." }, "userinfo_claims": { "type": "object" }, "id_token_claims": { "type": "object", "description": "On success: provider_issuer, provider_subject, email_verified, address_source, acr, amr." } } } } } },
+          "400": { "description": "`invalid_request` — malformed JSON body; `unknown_provider`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
         }
       }
     },
@@ -2649,12 +2681,15 @@
       },
       "LoginRequest": {
         "type": "object",
-        "required": ["email", "source"],
+        "required": ["source"],
         "additionalProperties": false,
         "properties": {
-          "email": { "type": "string", "format": "email" },
+          "email": { "type": "string", "format": "email", "description": "Required for `ldap` and `local`. Never used as the identity on `oauth2`, where the verified ID token supplies it." },
           "source": { "type": "string", "enum": ["oauth2", "ldap", "local"] },
-          "provider": { "type": "string", "description": "The identity provider (or LDAP source id) the PHP layer authenticated against." },
+          "provider": { "type": "string", "description": "`oauth2`: the configured issuer; `ldap`: the LDAP source id (`ldap-N`)." },
+          "authorization_code": { "type": "string", "writeOnly": true, "description": "`oauth2` only: the code from the provider's callback; the API redeems it (REQ-AUTH-086)." },
+          "code_verifier": { "type": "string", "writeOnly": true, "description": "`oauth2` only: the PKCE verifier `oauth/start` returned." },
+          "assertion_nonce": { "type": "string", "description": "`oauth2` only: the nonce `oauth/start` returned; compared with the ID token's `nonce` (REQ-AUTH-079)." },
           "password": { "type": "string", "writeOnly": true, "description": "Local login only; never logged (REQ-AUTH-036). Ignored on a race-finalizing call (REQ-API-135)." },
           "mfa_code": { "type": "string", "description": "The second factor for the two-factor gate (GD-21)." },
           "first_factor": { "type": "string", "description": "The handle from verify-password standing in for `password` on the second call of a two-factor challenge (REQ-API-131, DEV-API-19)." },

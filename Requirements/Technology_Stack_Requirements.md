@@ -9,6 +9,14 @@
 
 Defines the mandatory technology constraints and the non-functional requirements that follow from the chosen stack. The design document `Design/Technology_Stack_Design.md` fixes concrete versions, libraries, and repository layout.
 
+> **Key constraints** — a summary for quick orientation; the cited IDs and sections are normative.
+>
+> - **No frontend framework, no build step** (REQ-TECH-001); frontend libraries are vendored, never loaded from a CDN (ASM-TECH-2).
+> - **PHP opens no database connection** (REQ-TECH-006).
+> - **The Go API is a single static binary** (REQ-TECH-013).
+> - **The administration API is unreachable from the public network** (REQ-TECH-018).
+> - **Dependencies only from the allowlist** of `Design/Technology_Stack_Design.md`, pinned and reviewed (REQ-TECH-026).
+
 ## 2. Mandatory Technology Constraints
 
 | ID | Requirement |

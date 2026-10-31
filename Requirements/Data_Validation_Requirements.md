@@ -9,6 +9,13 @@
 
 Defines the validation requirements that apply to all data written into the system: the field-level value rules the Go API MUST enforce before storage (BR-004), the field name rules of the data dictionary, and the record-identifier rules (GD-8, REQ-DB-020). `Design/Data_Validation_Design.md` contains the normative validator table, error codes, and format grammars.
 
+> **Key constraints** — a summary for quick orientation; the cited IDs and sections are normative.
+>
+> - **Validated once, in the Go API, before storage** — on every entry path: data-API import, UI data entry, survey submission (REQ-VAL-001).
+> - **Client-side checks are advisory.** Integrity never depends on them (REQ-VAL-002).
+> - **The same rules for every caller.** No rule is relaxed for a token, the UI, or an administrator (REQ-VAL-004).
+> - **An empty value clears.** An empty string on import removes the stored value; it is not ignored (REQ-VAL-024, GD-14).
+
 ## 2. General Requirements
 
 | ID | Requirement |

@@ -14,7 +14,8 @@
 | PHP web application | `/api/v1/*` (internal path only) | `X-Internal-Service-Token` + `X-Internal-User-Id` (REQ-AUTH-011) | exactly the acting user's permissions — PHP adds none |
 | external data-API caller (Fiona/RIS) | `POST /api/` (public) | project token as `token` parameter (REQ-AUTH-031) | the token holder's per-arm and per-pair levels (REQ-AUTH-033/069) |
 | survey respondent | PHP route `/s/{link}` (public, no session — GD-9) | opaque link token | fill-only on exactly one (record, survey instrument) (REQ-AUTH-039) |
-| IdP / LDAP | outbound from PHP | OAuth2 client secret / LDAP bind DN | identity assertion (email) |
+| OAuth2 / OIDC provider | outbound from the Go API (discovery, code exchange, userinfo, keys — REQ-AUTH-086) | OAuth2 client secret | signed ID token, verified by the API (Sequence J, §2.10) |
+| LDAP server | outbound from PHP | LDAP bind DN / the user's password | identity (email) after a successful bind |
 | local (table-based) account | PHP login form → API | email + password (verified against `users.password_hash`), plus the configured second factor when enrolled (GD-21, §2.7) | the account's normal permissions (GD-18, REQ-AUTH-050) |
 | invited / resetting person (pre-authentication) | PHP set-password page via the emailed link (public route, no session — GD-22/GD-23) | single-use hashed token (`password_tokens`, REQ-DB-039) | exactly one thing: set the password of the one addressed account (§2.8) — nothing else is reachable |
 
@@ -38,6 +39,13 @@ Go API ──► SQLite / MariaDB
 - The browser never calls `/api/v1/*` directly (GD-1, REQ-AUTH-010, REQ-UI-002).
 - The reference proxy access logs omit query strings and referrers (INSTALL.md §11.2/§11.3, REQ-AUTH-049), so the OAuth authorization code returned to `/auth/callback` is not logged. The data API reads its token from the body only (REQ-API-010, DEV-API-30), and the invite/reset link `/set-password?token=…` remains a GET whose token the web server MUST NOT log.
 
+> **Key constraints** — a summary for quick orientation; the cited IDs and sections are normative.
+>
+> - **PHP adds no permissions.** The API applies exactly the acting user's effective permissions on every call (§1.1, REQ-AUTH-013).
+> - **Identity rests on different proofs per source.** OAuth2: the API verifies the provider's ID token itself (Sequence J). Local: the API checks the stored hash. LDAP: the API trusts PHP's word after a successful bind (§2.3).
+> - **`/api/v1/*` is internal.** The proxy strips the `X-Internal-*` headers from external requests and never routes `/api/v1/*` publicly (§1.2).
+> - **The API keeps no session state.** Sessions live in PHP; raising the account's session epoch is how the API ends them (§3, REQ-AUTH-074).
+
 ## 2. Authentication Sequences
 
 Every login starts with the user selecting an authentication source **by name** on the login page (Sequence I, §2.9 — REQ-AUTH-063); the sequences below describe what happens inside and after that selection.
@@ -49,12 +57,12 @@ An OAuth2 source joins login only through a browser round-trip, never the creden
 1. Browser opens `/login`, where PHP lists the distinct configured source names (§2.9); the user selects a name whose set contains the OAuth2 provider. PHP asks the API to start the round trip (`POST /api/v1/auth/oauth/start` — service-token guarded, no acting user, `httpapi.preAuthPaths`). The API resolves the provider's discovery document (§2.10, REQ-AUTH-082) and returns an `authorize_url` carrying `response_type=code`, `client_id`, `redirect_uri = WEB_PUBLIC_URL + /auth/callback`, `state`, `code_challenge` (method S256) and a `nonce`, together with the `state`, `code_verifier` and `nonce` themselves. PHP stores all three in the session beside the provider index and the selected name (`auth_source_name`, §3) as one single-use transaction, then redirects to that URL. The nonce ties the assertion to this browser rather than merely to this session (REQ-AUTH-079); generating it and the challenge in Go is what makes the API the component that satisfies itself (REQ-AUTH-086), and the client secret never enters PHP at all (REQ-CFG-021).
 2. The user authenticates at the IdP; the provider redirects the browser to `/auth/callback?code&state`.
 3. PHP verifies `state` against the session value (**single use**; mismatch → abort, no session, `login_failure` with reason `state_mismatch`). A provider error callback (`access_denied` and friends) consumes the transaction the same way and returns to the form with no login call at all.
-4. PHP calls the API's login endpoint (Sequence C) with `source:"oauth2"`, the provider's issuer, the `code`, the `code_verifier` and the `nonce`. It asserts no identity of its own, because it reads none: the address arrives out of the verified token, never out of this call (REQ-AUTH-076, DEV-AUTH-18).
+4. PHP calls the API's login endpoint (Sequence C) with `source:"oauth2"`, the provider's issuer, and the transaction's values as `authorization_code`, `code_verifier` and `assertion_nonce`. It asserts no identity of its own, because it reads none: the address arrives out of the verified token, never out of this call (REQ-AUTH-076, DEV-AUTH-18).
 5. The API redeems `code` + `code_verifier` with the configured client credentials at the discovery document's `token` endpoint — server-side, over TLS — and verifies the ID token that comes back by §2.10 **before resolving anyone**: signature under the pinned algorithm, `iss`/`aud`/`exp`, the nonce, the assurance gate, and the address attestation, with email read via `OAUTH2_N_EMAIL_ATTR` and subject via `OAUTH2_N_SUBJECT_ATTR` (REQ-AUTH-001/004/076/077).
 6. The API resolves the account by its (`iss`, `sub`) link, falling back to the verified address on a first verified login (§2.10 step 8, REQ-AUTH-080), and answers Sequence C as for any other source. The address is judged by the response that supplies it: the ID token's own claims first, and when it names none for `OAUTH2_N_EMAIL_ATTR`, the `userinfo` endpoint this provider's discovery document named — read with the access token from this same exchange, since PingFederate configures the ID-token release and `/idp/userinfo.openid` separately and a client that releases `email` only to userinfo is a working deployment (REQ-AUTH-078). A userinfo answer about a subject other than the verified token's is refused outright; one that cannot be reached reports `provider_unavailable` and spends none of the address's lockout budget.
 7. On success PHP establishes the session (§3) and redirects to `/`.
 
-Any failure at steps 3–6 does **not** silently move on to other sources: it is audit-logged (`login_failure`, `Audit_Logging_Design.md` §3.1) and the user returns to the login page (where the same name's credential form remains available if that name's set also contains credential sources — REQ-AUTH-066). A failure at step 6 names which check refused — `assertion_invalid`, `assertion_aud_mismatch`, `email_unverified`, `assurance_insufficient` — so an operator can tell a rejected proof from an unavailable provider (REQ-AUTH-084).
+Any failure at steps 3–6 does **not** silently move on to other sources: it is audit-logged (`login_failure`, `Audit_Logging_Design.md` §3.1) and the user returns to the login page (where the same name's credential form remains available if that name's set also contains credential sources — REQ-AUTH-066). A failure at steps 5–6 names which check refused — `assertion_invalid` (including an `iss`/`aud`/`exp` failure), `nonce_mismatch`, `email_unverified`, `assurance_insufficient`, `subject_conflict` — or which provider fault stopped it — `provider_issuer_mismatch`, `provider_unavailable` — so an operator can tell a rejected proof from an unavailable provider (REQ-AUTH-084; status codes in `API_Endpoints_Design.md` §4.3).
 
 ### 2.2 Sequence B — LDAP attempt (sources under the selected name, REQ-AUTH-003/065)
 
@@ -67,13 +75,14 @@ The PHP login form carries email + password for the **local and LDAP** paths; on
 
 ### 2.3 Sequence C — API login call (REQ-AUTH-016, REQ-API-044)
 
-`POST /api/v1/auth/login` — one of the five administration endpoints exempt from `X-Internal-User-Id` (it establishes the user context; the other four are the pre-authentication password endpoints of Sequence H, §2.8, and the pre-authentication `POST /api/v1/auth/verify-password` of Sequence I, §2.9 — DEV-API-16); it still requires a valid `X-Internal-Service-Token` and is internal-only per §1.2. `provider` names the concrete winning source (`"ldap-N"`, the provider issuer URL, or the local source id) and PHP passes the user-selected name through in the audit details (REQ-AUTH-067). Request body:
+`POST /api/v1/auth/login` — one of the six administration endpoints exempt from `X-Internal-User-Id` (it establishes the user context; the other five are the three pre-authentication password endpoints of Sequence H, §2.8, the pre-authentication `POST /api/v1/auth/verify-password` of Sequence I, §2.9, and `POST /api/v1/auth/oauth/start` of Sequence A, §2.1 — DEV-API-16/17/32; the code's list is `httpapi.preAuthPaths`); it still requires a valid `X-Internal-Service-Token` and is internal-only per §1.2. `provider` names the concrete winning source (`"ldap-N"`, the provider issuer URL, or the local source id) and PHP passes the user-selected name through in the audit details (REQ-AUTH-067). Request body:
 
 ```json
-{ "email": "user@example.org", "source": "oauth2", "provider": "https://idp.example.org", "source_name": "Hospital 1", "assertion": "<provider ID token, compact JWS>" }
+{ "source": "oauth2", "provider": "https://idp.example.org", "source_name": "Hospital 1",
+  "authorization_code": "…", "code_verifier": "…", "assertion_nonce": "…" }
 ```
 
-For `source = "oauth2"` the call carries no credential the API could check against a stored secret, so `assertion` is what makes the claim testable: the API verifies it to §2.10 **before any account lookup**, so that no user row is read on an unproven assertion (REQ-AUTH-076). A call naming `oauth2` with no `assertion`, or one that fails verification, is refused — the web layer's word alone no longer opens a session. The other sources are unaffected: LDAP still rests on PHP's word, and local still carries a password.
+For `source = "oauth2"` the call carries no identity and no credential the API could check against a stored secret. It carries the authorization code, which the API redeems itself; the ID token that comes back is what makes the login testable, and the API verifies it to §2.10 **before any account lookup**, so that no user row is read on an unproven assertion (REQ-AUTH-076, REQ-AUTH-086). A call naming `oauth2` without a redeemable code, or whose token fails verification, is refused — the web layer's word alone no longer opens a session. The other sources are unaffected: LDAP still rests on PHP's word, and local still carries a password.
 
 `source_name` (optional, REQ-AUTH-067) is the name the user selected on the login page; the API records it in the `login_success` / `login_failure` audit details. It never affects authorization or identity resolution.
 
@@ -390,7 +399,7 @@ Rules:
 |---|------|
 | session ownership and schema (GD-1) | PHP-native session, key table §3; the API is stateless |
 | logout ordering (REQ-AUTH-015 vs REQ-API-045) | the audit call precedes session destruction (§2.4) |
-| `X-Internal-User-Id` on `POST /api/v1/auth/login` (REQ-API-041) | the login endpoint is exempt — service token only; the externally authenticated identity arrives in the body (§2.3); the three Sequence H pre-auth endpoints share the exemption (§2.8, DEV-API-16) |
+| `X-Internal-User-Id` on `POST /api/v1/auth/login` (REQ-API-041) | the login endpoint is exempt — service token only; the externally authenticated identity arrives in the body (§2.3); the three Sequence H pre-auth endpoints, `verify-password` and `oauth/start` share the exemption (§2.8, §2.9, §2.1 — DEV-API-16/17/32) |
 | brute-force store and windows (REQ-AUTH-035) | in-memory per host; 5 failures / 10 min → 15 min lockout (§2.5) |
 | OAuth2 flow hardening | PKCE (S256) + single-use `state` (§2.1); signed-assertion verification added later as Sequence J (§2.10, DEV-AUTH-18) |
 | `login_failure` reason vocabulary | `provider_unavailable \| state_mismatch \| bad_credentials \| bad_password \| account_not_found \| account_disabled \| account_expired \| rate_limited \| bad_mfa_code` (`Audit_Logging_Design.md` §3.1) |
@@ -403,7 +412,6 @@ Rules:
 
 ## 9. Open Items
 
-- **Documents in other areas still describe the pre-DEV-AUTH-18 contract.** `API_Endpoints_Requirement.md` and `API_Endpoints_Design.md` §4.3 do not yet carry the `assertion` field on `POST /api/v1/auth/login`, and no `REQ-DB` id exists for the (`iss`, `sub`) account-linkage rows (REQ-AUTH-080) or the subject-to-session index the logout receiver needs (REQ-AUTH-083). Those belong to API_Endpoints and Database_Schema and need IDs of their own; they are not invented here.
 - **Whether the provider echoes `nonce`** is an observed fact, not a documented one — PingFederate's OIDC policy settings expose no nonce option and its discovery sample shows none. `OAUTH2_N_NONCE_REQUIRED` stays at `0` until one live exchange has been inspected per provider (REQ-AUTH-079).
 - **The JSON type of `email_verified`** under the mapping a given installation chooses, and whether that directory can attest verification at all. If it cannot, the honest configuration is to say so in the installation notes rather than map a constant true (REQ-AUTH-078).
 - **Provider version floor and entitlements.** Back-channel logout needs PingFederate 11.3 or newer and RP-initiated logout 12.0 or newer; nothing public gates these behind an entitlement, but licensing is by managed identities and enforcement can be by licence key, so both are confirmations to obtain rather than assumptions to design on (ASM-AUTH-6).

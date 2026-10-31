@@ -19,6 +19,13 @@ This area adds no model server, no external inference service and no additional 
 is an asset this application serves itself, and every statistic is computed by the existing PHP and
 Go layers from data the API already exposes.
 
+> **Key constraints** — a summary for quick orientation; the cited IDs and sections are normative.
+>
+> - **Inference stays in the browser.** No prompt, completion, tool argument, or record value is sent to a model outside the administrator's browser; the server runs no inference and proxies none (REQ-AI-002).
+> - **No runtime downloads.** Model artifacts are served from `web/assets/models/` on the application's own origin, so the assistant works without internet access (REQ-AI-003).
+> - **Read-only until switched.** A write tool is refused server-side while the session is read-only, and every write runs only after a confirmation that shows its payload (REQ-AI-006, REQ-AI-007).
+> - **No new permissions.** The assistant acts as the signed-in `is_admin` user, and every tool maps onto an existing API call that keeps its own checks (REQ-AI-001, REQ-AI-009).
+
 ## 2. Surface and identity
 
 | ID | Requirement |

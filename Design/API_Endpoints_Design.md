@@ -8,13 +8,20 @@
 
 The normative endpoint contracts — parameter tables, request/response schemas, status codes, error formats — for both surfaces. The requirements document fixes *what* (which endpoint does what, under which permission); this document fixes *shape*.
 
-- **Two surfaces** (REQ-API-001): the REDCap-compatible data API at `POST /api/` (and `GET /api/`) and the administration API under `/api/v1/`. Beyond these, only the documentation and health endpoints exist (REQ-API-003).
+- **Two surfaces** (REQ-API-001): the REDCap-compatible data API at `POST /api/` (`GET /api/` is refused as 405, REQ-API-009) and the administration API under `/api/v1/`. Beyond these, only the documentation and health endpoints exist (REQ-API-003).
 - **UTC and UTF-8** in all requests and responses for **system** timestamps (REQ-API-004, GD-7); clinical date/date-time values carry their collection timezone in the canonical form (GD-16, REQ-VAL-041, `Data_Validation_Design.md` §4.1).
 - **Versioning**: the administration API is versioned in the path (`/api/v1/`); breaking changes only under a new major version (REQ-API-008). The data API is pinned by the REDCap protocol — caller compatibility is the contract (REQ-API-037).
 - **Non-disclosure**: a project or record the caller is not entitled to is rejected with a uniform 403 (data API: `Permission denied`; administration API: `forbidden`) — never disclosed as missing (REQ-API-007).
 - **Pagination** (`GET /api/v1/audit`, record history): `limit` (default 50, max 200) + opaque `cursor` (encodes the last-seen `(created_at, id)`); the response carries `next_cursor` (`null` when exhausted).
 - **JSON shapes** (administration API): objects/arrays; timestamps `YYYY-MM-DD HH:MM:SS` (UTC); absent optionals are `null`.
 - **Log hygiene** (REQ-API-005): project tokens, the service secret, and record values MUST NOT appear in application logs at any level; the audit trail is the sole sanctioned carrier (`Audit_Logging_Design.md` §2).
+
+> **Key constraints** — a summary for quick orientation; the cited IDs and sections are normative.
+>
+> - **This document fixes the shape** of every endpoint; the Requirements document fixes what each one does. `api/openapi/openapi.json` is maintained by hand and served as the API's documentation (REQ-API-002), so a contract change here lands there in the same change.
+> - **The API stores no session** (GD-1); PHP owns it.
+> - **An unentitled project or record answers a uniform 403**, never a 404 (REQ-API-007).
+> - **PUT is idempotent, and every mutating call is audited** (REQ-API-042, REQ-API-043).
 
 ## 2. Non-Protocol Endpoints
 
@@ -359,7 +366,7 @@ Every other `content` (including `export` and `delete`), another record, or anot
 ### 4.1 Boundary and Authentication (REQ-API-040, REQ-API-041)
 
 - Reachable only from the trusted internal path (REQ-TECH-018, REQ-AUTH-014); the proxy strips `X-Internal-Service-Token`, `X-Internal-User-Id` and `X-Internal-Session-Epoch` from every externally-originated request (`Technology_Stack_Design.md` §5). The browser MUST NOT call this surface directly (GD-1, BR-006, REQ-API-040).
-- Every request MUST present a valid `X-Internal-Service-Token` and `X-Internal-User-Id` (REQ-API-041, REQ-AUTH-011…013); the exceptions are `POST /api/v1/auth/login` (§4.3, `Authentication_Authorization_Design.md` §2.3), the three pre-authentication password endpoints of Sequence H (§4.3, `Authentication_Authorization_Design.md` §2.8 — DEV-API-16), and `POST /api/v1/auth/verify-password` (§4.3, `Authentication_Authorization_Design.md` §2.9 — DEV-API-17), which carry the service token only.
+- Every request MUST present a valid `X-Internal-Service-Token` and `X-Internal-User-Id` (REQ-API-041, REQ-AUTH-011…013); the exceptions are `POST /api/v1/auth/login` (§4.3, `Authentication_Authorization_Design.md` §2.3), the three pre-authentication password endpoints of Sequence H (§4.3, `Authentication_Authorization_Design.md` §2.8 — DEV-API-16), `POST /api/v1/auth/verify-password` (§4.3, `Authentication_Authorization_Design.md` §2.9 — DEV-API-17), and `POST /api/v1/auth/oauth/start` (§4.3, `Authentication_Authorization_Design.md` §2.1 — DEV-API-32), which carry the service token only.
 - The service token (config per `System_Configuration_Design.md` §3.3) is compared in constant time (REQ-AUTH-012) and MUST NOT be logged (REQ-API-005); it is enforced regardless of any other configuration (REQ-CFG-023). Missing/invalid → 401 + audit `admin_rejected`.
 - `X-Internal-User-Id` is authoritative for authorization (REQ-AUTH-013): the API applies the acting user's effective levels (`Authentication_Authorization_Design.md` §4.1) — the PHP layer adds none. Unknown or disabled user → 403 + audit `admin_rejected`.
 - `X-Internal-Session-Epoch` (REQ-API-147) — present on every call PHP makes for an established session, absent on the enrollment wizard's pending-identity calls and on `POST /api/v1/auth/session-replay` — MUST equal the acting user's `session_epoch`; a different or non-integer value → 401 `session_revoked` + audit `admin_rejected` (reason `session_revoked`). The check follows the account-active rule, so a disabled user keeps the 403 above. Raising the epoch is how the API ends PHP sessions without storing them (`Authentication_Authorization_Design.md` §3.1).
@@ -395,10 +402,11 @@ Every error is a JSON object with a consistent shape:
 
 ### 4.3 Session (REQ-API-044, REQ-API-045)
 
-**`POST /api/v1/auth/login`** — called by the PHP application after successful OAuth2/LDAP authentication, **or with `source: "local"` and the password for table-based login** (GD-18, REQ-AUTH-050/051; REQ-AUTH-016). Exempt from `X-Internal-User-Id`, like the Sequence H endpoints below (DEV-API-16); it still requires the service token. Body:
+**`POST /api/v1/auth/login`** — called by the PHP application after a successful LDAP bind, after the OAuth2 provider's callback, **or with `source: "local"` and the password for table-based login** (GD-18, REQ-AUTH-050/051; REQ-AUTH-016). Exempt from `X-Internal-User-Id`, like the Sequence H endpoints below (DEV-API-16); it still requires the service token. Body:
 
 ```json
-{ "email": "user@example.org", "source": "oauth2", "provider": "https://idp.example.org" }
+{ "source": "oauth2", "provider": "https://idp.example.org", "source_name": "Hospital 1",
+  "authorization_code": "…", "code_verifier": "…", "assertion_nonce": "…" }
 ```
 
 ```json
@@ -427,6 +435,42 @@ An optional `attempts` carries the per-source outcomes of a failed named-source 
 The map is source-id → outcome (e.g. `bad_password`, `unreachable`) and MUST never contain credentials (REQ-AUTH-036). With attempts present, a credential rejection settles as `bad_credentials` — or `provider_unavailable` when every attempt was `unreachable`; account-state rejections keep their specific reason.
 
 Such a call **reports a failure and authenticates nothing** (REQ-API-135, DEV-API-21): no user object, no bootstrap promotion, no `auth_source`/`last_login_at` write, and it never reaches the two-factor gate — for `source: "ldap"` the API trusts the PHP layer's word, so falling through would turn a race that bound nobody into a session. The `password` attribute is ignored on it. A successful login carries no `attempts`.
+
+**The `oauth2` leg (REQ-API-044, REQ-AUTH-076…082/086, `Authentication_Authorization_Design.md` §2.1/§2.10).** The body names no identity: `provider` is the issuer, and `authorization_code`, `code_verifier` and `assertion_nonce` come from PHP's single-use browser transaction (the values `POST /api/v1/auth/oauth/start` returned, plus the code from the provider's callback). An `email` sent beside them is never used as the identity. Before any account lookup the API redeems the code at the discovery document's token endpoint and verifies the returned ID token (Sequence J steps 1–7); the identity is the verified token's address, and the account is resolved by its (`iss`, `sub`) link first (`provider_subject_links`, REQ-DB-051, Sequence J step 8). The address lockout check (REQ-AUTH-035) therefore runs after verification on this leg, never on a caller-supplied address. Refusals specific to this leg:
+
+| Status | `error` | Cause |
+|---|---|---|
+| 401 | `unknown_provider` | `provider` names no configured issuer |
+| 401 | `assertion_invalid` | incomplete authorization response, no ID token returned, malformed token, algorithm other than the pinned one, unknown key, bad signature, `iss`/`aud`/`exp`/`nbf` failure |
+| 401 | `nonce_mismatch` | the token's `nonce` differs from `assertion_nonce`, or is missing while `OAUTH2_N_NONCE_REQUIRED=1` |
+| 401 | `email_unverified` | `email_verified` is not the JSON boolean `true` in the response that supplied the address |
+| 403 | `assurance_insufficient` | `OAUTH2_N_MIN_ACR` is set and neither `acr` nor `amr` satisfies it |
+| 403 | `subject_conflict` | the subject link and the verified address point at different accounts — an administrator's decision |
+| 502 | `provider_issuer_mismatch` | the discovery document's `issuer` differs from the configured one (REQ-AUTH-082) |
+| 502 | `provider_unavailable` | discovery document or userinfo endpoint unreachable or unusable, or the token endpoint did not redeem the code |
+
+Each refusal is audited as `login_failure` with that reason and the assertion details observed so far — issuer, subject, assurance claims, address verification — never token material (REQ-AUTH-084, REQ-AUTH-036). The account-state answers below (`account_not_found`, `account_disabled`, `account_expired`) apply unchanged once the account is resolved; the two-factor gate does not apply to this leg (REQ-AUTH-055).
+
+**`POST /api/v1/auth/oauth/start`** — `{ "provider": 1 }` (the `N` of `OAUTH2_N_*`): begins Sequence A (REQ-API-173). The API resolves the provider's discovery document and answers 200
+
+```json
+{ "authorize_url": "https://idp.example.org/as/authorization.oauth2?response_type=code&client_id=…&redirect_uri=…&scope=openid+email+profile&state=…&code_challenge=…&code_challenge_method=S256&nonce=…",
+  "state": "…", "code_verifier": "…", "nonce": "…" }
+```
+
+`state` and `nonce` are 32 random bytes each, base64url-encoded; `code_verifier` is a fresh PKCE verifier. PHP stores the three in the session as one single-use transaction and redirects the browser to `authorize_url`; the API keeps none of them (GD-1) and receives them back on the login call. Pre-authentication: service token only, no `X-Internal-User-Id` (DEV-API-32). Errors: 400 `unknown_provider`; 502 `provider_issuer_mismatch` / `provider_unavailable` when discovery fails.
+
+**`POST /api/v1/auth/oauth/test`** — `is_admin`; `{ "provider": 1, "code": "…", "code_verifier": "…", "nonce": "…" }`: the OAuth half of the Control Panel's authentication diagnostic (REQ-API-174, REQ-AUTH-085, `Authentication_Authorization_Design.md` §2.11). PHP starts it through `oauth/start` like a login, marks the transaction `auth_test`, and on the callback calls this endpoint instead of `login`. The API runs discovery, the token exchange, a userinfo read, and Sequence J steps 1–7, and answers 200 with a report whatever the outcome — it resolves no account, writes no audit event and establishes no login:
+
+```json
+{ "ok": false, "stage": "assertion", "error": "email_unverified", "issuer": "https://idp.example.org",
+  "endpoints": { "authorize": "…", "token": "…", "userinfo": "…" },
+  "discovery_status": 200, "token_status": 200, "userinfo_status": 200,
+  "userinfo_claims": { "sub": "…", "email": "user@example.org", "email_verified": "true" },
+  "id_token_claims": {} }
+```
+
+`stage` (`discovery` | `token_exchange` | `assertion`) and `error` appear only when `ok` is `false`; `endpoints` is absent when discovery failed. `discovery_status` and `userinfo_status` are the provider's HTTP statuses (`0` = no response or not reached); `token_status` is `200` after a successful exchange, otherwise the status the login call would have answered. `id_token_claims` is filled on success with the verified assertion's audit details (`provider_issuer`, `provider_subject`, `email_verified`, `address_source`, `acr`, `amr`). `userinfo_claims` holds only allowlisted identity, assurance and group/role claims, each value cut to 500 characters and each list to 30 entries. No code, token, signature or client secret appears in the report (REQ-AUTH-036). Errors: 400 `unknown_provider`; 403 for a caller without `is_admin`.
 
 **`POST /api/v1/auth/verify-password`** — `{ "email": "…", "password": "***" }`: the side-effect-free verify step of the named-source credential race (`Authentication_Authorization_Design.md` §2.9, REQ-API-123). Runs the login endpoint's hash check and account-active rule only and answers `ok` / `bad_password` / `account_disabled` / `account_expired` — no `last_login_at`/`auth_source` write, no audit event, no user object; login finalizes exactly once through `POST /api/v1/auth/login`. Pre-authentication: service token only, no `X-Internal-User-Id` (DEV-API-17); password never logged (REQ-AUTH-036).
 
@@ -1263,7 +1307,7 @@ On SQLite only `connection`, `version` and `schema_version` are filled; every Ma
 
 **Measurement points** (`internal/metrics`, standard library only — no new dependency):
 
-- An HTTP middleware mounted **outermost** on both measured surfaces: `/healthz`, `/api/`, and the whole `/api/v1/` chain — so rate-limit 429s and boundary 401/403 rejections are inside the measured latency (desired traffic accounting). The documentation endpoints stay uninstrumented. Route labels come from the server-side registered pattern only (`http.RequestPatternFromContext`, resp. a pure `ServeMux.Handler` lookup on the administration mux), else `"unmatched"`; the metrics endpoint counts itself.
+- An HTTP middleware mounted **outermost** on both measured surfaces: `/healthz`, `/api/`, and the whole `/api/v1/` chain — so rate-limit 429s and boundary 401/403 rejections are inside the measured latency (desired traffic accounting). The documentation endpoints stay uninstrumented. Route labels come from the server-side registered pattern only — a fixed label per mount for `/healthz` and `/api/` (`metrics.StaticRoute`), and a pure `ServeMux.Handler` lookup on the administration mux for `/api/v1/` (`httpapi.adminRoute`) — else `"unmatched"`; the metrics endpoint counts itself.
 - Inside the data API handler, after parameters parse: one observation per call keyed by the fixed `content` vocabulary (`project`, `event`, `metadata`, `formEventMapping`, `exportFieldNames`, `repeatingFormsEvents`, `generateNextRecordName`, `record`) — anything else lands in `"other"`, so a caller string never mints a series.
 - A transparent `database/sql` connector wrapper (`sql.OpenDB` around the driver's own connector): per statement by **verb** (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `COMMIT`, `ROLLBACK`, `OTHER` — from the leading word only; the query text is never retained, and neither parameters nor row values are ever observed), rows read (counted through `Next`, recorded once at exhaustion or close) or written (`RowsAffected`), duration, error flag; per connection dial duration/count. Statements inside transactions flow through the same path; commit/rollback timings surface SQLite fsync cost.
 - Process numbers from `runtime.ReadMemStats` and `sql.DB.Stats()`, read when the snapshot is taken — not per operation.
@@ -1384,6 +1428,8 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirement.m
 | `PUT /users/me/password` (§4.4, REQ-API-118) | any authenticated user (self, with local credential) |
 | `POST /api/v1/auth/password-reset/request`, `…/complete`, `POST /api/v1/auth/invite/complete` (§4.3, REQ-API-119/120/121) | pre-authentication — service token only, no user id (DEV-API-16) |
 | `POST /api/v1/auth/verify-password` (§4.3, REQ-API-123) | pre-authentication — service token only, no user id (DEV-API-17) |
+| `POST /api/v1/auth/oauth/start` (§4.3, REQ-API-173) | pre-authentication — service token only, no user id (DEV-API-32) |
+| `POST /api/v1/auth/oauth/test` (§4.3, REQ-API-174) | `is_admin` |
 | `POST /api/v1/auth/session-replay` (§4.3, REQ-API-148) | any active user (self — the account whose session id was replayed; no session epoch) |
 | `POST /api/v1/projects` | `is_admin` |
 | `GET /api/v1/projects/{id}/export/odm`, `POST /api/v1/projects/import/odm` (§4.29) | `is_admin` only (REQ-ODM-002) |

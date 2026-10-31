@@ -6,9 +6,15 @@
 
 ## 1. Purpose
 
-Fixes the top-level system design: the normative component decomposition, the boundaries between components, and how the area design documents compose into one deployable system. It maps each business requirement (BR-001…BR-013) and global decision (GD-1…GD-20) of the charter to the area design that realizes it, and states how the charter's success criteria (§7) are verifiable.
+Fixes the top-level system design: the normative component decomposition, the boundaries between components, and how the area design documents compose into one deployable system. It maps each business requirement (BR-001…BR-014) and global decision (GD-1…GD-26) of the charter to the area design that realizes it, and states how the charter's success criteria (§7) are verifiable.
 
 The area design documents remain normative within their own areas; this document is normative for the **cross-area system view** — the component set, the inter-component boundaries, and the composition. Adding a component, moving a responsibility across a boundary, or changing how the areas compose is a change to this document.
+
+> **Key constraints** — a summary for quick orientation; the cited IDs and sections are normative.
+>
+> - **Exactly four components** — Go API, PHP web application, database, reverse proxy (§2.1). Adding one, or moving a responsibility across a boundary, is a change to this document (§1).
+> - **PHP has no database driver.** The Go API is the single writer to the store (§2.1, §2.2).
+> - **No scheduler, queue, or broker.** Time-bound behavior is evaluated at the next relevant request or run by an administrator (§5).
 
 ## 2. System Architecture
 
@@ -18,8 +24,8 @@ The system is exactly these four components and no others. There is no scheduler
 
 | Component | Responsibility | Technology | Normative source |
 |---|---|---|---|
-| Go API (single process, static binary) | All data access, validation, authorization, and audit writes; both API surfaces (REDCap data API + administration API); serves the OpenAPI document | Go 1.26 | `Technology_Stack_Design.md` §3–§5 |
-| PHP web application | Page rendering, session ownership, the OAuth2/LDAP/local login flow; the **sole client** of the administration API | PHP 8.3 or 8.4 (either line), no DB driver | `Technology_Stack_Design.md` §4–§5 |
+| Go API (single process, static binary) | All data access, validation, authorization, and audit writes; both API surfaces (REDCap data API + administration API); the OIDC protocol client (REQ-AUTH-086); serves the OpenAPI document | Go 1.26 | `Technology_Stack_Design.md` §3–§5 |
+| PHP web application | Page rendering, session ownership, the login flow — LDAP binds, the local form, and the browser half of OAuth2 (the OIDC protocol client is in the Go API, REQ-AUTH-086); the **sole client** of the administration API | PHP 8.3 or 8.4 (either line), no DB driver | `Technology_Stack_Design.md` §4–§5 |
 | Database | Single store: structure, EAV record data, and the two audit tables; SQLite (development) / MariaDB (production) | — | `Database_Schema_Design.md` |
 | Reverse proxy | TLS termination; publicly routes `POST /api/` and the PHP routes, and only those; strips the internal headers | nginx + PHP-FPM (reference), Apache httpd 2.4 + PHP-FPM (approved alternative) | `Technology_Stack_Design.md` §5 |
 
@@ -58,6 +64,7 @@ The system is exactly these four components and no others. There is no scheduler
 | BR-011 | Record isolation between data access groups | `Authentication_Authorization_Design.md` §4.2; `Database_Schema_Design.md` §6/§8 (`record_entities`, DAG tables) |
 | BR-012 | Account validity period + inactivity auto-disable | `Authentication_Authorization_Design.md` §4.4 (account active rule); `System_Configuration_Design.md` §3.10 |
 | BR-013 | Three project modes: staged setup changes in production, disabled data entry in analysis | `API_Endpoints_Design.md` §4.21 (mode + staging endpoints, classification); `User_Interface_Design.md` §6.6–§6.8 |
+| BR-014 | By-user configurable two-factor authentication (TOTP or email code) on the CLARA-verified login paths | realized as GD-21 (§4): `Authentication_Authorization_Design.md` §2.7 (Sequence G); `API_Endpoints_Design.md` §4.3/§4.4; `User_Interface_Design.md` §2.5 |
 
 ## 4. Realization of Global Decisions
 
@@ -97,7 +104,7 @@ System-level consequences of the phase-1 scope:
 - **No scheduler or queue component** — time-bound behavior is evaluated at defined checkpoints: account inactivity at the next authentication check (GD-19), and project end by an explicit operator action at the REK end date (BR-009, `Data_Export_Anonymization_Design.md` §7.1). Nothing runs automatically.
 - **No file/document storage** — the option flags are not project metadata (GD-17); DICOM handling is a separate system (charter out-of-scope).
 - **No randomization, DDP, or external modules; no survey invitations or scheduling** — only the survey-link filling is in scope (GD-9).
-- **No per-instrument access levels** — per-arm export levels plus the `personal_information`/`export_approved` field flags are the control (charter out-of-scope; `Data_Export_Anonymization_Requirements.md` DEV-EXP-1).
+- **No access control finer than the (instrument, event) grant of GD-2** — no per-field or per-user lists, time-boxed access, or approval workflows; the per-pair levels plus the `personal_information`/`export_approved` field flags are the control (charter §4 out-of-scope; `Data_Export_Anonymization_Requirements.md` DEV-EXP-1).
 
 ## 6. Success Criteria → Verification (charter §7)
 
@@ -127,4 +134,3 @@ Single-area open items (endpoint encoding, audit `details` shapes, configuration
 |---|------|
 | the per-project end-provision decision (delete vs. anonymize at the REK end date) — BR-009; spans export, storage, UI, and API | operations / project owner (rules fixed in `Data_Export_Anonymization_Design.md` §7) |
 | exact reverse-proxy configuration file for the deployment target (reverse-proxy component, §2.1) | operations — the rule set ships as `deploy/nginx/clara.conf` and `deploy/apache2/clara.conf`; per-host `server_name` and certificate remain theirs (rules fixed in `Technology_Stack_Design.md` §5) |
-| additive scope candidate not in phase 1: a most-recent-first record-history read (`API_Endpoints_Design.md` §4.16) — the 3-state completion of the master spec's "Instrument level completion info" is now in the baseline (REQ-API-074/110, REQ-DB-036), with surveys reporting `finished` automatically | owner + requirements (tracked in `User_Interface_Design.md` §11) |

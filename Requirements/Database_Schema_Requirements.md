@@ -9,6 +9,13 @@
 
 Defines the persistent data model requirements. `Design/Database_Schema_Design.md` contains the normative DDL for both dialects.
 
+> **Key constraints** — a summary for quick orientation; the cited IDs and sections are normative.
+>
+> - **One schema, two dialects.** SQL stays within the features common to SQLite and MariaDB; every exception is documented (REQ-DB-002, GD-6).
+> - **Ordered, idempotent migrations** recorded in `schema_version`, one numbered file per dialect (REQ-DB-003, `Design/Database_Schema_Design.md` §1).
+> - **System timestamps are UTC; clinical dates keep their collection offset** and are never converted (REQ-DB-005, GD-16).
+> - **Audit tables cannot be updated or deleted** by the application's database account (REQ-DB-024).
+
 ## 2. Structural Requirements
 
 | ID | Requirement |
@@ -31,10 +38,11 @@ Defines the persistent data model requirements. `Design/Database_Schema_Design.m
 
 | ID | Requirement |
 |---|------|
-| REQ-DB-008 | Store user accounts: email (unique), display name, enabled flag, authentication source (`oauth2`|`ldap`|`local`), the `is_admin` flag (GD-4), the UI language setting (default `en`, GD-12), the UI theme override `ui_theme` (nullable; one of the installed theme identifiers, or `NULL` = follow the installation default `UI_THEME` — GD-26, REQ-TECH-027, REQ-CFG-031), the local password hash (nullable; argon2id PHC string; table-based authentication — GD-18, DEV-AUTH-16), the account validity end date `valid_until` (nullable date; `NULL` = indefinite; set as days with `0` = indefinite — GD-19), the last successful login `last_login_at` (nullable UTC timestamp; updated on every successful login — GD-19), and the session epoch `session_epoch` (integer, default `0`; raised to end every session of the account — REQ-AUTH-074, DEV-AUTH-17). |
+| REQ-DB-008 | Store user accounts: email (unique), display name, enabled flag, authentication source (`oauth2`\|`ldap`\|`local`), the `is_admin` flag (GD-4), the UI language setting (default `en`, GD-12), the UI theme override `ui_theme` (nullable; one of the installed theme identifiers, or `NULL` = follow the installation default `UI_THEME` — GD-26, REQ-TECH-027, REQ-CFG-031), the local password hash (nullable; argon2id PHC string; table-based authentication — GD-18, DEV-AUTH-16), the account validity end date `valid_until` (nullable date; `NULL` = indefinite; set as days with `0` = indefinite — GD-19), the last successful login `last_login_at` (nullable UTC timestamp; updated on every successful login — GD-19), and the session epoch `session_epoch` (integer, default `0`; raised to end every session of the account — REQ-AUTH-074, DEV-AUTH-17). |
 | REQ-DB-009 | Store project roles: role name (unique per project), project-scoped, with the **per-arm default** permission assignment — a data access level and an export level for each arm (GD-2) — plus the project-level `project_admin` flag; an arm not listed in a role defaults to `no_access` / `export_none`. The ordering that once ranked `delete` and `edit_survey_responses` above `view_edit` no longer holds (REQ-AUTH-070). The example presets `data-manager`, `data-entry`, `controller` MAY be seeded per project; a project MAY have zero roles (REQ-AUTH-020). |
 | REQ-DB-040 | Below the arm default, the store MUST hold the role's **per-(instrument, event) grant**: for each pair of the arm, its data access level, export level, and the two rights **delete instrument values** and **edit collected surveys** (REQ-AUTH-069). The pair MUST be addressed by stable identifiers with the grant removed by cascade when the instrument or the event goes away, so a re-created name inherits nothing. A pair with no stored grant resolves to the arm default at evaluation time — the absence of a row is not a permission (REQ-AUTH-019). |
 | REQ-DB-010 | Store user-project assignments: unique per (user, project), nullable role (role-less = full permissions for that project), and the project token (UUID) unique across the database. |
+| REQ-DB-051 | The store MUST hold **provider subject links** (`provider_subject_links`, REQ-AUTH-080): the (issuer, subject) pair a verified OpenID Connect assertion named, the user it resolved to, and the UTC time of the first verified login. The pair MUST be unique — one provider subject names one account — while one account MAY be linked through several providers; the subject MUST be stored verbatim (a pairwise identifier is opaque) in a column wide enough for OIDC's 255-character maximum, and no token, signature, or other claim material may be stored (REQ-AUTH-036). Links MUST be removed with their account. The subject-to-session index of single sign-out (REQ-AUTH-083) is PHP session storage under `SESSION_DIR`, not a database table (`Authentication_Authorization_Design.md` §2.10). |
 
 ### 2.3 Project Structure
 

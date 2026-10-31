@@ -9,6 +9,14 @@
 
 Defines the web user interface requirements: the views, the permission gating of every page/section/action, and the UI obligations parked in the other area documents (record history, data access groups, calculated-field test, survey page, escaping in value views). `Design/User_Interface_Design.md` contains page layouts, component details, and interaction specifications.
 
+> **Key constraints** — a summary for quick orientation; the cited IDs and sections are normative.
+>
+> - **The browser talks only to PHP routes**, never to `/api/v1/*` (REQ-UI-002; the one exception is the Configuration Check's exposure probe, REQ-UI-061).
+> - **Hidden means absent from the DOM.** Gating is computed server-side, and the API re-checks every call (REQ-UI-003, REQ-AUTH-033).
+> - **Everything is escaped server-side** except free text, which is sanitized to an allowlist when stored (REQ-UI-004).
+> - **Every state-changing request carries the CSRF token** (REQ-UI-005).
+> - **Plain HTML, vanilla JavaScript, Bootstrap — no build step** (REQ-UI-001).
+
 ## 2. Common Requirements (all views)
 
 | ID | Requirement |

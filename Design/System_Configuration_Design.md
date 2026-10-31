@@ -8,6 +8,12 @@
 
 Defines the complete configuration variable inventory, the defaults, and the startup validation rules for both components. §3 is the **canonical inventory** that REQ-CFG-003 points to: the Go API and the PHP app read exactly these variable names, so a single `.env` file configures the whole system (ASM-CFG-1).
 
+> **Key constraints** — a summary for quick orientation; the cited IDs and sections are normative.
+>
+> - **§3 is the single variable inventory** both components read (REQ-CFG-003). A new variable is added to §3, to §5, and to the repository's `.env.example` in the same change.
+> - **Production refuses development defaults**, such as the development service token (§3.3, §4.1).
+> - **The startup dump logs non-secret values only** (§4.4, REQ-CFG-021, REQ-CFG-022).
+
 ## 2. Mechanism (REQ-CFG-001…006)
 
 - Environment variables exclusively; optionally loaded from a `.env` file in the working directory of each component. `.env` is git-ignored; the repository ships `.env.example` (REQ-CFG-001).
@@ -56,12 +62,19 @@ Per provider `N` (1…3):
 
 | Variable | Component | Type | Default | Required | Description |
 |---|---|---|---|---|---|
-| `OAUTH2_N_ISSUER` | web | absolute URL | — | if provider N used | provider root (authorize/token/userinfo endpoints derived, ASM-AUTH-1) |
-| `OAUTH2_N_CLIENT_ID` | web | string | — | if provider N used | (REQ-CFG-011) |
-| `OAUTH2_N_CLIENT_SECRET` | web | string (secret) | — | if provider N used | (REQ-CFG-011) |
-| `OAUTH2_N_REDIRECT_URI` | web | absolute URL | `WEB_PUBLIC_URL + /auth/callback` | — | (REQ-CFG-011) |
-| `OAUTH2_N_EMAIL_ATTR` | web | string | `email` | — | claim/attribute mapped to the system user (REQ-CFG-011, REQ-AUTH-004) |
+| `OAUTH2_N_ISSUER` | both | absolute URL | — | if provider N used | the provider's OpenID Connect issuer, copied from its discovery document. The API reads every endpoint (authorize, token, userinfo, `jwks_uri`) from `<issuer>/.well-known/openid-configuration` and requires that document's own `issuer` to equal this value; nothing is derived from the issuer path (REQ-AUTH-082, ASM-AUTH-1) |
+| `OAUTH2_N_CLIENT_ID` | api (web: display only) | string | — | if provider N used | sent in the authorization request; the ID token's `aud` must equal it (REQ-CFG-011, REQ-AUTH-076) |
+| `OAUTH2_N_CLIENT_SECRET` | api | string (secret) | — | if provider N used | used only for the server-side code exchange; never held in PHP's configuration object (REQ-CFG-011, REQ-AUTH-086) |
+| `OAUTH2_N_REDIRECT_URI` | api (web: display only) | absolute URL | `WEB_PUBLIC_URL + /auth/callback` | — | must match the provider's registration character for character (REQ-CFG-011) |
+| `OAUTH2_N_EMAIL_ATTR` | api (web: display only) | string | `email` | — | claim mapped to the system user, read from the verified ID token, else from userinfo (REQ-CFG-011, REQ-AUTH-004, REQ-AUTH-078) |
+| `OAUTH2_N_SUBJECT_ATTR` | api | string | `sub` | — | claim carrying the stable provider subject stored in `provider_subject_links`; empty is a startup error (REQ-CFG-035, REQ-AUTH-080) |
+| `OAUTH2_N_REQUIRE_EMAIL_VERIFIED` | api | `0`\|`1` | `1` | — | `1` refuses an address whose `email_verified` is not the JSON boolean `true` (REQ-CFG-035, REQ-AUTH-078) |
+| `OAUTH2_N_MIN_ACR` | api | comma-separated values | empty | — | assurance gate: `acr` must be one of these or `amr` must contain one; empty = no gate (REQ-CFG-035, REQ-AUTH-081) |
+| `OAUTH2_N_NONCE_REQUIRED` | api | `0`\|`1` | `0` | — | `1` refuses an ID token without `nonce`; `0` means "not yet observed", not "satisfied" (REQ-CFG-035, REQ-AUTH-079) |
+| `OAUTH2_N_ID_TOKEN_ALG` | api | JWS algorithm | `RS256` | — | the pinned signing algorithm; any value outside the asymmetric RS/PS/ES/EdDSA set — including `none` and the HMAC family — is a startup error (REQ-CFG-035, REQ-AUTH-077) |
 | `OAUTH2_N_NAMES` | web | comma-separated display names | unset → implicit default set | — | names this provider is selected by on the login page (master spec "Authentication order", REQ-CFG-032, REQ-AUTH-063/064); entries empty after trimming rejected at startup (§4.1) |
+
+Shared by all providers: `OAUTH2_JWKS_TTL` (api; positive integer seconds; default `3600`) bounds how long a fetched provider key set is reused before a scheduled refetch; an unknown `kid` refetches at once (REQ-CFG-035, REQ-AUTH-077).
 
 ### 3.5 LDAP (servers 1–3, tried in parallel within the selected source name; 2 and 3 optional)
 
@@ -218,6 +231,13 @@ OAUTH2_1_REDIRECT_URI=http://localhost:8000/auth/callback
 OAUTH2_1_EMAIL_ATTR=email
 # names shown on the login page; sources may share names, one source may carry several (REQ-CFG-032)
 OAUTH2_1_NAMES=Hospital 1
+# OpenID Connect assertion checks (REQ-CFG-035) — defaults shown
+#OAUTH2_1_SUBJECT_ATTR=sub
+#OAUTH2_1_REQUIRE_EMAIL_VERIFIED=1
+#OAUTH2_1_MIN_ACR=
+#OAUTH2_1_NONCE_REQUIRED=0
+#OAUTH2_1_ID_TOKEN_ALG=RS256
+#OAUTH2_JWKS_TTL=3600
 
 # local (table-based) source names — optional; unset everywhere = one implicit default set
 #LOCAL_LOGIN_NAMES=Clinic A

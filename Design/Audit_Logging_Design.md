@@ -8,6 +8,12 @@
 
 The normative event catalog (event codes, `details` payload schemas), the record-view entry rules, the write mechanics, and the partitioning/rollover mechanics for the two audit tables defined in `Database_Schema_Design.md` §7. The requirements document fixes the taxonomy and minimum entry content (REQ-AUD-016, ASM-AUD-3); this document fixes the codes and schemas.
 
+> **Key constraints** — a summary for quick orientation; the cited IDs and sections are normative.
+>
+> - **Write in the operation's own transaction**; a failed audit write rolls the operation back (REQ-AUD-003).
+> - **Read through the stable names only.** On SQLite, writes go to the current-year table because a compound view cannot take inserts (REQ-AUD-006, §6).
+> - **A new index on `audit_events` must also be created by the yearly rollover** (`audit.createEventsObjects`); otherwise every new year table silently lacks it (§6.5).
+
 ## 2. Conventions
 
 - **Event codes** (`event_type`) are stable, lowercase, `snake_case` strings; the audit UI and any downstream consumer may branch on them. Adding a code is non-breaking; changing or removing one is a breaking change.
@@ -269,10 +275,9 @@ Year objects are created by the startup/first-write check with the shape of the 
 
 ### 6.4 DDL supplement — `target_record` column and indexes
 
-To serve the record-scoped read patterns (REQ-AUD-020, REQ-API-079/080) at the reference scale (REQ-DB-025), `audit_events` carries one additional column — a normative supplement to `Database_Schema_Design.md` §7, applied by migration `004_audit_record_index.up.sql`:
+To serve the record-scoped read patterns (REQ-AUD-020, REQ-API-079/080) at the reference scale (REQ-DB-025), `audit_events` carries the `target_record` column (`VARCHAR(255)`, SQLite `TEXT`; declared in the table of `Database_Schema_Design.md` §7) and two indexes beyond the two listed there — a normative supplement to that section. Column and indexes are part of the base schema migration `0001_schema.sql` of both dialects:
 
 ```sql
-ALTER TABLE audit_events ADD COLUMN target_record VARCHAR(255);   -- SQLite: TEXT
 CREATE INDEX IF NOT EXISTS idx_audit_events_type   ON audit_events (project_id, event_type, created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_events_record ON audit_events (project_id, target_record, created_at);
 ```

@@ -18,6 +18,12 @@ browser (is_admin session)                      server
 └─────────────────────────────┘                 └──────────────────────┘
 ```
 
+> **Key constraints** — a summary for quick orientation; the cited IDs and sections are normative.
+>
+> - **The browser holds the model; PHP holds the tools and every permission decision.** The assistant needs no Go change, no migration, and no new runtime (§1).
+> - **Writes are gated twice** — the server-side mode gate and the confirmation dialog — and neither replaces the API's own permission checks (REQ-AI-006, REQ-AI-007).
+> - **Model files are not in the repository.** `web/assets/models/` is git-ignored and filled by `tools/fetch_assistant_model.sh` (§7).
+
 ## 2. MCP endpoint (`web/app/Mcp/Server.php`)
 
 `POST /mcp`, route row `'guard' => 'admin'`, `'region' => 'mcp'`: the router's CSRF check runs

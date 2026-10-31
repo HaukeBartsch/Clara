@@ -6,7 +6,7 @@
 
 ## 1. Purpose and Conventions
 
-This document contains the **normative** logical schema and DDL. MariaDB is the reference dialect (production); the SQLite variant differs only where §12 (dialect exceptions) says so (GD-6, REQ-DB-002). Conventions:
+This document contains the **normative** logical schema and DDL. MariaDB is the reference dialect (production); the SQLite variant differs only where §10 (dialect exceptions) says so (GD-6, REQ-DB-002). Conventions:
 
 - One logical schema, two dialect renderings; the DDL below is written in the common subset (REQ-DB-002)
 - All primary keys `id INTEGER` auto-generated (REQ-DB-004); SQLite: `INTEGER PRIMARY KEY` (rowid alias); MariaDB: append `AUTO_INCREMENT`
@@ -16,6 +16,12 @@ This document contains the **normative** logical schema and DDL. MariaDB is the 
 - Identifiers: `snake_case`; string identifiers `VARCHAR(255)`; email `VARCHAR(254)`; UUIDs `CHAR(36)`
 - **Canonical value formats** (resolves ASM-VAL-1; GD-16, REQ-VAL-041): dates `YYYY-MM-DD±HH:MM`; date-times `YYYY-MM-DD HH:MM±HH:MM` — no seconds, **with the timezone of collection** (`±HH:MM`, UTC = `+00:00`); values are stored as collected, never converted to UTC (clinical data, not system timestamps — system timestamps remain UTC per REQ-DB-005/GD-7); choice lists use the REDCap encoding `code$label##code$label`; free-form text has **no application length cap** beyond the storage type (REQ-VAL-021), `LONGTEXT`/`TEXT`
 - **Migrations** (REQ-DB-003): a `schema_version` table records applied versions; migrations are numbered `NNNN_name.sql`, one file per dialect under `api/internal/migrations/{sqlite,mariadb}/`, applied in order, idempotent (`CREATE TABLE IF NOT EXISTS`, guarded `ALTER`); the API applies them at startup (the project modes of GD-20 arrive as one such migration: `projects.mode` + `project_staging`)
+
+> **Key constraints** — a summary for quick orientation; the cited IDs and sections are normative.
+>
+> - **SQLite enforces foreign keys per connection.** `foreign_keys=ON` is set through the driver DSN, never by a statement after the pool opens — that would cover only one connection (§1, §10).
+> - **Every schema change is a new numbered migration**, written for both dialects under `api/internal/migrations/{sqlite,mariadb}/` (§1, REQ-DB-003).
+> - **Enumerations are API allowlists, not `CHECK` constraints** (SQLite `CHECK` is not portable): adding a value means changing the API's allowlist (§4, §10).
 
 ## 2. Logical Type Map
 
@@ -97,6 +103,15 @@ CREATE TABLE IF NOT EXISTS password_tokens (     -- REQ-DB-039 (GD-22/GD-23); Se
     expires_at   DATETIME NOT NULL,              -- now + AUTH_PASSWORD_TOKEN_TTL_DAYS (REQ-CFG-030)
     consumed_at  DATETIME                        -- UTC on first successful completion; expiry enforced at check
 );
+
+CREATE TABLE IF NOT EXISTS provider_subject_links (  -- REQ-DB-051 (REQ-AUTH-080, DEV-AUTH-18); migration 0018
+    issuer      VARCHAR(500) NOT NULL,           -- same value as OAUTH2_N_ISSUER
+    subject     VARCHAR(255) NOT NULL,           -- stored verbatim, never parsed (pairwise ids are opaque); OIDC maximum length
+    user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at  DATETIME NOT NULL,               -- UTC; first verified login
+    PRIMARY KEY (issuer, subject)                -- one provider subject names one account
+);
+CREATE INDEX IF NOT EXISTS idx_provider_subject_links_user ON provider_subject_links (user_id);  -- "what else is this account linked to" (conflict review, Authentication_Authorization_Design.md §2.10 step 8)
 
 CREATE TABLE IF NOT EXISTS roles (               -- REQ-DB-009 (GD-2)
     id             INTEGER PRIMARY KEY,
@@ -442,6 +457,7 @@ Reference scale (REQ-DB-025): 100 projects × 10,000 records × 200 fields × 10
 | `VARCHAR(n)` | `TEXT` (affinity check only) | `VARCHAR(n)` |
 | `IF [NOT] EXISTS` on indexes | `CREATE INDEX IF NOT EXISTS`, `DROP INDEX IF EXISTS name` | `CREATE INDEX IF NOT EXISTS`, `DROP INDEX IF EXISTS name ON table` — required, not cosmetic: each DDL statement commits on its own, so an index migration stopped halfway is not rolled back, and the guards let the next start finish it (migration 0016) |
 | unique key over 3072 bytes (`data`: four `VARCHAR(255)` utf8mb4 columns) | an ordinary B-tree; answers any leading prefix of the key | kept as a `HASH` "long unique" index: enforces uniqueness only — it answers no prefix lookup (hence `idx_data_project_record`, migration 0019) and cannot back a foreign key (hence an index led by `project_id` for `fk_data_project`, migration 0016) |
+| primary key near the 3072-byte limit (`provider_subject_links`: `VARCHAR(500)` + `VARCHAR(255)`) | no limit | 3,020 bytes in utf8mb4 — fits the default `DYNAMIC` row format only. A server set to `innodb_default_row_format=COMPACT` (767-byte limit) MUST be switched back rather than the columns shortened: a truncated subject would bind two people to one account (REQ-DB-051) |
 | yearly audit rollover | per-year tables + `VIEW` (no partitions) | `PARTITION BY RANGE (YEAR(created_at))` |
 | append-only enforcement | application-level (no such operation exposed) | grant `INSERT, SELECT` only to the app account |
 | foreign keys | `PRAGMA foreign_keys=ON` on every connection (DSN pragma, verified at startup — see the note below) | enforced (InnoDB) |

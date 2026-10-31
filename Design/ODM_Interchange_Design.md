@@ -10,6 +10,12 @@ Fixes the element-level mapping between CLARA's project structure / record data 
 
 Element and attribute spellings below follow **CDISC ODM 1.3.2** (`ODM1-3-2-foundation.xsd`, namespace `http://www.cdisc.org/ns/odm/v1.3`) for the 1.3 dialect, notably where later editions or common paraphrase differ: the root carries `FileOID` (not `ODID`), an item is referenced by `ItemData/@ItemOID` (not `@Name`), a codelist attaches through the child `CodeListRef` (there is no `codelistOID` attribute on `ItemDef`), 1.3.2 has no `NullFlavor`, and a method's body is `FormalExpression` (not `Formulation`). The same mapped content is emitted in the ODM 2.0 namespace with `ODMVersion="2.0"`; import chooses the dialect from the root namespace. A deviation from this document is a requirements-level change (AGENTS.md).
 
+> **Key constraints** — a summary for quick orientation; the cited IDs and sections are normative.
+>
+> - **Reuse the export pipeline; never re-implement anonymization** (§6, REQ-ODM-021).
+> - **`is_admin` only, administration API only** (REQ-ODM-002, REQ-ODM-003).
+> - **Element and attribute names follow the CDISC ODM 1.3.2 schema** (`tools/odm_schema/`), not common paraphrase (§1).
+
 ## 2. Document Envelope
 
 ```xml
@@ -115,7 +121,7 @@ A pair that repeats (REQ-DB-047) is marked in the extension, because **neither**
 
 | CLARA | ODM |
 |---|---|
-| instrument | 1.3: `<FormDef OID="FRM_<name>" Name="<name>" Repeating="No">` with one `ItemGroupRef` to `IG_<name>`, and `clara:Form` inside it. 2.0 declares **no form element**, so the instrument *is* its item group: `<ItemGroupDef OID="IG_<name>" Name="<name>" Repeating="No|Simple" Type="Form">`, with `clara:Form` carried on that group instead — same extension element, different host, because 2.0 has nothing else to put it in (REQ-ODM-015) |
+| instrument | 1.3: `<FormDef OID="FRM_<name>" Name="<name>" Repeating="No">` with one `ItemGroupRef` to `IG_<name>`, and `clara:Form` inside it. 2.0 declares **no form element**, so the instrument *is* its item group: `<ItemGroupDef OID="IG_<name>" Name="<name>" Repeating="No\|Simple" Type="Form">`, with `clara:Form` carried on that group instead — same extension element, different host, because 2.0 has nothing else to put it in (REQ-ODM-015) |
 | instrument's fields, in `position` order | `<ItemGroupDef OID="IG_<name>" Name="<name>" Repeating="No"…>` (`Type="Form"` under 2.0) and one `ItemRef ItemOID="IT_<field>" Mandatory="Y\|N" OrderNumber="<position>"` per exportable field (REQ-DB-013). The dataset name is written only when the instrument name satisfies ODM's `sasName` type (≤8 characters, `[A-Za-z_][A-Za-z0-9_]*`) and omitted otherwise — `@SASDatasetName` in 1.3, `@DatasetName` in 2.0, which declares no SAS attribute (REQ-ODM-028) |
 | pair is repeating (`instrument_events.is_repeating`, REQ-DB-047) | `@Repeating="Yes"` — **`"Simple"` in 2.0**, whose substituted type is `No\|Simple\|Dynamic\|Static` and admits no `Yes` — on the referenced `ItemGroupDef`, plus `@ItemGroupRepeatKey` on each data row (§4): ODM marks the group repeating, not the form. The per-pair flag is §3.2's extension attribute |
 | matrix group (`matrix_group`, REQ-DB-014) | its own `ItemGroupDef IG_<matrix_group>` (non-repeating; `Type="Section"` under 2.0), referenced after the main group — from the instrument's `FormDef` in 1.3, and from the instrument's **own item group** in 2.0, which is what tells a reader which instrument a Section belongs to when the event references every group side by side (§3.2); each row field is an `ItemRef` of that group with its own `OrderNumber` |

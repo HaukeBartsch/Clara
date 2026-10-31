@@ -9,6 +9,13 @@
 
 This document consolidates the business and product requirements for a research electronic data capture (EDC) system for clinical studies. It is the top-level requirements baseline; the area requirements documents in this folder refine it. The system replaces REDCap for this deployment: it provides a web-based platform to collect project data, and integrates with the research information system (RIS, "Fiona") through a REDCap-compatible API.
 
+> **Key constraints** — a summary for quick orientation; the cited IDs and sections are normative.
+>
+> - **The global decisions (§5) bind every area document.**
+> - **PHP never opens a database connection.** All data access goes through the Go API (BR-006, success criterion 6).
+> - **FIONA's calls must work unchanged** (BR-005, success criterion 1).
+> - **One binary for SQLite and MariaDB**, switched by configuration only (success criterion 5).
+
 ## 2. Stakeholders and Actors
 
 | Actor | Description | Key needs |
@@ -51,7 +58,7 @@ This document consolidates the business and product requirements for a research 
 - Project structure: single-arm first (multi-arm supported in the model), events, instruments, fields (data dictionary), instrument-by-event mapping.
 - Instrument designer and instrument/field reordering.
 - Data entry (create/update of record values), record deletion, and record status dashboard.
-- REDCap-compatible data API (`POST/GET /api/`) with content: `project`, `metadata`, `event`, `formEventMapping`, `exportFieldNames`, `generateNextRecordName`, `record` (export/import/delete).
+- REDCap-compatible data API (`POST /api/`; `GET` is refused, REQ-API-009) with content: `project`, `metadata`, `event`, `formEventMapping`, `exportFieldNames`, `generateNextRecordName`, `record` (export/import/delete).
 - Administration API (`/api/v1/...`) used exclusively by the PHP web application.
 - RBAC with per-arm permission levels (data access and export) plus `project_admin`; roles are defined per project (example presets, custom roles, or none).
 - Survey instruments filled via stable, record-specific public links without login (GD-9).
@@ -126,14 +133,86 @@ These decisions were made explicit with the project owner and are binding for al
 
 | Area | Requirements document |
 |---|------|
-| API surface | `API_Endpoints_Requirements.md` |
+| AI assistant | `AI_Assistant_Requirements.md` |
+| API surface | `API_Endpoints_Requirement.md` |
 | Security | `Authentication_Authorization_Requirements.md` |
 | Audit | `Audit_Logging_Requirements.md` |
 | Export/anonymization | `Data_Export_Anonymization_Requirements.md` |
 | Validation | `Data_Validation_Requirements.md` |
 | Data model | `Database_Schema_Requirements.md` |
+| Project interchange (CDISC ODM) | `ODM_Interchange_Requirements.md` |
 | Configuration | `System_Configuration_Requirements.md` |
 | Platform | `Technology_Stack_Requirements.md` |
 | UI | `User_Interface_Requirements.md` |
 
 Each area document carries requirement IDs prefixed with its area (`REQ-API-…`, `REQ-AUTH-…`, …) and references these business requirements where applicable.
+
+## 9. Glossary
+
+The terms and reference codes used across `Requirements/` and `Design/`. Each entry names where the term is defined normatively; the definition there wins over the summary here.
+
+### 9.1 Reference codes
+
+| Code | Meaning | Defined in |
+|---|---|---|
+| `REQ-<AREA>-nnn` | A requirement. IDs are stable: never renumbered, never reused. `<AREA>` names the document: `AI`, `API` (`API_Endpoints_Requirement.md`), `AUD` (Audit_Logging), `AUTH` (Authentication_Authorization), `CFG` (System_Configuration), `DB` (Database_Schema), `EXP` (Data_Export_Anonymization), `ODM` (ODM_Interchange), `TECH` (Technology_Stack), `UI` (User_Interface), `VAL` (Data_Validation). The same IDs appear in code comments and tests. | the area's Requirements document |
+| `ASM-<AREA>-n` | An assumption the area's requirements rely on. If it stops holding, every requirement citing it needs review. | "Assumptions" section of the area's Requirements document |
+| `DEV-<AREA>-n` | A recorded deviation: where a requirement departs from the retired per-area plan or from the master spec, with the reason. | "Deviations" section of the area's Requirements document |
+| `BR-nnn` | Business requirement. | §3 |
+| `GD-n` | Global decision, binding on every area. | §5 |
+| `D-n` | Local design decision of the export and anonymization pipeline. | `Design/Data_Export_Anonymization_Design.md` §10.1 |
+| `F1`…`F20` | Finding of the security review, with severity; "Req-change" marks findings that changed a requirement. | `VISION_AND_REQUIREMENTS.md`, "Security relevant findings" |
+| Sequence A…J | The authentication sequences: A OAuth2 authorization code, B LDAP attempt, C API login call, D logout, E brute-force protection, F local (table-based) attempt, G two-factor challenge and enrollment, H invite and password reset, I named source selection and credential race, J provider assertion verification. | `Design/Authentication_Authorization_Design.md` §2.1…§2.10 |
+| `§n` | Section `n` of the document named just before it; with no document named, of the document it appears in. "charter §n" is this document. | — |
+| master spec | `VISION_AND_REQUIREMENTS.md`, the origin document. A quoted heading after it (master spec "Authentication order") names its section. | — |
+| plan | One of the per-area delivery plans retired on 2026-10-28. Citations quote them as of commit `2b0c371` (`git show 2b0c371:Plan/<Area>.md`). | `AGENTS.md` |
+
+### 9.2 Domain terms
+
+| Term | Meaning | Defined in |
+|---|---|---|
+| acting user | The account an administration-API call acts for, named by `X-Internal-User-Id`. Authoritative for every authorization decision; PHP adds no permissions of its own. | GD-1, REQ-AUTH-013 |
+| administration API | The `/api/v1/*` surface. Called only by the PHP web application, server-side, over the trusted internal path; never by the browser or an external system. | GD-1, REQ-API-040 |
+| arm | A study arm of a project, numbered from 1 (`arm_num`). Holds events; permissions default per arm. | BR-003, REQ-DB-011 |
+| audit tables | `audit_events` (changes, exports, authentication, administration) and `audit_record_views` (record pulls through the data API). Both append-only, rolled over yearly. | BR-007, REQ-AUD-001 |
+| authentication source | One configured login backend of one kind: the local (table-based) source, an LDAP server, or an OAuth2/OpenID Connect provider. | REQ-AUTH-063 |
+| bootstrap administrator | The account named by `ADMIN_BOOTSTRAP_EMAIL`. Promoted to `is_admin` at login; on an installation without OAuth2 or LDAP it signs in with `ADMIN_BOOTSTRAP_PASSWORD`. | GD-4, GD-18, REQ-AUTH-007 |
+| branching logic | An expression on a field or instrument that decides whether it is displayed. Display-only: it never affects import, export, or audit. | GD-13 |
+| calculated field | Field type `calculated`. Its value is computed from other fields and recomputed in the same transaction as any change to an input or to the expression. | GD-11 |
+| collection timezone | The UTC offset stored with every clinical date and date-time value (`2026-03-01+01:00`). Values are stored as collected, never converted. System timestamps are UTC instead. | GD-16, GD-7 |
+| completion state | Per (record, event, instrument, instance): `no_data` and `some_data` are derived from the stored values; `finished` is assigned by a user. Survey instruments report `finished` automatically. | REQ-DB-036, REQ-API-074 |
+| Control Panel | The administration page (`GET /admin`, `is_admin` only), one left-panel section per task: users, projects, audits, translations, settings, API documentation, configuration check, monitoring, authentication test. | `Design/User_Interface_Design.md` §5 |
+| credential race | The parallel attempt of every local and LDAP source registered under the source name the user selected. The first successful answer wins; the rest are discarded. | REQ-AUTH-065, Sequence I |
+| data access group (DAG) | A per-project grouping of records. A member with an active group sees only that group's records; a member without a group sees all records. | GD-10, BR-011 |
+| data access level | `no_access` < `read_only` < `view_edit`. Held per arm as the role's default and per (instrument, event) pair below it. Two further rights — delete instrument values, edit collected surveys — are implied by no level. | GD-2 |
+| data API | The REDCap-compatible `POST /api/` surface for external callers such as FIONA, authenticated by a project token in the request body. | REQ-API-009, REQ-API-010 |
+| data dictionary | The field definitions of a project: name, type, label, choices, validation, and the identifier and personal-information flags. Imported and exported in the REDCap CSV layout. | REQ-DB-013 |
+| direct identifier field | The record identifier field, or a field flagged `direct_identifier`. Its value never leaves the system untransformed below `export_full`. | REQ-EXP-020, REQ-EXP-021 |
+| end-of-project provision | The one-shot action an administrator runs at the REK end date: delete or anonymize the project's stored data. No scheduler triggers it. | BR-009, D-7 |
+| event | A time point within an arm. Unique name `<label>_arm_<n>` (the data API's `redcap_event_name`); optional timepoint `period` in days after baseline. Events with a timepoint sort by it; the others are ordered by hand. | REQ-DB-011, GD-15 |
+| export level | `export_none` < `export_de_identified` (identifiers removed, personal fields hashed, dates shifted) < `export_no_identifiers` (identifier fields removed) < `export_full`. Held per (instrument, event) pair. | GD-2, BR-008 |
+| FIONA | (1) The research information system (RIS) that calls the data API; its recorded calls are the compatibility contract. (2) Its historic user-management application in `assets/table_based_authentication_plus_user_management/`, the reference for the web UI's layout and session flow. Spelled "Fiona" in older text. | §1, REQ-UI-032 |
+| first-factor handle | A signed statement, valid for 5 minutes, that the API verified an account's password. The second login call of a two-factor challenge presents it in place of the password. | REQ-API-131 |
+| instance | One fill-out of a repeating instrument, numbered from 1. Every non-repeating form has instance 1. | REQ-DB-047, REQ-DB-048 |
+| instrument | A form: an ordered set of fields. Collects data only while mapped to at least one event. | REQ-DB-011, REQ-DB-012 |
+| instrument-event mapping | The set of unique (instrument, event) pairs. The pair is also the unit of permission grants, export levels, and the repeating designation. | REQ-DB-012, GD-2 |
+| `is_admin` | The installation administrator flag on a user. Implies every permission on every project; only it may change a project's mode. | GD-4, GD-20, REQ-AUTH-023 |
+| ODM | CDISC Operational Data Model XML (versions 1.3.2 and 2.0), used to export and import a project's structure and data. | `ODM_Interchange_Requirements.md` |
+| personal field | A field flagged `personal_information` that is not a direct identifier. Hashed at `export_de_identified`, kept at the levels above. | REQ-EXP-022 |
+| project mode | `development` (everything allowed), `production` (setup changes go through a staging set; breaking changes warned before commit), or `analysis` (data entry disabled). Only `is_admin` changes it. | GD-20, BR-013 |
+| project token | The UUID of one (user, project) assignment. A data-API caller sends it as the `token` parameter in the request body. | GD-5, REQ-API-010 |
+| `project_admin` | A role flag: manage the structure and metadata of that one project. | GD-2 |
+| provider subject link | The stored (issuer, subject) pair binding an OpenID Connect identity to an account. Account resolution prefers it over the email address. | REQ-AUTH-080, REQ-DB-051 |
+| record | One participant's data within a project, named by the value of the record identifier field. | GD-8 |
+| record identifier field | The first field, by position, of the earliest instrument that has fields. Its value is the record name (`record_id`). | GD-8 |
+| record naming mode | `auto` (the system assigns plain numeric ids) or `manual` (the user types the id). | REQ-DB-045 |
+| REK | Norway's Regional Committees for Medical and Health Research Ethics. The REK number and approval dates are project metadata; the end-of-project provision is due at the REK end date. | GD-17, BR-009 |
+| repeating instrument | A mapped (instrument, event) pair whose form can be filled more than once per record at that event. Never a survey instrument or the instrument holding the record identifier. | REQ-DB-047 |
+| role | A project-scoped permission set: per-arm defaults, per-pair grants, and the `project_admin` flag. A member assigned no role has full permissions on that project. | GD-2, REQ-DB-009, REQ-DB-010 |
+| service token | `INTERNAL_SERVICE_TOKEN`, the shared secret PHP presents as `X-Internal-Service-Token` on every administration-API call. | GD-1, REQ-AUTH-011 |
+| session epoch | A per-account counter. PHP stores it in the session and presents it on every call; raising it ends every session of the account at its next call. | REQ-AUTH-074 |
+| source name | The label ("Hospital 1") a user selects on the login page. One name can cover several authentication sources, and one source can carry several names. | REQ-AUTH-063, REQ-AUTH-064 |
+| staging set | In production mode, the single open snapshot of pending setup changes of a project. Committed or discarded as a whole. | GD-20, REQ-DB-035 |
+| survey link | A stable, record-specific public URL (`/s/{link}`) with an opaque token. It lets a person without a login fill exactly one survey-marked instrument of one record. | GD-9, REQ-AUTH-038 |
+| transfer field | Field type `transfer`. Holds instructions (in its `choices` attribute) for copying values into another project; executed on request; stores no value of its own. | REQ-DB-050, REQ-API-165 |
+| two-factor authentication | A TOTP or emailed one-time code after a successful local or LDAP first factor. OAuth2 logins rely on the identity provider's own factor. | GD-21, BR-014 |

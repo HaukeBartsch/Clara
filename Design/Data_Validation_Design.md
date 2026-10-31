@@ -8,6 +8,12 @@
 
 The normative validation pipeline, rule codes, value grammars, content policy mechanics, and the two expression languages (calculated fields, branching logic). Everything here is enforced in the Go API at the single storage choke point (REQ-VAL-001/002/004); the UI's client-side checks are advisory mirrors of these rules.
 
+> **Key constraints** — a summary for quick orientation; the cited IDs and sections are normative.
+>
+> - **One choke point.** Every write path calls the same validation in the Go API before storage (REQ-VAL-001, REQ-VAL-004).
+> - **The UI's checks are advisory mirrors** of these rules and never replace them (REQ-VAL-002).
+> - **`api/internal/validate` is database-free** (`Technology_Stack_Design.md` §4).
+
 ## 2. Validation Pipeline
 
 Every value passes the same ordered pipeline, regardless of entry path (data API import, UI data entry, survey link — REQ-VAL-001/004):
@@ -283,7 +289,7 @@ Every rejection is a design-time error with a machine-readable reason (REQ-API-0
 | ASM-VAL-3 (partial records) | `required` is advisory at import; completion is tracked, not enforced (§8) |
 | ASM-VAL-4 (calculated-field details) | `*`/`/` before `+`/`-`, all left-associative, parentheses override; acyclic dependency graph; value stored at each active position; expression change → project-wide recomputation (§6) |
 | ASM-VAL-5 (free-form text details) | allowlist final (§5.2); disallowed markup is stripped with its text preserved; only `href` on `a`, schemes `http`/`https`/`mailto` |
-| ASM-VAL-6 (branching-logic details) | numeric / chronological / lexicographic comparison; missing referenced value → `0`; truthiness for bare references; `&&`/`||` as the logical operators; function set final (§7) |
+| ASM-VAL-6 (branching-logic details) | numeric / chronological / lexicographic comparison; missing referenced value → `0`; truthiness for bare references; `&&`/`\|\|` as the logical operators; function set final (§7) |
 
 ## 11. Open Items
 

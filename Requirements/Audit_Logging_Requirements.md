@@ -9,6 +9,14 @@
 
 Defines the requirements for the system's audit trail: the two append-only audit tables, the complete event taxonomy, the minimum content of entries, the boundary between the audit trail and application logging, and the authorized read access. `Design/Audit_Logging_Design.md` contains the normative event catalog (event codes, payload schemas) and the partitioning/rollover mechanics.
 
+> **Key constraints** — a summary for quick orientation; the cited IDs and sections are normative.
+>
+> - **Append-only.** No operation updates or deletes an audit entry; on MariaDB the application's database account lacks the privilege (REQ-AUD-002, REQ-DB-024).
+> - **Same transaction.** An operation whose audit entry cannot be written rolls back; no data change commits without its entry (REQ-AUD-003).
+> - **Completed operations only.** Rejected calls and failed validations create no data-change or record-view entries; security-relevant rejections are still logged (REQ-AUD-004).
+> - **Record views carry no values.** `audit_record_views` records which records and instruments were read, never the values (REQ-AUD-014).
+> - **The audit trail is not the application log.** Audit details may hold tokens and old/new values; application logs never do (REQ-AUD-007).
+
 ## 2. Audit Store
 
 | ID | Requirement |

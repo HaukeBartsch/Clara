@@ -27,6 +27,13 @@ Common conventions (REQ-UI-001…008), binding on every page:
 - **Time** (GD-7, GD-16): **system** timestamps (audit, history, account fields) are displayed as UTC, in the `YYYY-MM-DD HH:MM:SS` form the API returns. Clinical date/date-time **values** are displayed **exactly as stored** — canonical form **including the collection timezone offset** (e.g. `2026-03-01+01:00`, `2026-03-01 09:30+01:00`); the UI performs no locale reformatting of stored data and no timezone conversion (resolves ASM-UI-1). When the user enters a date/date-time in the data-entry form, the form submits it as typed (the field's `validation_format`) — for the two default formats through the browser's native date control plus a **now** button (REQ-UI-072, §8.2) — and the browser's timezone is sent as the collection zone (GD-16, REQ-VAL-041 — the PHP layer resolves the browser zone to the offset and passes `tz`).
 - **Layout** (master spec, "User interface details"; DEV-UI-14): the left panel belongs to the page that has switchable sections. The signed-in surface has four shells — the **project overview** (`/`) is a single content panel with no left panel; the **project page** (`/projects/{id}…`) carries the project's functions in a left panel and shows the selected one on the right; the **Control Panel** (`/admin`) does the same for the administration sections, and the **account page** (`/account`) for the user's own settings (§2.4). Selecting a section (e.g. *Setup*) renders that page in the right-hand panel. This is a shared multi-page layout, not a single-page app: each route of §2.1 renders the same shell and swaps the panel content (consistent with REQ-UI-001 — no framework). The shells, visual style, and interaction style follow the historic FIONA reference in `assets/table_based_authentication_plus_user_management/` (master spec, "Details"; REQ-UI-032, REQ-TECH-025): left panel + content panel, `table-sm` tables, responsive layout, and a client that populates data regions from JSON — realized in Bootstrap 5.3.x and vanilla ES2020.
 
+> **Key constraints** — a summary for quick orientation; the cited IDs and sections are normative.
+>
+> - **Client-side gating is presentation, never enforcement.** Hidden means absent from the DOM; the API re-checks every call (§1, REQ-UI-003).
+> - **The browser talks only to PHP routes** (REQ-UI-002).
+> - **Escape server-side**; only sanitized free text renders as HTML (REQ-UI-004).
+> - **No build step.** ES modules are loaded by relative path with `<script type="module">` (REQ-UI-045); §12 lists the rules enforced at review.
+
 ## 2. Application Shell and Routes
 
 ### 2.1 Route set (normative — the complete set of browser-reachable routes)
@@ -755,7 +762,7 @@ Items 2, 4–8 were owner-level baseline changes; the owner decisions of 2026-09
 | 7 | **account validity (days; 0 = indefinite)** (master spec "Details") | **RESOLVED (GD-19)** — `users.valid_until` (REQ-DB-008); `valid_days` on the user API (REQ-API-047/048); `account_expired` rejection (REQ-AUTH-052); the §5.1 form contract binds |
 | 8 | **auto-disable after N days (180) inactivity** + admin re-enable + display on the user overview (master spec "Details") | **RESOLVED (GD-19)** — `users.last_login_at` (REQ-DB-008); auto-disable rule + `account_auto_disabled` audit (REQ-AUTH-053, `Authentication_Authorization_Design.md` §4.4); `AUTH_INACTIVITY_LIMIT_DAYS` default 180, `0` = off (REQ-CFG-024, `System_Configuration_Design.md` §3.10); admin re-enable resets the inactivity clock; the §5.1 contract binds |
 
-Item 1 is no longer a dependency: the storage, endpoint, audit event, and three-state `record-status` response are in the baseline, so the §6.3 and §8.5 contracts bind as written. The remaining item (3) is additive and non-blocking — an efficiency suggestion for an endpoint that already works correctly, needing no requirements decision to implement the UI as specified here.
+No item remains a dependency: the storage, endpoint, audit event, and three-state `record-status` response of item 1 and the most-recent-first history read of item 3 are in the baseline, so the §6.3, §8.3 and §8.5 contracts bind as written.
 
 ## 12. Implementation rules (enforced at review)
 

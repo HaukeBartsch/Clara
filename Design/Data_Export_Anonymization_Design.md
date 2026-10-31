@@ -20,6 +20,12 @@ The surrounding machinery is fixed elsewhere and is not repeated here:
 
 This document is normative for the level pipeline (§4), the algorithms (§5), and the end-provision action (§7); any deviation is a requirements-level change.
 
+> **Key constraints** — a summary for quick orientation; the cited IDs and sections are normative.
+>
+> - **This document is normative for the level pipeline (§4), the algorithms (§5), and the end-provision action (§7).** Any deviation is a requirements-level change.
+> - **Direct identifiers are fail-safe**: never output untransformed below `export_full` (D-1, REQ-EXP-021).
+> - **Every export format reuses this pipeline.** ODM goes through the same steps and must not re-implement them (REQ-ODM-021).
+
 ## 2. Export Surfaces
 
 Two surfaces, one pipeline (§4):
