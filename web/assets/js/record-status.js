@@ -21,7 +21,7 @@
 import { el, fill, notice, ready, t, tabulatorOptions } from "../app.js"
 import { TabulatorFull as Tabulator } from "../vendor/tabulator/tabulator_esm.min.js"
 
-const STATES = ["no_data", "some_data", "finished"]
+const STATES = ["no_data", "some_data", "unverified", "finished"]
 
 // A cell lists at most this many instance dots; the rest are one link away (REQ-UI-055).
 const MAX_DOTS = 5
@@ -40,8 +40,14 @@ const litTiles = ([filled, visible]) =>
     : filled >= visible ? TILES
     : Math.min(TILES - 1, Math.max(1, Math.floor((2 * TILES * filled + visible) / (2 * visible))))
 
-// A state's colouring of the counter: grey is the counter's own, amber and green a class each.
-const COLORING = { no_data: [], some_data: ["counter-yellow"], finished: ["counter-green"] }
+// A state's colouring of the counter: grey is the counter's own, blue, yellow and green a class
+// each.
+const COLORING = {
+  no_data: [],
+  some_data: ["counter-blue"],
+  unverified: ["counter-yellow"],
+  finished: ["counter-green"],
+}
 
 // The spec's counting classes: `counter-<n>` turns on n + 1 tiles, and no class none.
 const countClass = (lit) => (lit > 0 ? ["counter-" + (lit - 1)] : [])

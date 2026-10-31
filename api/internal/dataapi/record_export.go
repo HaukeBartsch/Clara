@@ -511,14 +511,14 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 	}
 	instrValueFields := d.valueFieldsByInstrument()
 
-	// Stored finished assignments (§4.13, REQ-DB-036): the sparse set joined
-	// in memory per (record, event, instrument), as on the dashboard — only
-	// mapped pairs are visible (§ mapping_updated rule).
-	finished := map[string]bool{} // record|event|instrumentID|instance
-	// finishedFurther lists, per record|event|instrumentID, the further
-	// instances marked finished — an instance that holds no value but is
-	// finished still has a row (REQ-API-155).
-	finishedFurther := map[string][]int{}
+	// Stored assignments (§4.13, REQ-DB-036): the sparse set of finished and
+	// unverified cells joined in memory per (record, event, instrument), as on
+	// the dashboard — only mapped pairs are visible (§ mapping_updated rule).
+	assigned := map[string]string{} // record|event|instrumentID|instance → state
+	// assignedFurther lists, per record|event|instrumentID, the further
+	// instances holding an assignment — an instance that holds no value but is
+	// finished or unverified still has a row (REQ-API-155).
+	assignedFurther := map[string][]int{}
 	evNameOf := map[int64]string{}
 	for _, e := range d.events {
 		evNameOf[e.EventID] = e.UniqueEventName
@@ -534,10 +534,10 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 			if !known {
 				continue // event unknown to the dictionary (deleted mid-read)
 			}
-			finished[completionKey(c.RecordID, name, c.InstrumentID, c.Instance)] = true
+			assigned[completionKey(c.RecordID, name, c.InstrumentID, c.Instance)] = c.State
 			if c.Instance > 1 {
-				finishedFurther[completionKey(c.RecordID, name, c.InstrumentID, 1)] =
-					append(finishedFurther[completionKey(c.RecordID, name, c.InstrumentID, 1)], c.Instance)
+				assignedFurther[completionKey(c.RecordID, name, c.InstrumentID, 1)] =
+					append(assignedFurther[completionKey(c.RecordID, name, c.InstrumentID, 1)], c.Instance)
 			}
 		}
 	}
@@ -988,9 +988,25 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 			return present(c, event, v)
 		}
 
-		// <instrument>_complete (REQ-API-134): the dashboard's three-state
-		// derivation rendered as 0/1/2. An exact event stays exact; a bare
-		// slot scans the record's events, mirroring cell above.
+		// assignedCode is the REDCap code of one (event, instance)'s assignment
+		// (REQ-API-134): finished 2, unverified 1, and 0 for a cell without
+		// one, whether it holds values or not — REDCap's Incomplete covers both
+		// derived states.
+		assignedCode := func(instr dictInstrument, event, id string, instance int) string {
+			if !mapped(instr.ID, event) {
+				return "0"
+			}
+			switch assigned[completionKey(id, event, instr.ID, instance)] {
+			case db.CompletionFinished:
+				return "2"
+			case db.CompletionUnverified:
+				return "1"
+			}
+			return "0"
+		}
+		// <instrument>_complete (REQ-API-134): the dashboard's state rendered
+		// as REDCap's 0/1/2. An exact event stays exact; a bare slot scans the
+		// record's events for the highest code, mirroring cell above.
 		completeCell := func(instr dictInstrument, event, id string) string {
 			if event != "" && d.hasEvents && !mapped(instr.ID, event) {
 				// No pair at this event, so no completion state to report — REDCap's
@@ -1000,55 +1016,19 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 			if instr.IsSurvey {
 				return "2" // GD-9: completion info is filled in automatically
 			}
-			fieldsOf := instrValueFields[instr.ID]
-			hasValue := func(ev string) bool {
-				for name := range fieldsOf {
-					if rv[ev][name] != "" {
-						return true
-					}
-				}
-				return false
-			}
-			isFinished := func(ev string) bool {
-				return finished[completionKey(id, ev, instr.ID, 1)] && mapped(instr.ID, ev)
-			}
 			if event != "" {
-				if isFinished(event) {
-					return "2"
-				}
-				if hasValue(event) {
-					return "1"
-				}
-				return "0"
+				return assignedCode(instr, event, id, 1)
 			}
+			code := "0"
 			for ev := range rv {
-				if isFinished(ev) {
-					return "2"
-				}
+				code = max(code, assignedCode(instr, ev, id, 1))
 			}
-			if hasValue("") {
-				return "1"
-			}
-			for ev := range rv {
-				if hasValue(ev) {
-					return "1"
-				}
-			}
-			return "0"
+			return code
 		}
-		// instanceComplete is the same state for one instance of a repeating
-		// instrument at an exact event, read from that instance's values
-		// (REQ-API-155).
-		instanceComplete := func(instr dictInstrument, event, id string, instance int, values map[string]string) string {
-			if finished[completionKey(id, event, instr.ID, instance)] && mapped(instr.ID, event) {
-				return "2"
-			}
-			for name := range instrValueFields[instr.ID] {
-				if values[name] != "" {
-					return "1"
-				}
-			}
-			return "0"
+		// instanceComplete is the same code for one instance of a repeating
+		// instrument at an exact event (REQ-API-155).
+		instanceComplete := func(instr dictInstrument, event, id string, instance int) string {
+			return assignedCode(instr, event, id, instance)
 		}
 		// instanceValues is the value map of one instance: the first instance
 		// lives with the record's first-instance values (REQ-DB-048).
@@ -1059,10 +1039,10 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 			return ri[instanceKey{event: event, instrument: instrument, instance: instance}]
 		}
 		// instancesOf lists the instances of a repeating instrument at an event
-		// that hold a value or are marked finished, ascending (REQ-API-155).
+		// that hold a value or an assignment, ascending (REQ-API-155).
 		instancesOf := func(event string, instr dictInstrument) []int {
 			var out []int
-			first := finished[completionKey(id, event, instr.ID, 1)]
+			first := assigned[completionKey(id, event, instr.ID, 1)] != ""
 			for name := range instrValueFields[instr.ID] {
 				first = first || rv[event][name] != ""
 			}
@@ -1073,7 +1053,7 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 			for _, n := range ri.numbers(event, instr.Name) {
 				seen[n] = true
 			}
-			for _, n := range finishedFurther[completionKey(id, event, instr.ID, 1)] {
+			for _, n := range assignedFurther[completionKey(id, event, instr.ID, 1)] {
 				seen[n] = true
 			}
 			further := make([]int, 0, len(seen))
@@ -1156,7 +1136,7 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 						return "", false
 					}
 					if rs.instrument != nil {
-						return instanceComplete(*sl.comp, rs.event, id, rs.instance, rs.values), true
+						return instanceComplete(*sl.comp, rs.event, id, rs.instance), true
 					}
 					return completeCell(*sl.comp, rs.event, id), true
 				}
@@ -1214,11 +1194,11 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 					// not have reads as an absent value.
 					if sl.comp != nil {
 						values := instanceValues(sl.event, sl.comp.Name, sl.instance)
-						if values == nil && !finished[completionKey(id, sl.event, sl.comp.ID, sl.instance)] {
+						if values == nil && assigned[completionKey(id, sl.event, sl.comp.ID, sl.instance)] == "" {
 							cells = append(cells, "")
 							continue
 						}
-						cells = append(cells, instanceComplete(*sl.comp, sl.event, id, sl.instance, values))
+						cells = append(cells, instanceComplete(*sl.comp, sl.event, id, sl.instance))
 						continue
 					}
 					values := instanceValues(sl.event, cols[sl.col].f.Instrument, sl.instance)
@@ -1349,7 +1329,7 @@ func cellsValueHasData(f recField, v string) bool {
 	return v != "" && !(f.isChoiceColumn() && v == "0")
 }
 
-// completionKey indexes the stored finished assignments by
+// completionKey indexes the stored assignments by
 // (record, event, instrument, instance) — the join key of the REQ-API-134
 // derivation; instance is 1 for every form that does not repeat (REQ-DB-048).
 func completionKey(recordID, event string, instrumentID int64, instance int) string {

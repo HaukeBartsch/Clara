@@ -47,6 +47,7 @@ $hidden = static function (array $fields): string {
 $stateBadge = [
     'no_data' => 'clara-state-no_data',
     'some_data' => 'clara-state-some_data',
+    'unverified' => 'clara-state-unverified',
     'finished' => 'clara-state-finished',
 ];
 

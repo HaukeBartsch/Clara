@@ -50,7 +50,7 @@ func setCommitted(t *testing.T, s *Store, ctx context.Context, projectID int64,
 	if err != nil {
 		t.Fatalf("BeginTx: %v", err)
 	}
-	if _, err := s.SetInstrumentCompletionTx(ctx, tx, projectID, recordID, eventID, instrumentID, 1, userID); err != nil {
+	if _, err := s.SetInstrumentCompletionTx(ctx, tx, projectID, recordID, eventID, instrumentID, 1, CompletionFinished, userID); err != nil {
 		t.Fatalf("SetInstrumentCompletionTx: %v", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -77,7 +77,7 @@ func TestSetInstrumentCompletionTx(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BeginTx: %v", err)
 	}
-	created, err := s.SetInstrumentCompletionTx(ctx, tx, projectID, recordID, eventID, instrumentID, 1, userID)
+	created, err := s.SetInstrumentCompletionTx(ctx, tx, projectID, recordID, eventID, instrumentID, 1, CompletionFinished, userID)
 	if err != nil {
 		t.Fatalf("SetInstrumentCompletionTx: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestSetInstrumentCompletionTx(t *testing.T) {
 	}
 	// Repeating the call is a no-op — at most one row per triple (REQ-DB-036),
 	// and the caller learns nothing changed so it writes no second audit entry.
-	again, err := s.SetInstrumentCompletionTx(ctx, tx, projectID, recordID, eventID, instrumentID, 1, userID)
+	again, err := s.SetInstrumentCompletionTx(ctx, tx, projectID, recordID, eventID, instrumentID, 1, CompletionFinished, userID)
 	if err != nil {
 		t.Fatalf("SetInstrumentCompletionTx repeat: %v", err)
 	}
@@ -114,11 +114,74 @@ func TestSetInstrumentCompletionTx(t *testing.T) {
 	if got.CompletedAt == "" {
 		t.Errorf("completed_at is empty — REQ-DB-036 stores when")
 	}
+	if got.State != CompletionFinished {
+		t.Errorf("state = %q, want %q", got.State, CompletionFinished)
+	}
 
 	// Another project never sees it.
 	other := seedProject(t, s, ctx)
 	if n := completionCount(t, s, ctx, other); n != 0 {
 		t.Errorf("another project sees %d assignments, want 0", n)
+	}
+}
+
+// TestSetInstrumentCompletionTxSwitchesState: the two assignable states share
+// the one row of a cell (DEV-DB-19). Moving between them is a change — the row
+// takes the new state and names who changed it — while re-assigning the state
+// a row holds stays the no-op of REQ-API-042.
+func TestSetInstrumentCompletionTxSwitchesState(t *testing.T) {
+	s := migrateTestStore(t)
+	ctx := context.Background()
+	projectID, userID, eventID, instrumentID, recordID := seedCompletionCell(t, s, ctx)
+	verifier := seedUser(t, s, ctx, "verifier@"+t.Name()+".example.org")
+
+	set := func(state string, by int64) bool {
+		t.Helper()
+		tx, err := s.DB.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatalf("BeginTx: %v", err)
+		}
+		changed, err := s.SetInstrumentCompletionTx(ctx, tx, projectID, recordID, eventID, instrumentID, 1, state, by)
+		if err != nil {
+			t.Fatalf("SetInstrumentCompletionTx(%s): %v", state, err)
+		}
+		if err := tx.Commit(); err != nil {
+			t.Fatalf("Commit: %v", err)
+		}
+		return changed
+	}
+	stored := func() InstrumentCompletion {
+		t.Helper()
+		list, err := s.ListInstrumentCompletions(ctx, projectID)
+		if err != nil {
+			t.Fatalf("ListInstrumentCompletions: %v", err)
+		}
+		if len(list) != 1 {
+			t.Fatalf("stored assignments = %d, want exactly 1 (one row per cell, whatever its state)", len(list))
+		}
+		return list[0]
+	}
+
+	if !set(CompletionUnverified, userID) {
+		t.Fatal("first unverified assignment reported no change")
+	}
+	if got := stored(); got.State != CompletionUnverified || got.CompletedBy.Int64 != userID {
+		t.Fatalf("after unverified: %+v, want state unverified by %d", got, userID)
+	}
+	if set(CompletionUnverified, verifier) {
+		t.Error("re-assigning unverified reported a change")
+	}
+	if got := stored(); got.CompletedBy.Int64 != userID {
+		t.Errorf("a no-op re-assignment changed completed_by to %d, want %d", got.CompletedBy.Int64, userID)
+	}
+	if !set(CompletionFinished, verifier) {
+		t.Fatal("unverified → finished reported no change")
+	}
+	if got := stored(); got.State != CompletionFinished || got.CompletedBy.Int64 != verifier {
+		t.Errorf("after finished: %+v, want state finished by %d", got, verifier)
+	}
+	if set(CompletionFinished, userID) {
+		t.Error("re-assigning finished reported a change")
 	}
 }
 
@@ -131,7 +194,7 @@ func TestSetInstrumentCompletionTxRollback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BeginTx: %v", err)
 	}
-	if _, err := s.SetInstrumentCompletionTx(ctx, tx, projectID, recordID, eventID, instrumentID, 1, userID); err != nil {
+	if _, err := s.SetInstrumentCompletionTx(ctx, tx, projectID, recordID, eventID, instrumentID, 1, CompletionFinished, userID); err != nil {
 		t.Fatalf("SetInstrumentCompletionTx: %v", err)
 	}
 	// Rolling back drops the assignment exactly as it drops the audit entry

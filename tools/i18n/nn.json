@@ -828,6 +828,7 @@
     "records.no_instruments": "Intet instrument er knytt til ei hending i denne armen enno.",
     "records.state.no_data": "Ingen data",
     "records.state.some_data": "Nokon data",
+    "records.state.unverified": "Ikkje verifisert",
     "records.state.finished": "Fullført",
     "records.open_cell": "{record} — {instrument} ved {event}: {state}",
     "records.new.label": "Ny deltakar (registrerings-ID)",

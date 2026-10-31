@@ -11,13 +11,14 @@ import (
 
 // Completion states of the record-status dashboard (§4.13, REQ-API-074).
 // no_data and some_data are derived from the stored values on every read;
-// finished is the one state a user assigns and the only one stored
-// (REQ-DB-036), so an instrument can never display a completion the data
-// contradicts.
+// unverified and finished are the states a user assigns and the only ones
+// stored (REQ-DB-036, DEV-DB-19), so an instrument can never display a
+// derived state the data contradicts.
 const (
-	StateNoData   = "no_data"
-	StateSomeData = "some_data"
-	StateFinished = "finished"
+	StateNoData     = "no_data"
+	StateSomeData   = "some_data"
+	StateUnverified = db.CompletionUnverified
+	StateFinished   = db.CompletionFinished
 
 	// StateUnfinished is the clear verb of the PUT body, never a stored or
 	// returned state: §8.5 folds the dashboard's "no data" and "some data"
@@ -35,14 +36,15 @@ func (h *Handler) registerCompletion(mux *http.ServeMux) {
 }
 
 // completionObject is the §4.13 response: the resulting stored state —
-// "finished" after a set, "unfinished" after a clear (the cell then reads as
-// its derived no_data/some_data on the next record-status call).
+// "finished" or "unverified" after a set, "unfinished" after a clear (the cell
+// then reads as its derived no_data/some_data on the next record-status call).
 type completionObject struct {
 	State string `json:"state"`
 }
 
 // completionDetails is the audit payload of instrument_completed /
-// instrument_uncompleted (Audit_Logging_Design.md §3.2). It names the cell and
+// instrument_unverified / instrument_uncompleted (Audit_Logging_Design.md
+// §3.2). It names the cell and
 // nothing else — no field values, because the call changes none (REQ-AUD-026).
 type completionDetails struct {
 	RecordID   string `json:"record_id"`
@@ -54,9 +56,9 @@ type completionDetails struct {
 	Instance int `json:"instance,omitempty"`
 }
 
-// putCompletion sets or clears the user-assigned "finished" state of one
-// (record, event, instrument, instance) — the control at the end of a
-// data-collection instrument's form (REQ-API-110, UI §8.5). The optional body
+// putCompletion sets or clears the user-assigned state ("finished" or
+// "unverified") of one (record, event, instrument, instance) — the control at
+// the end of a data-collection instrument's form (REQ-API-110, UI §8.5). The optional body
 // attribute instance (default 1) addresses one instance of a repeating
 // instrument; an instance above 1 needs the pair to be repeating (REQ-API-156).
 //
@@ -69,8 +71,9 @@ type completionDetails struct {
 //   - an unknown record, event or instrument is 404; an (event, instrument) pair
 //     not mapped in the active design is 409, and so is a survey-marked
 //     instrument, which takes no assignment (GD-9);
-//   - idempotent (REQ-API-042): re-setting a finished cell answers 200 with no
-//     second write and no second audit entry, as the mode endpoint does;
+//   - idempotent (REQ-API-042): re-setting the state a cell holds answers 200
+//     with no second write and no second audit entry, as the mode endpoint
+//     does; moving between finished and unverified is a change;
 //   - no field value is written, so validation and the analysis-mode write rules
 //     for values do not apply here (GD-20 scopes those to imports).
 func (h *Handler) putCompletion(w http.ResponseWriter, r *http.Request) {
@@ -118,13 +121,13 @@ func (h *Handler) putCompletion(w http.ResponseWriter, r *http.Request) {
 	}
 	rawState, present := supplied["state"]
 	if !present {
-		errBadRequest(w, `state is required ("finished" or "unfinished")`)
+		errBadRequest(w, `state is required ("finished", "unverified" or "unfinished")`)
 		return
 	}
 	var want string
 	if err := json.Unmarshal(rawState, &want); err != nil ||
-		(want != StateFinished && want != StateUnfinished) {
-		errBadRequest(w, `state must be "finished" or "unfinished"`)
+		(want != StateFinished && want != StateUnverified && want != StateUnfinished) {
+		errBadRequest(w, `state must be "finished", "unverified" or "unfinished"`)
 		return
 	}
 
@@ -244,11 +247,16 @@ func (h *Handler) putCompletion(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 
 	var changed bool
-	eventType := audit.InstrumentCompleted
-	if want == StateFinished {
+	var eventType string
+	switch want {
+	case StateFinished, StateUnverified:
+		eventType = audit.InstrumentCompleted
+		if want == StateUnverified {
+			eventType = audit.InstrumentUnverified
+		}
 		changed, err = h.Store.SetInstrumentCompletionTx(ctx, tx, projectID, recordID,
-			event.ID, instrumentID, instance, u.ID)
-	} else {
+			event.ID, instrumentID, instance, want, u.ID)
+	default:
 		eventType = audit.InstrumentUncompleted
 		changed, err = h.Store.ClearInstrumentCompletionTx(ctx, tx, projectID, recordID,
 			event.ID, instrumentID, instance)

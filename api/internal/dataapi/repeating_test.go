@@ -175,7 +175,7 @@ func TestRepeatingExportRoundTrip(t *testing.T) {
 	}
 	first := byKey[key{"baseline_arm_1", "visits", "1"}]
 	if first == nil || first["visit_score"] != "3" || first["visit_double"] != "6" || first["age"] != "" ||
-		first["record_id"] != "8DISC001" || first["visits_complete"] != "1" || first["symptoms___1"] != "0" {
+		first["record_id"] != "8DISC001" || first["visits_complete"] != "0" || first["symptoms___1"] != "0" {
 		t.Fatalf("instance 1 row: %v", first)
 	}
 	second := byKey[key{"baseline_arm_1", "visits", "2"}]
@@ -246,7 +246,7 @@ func TestRepeatingWideExport(t *testing.T) {
 		}
 	}
 	if row1["visit_score_baseline_arm_1__3"] != "4" || row1["visit_double_baseline_arm_1__3"] != "8" ||
-		row1["visits_complete_baseline_arm_1__3"] != "1" || row1["visit_score_baseline_arm_1__2"] != "" {
+		row1["visits_complete_baseline_arm_1__3"] != "0" || row1["visit_score_baseline_arm_1__2"] != "" {
 		t.Fatalf("wide instance values: %v", row1)
 	}
 	if _, ok := row1["visit_score_followup_arm_1__2"]; ok {

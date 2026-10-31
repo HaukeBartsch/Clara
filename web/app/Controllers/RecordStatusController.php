@@ -2,7 +2,8 @@
 // The Record Status Dashboard (`User_Interface_Design.md` §6.3, REQ-UI-019): the participant
 // overview — every record visible under the data-access-group rule (REQ-AUTH-045) as a row,
 // the arm's events as column groups with their instruments in order, and one colour-coded
-// cell per (record, event, instrument): grey no data, amber some data, green finished.
+// cell per (record, event, instrument): grey no data, blue some data, yellow unverified,
+// green finished.
 //
 // The page renders the structure — arm tabs, the column headers, the new-participant form —
 // and the rows are the route's `records` data region, bound by `record-status.js` from the
@@ -125,7 +126,8 @@ final class RecordStatusController extends DataEntryController
             // The rows bind into a virtually rendered Tabulator grid (AGENTS.md "use Tabulator").
             'styles' => ['/assets/vendor/tabulator/tabulator_bootstrap5.min.css'],
             'jsKeys' => ['js.loading', 'js.load_failed', 'js.retry', 'records.empty',
-                'records.state.no_data', 'records.state.some_data', 'records.state.finished',
+                'records.state.no_data', 'records.state.some_data', 'records.state.unverified',
+                'records.state.finished',
                 'records.open_cell', 'records.open_instance', 'records.add_instance', 'records.more_instances',
                 'records.loading_count', 'records.load_incomplete', 'records.count', 'records.count_none'],
         ], $mode);

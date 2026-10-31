@@ -22,8 +22,11 @@ final class DataEntry
     /** Separates a checkbox's name from a choice code in its value columns (REQ-DB-042). */
     public const CHOICE_SEPARATOR = '___';
 
-    /** The three completion states of record-status and the dropdown (§6.3, §8.5). */
-    public const STATES = ['no_data', 'some_data', 'finished'];
+    /** The four completion states of record-status and the dropdown, in their order (§6.3, §8.5). */
+    public const STATES = ['no_data', 'some_data', 'unverified', 'finished'];
+
+    /** The states a user assigns and the API stores; the other two are derived (REQ-API-110). */
+    public const ASSIGNED_STATES = ['unverified', 'finished'];
 
     /**
      * The validation types entered through a native date control, with the only format each one

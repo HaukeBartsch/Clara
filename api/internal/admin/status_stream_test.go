@@ -110,7 +110,7 @@ func TestDashboardReadsStreamInChunks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BeginTx: %v", err)
 	}
-	if _, err := e.Store.SetInstrumentCompletionTx(ctx, tx, projectID, "R5", v2, intake, 1, admin.ID); err != nil {
+	if _, err := e.Store.SetInstrumentCompletionTx(ctx, tx, projectID, "R5", v2, intake, 1, db.CompletionFinished, admin.ID); err != nil {
 		t.Fatalf("SetInstrumentCompletionTx: %v", err)
 	}
 	if err := tx.Commit(); err != nil {

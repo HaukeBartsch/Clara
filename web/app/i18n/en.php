@@ -1188,6 +1188,7 @@ return [
     'records.no_instruments' => 'No instrument is assigned to an event of this arm yet.',
     'records.state.no_data' => 'No data',
     'records.state.some_data' => 'Some data',
+    'records.state.unverified' => 'Unverified',
     'records.state.finished' => 'Finished',
     'records.open_cell' => '{record} — {instrument} at {event}: {state}',
     'records.open_instance' => '{record} — {instrument} #{instance} at {event}: {state}',

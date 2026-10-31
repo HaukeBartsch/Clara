@@ -543,10 +543,10 @@ h1 .clara-mode-badge {
 
 /* --- data entry (§6.3, §8) --- */
 
-/* The three-state colour code of the Record Status Dashboard (§6.3): grey no data, amber some
-   data, green finished. Bootstrap's own colour variables, so every installed theme supplies
-   its shades (REQ-UI-040); the state is also named in the cell's title and label, never by
-   colour alone. */
+/* The four-state colour code of the Record Status Dashboard (§6.3): grey no data, blue some
+   data, yellow unverified, green finished. Bootstrap's own colour variables, so every installed
+   theme supplies its shades (REQ-UI-040); the state is also named in the cell's title and
+   label, never by colour alone. */
 .clara-state {
   display: inline-block;
   width: 0.85rem;
@@ -557,7 +557,8 @@ h1 .clara-mode-badge {
 }
 
 .clara-state-no_data { background-color: var(--bs-secondary-bg); }
-.clara-state-some_data { background-color: var(--bs-warning); border-color: var(--bs-warning-border-subtle); }
+.clara-state-some_data { background-color: var(--bs-primary); border-color: var(--bs-primary-border-subtle); }
+.clara-state-unverified { background-color: var(--bs-warning); border-color: var(--bs-warning-border-subtle); }
 .clara-state-finished { background-color: var(--bs-success); border-color: var(--bs-success-border-subtle); }
 
 /* The dashboard's completeness counter (§6.3, REQ-UI-081), after the master spec's CSS ("Visual
@@ -659,9 +660,15 @@ svg.counter-8 {
 }
 
 /* The counter's colouring is a class of its own beside `counter-<n>` (§6.3): grey is the spec's
-   on/off pair above, used as is; amber (some data) and green (finished) are the dashboard's
-   state colours — on in the colour the single state dot was filled with, off in the colour of
-   its border — so every installed theme supplies their shades in light and dark (REQ-UI-040). */
+   on/off pair above, used as is; blue (some data), yellow (unverified) and green (finished) are
+   the dashboard's state colours — on in the colour the single state dot is filled with, off in
+   the colour of its border — so every installed theme supplies their shades in light and dark
+   (REQ-UI-040). Blue is the theme's primary, which every vendored theme keeps blue. */
+svg.counter.counter-blue {
+  --fill-color-off: var(--bs-primary-border-subtle);
+  --fill-color-on: var(--bs-primary);
+}
+
 svg.counter.counter-yellow {
   --fill-color-off: var(--bs-warning-border-subtle);
   --fill-color-on: var(--bs-warning);

@@ -117,7 +117,7 @@ func TestMigrateRepeatingInstruments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := s.SetInstrumentCompletionTx(ctx, tx, pid, "R1", eventID, instID, 2, 0); err != nil || !ok {
+	if ok, err := s.SetInstrumentCompletionTx(ctx, tx, pid, "R1", eventID, instID, 2, CompletionFinished, 0); err != nil || !ok {
 		t.Fatalf("finish instance 2: %v %v", ok, err)
 	}
 	if err := tx.Commit(); err != nil {

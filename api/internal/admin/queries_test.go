@@ -85,7 +85,7 @@ func (e *env) mustMemberWithRole(projectID int64, u *db.User, roleID int64) {
 
 // --- §4.13 record status ---
 
-// TestRecordStatus covers the completion matrix (any value vs. none), the
+// TestRecordStatus covers the completion matrix (an answer vs. none), the
 // instrument order per event, the non-disclosure of values and membership,
 // and the no-access rejection.
 func TestRecordStatus(t *testing.T) {
@@ -113,10 +113,23 @@ func TestRecordStatus(t *testing.T) {
 	e.mustRecord(projectID, "R1")
 	e.mustRecord(projectID, "R2")
 	// Values belong to an instrument through their field, stored as an import
-	// stores them — repeating_instrument empty (no repeat instance).
-	e.mustField(projectID, intake, "age", "text", 1)
-	e.mustValue(projectID, "R1", "v1_arm_1", "", "age", "42") // complete
+	// stores them — repeating_instrument empty (no repeat instance). Only an
+	// answer makes some data (REQ-API-074): the identifier (GD-8), stored at
+	// every event the record reaches, a calculated and a @READONLY value make
+	// none.
+	e.mustField(projectID, intake, "record_id", "text", 1)
+	e.mustField(projectID, intake, "age", "text", 2)
+	e.mustCalcField(projectID, scores, "dbl", "[age] * 2", 1)
+	e.mustDesignField(db.Field{ProjectID: projectID, InstrumentID: scores, FieldName: "note",
+		FieldType: "notes", Position: 2, FieldAnnotation: logic("@READONLY")})
+	for _, r := range []string{"R1", "R2"} {
+		e.mustValue(projectID, r, "v1_arm_1", "", "record_id", r)
+		e.mustValue(projectID, r, "v2_arm_1", "", "record_id", r)
+	}
+	e.mustValue(projectID, "R1", "v1_arm_1", "", "age", "42") // an answer
 	e.mustValue(projectID, "R1", "v2_arm_1", "", "age", "")   // empty ≠ value
+	e.mustValue(projectID, "R1", "v1_arm_1", "", "dbl", "84")
+	e.mustValue(projectID, "R1", "v1_arm_1", "", "note", "ro")
 
 	rec := e.do("GET", "/api/v1/projects/999999/record-status", nil, admin)
 	if rec.Code != http.StatusNotFound {
@@ -139,7 +152,8 @@ func TestRecordStatus(t *testing.T) {
 		t.Fatalf("R1 events: %+v", rows[0].Events)
 	}
 	// Sparse (REQ-API-149): v1_arm_1 lists intake and feedback in instrument
-	// order; scores holds nothing, so it is absent rather than no_data.
+	// order; scores holds no answer — a calculated and a @READONLY value only —
+	// so it is absent rather than some_data.
 	e1 := rows[0].Events[0]
 	if e1.UniqueEventName != "v1_arm_1" || len(e1.Instruments) != 2 ||
 		e1.Instruments[0].Name != "intake" || e1.Instruments[0].State != StateSomeData ||
@@ -152,9 +166,9 @@ func TestRecordStatus(t *testing.T) {
 	if e1.Instruments[1].State != StateFinished {
 		t.Fatalf("survey cell = %q, want the automatic %s", e1.Instruments[1].State, StateFinished)
 	}
-	// v2_arm_1 maps intake only and its one value is empty: the event is still
-	// listed — so its absent intake reads as no data, not as unreported — with
-	// no cell under it.
+	// v2_arm_1 maps intake only, which holds the identifier and an empty age:
+	// the event is still listed — so its absent intake reads as no data, not
+	// as unreported — with no cell under it.
 	e2 := rows[0].Events[1]
 	if e2.UniqueEventName != "v2_arm_1" || e2.Instruments == nil || len(e2.Instruments) != 0 {
 		t.Fatalf("R1 v2 state: %+v", e2)
@@ -162,7 +176,8 @@ func TestRecordStatus(t *testing.T) {
 	if strings.Contains(rec.Body.String(), StateNoData) {
 		t.Fatalf("sparse response lists a %s cell: %s", StateNoData, rec.Body.String())
 	}
-	// R2 holds no values: both events listed, only the survey cell under v1.
+	// R2 holds its identifier only: both events listed, only the survey cell
+	// under v1.
 	if r2 := rows[1].Events; len(r2) != 2 || len(r2[0].Instruments) != 1 ||
 		r2[0].Instruments[0].Name != "feedback" || len(r2[1].Instruments) != 0 {
 		t.Fatalf("R2 events: %+v", r2)

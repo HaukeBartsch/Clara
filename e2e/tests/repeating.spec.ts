@@ -131,7 +131,7 @@ test.describe("repeating instruments (REQ-UI-054, REQ-UI-055)", () => {
     await page.locator("#clara-nav").getByRole("link", { name: "Record Status Dashboard" }).click()
     const cell = visitsCell(page, "RP001")
     await expect(cell.locator("svg.counter")).toHaveCount(1)
-    await expect(cell.locator("svg.counter-yellow")).toHaveCount(1)
+    await expect(cell.locator("svg.counter-blue")).toHaveCount(1)
     await cell.locator("a.clara-instance-add").click()
     await expect(page).toHaveURL(/instrument=visits&instance=2/)
     await expect(page.locator('.clara-instance-nav [data-clara-instance="2"] a')).toHaveAttribute("aria-current", "page")

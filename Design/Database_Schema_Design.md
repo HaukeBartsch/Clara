@@ -312,12 +312,13 @@ CREATE TABLE IF NOT EXISTS record_entities (     -- REQ-DB-029 (GD-10)
     PRIMARY KEY (project_id, record_id)
 );
 
-CREATE TABLE IF NOT EXISTS instrument_completion (  -- REQ-DB-036 (DEV-DB-10) — sparse: a row exists only when the user marked it finished
+CREATE TABLE IF NOT EXISTS instrument_completion (  -- REQ-DB-036 (DEV-DB-10) — sparse: a row exists only when the user marked it unverified or finished
     project_id     INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     record_id      VARCHAR(255) NOT NULL,
     event_id       INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
     instrument_id  INTEGER NOT NULL REFERENCES instruments(id) ON DELETE CASCADE,
     repeat_instance INTEGER NOT NULL DEFAULT 1,     -- the instance of a repeating instrument; 1 otherwise (REQ-DB-036/048, migration 0015)
+    state          VARCHAR(16) NOT NULL DEFAULT 'finished',  -- 'finished' | 'unverified' (DEV-DB-19, migration 0021)
     completed_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
     completed_at   DATETIME NOT NULL,
     PRIMARY KEY (project_id, record_id, event_id, instrument_id, repeat_instance)
@@ -330,7 +331,7 @@ CREATE TABLE IF NOT EXISTS instrument_completion (  -- REQ-DB-036 (DEV-DB-10) �
 
 Migration 0015 (both dialects): adds `instrument_events.is_repeating`; moves values stored at `repeating_instance_number = 0` — the data API's import never set the number (DEV-DB-16) — to 1, first deleting the instance-1 twin the design-time recomputation could have written beside such a value (the instance-0 row is the one every read resolved); and widens `instrument_completion`'s key by `repeat_instance` (SQLite rebuilds the table, MariaDB alters the primary key; existing rows become instance 1). Verified on SQLite and MariaDB 11.4.
 
-**`instrument_completion`** (REQ-DB-036, DEV-DB-10) stores **only** the user's "finished" assignment — there is no state column, because absence of the row already means "not finished" and the grey/amber split stays derived from `data` (REQ-API-074). Keeping it sparse avoids a row per (record × event × instrument) mapping in projects that never mark anything, and makes clearing the assignment a delete. It joins nothing into `data`, so it cannot make a stored value look complete. The primary key doubles as the record-status read path (`project_id, record_id` prefix, REQ-DB-025); the cascades drop a project's assignments with its records, instruments, and events (REQ-DB-036). Survey-marked instruments never get a row — their completion is filled in automatically by the read side, not stored (GD-9, REQ-API-074).
+**`instrument_completion`** (REQ-DB-036, DEV-DB-10, DEV-DB-19) stores **only** the user's assignment — `state` is `finished` or `unverified`; absence of the row means neither, and the grey/blue split stays derived from `data` (REQ-API-074). One row per cell holds at most one assignment: `SetInstrumentCompletionTx` inserts it, or — when the row holds the other state — replaces `state`, `completed_by` and `completed_at` (SQLite `ON CONFLICT … DO UPDATE … WHERE state <> excluded.state`, MariaDB `ON DUPLICATE KEY UPDATE` assigning the stored values back when the state is unchanged), so re-setting the state a row holds affects no row and the caller writes no audit entry (REQ-API-042). Migration 0021 adds the column in both dialects; every existing row reads `finished`. Verified on SQLite and MariaDB 11.4. Keeping it sparse avoids a row per (record × event × instrument) mapping in projects that never mark anything, and makes clearing the assignment a delete. It joins nothing into `data`, so it cannot make a stored value look complete. The primary key doubles as the record-status read path (`project_id, record_id` prefix, REQ-DB-025); the cascades drop a project's assignments with its records, instruments, and events (REQ-DB-036). Survey-marked instruments never get a row — their completion is filled in automatically by the read side, not stored (GD-9, REQ-API-074).
 
 Notes: upsert is the unique constraint + `INSERT … ON CONFLICT` (SQLite) / `INSERT … ON DUPLICATE KEY UPDATE` (MariaDB) inside one transaction (REQ-DB-016, REQ-DB-026); calculated-field values live here as ordinary rows at each active position (REQ-DB-030) — per instance on a repeating instrument (REQ-DB-048); `repeating_instrument` is `''` for every first instance so the unique key stays total.
 
@@ -452,7 +453,7 @@ Notes:
 |---|------|
 | all values of one project (exports, REQ-API-024) | the `project_id` prefix of `idx_data_project_field` / `idx_data_project_event` |
 | all values of one record (data entry, history, record rename and delete), and of one chunk of records (`record_id IN (…)`: the dashboard's streamed reads, REQ-API-172) | SQLite: the (`project_id`, `record_id`) prefix of the `data` unique key; MariaDB: `idx_data_project_record` (migration 0019) — the unique key is a hash there and answers no prefix (§10) |
-| the `finished` assignments of one chunk of records (REQ-API-172) | the (`project_id`, `record_id`) prefix of the `instrument_completion` primary key |
+| the `unverified` and `finished` assignments of one chunk of records (REQ-API-172) | the (`project_id`, `record_id`) prefix of the `instrument_completion` primary key |
 | one field's or one event's values (designer renames, deletes, breaking-change checks) | `idx_data_project_field`, `idx_data_project_event` |
 | upsert uniqueness (REQ-DB-016) | `data` unique key |
 | token → assignment (every API call) | `user_projects.token` unique |
@@ -521,7 +522,7 @@ Why the schema takes its shape, and what each choice costs. The decision records
 
 - **EAV for record data** (§6). One `data` row per stored value, keyed by (project, record, event, repeating instrument, instance, field), lets a project's design change — fields added, renamed, moved, repeating switched on — without DDL, and keeps REDCap's flat export shape a projection rather than a table layout. The cost is that every record read is a range scan over many rows, which is what the (`project_id`, `record_id`) indexes of §9 exist to bound.
 - **One logical schema, two dialects** (§1, §10). The DDL is written in the subset common to SQLite and MariaDB, and every difference is listed in §10, so development and production run the same queries. The cost: no `ENUM` or `CHECK` constraints (enumerations are API allowlists), and features one dialect lacks are worked around rather than used.
-- **Sparse rather than dense** (DEV-DB-10, DEV-DB-14). `instrument_completion` stores only the "finished" assignments, and absence means "not finished"; event-keyed rows require an event rather than carrying a sentinel. Storage and reads grow with what users did, not with the size of the design.
+- **Sparse rather than dense** (DEV-DB-10, DEV-DB-14). `instrument_completion` stores only the "unverified" and "finished" assignments, and absence means neither; event-keyed rows require an event rather than carrying a sentinel. Storage and reads grow with what users did, not with the size of the design.
 - **Instance 1 lives where a non-repeating form's only instance does** (§6, DEV-DB-16). Switching repeating on or off never rewrites stored values; the cost is that a reader must treat `repeating_instrument = ''` as the first instance of a repeating form.
 - **Unbounded text where imported data needs it** (DEV-DB-15). Labels and section headers are unbounded because MariaDB's strict mode would refuse a long label that SQLite accepts; a schema that imports in development must import in production.
 - **Migrations are numbered and idempotent** (§1, REQ-DB-003). The API applies them at startup, and MariaDB's index DDL is guarded with `IF [NOT] EXISTS` because each DDL statement commits on its own (§10).

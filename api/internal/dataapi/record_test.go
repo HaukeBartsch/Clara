@@ -362,15 +362,17 @@ func TestRecordExportCompleteColumns(t *testing.T) {
 		t.Fatalf("GetEventByUniqueName: %v", err)
 	}
 
-	setCompletion := func(record string, eventID, instrID int64, on bool) {
+	// setCompletion assigns state — db.CompletionFinished or
+	// db.CompletionUnverified — or clears the cell with "".
+	setCompletion := func(record string, eventID, instrID int64, state string) {
 		t.Helper()
 		tx, err := f.s.DB.BeginTx(ctx, nil)
 		if err != nil {
 			t.Fatalf("BeginTx: %v", err)
 		}
 		defer tx.Rollback()
-		if on {
-			if _, err := f.s.SetInstrumentCompletionTx(ctx, tx, f.pid, record, eventID, instrID, 1, 0); err != nil {
+		if state != "" {
+			if _, err := f.s.SetInstrumentCompletionTx(ctx, tx, f.pid, record, eventID, instrID, 1, state, 0); err != nil {
 				t.Fatalf("SetInstrumentCompletionTx: %v", err)
 			}
 		} else if _, err := f.s.ClearInstrumentCompletionTx(ctx, tx, f.pid, record, eventID, instrID, 1); err != nil {
@@ -381,14 +383,15 @@ func TestRecordExportCompleteColumns(t *testing.T) {
 		}
 	}
 
-	// Derived states: demo holds values at both events → 1; calc holds none
-	// (the calculated total is not seeded) → 0.
+	// Derived states are REDCap's Incomplete, 0, with values or without: demo
+	// holds values at both events, calc none (the calculated total is not
+	// seeded).
 	rows := f.exportJSON(t, "tok-admin", url.Values{"records": {"8DISC001"}})
 	if len(rows) != 2 {
 		t.Fatalf("rows = %d, want baseline + followup: %v", len(rows), rows)
 	}
-	if rows[0]["demo_complete"] != "1" || rows[1]["demo_complete"] != "1" {
-		t.Errorf("demo_complete = %q / %q, want 1 and 1 (values present)",
+	if rows[0]["demo_complete"] != "0" || rows[1]["demo_complete"] != "0" {
+		t.Errorf("demo_complete = %q / %q, want 0 and 0 (values present, nothing assigned)",
 			rows[0]["demo_complete"], rows[1]["demo_complete"])
 	}
 	// calc is mapped to baseline only: at followup there is no pair, so no state
@@ -398,29 +401,35 @@ func TestRecordExportCompleteColumns(t *testing.T) {
 			rows[0]["calc_complete"], rows[1]["calc_complete"])
 	}
 
-	// Stored finished → 2; clearing returns the derived 1.
-	setCompletion("8DISC001", evBase.ID, demoID, true)
+	// Stored unverified → 1 (REDCap's Unverified), finished → 2; clearing
+	// returns the derived 0.
+	setCompletion("8DISC001", evBase.ID, demoID, db.CompletionUnverified)
+	rows = f.exportJSON(t, "tok-admin", url.Values{"records": {"8DISC001"}})
+	if rows[0]["demo_complete"] != "1" {
+		t.Errorf("unverified demo_complete = %q, want 1", rows[0]["demo_complete"])
+	}
+	setCompletion("8DISC001", evBase.ID, demoID, db.CompletionFinished)
 	rows = f.exportJSON(t, "tok-admin", url.Values{"records": {"8DISC001"}})
 	if rows[0]["demo_complete"] != "2" {
 		t.Errorf("finished demo_complete = %q, want 2", rows[0]["demo_complete"])
 	}
-	if rows[1]["demo_complete"] != "1" { // the other event keeps its own state
-		t.Errorf("followup demo_complete = %q, want 1", rows[1]["demo_complete"])
+	if rows[1]["demo_complete"] != "0" { // the other event keeps its own state
+		t.Errorf("followup demo_complete = %q, want 0", rows[1]["demo_complete"])
 	}
-	setCompletion("8DISC001", evBase.ID, demoID, false)
+	setCompletion("8DISC001", evBase.ID, demoID, "")
 	rows = f.exportJSON(t, "tok-admin", url.Values{"records": {"8DISC001"}})
-	if rows[0]["demo_complete"] != "1" {
-		t.Errorf("cleared demo_complete = %q, want 1", rows[0]["demo_complete"])
+	if rows[0]["demo_complete"] != "0" {
+		t.Errorf("cleared demo_complete = %q, want 0", rows[0]["demo_complete"])
 	}
 
 	// A finished assignment on an unmapped pair stays invisible.
-	setCompletion("8DISC001", evFol.ID, calcID, true) // calc is mapped to baseline only
+	setCompletion("8DISC001", evFol.ID, calcID, db.CompletionFinished) // calc is mapped to baseline only
 	rows = f.exportJSON(t, "tok-admin", url.Values{"records": {"8DISC001"}})
 	if rows[1]["calc_complete"] != "" {
 		t.Errorf("unmapped finished calc_complete = %q, want empty (invisible until mapped back)",
 			rows[1]["calc_complete"])
 	}
-	setCompletion("8DISC001", evFol.ID, calcID, false)
+	setCompletion("8DISC001", evFol.ID, calcID, "")
 
 	// forms[] keeps whole instrument blocks — each keeps its completion;
 	// fields[] returns exactly the requested fields and carries none.
@@ -463,8 +472,8 @@ func TestRecordExportCompleteColumns(t *testing.T) {
 	if len(wide) != 1 {
 		t.Fatalf("wide rows = %d, want 1", len(wide))
 	}
-	if wide[0]["demo_complete_baseline_arm_1"] != "1" || wide[0]["demo_complete_followup_arm_1"] != "1" {
-		t.Errorf("wide demo completion = %q / %q, want 1 and 1",
+	if wide[0]["demo_complete_baseline_arm_1"] != "0" || wide[0]["demo_complete_followup_arm_1"] != "0" {
+		t.Errorf("wide demo completion = %q / %q, want 0 and 0",
 			wide[0]["demo_complete_baseline_arm_1"], wide[0]["demo_complete_followup_arm_1"])
 	}
 	if _, ok := wide[0]["demo_complete"]; ok {
@@ -632,8 +641,8 @@ func TestRecordExportPerPairLevels(t *testing.T) {
 	if got := wide[0]["age_baseline_arm_1"]; got != "42" {
 		t.Errorf("age_baseline_arm_1 = %q, want the permitted pair's raw value", got)
 	}
-	if got := wide[0]["demo_complete_baseline_arm_1"]; got != "1" {
-		t.Errorf("demo_complete_baseline_arm_1 = %q, want 1: values without a finished mark", got)
+	if got := wide[0]["demo_complete_baseline_arm_1"]; got != "0" {
+		t.Errorf("demo_complete_baseline_arm_1 = %q, want 0: values without an assignment", got)
 	}
 	for k := range wide[0] {
 		if strings.Contains(k, "followup") {

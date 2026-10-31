@@ -54,8 +54,11 @@ func newCompletionFixture(t *testing.T, e *env) completionFixture {
 	)
 	e.mustRecord(f.projectID, "R1")
 	// Stored the way an import stores it: the value belongs to intake through
-	// its field, and repeating_instrument stays empty (no repeat instance).
-	e.mustField(f.projectID, f.intake, "age", "text", 1)
+	// its field, and repeating_instrument stays empty (no repeat instance). The
+	// identifier comes first (GD-8); age is the answer that makes some data.
+	e.mustField(f.projectID, f.intake, "record_id", "text", 1)
+	e.mustField(f.projectID, f.intake, "age", "text", 2)
+	e.mustValue(f.projectID, "R1", "v1_arm_1", "", "record_id", "R1")
 	e.mustValue(f.projectID, "R1", "v1_arm_1", "", "age", "42") // some_data
 	return f
 }
@@ -105,8 +108,8 @@ func completionAuditRows(t *testing.T, e *env) []auditRow {
 	t.Helper()
 	rows, err := e.Store.DB.Query(
 		`SELECT event_type, source, target_record, arm_num, details
-		 FROM audit_events WHERE event_type IN (?, ?) ORDER BY id`,
-		audit.InstrumentCompleted, audit.InstrumentUncompleted)
+		 FROM audit_events WHERE event_type IN (?, ?, ?) ORDER BY id`,
+		audit.InstrumentCompleted, audit.InstrumentUnverified, audit.InstrumentUncompleted)
 	if err != nil {
 		t.Fatalf("audit query: %v", err)
 	}
@@ -219,14 +222,97 @@ func TestPutCompletion(t *testing.T) {
 	}
 
 	// No field value was written by any of this (REQ-API-110): the project's
-	// data table still holds exactly the one seeded value.
+	// data table still holds exactly the two seeded values.
 	var values int
 	if err := e.Store.DB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM data WHERE project_id = ?`, f.projectID).Scan(&values); err != nil {
 		t.Fatalf("count data: %v", err)
 	}
-	if values != 1 {
-		t.Errorf("data rows = %d, want the single seeded value (the call writes none)", values)
+	if values != 2 {
+		t.Errorf("data rows = %d, want the two seeded values (the call writes none)", values)
+	}
+}
+
+// TestPutCompletionUnverified: unverified is the second assignable state
+// (REQ-API-110, DEV-DB-19). It overrides the derived state like finished does,
+// a cell moves between the two assignments with one audit entry per move, and
+// clearing either returns the derived state.
+func TestPutCompletionUnverified(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	f := newCompletionFixture(t, e)
+	path := completionPath(f.projectID, "R1", "v1_arm_1", f.intake)
+
+	put := func(state string) {
+		t.Helper()
+		rec := e.do("PUT", path, map[string]string{"state": state}, admin)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PUT %s: got %d %s", state, rec.Code, rec.Body.String())
+		}
+		var body completionObject
+		e.decode(rec, &body)
+		if body.State != state {
+			t.Errorf("PUT %s: response = %+v", state, body)
+		}
+	}
+	wantTrail := func(types ...string) {
+		t.Helper()
+		rows := completionAuditRows(t, e)
+		got := make([]string, len(rows))
+		for i, r := range rows {
+			got[i] = r.EventType
+		}
+		if len(got) != len(types) {
+			t.Fatalf("audit trail = %v, want %v", got, types)
+		}
+		for i := range types {
+			if got[i] != types[i] {
+				t.Fatalf("audit trail = %v, want %v", got, types)
+			}
+		}
+	}
+
+	put(StateUnverified)
+	if got := stateOf(t, e, admin, f, "v1_arm_1", "intake"); got != StateUnverified {
+		t.Fatalf("after unverified: state = %q, want %s", got, StateUnverified)
+	}
+	rows := completionAuditRows(t, e)
+	want := completionDetails{RecordID: "R1", Event: "v1_arm_1", Instrument: "intake"}
+	if len(rows) != 1 || rows[0].EventType != audit.InstrumentUnverified || rows[0].Details != want ||
+		rows[0].Source != audit.SourceUI || rows[0].TargetRecord != "R1" {
+		t.Fatalf("audit rows = %+v, want one instrument_unverified naming %+v", rows, want)
+	}
+	put(StateUnverified) // a no-op (REQ-API-042)
+	wantTrail(audit.InstrumentUnverified)
+
+	put(StateFinished)
+	if got := stateOf(t, e, admin, f, "v1_arm_1", "intake"); got != StateFinished {
+		t.Errorf("unverified → finished: state = %q", got)
+	}
+	put(StateUnverified)
+	if got := stateOf(t, e, admin, f, "v1_arm_1", "intake"); got != StateUnverified {
+		t.Errorf("finished → unverified: state = %q", got)
+	}
+	put(StateUnfinished)
+	if got := stateOf(t, e, admin, f, "v1_arm_1", "intake"); got != StateSomeData {
+		t.Errorf("after clear: state = %q, want the derived %s", got, StateSomeData)
+	}
+	wantTrail(audit.InstrumentUnverified, audit.InstrumentCompleted, audit.InstrumentUnverified,
+		audit.InstrumentUncompleted)
+
+	// A cell without values can be unverified too, and the sparse answer then
+	// lists it (REQ-API-149): only no_data cells are left out.
+	if rec := e.do("PUT", completionPath(f.projectID, "R1", "v1_arm_1", f.scores),
+		map[string]string{"state": StateUnverified}, admin); rec.Code != http.StatusOK {
+		t.Fatalf("unverified on an empty cell: got %d %s", rec.Code, rec.Body.String())
+	}
+	if got := stateOf(t, e, admin, f, "v1_arm_1", "scores"); got != StateUnverified {
+		t.Errorf("empty cell marked unverified: state = %q", got)
+	}
+	// A survey takes no assignment of either kind (GD-9).
+	if rec := e.do("PUT", completionPath(f.projectID, "R1", "v1_arm_1", f.survey),
+		map[string]string{"state": StateUnverified}, admin); rec.Code != http.StatusConflict {
+		t.Errorf("unverified on a survey: got %d, want 409", rec.Code)
 	}
 }
 
@@ -427,7 +513,7 @@ func TestSurveyAutoFinished(t *testing.T) {
 		t.Fatalf("BeginTx: %v", err)
 	}
 	if _, err := e.Store.SetInstrumentCompletionTx(ctx, tx, f.projectID, "R1",
-		events[0].ID, f.survey, 1, admin.ID); err != nil {
+		events[0].ID, f.survey, 1, db.CompletionFinished, admin.ID); err != nil {
 		t.Fatalf("SetInstrumentCompletionTx: %v", err)
 	}
 	if err := tx.Commit(); err != nil {

@@ -124,12 +124,21 @@ type complSlot struct {
 	index      int
 }
 
-// newComplDict reads the count's view of the design. The counted fields are
-// the enterable ones, without the record identifier — the first field of the
+// countedField reports whether f, at index i of the design as ListFields
+// orders it, is a field a person answers on the form (REQ-API-171): an
+// enterable one, but not the record identifier — the first field of the
 // earliest instrument with fields (GD-8), a key rather than an answer — and
-// without fields annotated @READONLY, which the form takes no input for
-// (REQ-DB-046). An expression that does not compile is left nil, so its field
-// or instrument counts as shown, as the form shows it (REQ-VAL-048).
+// not one annotated @READONLY, which the form takes no input for (REQ-DB-046).
+// The count reads these fields, and record-status derives some_data from them
+// (REQ-API-074), so the two never disagree on whether a cell holds an answer.
+func countedField(i int, f db.Field) bool {
+	return countedTypes[f.FieldType] && i != 0 && !f.IsReadOnly()
+}
+
+// newComplDict reads the count's view of the design: the counted fields
+// (countedField) in design order. An expression that does not compile is
+// left nil, so its field or instrument counts as shown, as the form shows it
+// (REQ-VAL-048).
 func newComplDict(fields []db.Field, instruments []db.Instrument) *complDict {
 	d := &complDict{
 		instruments: make(map[int64]*complInstrument, len(instruments)),
@@ -181,7 +190,7 @@ func newComplDict(fields []db.Field, instruments []db.Instrument) *complDict {
 	}
 	for i, f := range fields {
 		in, ok := d.instruments[f.InstrumentID]
-		if !ok || !countedTypes[f.FieldType] || i == 0 || f.IsReadOnly() {
+		if !ok || !countedField(i, f) {
 			continue
 		}
 		cf := complField{program: compile(f.BranchingLogic.String)}

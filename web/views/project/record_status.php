@@ -7,8 +7,8 @@
  * are the route's `records` data region, bound by record-status.js (REQ-UI-032/044), which reads
  * that head as the column structure and replaces the table with a virtually rendered Tabulator
  * grid (AGENTS.md "use Tabulator"). Each cell is a link to the record view on that (record,
- * event, instrument) carrying the three-state colour code: grey no data, amber some data, green
- * finished (§6.3), on the master spec's 3×3 counter whose "on" tiles show how many of the
+ * event, instrument) carrying the four-state colour code: grey no data, blue some data, yellow
+ * unverified, green finished (§6.3), on the master spec's 3×3 counter whose "on" tiles show how many of the
  * instrument's fields hold a value (REQ-UI-081) — a count record-status.js reads from $countUrl
  * beside the rows, and draws by cloning the marker from the page's template; every marker
  * draws the page's one counter SVG and differs from the others only in its classes. No field
@@ -76,9 +76,10 @@ $activeArm = (int) ($arms[0]['arm_num'] ?? 0);
 <?php require __DIR__ . '/../partials/counter-sprite.php'; ?>
 
 <!-- The colour code (§6.3) on the completeness counter (REQ-UI-081): each state in its colouring
-     with an example count — none, four and all nine tiles on. -->
+     with an example count — none, four, seven and all nine tiles on. -->
 <p class="small mb-1 clara-legend">
-    <?php foreach (['no_data' => '', 'some_data' => 'counter-yellow counter-3', 'finished' => 'counter-green counter-8'] as $state => $counterClass): ?>
+    <?php foreach (['no_data' => '', 'some_data' => 'counter-blue counter-3', 'unverified' => 'counter-yellow counter-6',
+        'finished' => 'counter-green counter-8'] as $state => $counterClass): ?>
         <?php require __DIR__ . '/../partials/counter.php'; ?>
         <span class="me-3"><?= View::e($view->t('records.state.' . $state)) ?></span>
     <?php endforeach; ?>

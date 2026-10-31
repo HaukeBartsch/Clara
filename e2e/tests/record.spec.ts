@@ -191,30 +191,55 @@ test.describe("data entry and the record view (M5)", () => {
     // The calculated result comes back through the history like any value (REQ-VAL-036).
     await expect(page.locator("output#f-dbl")).toHaveText("84")
 
-    // The dashboard derives "some data" (amber) from the stored values (§6.3), and its
+    // The dashboard derives "some data" (blue) from the stored values (§6.3), and its
     // cell opens this very form.
     await page.getByRole("link", { name: "← Record Status Dashboard" }).click()
     const someData = page.locator("[data-region='records'] [data-record='M5001'] [data-state]")
     await expect(someData).toHaveAttribute("data-state", "some_data")
     // Its counter shows how many of the counted fields hold a value (REQ-UI-081): age, sex, the
     // pregnancy question its branching shows and notes — not the identifier, not the
-    // calculation — are all filled, so all nine tiles are on while the state stays amber.
+    // calculation — are all filled, so all nine tiles are on while the state stays blue.
     const someCounter = someData.locator("svg.counter")
     await expect(someCounter).toHaveAttribute("data-lit", "9")
-    await expect(someCounter).toHaveClass("counter counter-yellow counter-8")
+    await expect(someCounter).toHaveClass("counter counter-blue counter-8")
     await expect(someData.locator("a")).toHaveAttribute("title", /Some data, 4 of 4 fields filled/)
     await someData.locator("a").click()
     await expect(page).toHaveURL(/\/records\/M5001\?event=baseline_arm_1&instrument=instrument$/)
 
     // --- update: change one value, clear one, leave the rest untouched ---
+    // The dropdown offers the dashboard's four states in its order (§8.5).
+    await expect(page.locator("#record-completion option")).toHaveText(["No data", "Some data", "Unverified", "Finished"])
     await page.fill("#f-age", "43")
     await page.fill("#f-notes", "")
-    await page.selectOption("#record-completion", "finished")
+    await page.selectOption("#record-completion", "unverified")
     await form.locator("[data-clara-save]").click()
     await expect(success(page)).toContainText("Record M5001 — instrument at baseline_arm_1 saved.")
     await expect(page.locator("#f-age")).toHaveValue("43")
     await expect(page.locator("#f-notes")).toHaveValue("")
     await expect(page.locator("output#f-dbl")).toHaveText("86")
+    await expect(page.locator("#record-completion")).toHaveValue("unverified")
+
+    // --- the dashboard shows the unverified assignment as yellow (§6.3) ---
+    await page.getByRole("link", { name: "← Record Status Dashboard" }).click()
+    const unverified = page.locator("[data-region='records'] [data-record='M5001'] [data-state]")
+    await expect(unverified).toHaveAttribute("data-state", "unverified")
+    // Notes was cleared: 3 of 4 is seven tiles of nine (REQ-UI-081).
+    await expect(unverified.locator("svg.counter")).toHaveClass("counter counter-yellow counter-6")
+    await expect(unverified.locator("a")).toHaveAttribute("title", /Unverified, 3 of 4 fields filled/)
+    // The export writes REDCap's code for it, 1 (REQ-API-134).
+    const unverifiedExport = await request.post(`${API_URL}/api/`, {
+      form: { token, content: "record", action: "export", format: "json", type: "flat", "records[0]": "M5001" },
+    })
+    expect(unverifiedExport.ok()).toBeTruthy()
+    const unverifiedRows = (await unverifiedExport.json()) as Array<Record<string, string>>
+    expect(unverifiedRows.find((r) => r.redcap_event_name === "baseline_arm_1")?.instrument_complete).toBe("1")
+    await unverified.locator("a").click()
+    await expect(page).toHaveURL(/\/records\/M5001\?event=baseline_arm_1&instrument=instrument$/)
+
+    // --- verified: the same form is marked finished ---
+    await page.selectOption("#record-completion", "finished")
+    await form.locator("[data-clara-save]").click()
+    await expect(success(page)).toContainText("Record M5001 — instrument at baseline_arm_1 saved.")
     await expect(page.locator("#record-completion")).toHaveValue("finished")
 
     // Per-field history (§8.3, REQ-UI-026): the route's `history` region in a read-only modal.
@@ -230,8 +255,8 @@ test.describe("data entry and the record view (M5)", () => {
     await page.getByRole("link", { name: "← Record Status Dashboard" }).click()
     const cell = page.locator("[data-region='records'] [data-record='M5001'] [data-state]")
     await expect(cell).toHaveAttribute("data-state", "finished")
-    // Notes was cleared: 3 of 4 is seven tiles of nine, and one stays off however close the
-    // share comes (REQ-UI-081).
+    // Still 3 of 4: seven tiles of nine, and one stays off however close the share comes
+    // (REQ-UI-081).
     await expect(cell.locator("svg.counter")).toHaveAttribute("data-lit", "7")
     await expect(cell.locator("svg.counter")).toHaveClass("counter counter-green counter-6")
     await expect(cell.locator("a")).toHaveAttribute("title", /Finished, 3 of 4 fields filled/)

@@ -266,8 +266,8 @@ func TestExportAdminFullCSVAndAudit(t *testing.T) {
 	if len(rows) != 3 || strings.Join(rows[0], ",") != strings.Join(wantHeader, ",") {
 		t.Fatalf("CSV = %v, want header %v and two data rows", rows, wantHeader)
 	}
-	if rows[1][8] != "1" { // values present, no finished assignment (REQ-API-074 derivation)
-		t.Errorf("demo_complete = %q, want 1", rows[1][8])
+	if rows[1][8] != "0" { // values present, nothing assigned: REDCap's Incomplete (REQ-API-134)
+		t.Errorf("demo_complete = %q, want 0", rows[1][8])
 	}
 	if rows[1][0] != "REC-001" || rows[1][1] != "baseline_arm_1" {
 		t.Errorf("row 1 = %v, want REC-001 at baseline_arm_1", rows[1])
@@ -541,10 +541,10 @@ func TestExportCompletionStateFollowsPairs(t *testing.T) {
 	if seen != 1 {
 		t.Fatalf("header %v carries %d demo_complete columns, want exactly one (flat)", rows[0], seen)
 	}
-	// REC-001 at baseline_arm_1: the pair permits, so the state is derived as ever —
-	// values without a finished mark.
-	if v := rows[1][completion]; v != "1" {
-		t.Errorf("REC-001 demo_complete = %q, want 1", v)
+	// REC-001 at baseline_arm_1: the pair permits, so the state is reported as ever —
+	// values without an assignment, REDCap's Incomplete.
+	if v := rows[1][completion]; v != "0" {
+		t.Errorf("REC-001 demo_complete = %q, want 0", v)
 	}
 	// REC-002 at visit_arm_2: the row stands on followup's permitted pair; demo's
 	// refused pair contributes nothing, its completion state included.

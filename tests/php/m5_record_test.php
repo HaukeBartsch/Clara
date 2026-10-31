@@ -396,18 +396,25 @@ describe('Record Status Dashboard (§6.3, REQ-UI-019)', function (): void {
         assert_contains('/assets/js/record-status.js', $body);
         // The rows bind into a Tabulator grid, whose theme the page links (§3.8).
         assert_contains('/assets/vendor/tabulator/tabulator_bootstrap5.min.css', $body);
-        // The legend draws the states on the master spec's counter — grey as is, amber and green
-        // in their own colouring class — the page carries the counter the script clones, and the
-        // region names the count's read beside its own (REQ-UI-081).
+        // The legend draws the four states on the master spec's counter, in their order — grey as
+        // is, blue, yellow and green in their own colouring class — the page carries the counter
+        // the script clones, and the region names the count's read beside its own (REQ-UI-081).
         assert_contains('<svg class="counter" aria-hidden="true" focusable="false"><use href="#clara-counter"></use></svg>', $body);
-        assert_contains('<svg class="counter counter-yellow counter-3" aria-hidden="true" focusable="false"><use href="#clara-counter"></use></svg>', $body);
+        assert_contains('<svg class="counter counter-blue counter-3" aria-hidden="true" focusable="false"><use href="#clara-counter"></use></svg>', $body);
+        assert_contains('<svg class="counter counter-yellow counter-6"', $body);
         assert_contains('<svg class="counter counter-green counter-8"', $body);
+        $legend = array_map(fn (string $label): int|false => strpos($body, '<span class="me-3">' . $label . '</span>'),
+            ['No data', 'Some data', 'Unverified', 'Finished']);
+        assert_true(!in_array(false, $legend, true), 'the legend names all four states');
+        $ordered = $legend;
+        sort($ordered);
+        assert_same($ordered, $legend, 'the legend orders the states no data, some data, unverified, finished');
         assert_contains('<template id="clara-counter-marker"><svg class="counter"', $body);
-        // The spec's SVG is on the page once, as the symbol every marker draws — the three
+        // The spec's SVG is on the page once, as the symbol every marker draws — the four
         // legend markers and the template's — so markers differ only in their classes.
         assert_contains('<symbol id="clara-counter" viewBox="0 0 590 590">', $body);
         assert_same(9, substr_count($body, '<path class="index-'));
-        assert_same(4, substr_count($body, '<use href="#clara-counter"></use>'));
+        assert_same(5, substr_count($body, '<use href="#clara-counter"></use>'));
         assert_contains('data-count-source="/projects/3/record-status?counts=1"', $body);
         assert_contains('class="small text-danger mb-2 clara-counts-failed" role="status" hidden', $body);
         // The entry is now built and allowed, and it is the page on screen.
@@ -479,6 +486,22 @@ describe('Record Status Dashboard (§6.3, REQ-UI-019)', function (): void {
                 'cells' => ['baseline_arm_1|intake' => 'some_data'], 'instances' => []],
             ['record_id' => '8DISC002', 'events' => ['baseline_arm_1'], 'cells' => [], 'instances' => []],
         ], $payload['records']);
+    });
+
+    it('relays the unverified state beside the others (REQ-UI-019)', function (): void {
+        sign_in();
+        m5_queue(status: [
+            ['record_id' => '8DISC001', 'events' => [
+                ['unique_event_name' => 'baseline_arm_1', 'instruments' => [['name' => 'intake', 'state' => 'unverified']]],
+                ['unique_event_name' => 'follow_up_arm_1', 'instruments' => [['name' => 'intake', 'state' => 'no_data',
+                    'instances' => [['instance' => 2, 'state' => 'unverified']]]]],
+            ]],
+        ]);
+
+        $payload = json_decode(m5_get('/projects/3/record-status', [], json_headers())->body(), true);
+
+        assert_same(['baseline_arm_1|intake' => 'unverified', 'follow_up_arm_1|intake' => 'no_data'], $payload['records'][0]['cells']);
+        assert_same(['follow_up_arm_1|intake' => [[2, 'unverified']]], $payload['records'][0]['instances']);
     });
 
     it('streams the rows as NDJSON, each line as soon as it is complete (REQ-UI-074)', function (): void {
@@ -758,6 +781,9 @@ describe('record view (§8, REQ-UI-025…027)', function (): void {
         assert_contains('clara-required', $body);
         assert_contains('name="completion"', $body);
         assert_contains('<option value="some_data" selected', $body);
+        // The dropdown offers the four states in the dashboard's order (§8.5).
+        preg_match_all('/<option value="([a-z_]+)"(?: selected)?>/', substr($body, (int) strpos($body, 'name="completion"')), $options);
+        assert_same(['no_data', 'some_data', 'unverified', 'finished'], array_slice($options[1], 0, 4));
         // The out-of-form reference of the branching logic travels to the evaluator.
         assert_contains('"follow_up_arm_1|visit":"1"', $body);
         assert_contains('data-clara-branching="[sex] = &quot;2&quot;', $body);
@@ -1020,7 +1046,7 @@ describe('saving and deleting (§8.6, §8.7)', function (): void {
         assert_same('43', $row['age']);
     });
 
-    it('sets "finished" after the import, and clears it only when leaving finished (§8.5)', function (): void {
+    it('sets "finished" or "unverified" after the import, and clears only when leaving one (§8.5)', function (): void {
         sign_in(['csrf_token' => M5_CSRF]);
         m5_queue();
         api_route('data:action=import', [['record_id' => '8DISC001', 'import_record_id' => 2, 'import_form_name' => 'intake']]);
@@ -1034,6 +1060,16 @@ describe('saving and deleting (§8.6, §8.7)', function (): void {
 
         m5_post('/projects/3/records/8DISC001', m5_save_fields([], [], ['completion' => 'no_data', 'completion_was' => 'some_data']), 'save');
         assert_same(2, m5_count('PUT', '/completion'), 'moving between the derived states is no assignment');
+
+        // Unverified is assigned like finished, the two move into each other with one call, and
+        // leaving unverified for a derived state clears it (REQ-API-110).
+        m5_post('/projects/3/records/8DISC001', m5_save_fields([], [], ['completion' => 'unverified', 'completion_was' => 'some_data']), 'save');
+        assert_same(['state' => 'unverified'], m4_body('PUT', '/events/baseline_arm_1/instruments/7/completion'));
+        m5_post('/projects/3/records/8DISC001', m5_save_fields([], [], ['completion' => 'finished', 'completion_was' => 'unverified']), 'save');
+        assert_same(['state' => 'finished'], m4_body('PUT', '/events/baseline_arm_1/instruments/7/completion'));
+        m5_post('/projects/3/records/8DISC001', m5_save_fields([], [], ['completion' => 'some_data', 'completion_was' => 'unverified']), 'save');
+        assert_same(['state' => 'unfinished'], m4_body('PUT', '/events/baseline_arm_1/instruments/7/completion'));
+        assert_same(5, m5_count('PUT', '/completion'));
     });
 
     it('re-renders a rejected row with the reasons beside the fields and nothing else changed', function (): void {

@@ -909,23 +909,25 @@ final class RecordController extends DataEntryController
 
     /**
      * Sets or clears the user's completion assignment when the dropdown changed (§8.5):
-     * "finished" sets it; leaving "finished" for either other state clears it, after which
-     * record-status derives no data / some data from the values (REQ-API-110). Moving between
-     * the two derived states is not an assignment and makes no call.
+     * "unverified" or "finished" sets that state; leaving either for a derived state clears
+     * it, after which record-status derives no data / some data from the values
+     * (REQ-API-110). Moving between the two derived states is not an assignment and makes no
+     * call.
      */
     private function applyCompletion(int $projectId, string $record, string $event, int $iid, int $instance = 0): void
     {
         $now = $this->request->field('completion');
         $was = $this->request->field('completion_was');
+        $assigns = in_array($now, DataEntry::ASSIGNED_STATES, true);
         if ($iid === 0 || !in_array($now, DataEntry::STATES, true) || $now === $was
-            || ($now !== 'finished' && $was !== 'finished')) {
+            || (!$assigns && !in_array($was, DataEntry::ASSIGNED_STATES, true))) {
             return;
         }
 
         try {
             $this->api->put('/api/v1/projects/' . $projectId . '/records/' . rawurlencode($record)
                 . '/events/' . rawurlencode($event) . '/instruments/' . $iid . '/completion',
-                ['state' => $now === 'finished' ? 'finished' : 'unfinished']
+                ['state' => $assigns ? $now : 'unfinished']
                     + ($instance > 0 ? ['instance' => $instance] : []));
         } catch (ApiException $e) {
             $this->logger->info('completion change rejected', ['code' => $e->code(), 'status' => $e->status()]);

@@ -44,6 +44,7 @@ const (
 	RecordDeleted         = "record_deleted"
 	CalculatedRecomputed  = "calculated_recomputed"
 	InstrumentCompleted   = "instrument_completed"   // REQ-AUD-026, REQ-API-110
+	InstrumentUnverified  = "instrument_unverified"  // REQ-AUD-026: the cell is marked unverified
 	InstrumentUncompleted = "instrument_uncompleted" // REQ-AUD-026
 	TransferExecuted      = "transfer_executed"      // REQ-AUD-034, REQ-API-165: a cross-project transfer ran (source project)
 

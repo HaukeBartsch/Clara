@@ -32,9 +32,9 @@ func (h *Handler) registerQueries(mux *http.ServeMux) {
 // --- GET /api/v1/projects/{id}/record-status (§4.13, REQ-API-074) ---
 
 // recordStatusInstrument is one (record, event, instrument) cell of the
-// dashboard: three states, no values (REQ-API-074). state is some_data as
-// derived from the stored values, or finished when the user assigned it
-// (§4.13, REQ-DB-036); no_data cells are not listed (REQ-API-149).
+// dashboard: four states, no values (REQ-API-074). state is some_data as
+// derived from the stored values, or unverified / finished when the user
+// assigned it (§4.13, REQ-DB-036); no_data cells are not listed (REQ-API-149).
 type recordStatusInstrument struct {
 	Name  string `json:"name"`
 	State string `json:"state"`
@@ -45,7 +45,7 @@ type recordStatusInstrument struct {
 }
 
 // recordStatusInstance is one instance of a repeating instrument at one event:
-// its number and its three-state completion state (REQ-API-156).
+// its number and its completion state (REQ-API-156).
 type recordStatusInstance struct {
 	Instance int    `json:"instance"`
 	State    string `json:"state"`
@@ -67,8 +67,8 @@ type recordStatusRow struct {
 }
 
 // recordStatus returns all records visible to the acting user under the DAG
-// rule (REQ-AUTH-045) with a three-state completion state per (record, event,
-// instrument) — no_data / some_data derived, finished stored
+// rule (REQ-AUTH-045) with a completion state per (record, event,
+// instrument) — no_data / some_data derived, unverified / finished stored
 // (REQ-API-074, REQ-DB-036). The answer is sparse (REQ-API-149): no_data
 // cells are left out, because the dense matrix grows with records × events ×
 // mapped instruments however little data exists. Requires data access ≥
@@ -313,9 +313,11 @@ type statusPair struct {
 }
 
 // The marks a cell can carry: a field of the instrument holds a value there
-// (derived), and the user assigned finished (stored, REQ-DB-036).
+// (derived), and the user assigned unverified or finished (stored,
+// REQ-DB-036 — one row per cell, so at most one of the two).
 const (
 	markData uint8 = 1 << iota
+	markUnverified
 	markFinished
 )
 
@@ -336,17 +338,19 @@ func (m *statusMarks) mark(c statusCell, bit uint8) {
 	m.cells[c] = before | bit
 }
 
-// state is a cell's three-state completion. Finished wins over the derived
-// state, never the other way round, so the badge cannot claim less than the
-// data shows and grey/amber can never contradict it (REQ-API-074); a survey
-// instrument reports finished automatically — its completion info is filled
-// in without an assignment (GD-9; master spec "Instrument level completion
-// info").
+// state is a cell's completion state. An assignment — finished, then
+// unverified — wins over the derived state, never the other way round, so the
+// badge cannot claim less than the data shows and grey/blue can never
+// contradict it (REQ-API-074); a survey instrument reports finished
+// automatically — its completion info is filled in without an assignment
+// (GD-9; master spec "Instrument level completion info").
 func (m *statusMarks) state(c statusCell, survey bool) string {
 	marks := m.cells[c]
 	switch {
 	case survey || marks&markFinished != 0:
 		return StateFinished
+	case marks&markUnverified != 0:
+		return StateUnverified
 	case marks&markData != 0:
 		return StateSomeData
 	}
@@ -360,10 +364,13 @@ type statusOwner struct {
 	name string
 }
 
-// statusOwnersOf maps every stored value name of the design to its
-// instrument — a checked box through its choice column, which names no fields
-// row (REQ-DB-042) and never shares a name with one, the designer refuses
-// that. Read once per request; every chunk shares it.
+// statusOwnersOf maps the stored value names a cell's some_data reads to their
+// instrument: those of the counted fields (countedField, REQ-API-074) — a
+// checked box through its choice column, which names no fields row
+// (REQ-DB-042) and never shares a name with one, the designer refuses that.
+// The identifier, a calculated or a @READONLY value is no answer to the
+// instrument, so it maps to nothing and marks no cell. Read once per request;
+// every chunk shares it.
 func (h *Handler) statusOwnersOf(ctx context.Context, sc *statusScope) (map[string]statusOwner, error) {
 	nameOf := make(map[int64]string, len(sc.instruments))
 	for _, in := range sc.instruments {
@@ -374,7 +381,10 @@ func (h *Handler) statusOwnersOf(ctx context.Context, sc *statusScope) (map[stri
 		return nil, err
 	}
 	ownerOf := make(map[string]statusOwner, len(fields))
-	for _, f := range fields {
+	for i, f := range fields {
+		if !countedField(i, f) {
+			continue
+		}
 		o := statusOwner{id: f.InstrumentID, name: nameOf[f.InstrumentID]}
 		ownerOf[f.FieldName] = o
 		if f.FieldType == "checkbox" {
@@ -388,15 +398,16 @@ func (h *Handler) statusOwnersOf(ctx context.Context, sc *statusScope) (map[stri
 
 // statusMarksOf reads the marks of one chunk of visible records, keyed by
 // each record's index in the chunk (REQ-API-172). The derived half: a
-// (record, event, instrument, instance) holds some data when any stored value
-// of one of the instrument's fields is non-empty there ("any field has a value
-// vs. none") — the same test the export's `<instrument>_complete` column
-// applies (REQ-API-134). It is one read of the chunk's non-empty values, with
-// no join and no DISTINCT for the database to sort: a value reaches its
-// instrument through its field in memory (owners), and a value at an event or
-// under a name the design no longer has is skipped as it streams past. Values
+// (record, event, instrument, instance) holds some data when a stored value of
+// one of the instrument's counted fields is non-empty there, shown by
+// branching or not — the fields record-completeness counts, so a blue cell
+// always holds an answer (REQ-API-074, REQ-API-171). It is one read of the
+// chunk's non-empty values, with no join and no DISTINCT for the database to
+// sort: a value reaches its instrument through its field in memory (owners),
+// and a value of a field outside the count, at an event or under a name the
+// design no longer has is skipped as it streams past. Values
 // are aggregated away here; none leaves this function (REQ-API-074). The
-// stored half is the chunk's finished assignments (REQ-DB-036).
+// stored half is the chunk's unverified and finished assignments (REQ-DB-036).
 func (h *Handler) statusMarksOf(ctx context.Context, sc *statusScope, owners map[string]statusOwner,
 	chunk []db.RecordEntity) (*statusMarks, error) {
 	recordAt := recordIndexOf(chunk)
@@ -452,7 +463,11 @@ func (h *Handler) statusMarksOf(ctx context.Context, sc *statusScope, owners map
 	}
 	for _, c := range completions {
 		if at, ok := recordAt[c.RecordID]; ok {
-			m.mark(statusCell{record: at, instance: int32(max(c.Instance, 1)), event: c.EventID, instrument: c.InstrumentID}, markFinished)
+			bit := markFinished
+			if c.State == StateUnverified {
+				bit = markUnverified
+			}
+			m.mark(statusCell{record: at, instance: int32(max(c.Instance, 1)), event: c.EventID, instrument: c.InstrumentID}, bit)
 		}
 	}
 	return m, nil
