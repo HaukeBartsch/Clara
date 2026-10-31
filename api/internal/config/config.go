@@ -52,6 +52,12 @@ type OAuth2Provider struct {
 	MinACR               []string // OAUTH2_N_MIN_ACR; empty means no assurance gate (REQ-AUTH-081)
 	NonceRequired        bool     // OAUTH2_N_NONCE_REQUIRED, default 0 until the provider is observed echoing it (REQ-AUTH-079)
 	IDTokenAlg           string   // OAUTH2_N_ID_TOKEN_ALG, default RS256; asymmetric set only (REQ-AUTH-077)
+
+	// RolesAttr names the claim carrying the provider's role values, which the region
+	// mapping turns into a user's automatic preferred region (OAUTH2_N_ROLES_ATTR,
+	// REQ-CFG-037, REQ-AUTH-088). Empty — the default — leaves the provider's roles
+	// unread. It orders the project overview and grants nothing (REQ-AUTH-089).
+	RolesAttr string
 }
 
 // MinACRSet reports whether an assurance gate is configured for this provider.
@@ -374,6 +380,15 @@ func Load() (*Config, error) {
 		}
 		p.IDTokenAlg = alg
 
+		// One claim name or nothing (REQ-CFG-037): a list or a value with spaces is a
+		// misreading of the key, and guessing which claim was meant would make sign-in
+		// regions depend on that guess.
+		p.RolesAttr = strings.TrimSpace(get(fmt.Sprintf("OAUTH2_%d_ROLES_ATTR", n)))
+		if strings.ContainsAny(p.RolesAttr, " \t,") {
+			fail("OAUTH2_%d_ROLES_ATTR: %q is not a single claim name (REQ-CFG-037)", n, p.RolesAttr)
+			p.RolesAttr = ""
+		}
+
 		cfg.OAuth2 = append(cfg.OAuth2, p)
 	}
 
@@ -657,6 +672,7 @@ func (c *Config) Dump() []string {
 			fmt.Sprintf("OAUTH2_%d_ID_TOKEN_ALG=%s (pinned, REQ-AUTH-077)", p.N, p.IDTokenAlg),
 			fmt.Sprintf("OAUTH2_%d_NONCE_REQUIRED=%s (REQ-AUTH-079; 0 means unobserved, not satisfied)", p.N, boolStr(p.NonceRequired)),
 			fmt.Sprintf("OAUTH2_%d_MIN_ACR=%s (empty = no assurance gate, REQ-AUTH-081)", p.N, none(strings.Join(p.MinACR, ", "))),
+			fmt.Sprintf("OAUTH2_%d_ROLES_ATTR=%s (preferred-region roles, REQ-CFG-037)", p.N, none(p.RolesAttr)),
 		)
 	}
 	for _, s := range c.LDAP {

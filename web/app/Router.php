@@ -318,6 +318,8 @@ final class Router
         // the API (REQ-API-162); Hide is a plain GET of the section.
         ['method' => 'GET', 'pattern' => '/account', 'controller' => Controllers\AccountController::class,
             'handler' => 'index', 'guard' => 'login'],
+        ['method' => 'POST', 'pattern' => '/account', 'controller' => Controllers\AccountController::class,
+            'handler' => 'setRegion', 'guard' => 'login', 'action' => 'set_region'],
         ['method' => 'GET', 'pattern' => '/account/tokens', 'controller' => Controllers\AccountController::class,
             'handler' => 'tokens', 'guard' => 'login'],
         ['method' => 'POST', 'pattern' => '/account/tokens', 'controller' => Controllers\AccountController::class,

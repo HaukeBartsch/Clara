@@ -10,7 +10,8 @@ import (
 // --- users (REQ-DB-008) ---
 
 const userColumns = `id, email, display_name, enabled, auth_source, password_hash,
-	valid_until, last_login_at, is_admin, ui_language, ui_theme, session_epoch, created_at`
+	valid_until, last_login_at, is_admin, ui_language, ui_theme, session_epoch,
+	preferred_region, automatic_region, automatic_region_source, created_at`
 
 func scanUser(row interface{ Scan(dest ...any) error }) (User, error) {
 	var (
@@ -21,7 +22,8 @@ func scanUser(row interface{ Scan(dest ...any) error }) (User, error) {
 		lastLogin  any
 	)
 	err := row.Scan(&u.ID, &u.Email, &u.DisplayName, &enabled, &u.AuthSource,
-		&u.PasswordHash, &validUntil, &lastLogin, &isAdmin, &u.UILanguage, &u.UITheme, &u.SessionEpoch, &u.CreatedAt)
+		&u.PasswordHash, &validUntil, &lastLogin, &isAdmin, &u.UILanguage, &u.UITheme, &u.SessionEpoch,
+		&u.PreferredRegion, &u.AutomaticRegion, &u.AutomaticRegionSource, &u.CreatedAt)
 	if err != nil {
 		return u, err
 	}
@@ -81,7 +83,8 @@ func (s *Store) UpsertBootstrap(ctx context.Context, email, displayName, passwor
 	var u User
 	err := s.DB.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE email = ?`, email).
 		Scan(&u.ID, &u.Email, &u.DisplayName, new(int), &u.AuthSource, &u.PasswordHash,
-			new(any), new(any), new(int), &u.UILanguage, &u.UITheme, &u.SessionEpoch, &u.CreatedAt)
+			new(any), new(any), new(int), &u.UILanguage, &u.UITheme, &u.SessionEpoch,
+			&u.PreferredRegion, &u.AutomaticRegion, &u.AutomaticRegionSource, &u.CreatedAt)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, err
 	}
@@ -336,6 +339,39 @@ func (s *Store) SetUILanguage(ctx context.Context, id int64, lang string) error 
 func (s *Store) SetUITheme(ctx context.Context, id int64, theme sql.NullString) error {
 	_, err := s.DB.ExecContext(ctx, `UPDATE users SET ui_theme = ? WHERE id = ?`, nullStr(theme), id)
 	return err
+}
+
+// SetPreferredRegionTx stores the user's own region choice; an invalid NullString clears
+// it, so the automatic region applies again (REQ-API-175, REQ-DB-052).
+func (s *Store) SetPreferredRegionTx(ctx context.Context, tx *sql.Tx, id int64, region sql.NullString) error {
+	_, err := tx.ExecContext(ctx, `UPDATE users SET preferred_region = ? WHERE id = ?`, nullStr(region), id)
+	return err
+}
+
+// SetProviderRegion records the region a sign-in derived from the provider's roles
+// (REQ-AUTH-088). It replaces an earlier provider region and an assignment placeholder
+// alike, and never touches the user's own choice.
+func (s *Store) SetProviderRegion(ctx context.Context, id int64, region string) error {
+	_, err := s.DB.ExecContext(ctx,
+		`UPDATE users SET automatic_region = ?, automatic_region_source = ? WHERE id = ?`,
+		region, RegionSourceProvider, id)
+	return err
+}
+
+// SetRegionPlaceholderTx gives an account without any region the assigning
+// administrator's one (REQ-API-179). The update is conditional on both columns still
+// being NULL, so a region derived at a concurrent sign-in, or chosen by the user in the
+// meantime, is never overwritten; it reports whether the placeholder was set.
+func (s *Store) SetRegionPlaceholderTx(ctx context.Context, tx *sql.Tx, id int64, region string) (bool, error) {
+	res, err := tx.ExecContext(ctx,
+		`UPDATE users SET automatic_region = ?, automatic_region_source = ?
+		 WHERE id = ? AND preferred_region IS NULL AND automatic_region IS NULL`,
+		region, RegionSourceAssignment, id)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 
 // AutoDisable marks a user disabled and clears the inactivity clock

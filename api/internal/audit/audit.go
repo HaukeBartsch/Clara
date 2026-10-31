@@ -83,6 +83,10 @@ const (
 	I18nUpdated       = "i18n_updated"
 	SettingsUpdated   = "settings_updated" // REQ-AUD-027, REQ-API-112
 
+	// preferred region (REQ-AUD-036): role values never enter details of a login
+	RegionMappingChanged   = "region_mapping_changed"   // REQ-API-178: an administrator decided on a provider role value
+	PreferredRegionChanged = "preferred_region_changed" // REQ-API-175: a user changed their own region
+
 	// password lifecycle (Sequence H) — token values never enter details (REQ-AUD-029)
 	UserInvited            = "user_invited"             // REQ-AUD-029, GD-22
 	InviteAccepted         = "invite_accepted"          // REQ-AUD-029, GD-22

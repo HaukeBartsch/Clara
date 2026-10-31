@@ -670,3 +670,46 @@ func TestLoadRejectsJWKSTTLBelowOne(t *testing.T) {
 		})
 	}
 }
+
+// TestLoadRolesAttr covers REQ-CFG-037: OAUTH2_N_ROLES_ATTR is one claim name, trimmed,
+// empty by default; a list or a value with spaces fails at startup instead of guessing.
+func TestLoadRolesAttr(t *testing.T) {
+	setup := func(t *testing.T) {
+		clearAuthEnv(t)
+		unsetEnv(t, "OAUTH2_1_ROLES_ATTR")
+		t.Setenv("ADMIN_BOOTSTRAP_EMAIL", "admin@example.org")
+		t.Setenv("OAUTH2_1_ISSUER", "https://idp.example.org")
+		t.Setenv("OAUTH2_1_CLIENT_ID", "csms")
+		t.Setenv("OAUTH2_1_CLIENT_SECRET", "s3cret")
+	}
+	t.Run("default", func(t *testing.T) {
+		setup(t)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load(): %v", err)
+		}
+		if cfg.OAuth2[0].RolesAttr != "" {
+			t.Errorf("RolesAttr = %q, want empty (roles unread)", cfg.OAuth2[0].RolesAttr)
+		}
+	})
+	t.Run("set", func(t *testing.T) {
+		setup(t)
+		t.Setenv("OAUTH2_1_ROLES_ATTR", " memberOf ")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load(): %v", err)
+		}
+		if cfg.OAuth2[0].RolesAttr != "memberOf" {
+			t.Errorf("RolesAttr = %q, want memberOf (trimmed)", cfg.OAuth2[0].RolesAttr)
+		}
+	})
+	for _, raw := range []string{"groups,roles", "member of", "groups\troles"} {
+		t.Run("reject="+raw, func(t *testing.T) {
+			setup(t)
+			t.Setenv("OAUTH2_1_ROLES_ATTR", raw)
+			if _, err := Load(); err == nil {
+				t.Errorf("Load() succeeded for OAUTH2_1_ROLES_ATTR=%q, want rejection (REQ-CFG-037)", raw)
+			}
+		})
+	}
+}

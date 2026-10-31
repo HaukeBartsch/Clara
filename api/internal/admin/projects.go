@@ -241,6 +241,12 @@ type projectSummary struct {
 	// project see different values. The list itself stays alphabetical: ordering by this
 	// field is the overview's presentation decision, not the endpoint's.
 	LastAccessedAt *string `json:"last_accessed_at"`
+	// InPreferredRegion is true when the project's organization is the acting user's
+	// effective region (REQ-API-049, REQ-DB-052). Computed per call, after the visibility
+	// filter, so a region changed elsewhere regroups an open overview on its next read.
+	// Like LastAccessedAt it leaves the list in name order: grouping is the page's
+	// presentation (REQ-UI-076/077).
+	InPreferredRegion bool `json:"in_preferred_region"`
 }
 
 // listProjects returns the projects within the acting user's visibility —
@@ -277,6 +283,7 @@ func (h *Handler) listProjects(w http.ResponseWriter, r *http.Request) {
 		errInternal(w)
 		return
 	}
+	region := u.EffectiveRegion()
 	out := make([]projectSummary, 0, len(projects))
 	for _, p := range projects {
 		if visible != nil && !visible[p.ID] {
@@ -308,6 +315,7 @@ func (h *Handler) listProjects(w http.ResponseWriter, r *http.Request) {
 			ID: p.ID, ProjectName: p.ProjectName, Organization: p.Organization,
 			RecordCount: records, InstrumentCount: len(instruments),
 			FieldCount: len(fields), LastAccessedAt: lastAccessed,
+			InPreferredRegion: region != "" && p.Organization == region,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

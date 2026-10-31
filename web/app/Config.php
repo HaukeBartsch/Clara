@@ -124,7 +124,7 @@ final class Config
      * only the provider metadata needed to route the callback and render the Control
      * Panel; it does not load or retain the client secret.
      *
-     * @var list<array{index: int, issuer: string, client_id: string, redirect_uri: string, email_attr: string, names: list<string>}>
+     * @var list<array{index: int, issuer: string, client_id: string, redirect_uri: string, email_attr: string, roles_attr: string, names: list<string>}>
      */
     public array $oauthProviders = [];
 
@@ -488,6 +488,8 @@ final class Config
                     // WEB_PUBLIC_URL + /auth/callback default (REQ-CFG-011).
                     'redirect_uri' => $get("OAUTH2_{$n}_REDIRECT_URI"),
                     'email_attr' => $get("OAUTH2_{$n}_EMAIL_ATTR", 'email'),
+                    // Display only: the Go API reads and validates the claim (REQ-CFG-037).
+                    'roles_attr' => trim($get("OAUTH2_{$n}_ROLES_ATTR")),
                     'names' => self::nameList("OAUTH2_{$n}_NAMES", $get("OAUTH2_{$n}_NAMES"), $errors),
                 ];
             }
@@ -591,6 +593,7 @@ final class Config
             $keys[] = "OAUTH2_{$n}_CLIENT_SECRET";
             $keys[] = "OAUTH2_{$n}_REDIRECT_URI";
             $keys[] = "OAUTH2_{$n}_EMAIL_ATTR";
+            $keys[] = "OAUTH2_{$n}_ROLES_ATTR";
             $keys[] = "OAUTH2_{$n}_NAMES";
             $keys[] = "LDAP_SERVER_{$n}_URL";
             $keys[] = "LDAP_SERVER_{$n}_BIND_DN";

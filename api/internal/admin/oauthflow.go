@@ -253,7 +253,7 @@ func (h *Handler) oauthTest(w http.ResponseWriter, r *http.Request) {
 	// made a split claim release invisible (REQ-AUTH-078, REQ-AUTH-085).
 	if claims, status, _ := h.userInfo(r.Context(), runtime.userinfo, token.AccessToken); status > 0 {
 		report["userinfo_status"] = status
-		report["userinfo_claims"] = safeDiagnosticClaims(claims)
+		report["userinfo_claims"] = safeDiagnosticClaims(claims, provider.RolesAttr)
 	}
 
 	assertion, failure := h.verifyAssertion(r.Context(), provider.Issuer, idTokenOf(token), body.Nonce, token.AccessToken)
@@ -265,6 +265,16 @@ func (h *Handler) oauthTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	report["id_token_claims"] = assertion.auditDetails()
+	// The region preview (§2.11): what the mapping says about this sign-in's role values
+	// and the region it would set. Records nothing — the test is not a sign-in.
+	if provider.RolesAttr != "" {
+		preview, err := h.regionPreview(r.Context(), provider.RolesAttr, assertion)
+		if err != nil {
+			errInternal(w)
+			return
+		}
+		report["region_preview"] = preview
+	}
 	writeJSON(w, http.StatusOK, report)
 }
 
@@ -288,13 +298,15 @@ const (
 )
 
 // safeDiagnosticClaims projects a provider's claim set onto the allowlist, bounding every
-// name and value. The claims come from a server this installation trusts to authenticate
+// name and value. extra admits further claim names — the provider's configured roles claim,
+// which an installation may name outside the pattern (§2.11). The claims come from a server this installation trusts to authenticate
 // people but has no reason to trust for rendering, and the report is rendered (REQ-AUTH-085,
 // REQ-UI-008).
-func safeDiagnosticClaims(claims map[string]json.RawMessage) map[string]any {
+func safeDiagnosticClaims(claims map[string]json.RawMessage, extra ...string) map[string]any {
 	out := map[string]any{}
 	for name, raw := range claims {
-		if !slices.Contains(diagnosticClaimAllowlist, name) && !diagnosticGroupClaim.MatchString(name) {
+		if !slices.Contains(diagnosticClaimAllowlist, name) && !diagnosticGroupClaim.MatchString(name) &&
+			(name == "" || !slices.Contains(extra, name)) {
 			continue
 		}
 		var value any

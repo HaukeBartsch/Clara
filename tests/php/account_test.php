@@ -43,6 +43,8 @@ describe('account page — Profile (§2.8)', function (): void {
     it('shows name, address, the language and theme selectors and Sign out, in the account panel', function (): void {
         sign_in();
         queue_shell();
+        api_route('/api/v1/users/me/region', ['region' => 'OUS', 'preferred_region' => null,
+            'automatic_region' => 'OUS', 'automatic_region_source' => 'provider']);
 
         $response = router_for(http_request('GET', '/account', browser_headers()))->dispatch();
         $body = $response->body();
@@ -62,6 +64,8 @@ describe('account page — Profile (§2.8)', function (): void {
     it('lists no Password section for an account that authenticates through a provider (GD-23)', function (): void {
         sign_in(['auth_source' => 'oauth2']);
         queue_shell();
+        api_route('/api/v1/users/me/region', ['region' => 'OUS', 'preferred_region' => null,
+            'automatic_region' => 'OUS', 'automatic_region_source' => 'provider']);
 
         $body = router_for(http_request('GET', '/account', browser_headers()))->dispatch()->body();
 

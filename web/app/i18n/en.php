@@ -119,6 +119,15 @@ return [
 
     // --- dashboard (User_Interface_Design.md §4) ---
     'dashboard.title' => 'Your projects',
+    'dashboard.group.preferred' => 'Your region: {region} · {count}',
+    'dashboard.group.region' => '{region} · {count}',
+    'account.region.label' => 'Preferred region',
+    'account.region.automatic.provider' => 'Automatic — {region} (from your sign-in)',
+    'account.region.automatic.assignment' => 'Automatic — {region} (from a project assignment)',
+    'account.region.automatic.none' => 'Automatic — none',
+    'account.region.help' => 'Your region only decides which projects are listed first. It gives no access.',
+    'account.region.saved' => 'Preferred region saved.',
+    'account.region.unavailable' => 'Your preferred region could not be loaded.',
     'dashboard.project.records' => 'Records',
     'dashboard.project.instruments' => 'Instruments',
     'dashboard.project.fields' => 'Fields',

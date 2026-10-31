@@ -67,6 +67,16 @@ type verifiedAssertion struct {
 	Acr           string // observed assurance claims — recorded, never interpreted again
 	Amr           []string
 	NonceChecked  bool // a nonce claim was present and matched (REQ-AUTH-079)
+
+	// The provider's role values for the preferred-region default (REQ-AUTH-088), read
+	// from the claim OAUTH2_N_ROLES_ATTR names. They are not claim material for the audit
+	// trail — auditDetails leaves them out (REQ-AUTH-084) — and authorize nothing
+	// (REQ-AUTH-089). RolesPresent is false when the provider reads no roles claim or the
+	// assertion did not carry it; the two counts are what normalization skipped.
+	RoleValues     []string
+	RolesPresent   bool
+	RolesTooLong   int
+	RolesOverLimit int
 }
 
 // assertionFailure is a refusal from Sequence J: the reason goes to the audit trail,
@@ -487,8 +497,14 @@ func (h *Handler) verifyAssertion(ctx context.Context, issuer, rawAssertion, exp
 	// deployment, not a broken one.
 	email, emailVerified := addressAttestation(claims, provider.EmailAttr)
 	addressSource := addressFromIDToken
+	// uiClaims keeps a userinfo response read here, so the roles claim below can come from
+	// it without a second request (§2.12). It holds a response only once its subject has
+	// been checked against the verified token.
+	var uiClaims map[string]json.RawMessage
+	uiFetched := false
 	if email == "" && accessToken != "" {
-		uiClaims, _, outcome := h.userInfo(ctx, runtime.userinfo, accessToken)
+		fetched, _, outcome := h.userInfo(ctx, runtime.userinfo, accessToken)
+		uiFetched = true
 		switch outcome {
 		case userInfoUnavailable:
 			// An unreachable userinfo endpoint is an outage, not an unverified address:
@@ -498,7 +514,7 @@ func (h *Handler) verifyAssertion(ctx context.Context, issuer, rawAssertion, exp
 			return nil, newFailure(reasonProviderUnavail, http.StatusBadGateway,
 				"the authentication provider could not be reached").withObserved(found)
 		case userInfoOK:
-			if !userInfoSubjectMatches(uiClaims, idToken.Issuer, idToken.Subject) {
+			if !userInfoSubjectMatches(fetched, idToken.Issuer, idToken.Subject) {
 				// The endpoint answered about somebody other than the subject the verified
 				// token names. None of that claim set is used, and the refusal says only
 				// "could not be verified": whether this is a provider fault or an attempt is
@@ -506,6 +522,7 @@ func (h *Handler) verifyAssertion(ctx context.Context, issuer, rawAssertion, exp
 				return nil, newFailure(reasonAssertionInvalid, http.StatusUnauthorized,
 					"the provider's assertion could not be verified").withObserved(found)
 			}
+			uiClaims = fetched
 			if uiEmail, uiVerified := addressAttestation(uiClaims, provider.EmailAttr); uiEmail != "" {
 				email, emailVerified, addressSource = uiEmail, uiVerified, addressFromUserinfo
 			}
@@ -564,6 +581,32 @@ func (h *Handler) verifyAssertion(ctx context.Context, issuer, rawAssertion, exp
 	}
 	found.Subject = subject
 	found.NonceChecked = nonceChecked
+
+	// The roles claim for the preferred region (REQ-AUTH-088, §2.12): from the verified ID
+	// token, else from userinfo held to the same subject — PingFederate releases the two
+	// claim sets independently. Nothing here refuses: a missing, unreadable or unreachable
+	// claim is "no region information", and the login proceeds without it.
+	if provider.RolesAttr != "" {
+		raw, present := claims[provider.RolesAttr]
+		if !present && accessToken != "" {
+			if !uiFetched {
+				fetched, status, outcome := h.userInfo(ctx, runtime.userinfo, accessToken)
+				switch {
+				case outcome != userInfoOK:
+					slog.Warn("roles claim: userinfo not read", "issuer", provider.Issuer, "status", status)
+				case !userInfoSubjectMatches(fetched, idToken.Issuer, idToken.Subject):
+					slog.Warn("roles claim: userinfo names another subject; roles ignored", "issuer", provider.Issuer)
+				default:
+					uiClaims = fetched
+				}
+			}
+			raw, present = uiClaims[provider.RolesAttr]
+		}
+		if present {
+			found.RolesPresent = true
+			found.RoleValues, found.RolesTooLong, found.RolesOverLimit = normalizeRoleValues(raw)
+		}
+	}
 
 	return found, nil
 }

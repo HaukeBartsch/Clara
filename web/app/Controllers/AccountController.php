@@ -1,6 +1,7 @@
 <?php
 // The account page (§2.8, REQ-UI-063) and the three dedicated POST routes it hosts: sign
-// out (§2.4), the language selector (§9) and the theme selector (§3.8). All three are
+// out (§2.4), the language selector (§9) and the theme selector (§3.8); the preferred region
+// (REQ-UI-075) posts to the page's own route with ?action=set_region. All three are
 // CSRF-protected like every other mutation (REQ-UI-005) and both selectors redirect back,
 // applying from the next page load — the page already rendered keeps its strings and its
 // stylesheet (§9, REQ-UI-041). Sign out is also offered by the header's account menu.
@@ -17,19 +18,62 @@ namespace Clara\Controllers;
 use Clara\ApiException;
 use Clara\Config;
 use Clara\Navigation;
+use Clara\Regions;
 use Clara\Response;
 use Clara\Session;
 
 final class AccountController extends Controller
 {
-    /** GET /account — Profile: who is signed in, language, theme, sign out (§2.8). */
+    /** GET /account — Profile: who is signed in, language, theme, region, sign out (§2.8). */
     public function index(): Response
     {
+        // The region is read here rather than taken from the session's copy of the user object:
+        // an administrator's assignment can set a placeholder after this session began (§2.8,
+        // API_Endpoints_Design.md §4.30). A failed read costs the selector, not the page.
+        try {
+            $region = $this->api->get('/api/v1/users/me/region');
+        } catch (ApiException $e) {
+            $this->logger->info('region read failed', ['code' => $e->code(), 'status' => $e->status()]);
+            $region = null;
+        }
+
         return $this->page('account/profile', [
             'pageTitle' => $this->i18n->t('account.section.profile'),
             'email' => Session::email(),
+            'region' => is_array($region) ? $region : null,
+            'regionOptions' => Regions::options($this->i18n),
+            'regionLabel' => fn (string $code): string => Regions::label($this->i18n, $code),
             'nav' => Navigation::accountNav('profile'),
         ], ['titleKey' => '']);
+    }
+
+    /**
+     * POST /account?action=set_region — the user's own preferred region (REQ-UI-075):
+     * `PUT /api/v1/users/me/region` with a code, or null for Automatic. A value outside the
+     * list is refused here before the API refuses it again; nothing is kept in the session, so
+     * the overview regroups on its next read (§4).
+     */
+    public function setRegion(): Response
+    {
+        $supplied = $this->request->field('region');
+        if ($supplied !== '' && !Regions::isCode($supplied)) {
+            $this->flashDanger($this->invalidRequest('region'));
+
+            return Response::redirect('/account');
+        }
+
+        try {
+            // JSON null is "Automatic", so the attribute is always sent.
+            $this->api->put('/api/v1/users/me/region', ['region' => $supplied !== '' ? $supplied : null]);
+        } catch (ApiException $e) {
+            $this->logger->info('region change rejected', ['code' => $e->code(), 'status' => $e->status()]);
+            $this->flashDanger($this->apiFailureMessage($e));
+
+            return Response::redirect('/account');
+        }
+        $this->flashSuccess($this->i18n->t('account.region.saved'));
+
+        return Response::redirect('/account');
     }
 
     /** GET /account/tokens — the member's own project tokens, every one masked (§2.8). */

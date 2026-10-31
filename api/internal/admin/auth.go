@@ -345,6 +345,9 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 			slog.Error("provider subject link not recorded",
 				"issuer", assertion.Issuer, "user_id", u.ID, "err", err)
 		}
+		// Step 3.5 (REQ-AUTH-088): the role values this sign-in carried, and the automatic
+		// region they map to. Never a reason to refuse the login (§2.12).
+		h.applyProviderRegion(ctx, assertion, u, now)
 	}
 	u.LastLoginAt = sql.NullString{String: now.Format("2006-01-02 15:04:05"), Valid: true}
 	u.AuthSource = body.Source

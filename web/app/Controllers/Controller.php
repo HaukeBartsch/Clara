@@ -137,6 +137,9 @@ abstract class Controller
                 'last_accessed_at' => isset($project['last_accessed_at'])
                     ? (string) $project['last_accessed_at']
                     : null,
+                // The project is in this user's effective region (REQ-API-049); the page groups by
+                // it (REQ-UI-076/077), the list order stays the API's.
+                'in_preferred_region' => ($project['in_preferred_region'] ?? false) === true,
             ];
         }
 

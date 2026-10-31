@@ -10,6 +10,9 @@
 use Clara\View;
 
 /** @var string $email */
+/** @var array<string, mixed>|null $region the §4.30 region state, null when it could not be read */
+/** @var array<string, string> $regionOptions code => display text, REQ-DB-006 order */
+/** @var callable(string): string $regionLabel */
 ?>
 <h1 class="h4 mb-3"><?= View::e($view->t('account.section.profile')) ?></h1>
 
@@ -52,6 +55,36 @@ use Clara\View;
         </select>
         <button class="btn btn-sm btn-outline-secondary" type="submit"><?= View::e($view->t('action.save')) ?></button>
     </form>
+
+    <?php if ($region !== null): ?>
+        <?php
+        // Preferred region (REQ-UI-075): Automatic first, saying what it currently means; a stored
+        // own choice the enumeration no longer offers stays selectable as an extra option.
+        $own = is_string($region['preferred_region'] ?? null) ? $region['preferred_region'] : '';
+        $automatic = is_string($region['automatic_region'] ?? null) ? $region['automatic_region'] : '';
+        $source = ($region['automatic_region_source'] ?? '') === 'assignment' ? 'assignment' : 'provider';
+        $automaticText = $automatic === ''
+            ? $view->t('account.region.automatic.none')
+            : $view->t('account.region.automatic.' . $source, ['region' => $regionLabel($automatic)]);
+        if ($own !== '' && !array_key_exists($own, $regionOptions)) {
+            $regionOptions[$own] = $own;
+        }
+        ?>
+        <form method="post" action="/account?action=set_region" class="d-flex flex-wrap align-items-center gap-2">
+            <?= $view->csrfField() ?>
+            <label class="form-label mb-0 clara-account-label" for="clara-region"><?= View::e($view->t('account.region.label')) ?></label>
+            <select class="form-select form-select-sm w-auto" id="clara-region" name="region" aria-describedby="clara-region-help">
+                <option value=""<?= $own === '' ? ' selected' : '' ?>><?= View::e($automaticText) ?></option>
+                <?php foreach ($regionOptions as $code => $text): ?>
+                    <option value="<?= View::e($code) ?>"<?= $own === $code ? ' selected' : '' ?>><?= View::e($text) ?></option>
+                <?php endforeach; ?>
+            </select>
+            <button class="btn btn-sm btn-outline-secondary" type="submit"><?= View::e($view->t('action.save')) ?></button>
+            <div class="form-text w-100" id="clara-region-help"><?= View::e($view->t('account.region.help')) ?></div>
+        </form>
+    <?php else: ?>
+        <p class="small text-body-secondary mb-0"><?= View::e($view->t('account.region.unavailable')) ?></p>
+    <?php endif; ?>
 </div>
 
 <form method="post" action="/logout">

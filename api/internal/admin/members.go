@@ -383,20 +383,10 @@ func (h *Handler) addOrChangeRole(w http.ResponseWriter, ctx context.Context, ac
 		return
 	}
 
+	// The membership, the region placeholder it may set, and both audit entries commit
+	// together (REQ-API-179, REQ-AUD-003).
 	newAssignment := &db.Assignment{UserID: target.ID, ProjectID: projectID, RoleID: roleID}
-	if _, err := h.Store.AddAssignment(ctx, newAssignment); err != nil {
-		errInternal(w)
-		return
-	}
-	if err := h.auditMember(ctx, actorUser, projectID, audit.MembershipChanged, map[string]any{
-		"member_email": target.Email, "action": "add", "role": roleNameStr,
-	}); err != nil {
-		errInternal(w)
-		return
-	}
-	if err := h.auditMember(ctx, actorUser, projectID, audit.TokenIssued, map[string]any{
-		"member_email": target.Email,
-	}); err != nil {
+	if err := h.addMemberTx(ctx, actorUser, projectID, target, newAssignment, roleNameStr); err != nil {
 		errInternal(w)
 		return
 	}
@@ -404,6 +394,51 @@ func (h *Handler) addOrChangeRole(w http.ResponseWriter, ctx context.Context, ac
 		UserID: target.ID, Email: target.Email, DisplayName: target.DisplayName,
 		Role: roleNameStr, Token: newAssignment.Token,
 	})
+}
+
+// addMemberTx adds a membership in one transaction with its audit entries. When the new
+// member has no region at all and the administrator has one, the administrator's region
+// becomes the member's placeholder (REQ-API-179): the update is conditional on both region
+// columns still being NULL, so a region derived at a concurrent sign-in or chosen by the
+// member is never overwritten, and membership_changed names the placeholder it set.
+// Adding oneself sets nothing — an administrator's own region needs no placeholder.
+func (h *Handler) addMemberTx(ctx context.Context, actorUser *db.User, projectID int64, target *db.User,
+	a *db.Assignment, roleNameStr *string) error {
+	tx, err := h.Store.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := h.Store.AddAssignmentTx(ctx, tx, a); err != nil {
+		return err
+	}
+	details := map[string]any{"member_email": target.Email, "action": "add", "role": roleNameStr}
+	region := actorUser.EffectiveRegion()
+	if region != "" && target.ID != actorUser.ID && !target.PreferredRegion.Valid && !target.AutomaticRegion.Valid {
+		set, err := h.Store.SetRegionPlaceholderTx(ctx, tx, target.ID, region)
+		if err != nil {
+			return err
+		}
+		if set {
+			details["region_placeholder"] = region
+		}
+	}
+	for _, e := range []struct {
+		eventType string
+		details   map[string]any
+	}{
+		{audit.MembershipChanged, details},
+		{audit.TokenIssued, map[string]any{"member_email": target.Email}},
+	} {
+		if err := h.Audit.InsertTx(ctx, tx, audit.Entry{
+			EventType: e.eventType, Source: audit.SourceUI,
+			UserID: actorUser.ID, Email: actorUser.Email, ProjectID: projectID,
+			Details: e.details,
+		}); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // resolveRole maps the body's role attribute to (name, role id). null or

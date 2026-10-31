@@ -79,6 +79,7 @@ func New(store *db.Store, cfg *config.Config, aw *audit.Writer, reg *metrics.Reg
 	h.registerAuth(mux)
 	h.registerTfa(mux)
 	h.registerUsers(mux)
+	h.registerRegions(mux) // preferred region and the provider role mapping (§4.30)
 	h.registerPasswords(mux)
 	h.registerProjects(mux)
 	h.registerModes(mux)
@@ -326,6 +327,8 @@ type UserObject struct {
 	// presents as X-Internal-Session-Epoch (REQ-AUTH-074). Not a secret: it
 	// counts revocations and authorizes nothing on its own.
 	SessionEpoch int64 `json:"session_epoch"`
+	// The region state of REQ-API-176 (§4.30): presentation only, never authorization.
+	regionState
 }
 
 // NewUserObject maps a db.User to the response shape. tfa_method defaults to
@@ -338,6 +341,7 @@ func NewUserObject(u *db.User, now time.Time) UserObject {
 		UILanguage: u.UILanguage, UITheme: NullStrPtr(u.UITheme),
 		Status: authz.UserStatus(u, now), TFAMethod: "off",
 		SessionEpoch: u.SessionEpoch,
+		regionState:  newRegionState(u),
 	}
 	if u.LastLoginAt.Valid {
 		s := u.LastLoginAt.String

@@ -70,7 +70,32 @@ type User struct {
 	UILanguage   string
 	UITheme      sql.NullString // installed theme id; NULL = follow UI_THEME default (GD-26)
 	SessionEpoch int64          // raised to end every PHP session of the account (REQ-AUTH-074)
-	CreatedAt    string
+	// The region state of REQ-DB-052: the user's own choice (NULL = automatic), the
+	// region set from provider roles or an assignment placeholder, and which of the two
+	// set it. EffectiveRegion combines them; none of the three authorizes anything
+	// (REQ-AUTH-089).
+	PreferredRegion       sql.NullString
+	AutomaticRegion       sql.NullString
+	AutomaticRegionSource sql.NullString // provider | assignment
+	CreatedAt             string
+}
+
+// Sources of an automatic region (REQ-DB-052).
+const (
+	RegionSourceProvider   = "provider"
+	RegionSourceAssignment = "assignment"
+)
+
+// EffectiveRegion is the region the overview puts first: the user's own choice, else
+// the automatic one, else none (REQ-DB-052).
+func (u *User) EffectiveRegion() string {
+	if u.PreferredRegion.Valid && u.PreferredRegion.String != "" {
+		return u.PreferredRegion.String
+	}
+	if u.AutomaticRegion.Valid {
+		return u.AutomaticRegion.String
+	}
+	return ""
 }
 
 // Role (REQ-DB-009, GD-2).

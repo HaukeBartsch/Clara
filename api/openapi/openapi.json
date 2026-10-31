@@ -1958,6 +1958,82 @@
         }
       }
     },
+    "/api/v1/users/me/region": {
+      "get": {
+        "tags": ["Admin: Users"],
+        "operationId": "getMyRegion",
+        "summary": "Read my preferred region (REQ-API-175)",
+        "description": "Any authenticated user, about themselves. `region` is the effective region — the user's own choice, else the automatic one, else `null` (REQ-DB-052). Orders the project overview only; never authorizes (REQ-AUTH-089).",
+        "responses": {
+          "200": { "description": "The region state.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RegionState" } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" }
+        }
+      },
+      "put": {
+        "tags": ["Admin: Users"],
+        "operationId": "putMyRegion",
+        "summary": "Set my preferred region (REQ-API-175)",
+        "description": "Any authenticated user acting on themselves. A code of the organization enumeration (REQ-DB-006) sets the user's own choice; `null` clears it so the automatic region applies (\"Automatic\"). Any other value → 400. A change is audited as `preferred_region_changed` (REQ-AUD-036).",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["region"], "additionalProperties": false, "properties": { "region": { "type": ["string", "null"], "enum": ["OUS", "Ahus", "SØ", "SiV", "ST", "SSHF", "SI", "VVHF", "SUN", "NAT EU", "OTHER", null] } } }, "example": { "region": "Ahus" } } } },
+        "responses": {
+          "200": { "description": "The region state.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RegionState" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
+    "/api/v1/provider-roles": {
+      "get": {
+        "tags": ["Admin: Users"],
+        "operationId": "listProviderRoles",
+        "summary": "List the provider role mapping (REQ-API-177)",
+        "description": "`is_admin`. Every role value a sign-in carried or an administrator entered, undecided values first, then by issuer and value. Not paginated: the list holds distinct values, not sign-ins.",
+        "responses": {
+          "200": { "description": "The mapping.", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/ProviderRole" } } } } },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
+        }
+      },
+      "post": {
+        "tags": ["Admin: Users"],
+        "operationId": "createProviderRole",
+        "summary": "Enter a role value before any sign-in carried it (REQ-API-178)",
+        "description": "`is_admin`. `issuer` MUST equal a configured `OAUTH2_N_ISSUER`; `role_value` is trimmed, 1–255 characters; `region` is a code or `null` (names no region). The row is reviewed and never seen. An existing pair → 409. Audited as `region_mapping_changed` (REQ-AUD-036).",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["issuer", "role_value", "region"], "additionalProperties": false, "properties": { "issuer": { "type": "string" }, "role_value": { "type": "string", "maxLength": 255 }, "region": { "type": ["string", "null"], "enum": ["OUS", "Ahus", "SØ", "SiV", "ST", "SSHF", "SI", "VVHF", "SUN", "NAT EU", "OTHER", null] } } }, "example": { "issuer": "https://idp.example.org/idp", "role_value": "HSO-Ahus-Ansatt", "region": "Ahus" } } } },
+        "responses": {
+          "201": { "description": "The new row.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProviderRole" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/provider-roles/{id}": {
+      "put": {
+        "tags": ["Admin: Users"],
+        "operationId": "updateProviderRole",
+        "summary": "Map a role value to a region (REQ-API-178)",
+        "description": "`is_admin`. A code maps the value; `null` records that it names no region. Both mark the row reviewed. A change reaches each holder of the value at their next sign-in, never a user who chose their own region (REQ-AUTH-088). Audited as `region_mapping_changed` when something changed.",
+        "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64" } } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["region"], "additionalProperties": false, "properties": { "region": { "type": ["string", "null"], "enum": ["OUS", "Ahus", "SØ", "SiV", "ST", "SSHF", "SI", "VVHF", "SUN", "NAT EU", "OTHER", null] } } }, "example": { "region": "OUS" } } } },
+        "responses": {
+          "200": { "description": "The row.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProviderRole" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "delete": {
+        "tags": ["Admin: Users"],
+        "operationId": "deleteProviderRole",
+        "summary": "Remove a role value from the mapping (REQ-API-178)",
+        "description": "`is_admin`. A later sign-in carrying the value enters it again as undecided. Audited as `region_mapping_changed`.",
+        "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64" } } ],
+        "responses": {
+          "200": { "description": "Removed.", "content": { "application/json": { "schema": { "type": "object", "properties": { "ok": { "type": "boolean" } } } } } },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
     "/api/v1/projects/{id}/end-provision": {
       "post": {
         "tags": ["Admin: Modes & Staging"],
@@ -2675,9 +2751,39 @@
           "valid_until": { "type": ["string", "null"], "description": "`null` when indefinite (REQ-AUTH-052)." },
           "status": { "type": "string", "enum": ["active", "disabled", "expired", "auto_disabled"], "description": "Derived (GD-19, REQ-AUTH-052/053)." },
           "tfa_method": { "type": "string", "enum": ["off", "totp", "email"], "description": "GD-21, REQ-API-116." },
-          "session_epoch": { "type": "integer", "format": "int64", "minimum": 0, "description": "The account's session epoch (REQ-AUTH-074): the web layer stores it in the session at login and presents it as `X-Internal-Session-Epoch`; raised by every password write, every disable, an administrator's two-factor reset and a reported session replay. Counts revocations; authorizes nothing on its own." }
+          "session_epoch": { "type": "integer", "format": "int64", "minimum": 0, "description": "The account's session epoch (REQ-AUTH-074): the web layer stores it in the session at login and presents it as `X-Internal-Session-Epoch`; raised by every password write, every disable, an administrator's two-factor reset and a reported session replay. Counts revocations; authorizes nothing on its own." },
+          "region": { "type": ["string", "null"], "description": "The effective preferred region (REQ-API-176): `preferred_region`, else `automatic_region`, else `null`." },
+          "preferred_region": { "type": ["string", "null"], "description": "The user's own choice; `null` = Automatic (REQ-DB-052)." },
+          "automatic_region": { "type": ["string", "null"], "description": "Set from provider roles at sign-in or as an assignment placeholder; `null` = none." },
+          "automatic_region_source": { "type": ["string", "null"], "enum": ["provider", "assignment", null] }
         },
-        "example": { "id": 3, "email": "user@example.org", "display_name": "User", "enabled": true, "is_admin": true, "auth_source": "oauth2", "ui_language": "en", "ui_theme": null, "last_login_at": "2026-09-20 08:14:05", "valid_until": null, "status": "active", "tfa_method": "off", "session_epoch": 0 }
+        "example": { "id": 3, "email": "user@example.org", "display_name": "User", "enabled": true, "is_admin": true, "auth_source": "oauth2", "ui_language": "en", "ui_theme": null, "last_login_at": "2026-09-20 08:14:05", "valid_until": null, "status": "active", "tfa_method": "off", "session_epoch": 0, "region": "OUS", "preferred_region": null, "automatic_region": "OUS", "automatic_region_source": "provider" }
+      },
+      "RegionState": {
+        "type": "object",
+        "description": "The acting user's preferred-region state (§4.30, REQ-API-175). Orders presentation only (REQ-AUTH-089).",
+        "properties": {
+          "region": { "type": ["string", "null"] },
+          "preferred_region": { "type": ["string", "null"] },
+          "automatic_region": { "type": ["string", "null"] },
+          "automatic_region_source": { "type": ["string", "null"], "enum": ["provider", "assignment", null] }
+        },
+        "example": { "region": "OUS", "preferred_region": null, "automatic_region": "OUS", "automatic_region_source": "provider" }
+      },
+      "ProviderRole": {
+        "type": "object",
+        "description": "One row of the provider role mapping (REQ-DB-053). `region` `null` is undecided while `reviewed` is false and \"names no region\" once it is true. No account is linked to a value.",
+        "properties": {
+          "id": { "type": "integer", "format": "int64" },
+          "issuer": { "type": "string" },
+          "role_value": { "type": "string" },
+          "region": { "type": ["string", "null"] },
+          "reviewed": { "type": "boolean" },
+          "first_seen_at": { "type": ["string", "null"], "description": "UTC; `null` for a value entered before any sign-in carried it." },
+          "last_seen_at": { "type": ["string", "null"] },
+          "seen_count": { "type": "integer" }
+        },
+        "example": { "id": 4, "issuer": "https://idp.example.org/idp", "role_value": "HSO-Ahus-Ansatt", "region": "Ahus", "reviewed": true, "first_seen_at": "2026-10-02 09:30:00", "last_seen_at": "2026-10-31 07:55:12", "seen_count": 412 }
       },
       "LoginRequest": {
         "type": "object",
@@ -2847,9 +2953,11 @@
           "organization": { "type": "string" },
           "record_count": { "type": "integer" },
           "instrument_count": { "type": "integer" },
-          "field_count": { "type": "integer" }
+          "field_count": { "type": "integer" },
+          "last_accessed_at": { "type": ["string", "null"], "description": "The acting user's own newest audit event in the project, UTC; `null` when they have none there (REQ-UI-071)." },
+          "in_preferred_region": { "type": "boolean", "description": "The project's organization is the acting user's effective region (REQ-API-049); the list order is unchanged by it." }
         },
-        "example": { "id": 33, "project_name": "8DISC", "organization": "NAT EU", "record_count": 42, "instrument_count": 5, "field_count": 128 }
+        "example": { "id": 33, "project_name": "8DISC", "organization": "NAT EU", "record_count": 42, "instrument_count": 5, "field_count": 128, "last_accessed_at": "2026-10-20 08:00:00", "in_preferred_region": false }
       },
       "ProjectCreate": {
         "type": "object",
