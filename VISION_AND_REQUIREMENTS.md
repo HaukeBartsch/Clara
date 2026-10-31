@@ -1161,6 +1161,8 @@ If we select a project on the first page the project should grow slightly (bounc
 
 To add more information to the dots (using color and three states currently) use a square arrangement of 3x3 round equally spaced dots on a transparent background. Border dots should touch the border. Indicate status using color as before but use highlighted dots to show the level of completion of an instrument. Fill in dots from the bottom to top, left to right. All fields have a value should result in all dots highlighted. For highlighting dots use a two level intensity (brighter highlighted and darker intensity else).
 
+If an instrument or field is not complete (100%) at least one of the dots will stay off, regardless of how close it is numerically. If even a single field has a value at least one dot is on. 
+
 
 ```css
 :root {
@@ -1257,6 +1259,4 @@ svg.counter-8 .index-2 {
 </svg>
 ```
 
-## Metrics
 
-Does the stress test answer the question how many requests per seconds can be run?
