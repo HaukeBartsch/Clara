@@ -128,6 +128,8 @@ abstract class Controller
                 'id' => (int) $project['id'],
                 'project_name' => (string) ($project['project_name'] ?? ''),
                 'organization' => (string) ($project['organization'] ?? ''),
+                // The GD-20 mode the box badges (REQ-UI-070); '' when missing, which draws no badge.
+                'mode' => (string) ($project['mode'] ?? ''),
                 'record_count' => (int) ($project['record_count'] ?? 0),
                 'instrument_count' => (int) ($project['instrument_count'] ?? 0),
                 'field_count' => (int) ($project['field_count'] ?? 0),

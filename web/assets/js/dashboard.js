@@ -172,12 +172,20 @@ function stat(label, value) {
 
 const TIER_CLASSES = ["recent", "active", "idle"].map((tier) => "clara-project-cell--" + tier)
 
+// The mode badge takes the project home's colours (partials/mode-badge.php, REQ-UI-033), so a mode
+// reads the same on both pages; a mode outside the three of GD-20 draws no badge.
+const MODE_CLASSES = new Map([
+  ["development", "text-bg-secondary"],
+  ["production", "text-bg-success"],
+  ["analysis", "text-bg-info"],
+])
+
 /**
  * One project's box, empty of the facts that can change — paint() writes those. The DOM order is the
- * same in every box — name, organization, last used, then the three counts — and `app.css` lays those
- * out down or across by the box's own width, which is why a wide box and a narrow one can hold
- * identical markup: the head group and the count group simply change from stacked to side by side.
- * Nothing here knows which tier it is rendering.
+ * same in every box — name, organization, last used, the mode, then the three counts — and `app.css`
+ * lays those out down or across by the box's own width, which is why a wide box and a narrow one can
+ * hold identical markup: the head group and the count group simply change from stacked to side by
+ * side, and the mode keeps the top-right corner in both. Nothing here knows which tier it is rendering.
  */
 function projectBox(project) {
   // el() takes its children as one array; extra arguments would be dropped.
@@ -189,6 +197,7 @@ function projectBox(project) {
         el("p", { class: "clara-project-org" }),
         el("p", { class: "clara-project-used" }),
       ]),
+      el("span", { class: "badge clara-project-mode" }),
       el("div", { class: "clara-project-tail" }, [
         el("div", { class: "clara-project-stats" }, [
           stat(t("dashboard.project.records"), ""),
@@ -209,8 +218,8 @@ function setText(node, text) {
 }
 
 /**
- * Brings a box up to date with its project: tier, name, organization (hidden where there is none),
- * last used and the three counts.
+ * Brings a box up to date with its project: tier, name, mode (hidden where it is none of the three),
+ * organization (hidden where there is none), last used and the three counts.
  */
 function paint(box, entry) {
   const tier = "clara-project-cell--" + entry.tier
@@ -219,6 +228,14 @@ function paint(box, entry) {
     box.classList.add(tier)
   }
   setText(box.querySelector(".clara-project-open"), String(entry.project.project_name))
+  const mode = box.querySelector(".clara-project-mode")
+  const modeClass = MODE_CLASSES.get(String(entry.project.mode))
+  if (modeClass && !mode.classList.contains(modeClass)) {
+    mode.classList.remove(...MODE_CLASSES.values())
+    mode.classList.add(modeClass)
+  }
+  setText(mode, modeClass ? t("dashboard.project.mode." + entry.project.mode) : "")
+  mode.hidden = !modeClass
   const org = box.querySelector(".clara-project-org")
   setText(org, entry.project.organization ? String(entry.project.organization) : "")
   org.hidden = !entry.project.organization

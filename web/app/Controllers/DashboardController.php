@@ -55,6 +55,8 @@ final class DashboardController extends Controller
                 'js.load_failed', 'js.retry', 'dashboard.empty',
                 'dashboard.project.records', 'dashboard.project.instruments', 'dashboard.project.fields',
                 'dashboard.project.open', 'dashboard.project.last_used',
+                'dashboard.project.mode.development', 'dashboard.project.mode.production',
+                'dashboard.project.mode.analysis',
                 'dashboard.project.last_used.today', 'dashboard.project.last_used.yesterday',
                 'dashboard.project.never_used', 'dashboard.group.preferred', 'dashboard.group.region',
             ],

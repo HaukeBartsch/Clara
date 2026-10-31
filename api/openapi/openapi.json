@@ -2951,13 +2951,14 @@
           "id": { "type": "integer", "format": "int64" },
           "project_name": { "type": "string" },
           "organization": { "type": "string" },
+          "mode": { "type": "string", "enum": ["development", "production", "analysis"], "description": "The project's mode (GD-20), as `GET /api/v1/projects/{id}/mode` reports it." },
           "record_count": { "type": "integer" },
           "instrument_count": { "type": "integer" },
           "field_count": { "type": "integer" },
           "last_accessed_at": { "type": ["string", "null"], "description": "The acting user's own newest audit event in the project, UTC; `null` when they have none there (REQ-UI-071)." },
           "in_preferred_region": { "type": "boolean", "description": "The project's organization is the acting user's effective region (REQ-API-049); the list order is unchanged by it." }
         },
-        "example": { "id": 33, "project_name": "8DISC", "organization": "NAT EU", "record_count": 42, "instrument_count": 5, "field_count": 128, "last_accessed_at": "2026-10-20 08:00:00", "in_preferred_region": false }
+        "example": { "id": 33, "project_name": "8DISC", "organization": "NAT EU", "mode": "production", "record_count": 42, "instrument_count": 5, "field_count": 128, "last_accessed_at": "2026-10-20 08:00:00", "in_preferred_region": false }
       },
       "ProjectCreate": {
         "type": "object",

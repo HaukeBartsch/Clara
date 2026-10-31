@@ -199,12 +199,16 @@
    absolutely over its nearest positioned ancestor. Without `relative` here every box's overlay resolves
    against the page instead — all of them covering it at the same z-index, so the last box in the grid
    alone takes every click and every hover on the page. Bootstrap's `.card` carries this for the Training
-   cards (§2.7); a plain element has to say it itself. */
+   cards (§2.7); a plain element has to say it itself.
+   A two-column grid rather than a flex column, so that the mode badge holds the top-right corner in
+   either arrangement: beside the name's line when the box stacks, above the counts when it reads
+   across (REQ-UI-070). The second row takes the height a tier adds, which keeps the counts low. */
 .clara-project {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto 1fr;
+  gap: 0.5rem 0.75rem;
   flex: 1 1 auto;
   min-width: 0;
   padding: 0.75rem 0.875rem;
@@ -214,7 +218,7 @@
 }
 
 /* Size and weight follow the tier; the information does not. Every box carries the name, the
- * organization, when it was last used and all three counts (REQ-UI-070). */
+ * mode, the organization, when it was last used and all three counts (REQ-UI-070). */
 .clara-project-cell--recent .clara-project {
   min-height: 12rem;
   padding: 1rem 1.125rem;
@@ -222,6 +226,21 @@
 
 .clara-project-cell--active .clara-project {
   min-height: 9rem;
+}
+
+.clara-project-head {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+}
+
+/* Held to the top of the name's line; the small offset centres the badge on that line's text. */
+.clara-project-mode {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+  justify-self: end;
+  margin-top: 0.125rem;
 }
 
 .clara-project-name {
@@ -265,6 +284,8 @@
 /* Tall by default — the shape of a one-column box: the counts read as a key/value list under the
  * name, each row's figure held to the right edge so the column of numbers lines up. */
 .clara-project-tail {
+  grid-column: 1 / -1;
+  grid-row: 2;
   margin-top: auto; /* the counts sit on the bottom edge of the box, whatever the name cost above */
 }
 
@@ -305,29 +326,24 @@
 
 @container (min-width: 26rem) {
   .clara-project {
-    flex-direction: row;
-    align-items: stretch;
-    justify-content: space-between;
-    gap: 1.5rem;
+    column-gap: 1.5rem;
   }
 
   /* Diagonal, not centred: the name leads from the top-left corner and the counts sit on the bottom
-     edge at the far one, so a wide box reads as one object instead of two bands of text floating in
-     the middle of it. */
+     edge at the far one, with the mode above them in the top-right corner, so a wide box reads as one
+     object instead of two bands of text floating in the middle of it. The head spans both rows, so
+     the second column is the counts' alone and the name keeps the rest of the width. */
   .clara-project-head {
-    flex: 1 1 auto;
-    min-width: 0;
-    align-self: flex-start;
+    grid-row: 1 / -1;
+    align-self: start;
   }
 
   .clara-project-tail {
-    flex: 0 0 auto;
+    grid-column: 2;
     display: flex;
     flex-direction: column;
     align-items: flex-end;
     gap: 0.25rem;
-    margin-top: 0;
-    align-self: flex-end;
   }
 
   .clara-project-stats {

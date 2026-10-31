@@ -53,6 +53,9 @@ test.describe("project overview refresh (REQ-UI-073)", () => {
 
     // One refresh period is two seconds; allow a few for a slow stack.
     await expect(grid.getByRole("link", { name: projectName, exact: true })).toBeVisible({ timeout: 10_000 })
+    // A new project starts in development, which its box badges in short form beside the name (REQ-UI-070).
+    const box = grid.locator(".clara-project").filter({ has: page.getByRole("link", { name: projectName, exact: true }) })
+    await expect(box.locator(".clara-project-mode")).toHaveText("dev")
     // Other specs create projects on the same stack in parallel, so the count is checked against the
     // grid it heads rather than against a fixed increment.
     const count = page.locator("[data-clara-project-count]")

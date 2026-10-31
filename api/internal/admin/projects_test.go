@@ -176,6 +176,37 @@ func TestProjectsListVisibility(t *testing.T) {
 	}
 }
 
+// TestProjectsListCarriesMode: each summary carries the project's stored mode, so the
+// overview badges its boxes from the list alone (REQ-API-049, REQ-UI-070), and a mode
+// changed through the mode endpoint reads back on the next list.
+func TestProjectsListCarriesMode(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	member := e.mustUser("member@example.org")
+	alpha := e.mustProject("Alpha")
+	beta := e.mustProject("Beta")
+	mustMember(t, e, member.ID, alpha)
+	mustMember(t, e, member.ID, beta)
+	if rec := e.do("PUT", "/api/v1/projects/"+itoa(beta)+"/mode",
+		map[string]any{"mode": "production", "keep_data": true}, admin); rec.Code != http.StatusOK {
+		t.Fatalf("mode change status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	rec := e.do("GET", "/api/v1/projects", nil, member)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var out []projectSummary
+	e.decode(rec, &out)
+	modes := map[string]string{}
+	for _, s := range out {
+		modes[s.ProjectName] = s.Mode
+	}
+	if modes["Alpha"] != db.ModeDevelopment || modes["Beta"] != db.ModeProduction {
+		t.Errorf("modes = %v, want Alpha development and Beta production", modes)
+	}
+}
+
 // TestProjectsListCarriesLastAccessedAt: each summary carries the acting user's own last
 // audited activity in that project (REQ-UI-071) — its newest event rather than its first,
 // null where they have none, and never another member's. The list stays alphabetical.

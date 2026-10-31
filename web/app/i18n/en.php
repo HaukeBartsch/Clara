@@ -135,6 +135,11 @@ return [
     'dashboard.project.instruments' => 'Instruments',
     'dashboard.project.fields' => 'Fields',
     'dashboard.project.open' => 'Open project',
+    // The mode badge beside a box's name (REQ-UI-070): the short forms of project.mode.*, so the
+    // badge takes little width from the name in a narrow box.
+    'dashboard.project.mode.development' => 'dev',
+    'dashboard.project.mode.production' => 'prod',
+    'dashboard.project.mode.analysis' => 'analysis',
     // The last-used line of a project box (REQ-UI-071): relative while the answer is two days long,
     // dated beyond that — {when} carries either word, or the date in the browser's own format.
     'dashboard.project.last_used' => 'Last used {when}',

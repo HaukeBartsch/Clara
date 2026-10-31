@@ -235,6 +235,9 @@ type projectSummary struct {
 	RecordCount     int    `json:"record_count"`
 	InstrumentCount int    `json:"instrument_count"`
 	FieldCount      int    `json:"field_count"`
+	// Mode is the stored GD-20 mode, the value GET …/mode reports; the overview badges
+	// every box with it (REQ-UI-070) without a mode read per project.
+	Mode string `json:"mode"`
 	// LastAccessedAt is when the acting user last generated an audit event in this
 	// project, in the stored `YYYY-MM-DD HH:MM:SS` UTC layout, or null when they never
 	// have (REQ-UI-071). It is the actor's own history, so two members listing the same
@@ -312,7 +315,7 @@ func (h *Handler) listProjects(w http.ResponseWriter, r *http.Request) {
 			lastAccessed = &at
 		}
 		out = append(out, projectSummary{
-			ID: p.ID, ProjectName: p.ProjectName, Organization: p.Organization,
+			ID: p.ID, ProjectName: p.ProjectName, Organization: p.Organization, Mode: p.Mode,
 			RecordCount: records, InstrumentCount: len(instruments),
 			FieldCount: len(fields), LastAccessedAt: lastAccessed,
 			InPreferredRegion: region != "" && p.Organization == region,

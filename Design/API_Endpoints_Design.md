@@ -538,9 +538,11 @@ Administrator (requires `is_admin`), REQ-API-116: `POST /api/v1/users/{id}/tfa/r
 **`GET /api/v1/projects`** — project visibility only (`is_admin` or member, REQ-AUTH-026); projects outside the acting user's visibility do not appear (REQ-API-007). 200 — dashboard summaries:
 
 ```json
-[ { "id": 33, "project_name": "MOBA", "organization": "NAT EU", "record_count": 42, "instrument_count": 5, "field_count": 128,
-    "last_accessed_at": "2026-10-20 08:00:00", "in_preferred_region": false } ]
+[ { "id": 33, "project_name": "MOBA", "organization": "NAT EU", "mode": "production", "record_count": 42, "instrument_count": 5,
+    "field_count": 128, "last_accessed_at": "2026-10-20 08:00:00", "in_preferred_region": false } ]
 ```
+
+`mode` is the project's stored mode (`development`, `production` or `analysis` — GD-20, REQ-DB-034), the value `GET …/mode` reports (§4.21), read with the project row the list already loads. It lets the overview badge every box (REQ-UI-070) without one mode read per project.
 
 `in_preferred_region` is `true` when `organization` equals the acting user's effective region, `COALESCE(preferred_region, automatic_region)` from the user row the call has already loaded (REQ-API-049, REQ-DB-052). It is `false` for every project when the user has no region. It is computed after the visibility filter, from the region as it stands at that call. So a region changed in another session — a placeholder set by an administrator, a choice made in a second tab — regroups an open overview on its next two-second read without waiting for a new sign-in (`User_Interface_Design.md` §4). Like `last_accessed_at`, it leaves the list in name order: grouping is the page's presentation (REQ-UI-076/077). A per-project flag keeps the response a plain array, which every existing consumer already reads.
 
