@@ -463,11 +463,11 @@ Reference scale (REQ-DB-025): 100 projects × 10,000 records × 200 fields × 10
 | foreign keys | `PRAGMA foreign_keys=ON` on every connection (DSN pragma, verified at startup — see the note below) | enforced (InnoDB) |
 | upsert | `INSERT … ON CONFLICT DO UPDATE` | `INSERT … ON DUPLICATE KEY UPDATE` |
 | `ENUM`/`CHECK` as constraint | not portable — API allowlists | API allowlists (same) |
-| journal mode | **WAL** (decided 2026-10-25; SQLite is development and test only, REQ-TECH-005) — readers and one writer coexist, as on InnoDB | row-level locking with MVCC; nothing to set |
+| journal mode | **WAL** (SQLite is development and test only, REQ-TECH-005) — readers and one writer coexist, as on InnoDB | row-level locking with MVCC; nothing to set |
 
-**Connection pragmas are per connection, so they belong in the DSN** (`api/internal/db/db.go`): `foreign_keys(1)`, `journal_mode(WAL)`, `busy_timeout(5000)`. Two defects came from ignoring that. A single `ExecContext("PRAGMA foreign_keys = ON")` after opening the pool enabled enforcement on whichever connection answered and left the other nine unenforced — the settings are now read back at startup, foreign keys fatally (correctness) and journal mode as a warning (a filesystem without shared memory silently keeps the rollback journal, which degrades speed, not correctness). And WAL-less SQLite excluded readers from a writer's window entirely, so any concurrency the pool allowed surfaced as `SQLITE_BUSY`; that is what turned one bad read into intermittent 500s under bulk import.
+**Connection pragmas are per connection, so they belong in the DSN** (`api/internal/db/db.go`): `foreign_keys(1)`, `journal_mode(WAL)`, `busy_timeout(5000)`. Set any other way they fail silently: a single `ExecContext("PRAGMA foreign_keys = ON")` after opening the pool enables enforcement on whichever connection answers and leaves the other nine unenforced. The settings are therefore read back at startup, foreign keys fatally (correctness) and journal mode as a warning (a filesystem without shared memory silently keeps the rollback journal, which degrades speed, not correctness). Without WAL, SQLite excludes readers from a writer's window entirely, so any concurrency the pool allows surfaces as `SQLITE_BUSY` — intermittent 500s under bulk import.
 
-**Write transactions begin `IMMEDIATE`** (DSN `_txlock=immediate`). A deferred transaction that reads before its first write holds a WAL snapshot; once another connection commits, that write fails at once with `SQLITE_BUSY_SNAPSHOT` (517), which `busy_timeout` cannot wait out — an instrument delete under a concurrent stress-test load returned 500 this way (2026-10-30). Taking the write lock at `BEGIN` makes a transaction wait under `busy_timeout` like any other writer, as an InnoDB transaction waits on its row locks. A consequence: while a transaction is open, a write on a second pooled connection waits for it (and fails after the timeout), so such writes go through the transaction too, as reads already must. Transactions opened with `sql.TxOptions{ReadOnly: true}` still begin deferred. `db.TestSQLiteWriteTxSurvivesConcurrentCommit` guards it.
+**Write transactions begin `IMMEDIATE`** (DSN `_txlock=immediate`). A deferred transaction that reads before its first write holds a WAL snapshot; once another connection commits, that write fails at once with `SQLITE_BUSY_SNAPSHOT` (517), which `busy_timeout` cannot wait out — an instrument delete under a concurrent stress-test load would answer 500 this way. Taking the write lock at `BEGIN` makes a transaction wait under `busy_timeout` like any other writer, as an InnoDB transaction waits on its row locks. A consequence: while a transaction is open, a write on a second pooled connection waits for it (and fails after the timeout), so such writes go through the transaction too, as reads already must. Transactions opened with `sql.TxOptions{ReadOnly: true}` still begin deferred. `db.TestSQLiteWriteTxSurvivesConcurrentCommit` guards it.
 
 **WAL does not relax the transaction rule.** Reading on a second pooled connection while a transaction is open still sees the state from before that transaction began, whatever the journal mode — and production (MariaDB) never had WAL's forgiveness. Code inside a transaction uses the `*Tx` store methods (§10, and `dataapi.activeGroupIDTx` as the pattern); `dataapi.TestRecordImportExistingRowReadsInsideTransaction` enforces it by capping the pool at one connection, so a read that leaves the transaction cannot be served at all.
 
@@ -479,11 +479,11 @@ Reference scale (REQ-DB-025): 100 projects × 10,000 records × 200 fields × 10
 | REQ-VAL-030 (max length) | no application cap beyond storage — `LONGTEXT`/`TEXT` (§1, REQ-VAL-021 default) |
 | choices encoding | REDCap-style `code$label##code$label` (§1) |
 | REQ-DB-023 (date shift) | deterministic `offset_days` per (project, record) via salted SHA-256, persisted (§8); date part shifted, collection offset preserved |
-| role level enums | `no_access`/`read_only`/`view_edit`; `export_none`/`export_de_identified`/`export_no_identifiers`/`export_full` (§4, REQ-AUTH-017) — `delete` and `edit_survey_responses` are no longer levels of the ladder but the two boolean rights of a grant (REQ-AUTH-070) |
+| role level enums | `no_access`/`read_only`/`view_edit`; `export_none`/`export_de_identified`/`export_no_identifiers`/`export_full` (§4, REQ-AUTH-017) — `delete` and `edit_survey_responses` are not levels of the ladder but the two boolean rights of a grant (REQ-AUTH-070) |
 | per-pair grants | `role_grants(role_id, event_id, instrument_id, …)` under `role_arms`; an absent row is the arm default, never a permission; a design change materializes new pairs as `read_only`/`export_none`/rights off (REQ-DB-040, REQ-AUTH-069) |
 | simplified `projects` (master spec "Details", GD-17) | `projects` keeps name, organization, PI, DM, REK, dates, naming pattern (§4); removed attributes are ordinary instrument data if wanted (REQ-DB-032) |
 | table-based authentication (master spec "Details", GD-18) | `users.password_hash` (nullable, argon2id) + `auth_source = local` (§4); plaintext never stored |
-| session revocation (owner decision 2026-10-11, DEV-AUTH-17) | `users.session_epoch` (integer, default `0`, §4) — raised in the transaction of the change that ends the account's sessions; the API compares it with `X-Internal-Session-Epoch` (`Authentication_Authorization_Design.md` §3.1); no session table — the API stores no sessions (GD-1) |
+| session revocation (DEV-AUTH-17) | `users.session_epoch` (integer, default `0`, §4) — raised in the transaction of the change that ends the account's sessions; the API compares it with `X-Internal-Session-Epoch` (`Authentication_Authorization_Design.md` §3.1); no session table — the API stores no sessions (GD-1) |
 | account validity and inactivity (master spec "Details", GD-19) | `users.valid_until` (NULL = indefinite) + `users.last_login_at` (§4); auto-disable rule in `Authentication_Authorization_Design.md` §4.4 |
 | two-factor authentication (master spec "Details", GD-21) | `user_two_factor` — one row per user, method/secret/replay step/pending-code hash/recovery hashes (§4); verification and enrollment in `Authentication_Authorization_Design.md` §2.7 |
 | account onboarding and password lifecycle (GD-22/GD-23) | `password_tokens` — single-use hashed invite/reset tokens (§4); issuance, email, and completion in `Authentication_Authorization_Design.md` §2.8 |
@@ -496,3 +496,33 @@ Reference scale (REQ-DB-025): 100 projects × 10,000 records × 200 fields × 10
 | `details` JSON shapes per audit event type | `Audit_Logging_Design.md` |
 | `anon_salt` configuration key | `System_Configuration_Design.md` |
 | exact validator grammar for `validation_type` values and the `validation_types` seed patterns | `Data_Validation_Design.md` §4/§4.2 |
+
+## 13. Rationale and Trade-offs
+
+Why the schema takes its shape, and what each choice costs. The decision records DEV-DB-1…17 (`Requirements/Database_Schema_Requirements.md` §5) carry the table-level reasoning.
+
+- **EAV for record data** (§6). One `data` row per stored value, keyed by (project, record, event, repeating instrument, instance, field), lets a project's design change — fields added, renamed, moved, repeating switched on — without DDL, and keeps REDCap's flat export shape a projection rather than a table layout. The cost is that every record read is a range scan over many rows, which is what the (`project_id`, `record_id`) indexes of §9 exist to bound.
+- **One logical schema, two dialects** (§1, §10). The DDL is written in the subset common to SQLite and MariaDB, and every difference is listed in §10, so development and production run the same queries. The cost: no `ENUM` or `CHECK` constraints (enumerations are API allowlists), and features one dialect lacks are worked around rather than used.
+- **Sparse rather than dense** (DEV-DB-10, DEV-DB-14). `instrument_completion` stores only the "finished" assignments, and absence means "not finished"; event-keyed rows require an event rather than carrying a sentinel. Storage and reads grow with what users did, not with the size of the design.
+- **Instance 1 lives where a non-repeating form's only instance does** (§6, DEV-DB-16). Switching repeating on or off never rewrites stored values; the cost is that a reader must treat `repeating_instrument = ''` as the first instance of a repeating form.
+- **Unbounded text where imported data needs it** (DEV-DB-15). Labels and section headers are unbounded because MariaDB's strict mode would refuse a long label that SQLite accepts; a schema that imports in development must import in production.
+- **Migrations are numbered and idempotent** (§1, REQ-DB-003). The API applies them at startup, and MariaDB's index DDL is guarded with `IF [NOT] EXISTS` because each DDL statement commits on its own (§10).
+- **SQLite is development and test only** (§10, REQ-TECH-005). Its settings — WAL, `IMMEDIATE` write transactions, a 5-second busy timeout — make it behave enough like InnoDB that concurrency bugs surface in development rather than in production.
+
+## 14. Edge Cases and Failure Modes
+
+| Situation | Behavior | Specified in |
+|---|---|---|
+| `foreign_keys` is not on for a SQLite connection | Startup fails: the pragma is set in the DSN and read back, fatally | §10 |
+| The filesystem does not support WAL | The rollback journal stays; startup logs a warning (speed, not correctness) | §10 |
+| A SQLite write transaction reads, then another connection commits | Cannot happen as `SQLITE_BUSY_SNAPSHOT`: write transactions begin `IMMEDIATE` and wait under `busy_timeout` | §10 |
+| Code inside a transaction reads through a second pooled connection | It sees the state before the transaction began; the `*Tx` store methods are required, and a test caps the pool at one connection to catch violations | §10 |
+| A MariaDB index migration stops halfway | DDL is not rolled back; the `IF [NOT] EXISTS` guards let the next start finish it | §10 |
+| MariaDB runs with `innodb_default_row_format=COMPACT` | `provider_subject_links`' primary key does not fit; the server must be switched back to `DYNAMIC`, never the columns shortened | §10, REQ-DB-051 |
+| A lookup by a prefix of the `data` unique key on MariaDB | The hash "long unique" index answers none; `idx_data_project_record` serves it | §9, §10 |
+| A further instance stored at a pair that no longer repeats | Stays in `data`, hidden from every reader until the pair repeats again | §6 |
+| Removing an instrument that is a survey, the first instrument, or holds the record identifier | Refused | §6, REQ-API-154 |
+| A survey link whose instrument maps to no event | Cannot exist: `survey_links.event_id` is `NOT NULL` | §8, DEV-DB-14 |
+| Deleting a data access group with assigned records | Rejected by the API | §8, REQ-API-088 |
+| Deleting a registry validation type a field still references | Not supported while referenced | §5 |
+| One project holds most of the `data` table | The optimizer reads it with a table scan — the cheaper plan at that share; other projects keep their index range reads | §9 |

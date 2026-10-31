@@ -212,3 +212,30 @@ Playwright (`e2e/tests/assistant.spec.ts`, REQ-TECH-028): the section renders fo
 session — `tools/list` shape, a read tool round-trip, and the server-side refusal of a write tool in
 read-only mode (REQ-AI-006). Stats helpers are verified against hand-computed values,
 including the p-value against a known reference (e.g. t = 2.1, df = 18 → p ≈ 0.0489).
+
+## 9. Rationale and Trade-offs
+
+Why the assistant takes the shape of §1, and what each choice costs. The decision records DEV-AI-1…3 (`Requirements/AI_Assistant_Requirements.md` §8) carry the requirement-level reasoning.
+
+- **The model runs in the administrator's browser.** WebLLM on WebGPU, loaded from weights hosted by the installation itself (§7, ASM-AI-2), keeps the application usable without internet access and sends no prompt or tool result to a third party. The cost is a capable GPU and a multi-gigabyte download per browser, and a device that cannot hold the model fails at load time rather than being refused up front (§7).
+- **PHP holds the tools and every permission decision** (§1, §3). The browser is untrusted: the write-mode flag it shows is a display default the server never trusts (§6), and every tool runs through the same API calls, with the same permission checks, as the rest of the web layer. A second permission model for the assistant would be a second place to get authorization wrong.
+- **Hand-written MCP halves instead of an SDK** (DEV-AI-2). An npm SDK needs a build step (REQ-TECH-001) and no PHP MCP library is on the allowlist (REQ-TECH-026). Implementing only the subset REQ-AI-004/005 names keeps the code small; conformance is checked against the protocol shapes in the tests of §8 rather than inherited.
+- **Tool failures are results, not protocol errors** (§2, REQ-AI-012). An `isError` result carrying the API's stable code is something the model can read and re-plan around; a JSON-RPC error would end the turn with nothing for the model to act on.
+- **A repeated call ends the turn** (§5). The same tool with the same arguments twice means the model did not take in the first answer; running it again up to `MAX_TOOL_ROUNDS` times would spend API calls without changing the outcome.
+- **Only tool-calling models the bundle supports** (§7). Widening the list needs grammar-constrained output driven from this client — a redesign, deliberately not taken while the supported Hermes models cover the need.
+- **Pinned digests over size checks** (§7). The compiled `.wasm` runs as browser code under the application's origin, so the install trusts nothing it cannot match against a reviewed manifest, and the browser repeats the check on every load.
+
+## 10. Edge Cases and Failure Modes
+
+| Situation | Behavior | Specified in |
+|---|---|---|
+| An upstream API call fails inside a tool | The tool returns `isError: true` with the API's stable code; the model sees it and may re-plan | §2, §3, REQ-AI-012 |
+| The model repeats an identical tool call in one turn | The client marks the line `repeated`, shows `admin.assistant.error.repeat_stopped` and ends the turn; the refused call stays answered in the history | §5 |
+| A write tool is called in read-only mode | Refused by the server's mode gate, whatever the client believes the mode to be | §3, §6, §8 |
+| The CSP lacks `'wasm-unsafe-eval'` | The engine fails with "Refused to create a WebAssembly object"; the client names the header (`admin.assistant.error.wasm_blocked`) instead of blaming the artifacts | §5 |
+| The configured model is not one the bundle allows tools for | It loads and reports "Model ready", then every question fails with `UnsupportedModelIdError`; the fetch script offers only supported ids to prevent this | §7 |
+| The model or its context window does not fit the GPU | web-llm does not refuse the install; the load dies as `DeviceLostError`. `vram_required_MB` states the need so an administrator can tell this from a broken artifact | §7 |
+| A conversation outgrows the context window | `ContextWindowSizeExceededError` mid-turn, not a truncation; the failure details show the configured window and the size of the last request | §5, §7 |
+| Model files are absent or incomplete | A supported state: the section reports it, and re-running the fetch script completes an interrupted download | §5, §7 |
+| A model file is changed after install | The browser's integrity check fails with `IntegrityError`, and nothing executes | §7 |
+| A turn fails for any other reason | Three channels: `console.error` with the error object, a translated status clause, and a collapsed details block with counts and identifiers only — never conversation text | §5 |

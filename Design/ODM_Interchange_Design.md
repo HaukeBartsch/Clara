@@ -355,3 +355,34 @@ Dropped **with a warning**, never silently (REQ-ODM-053): instrument completion 
 | REQ-ODM-040…047 (import effects) | §6.2 |
 | REQ-ODM-050…055 (fidelity, losses, published wrapper schema) | §5, §8, §10.1 O-7 |
 | REQ-ODM-060…063 (reporting, audit, privacy) | §7, §9 |
+
+## 11. Rationale and Trade-offs
+
+Why the interchange works this way, and what each choice costs. The local decisions O-1…O-8 (§10.1) and the decision records DEV-ODM-1…7 (`Requirements/ODM_Interchange_Requirements.md` §9) carry the full reasoning.
+
+- **Reuse, never re-implement** (§6, O-6). The exporter consumes the shared export row stream, and the importer goes through `validate` and the store's write path. ODM therefore cannot disagree with the tabular export about what a level removes, nor accept a value the API would refuse (§6.3); the cost is that ODM inherits every constraint of those paths.
+- **Two dialects, one mapping** (§2, DEV-ODM-7). Everything CLARA models is common to ODM 1.3.2 and 2.0; only each schema's spelling differs, and those differences are forced. One shared shape would be invalid in one dialect or the other.
+- **An extension namespace for what ODM cannot say** (§5, O-4, DEV-ODM-3). Branching logic, sensitivity flags and transfer instructions travel in `clara:` elements that a standards reader ignores; a file without them imports with CLARA's fail-safe defaults (§5). Forcing them into standard constructs would misrepresent them.
+- **Import creates a new project** (DEV-ODM-4). ODM names no CLARA project, and diffing a document against a live study would pull stored-value re-validation into a new format. Updating an existing project through staging remains possible later.
+- **Partial success per record** (§6.2). A failed design rolls the whole import back, but once the design is built a bad value fails only its own record — the same unit of consistency as the data API's import (`API_Endpoints_Design.md` §3.7.2).
+- **Conformance is checked offline** (§9, O-7). The pure-Go constraint rules out XSD validation at runtime (ASM-ODM-5), so vendored CDISC schemas and a round-trip test gate fidelity in the repository instead.
+- **Administrators only** (DEV-ODM-2, DEV-ODM-6). Whole-study interchange is an installation-level operation; the pipeline stays wired so that a wider gate later cannot become an untransformed path.
+
+## 12. Edge Cases and Failure Modes
+
+| Situation | Behavior | Specified in |
+|---|---|---|
+| Root is not `ODM`, or the namespace is neither supported dialect | Fatal `not_odm` | §7, REQ-ODM-011 |
+| A `DOCTYPE` or entity declaration | Fatal `dtd_forbidden`, refused before parsing | §9, REQ-ODM-013 |
+| Nesting deeper than 64 or a body over 32 MiB | Fatal `too_deep` / `too_large` (400) | §9, REQ-ODM-014 |
+| Duplicate OIDs, dangling references, empty item groups, no `MetaDataVersion` | Fatal; the whole import rolls back with the problem list | §6.2, §7, REQ-ODM-054 |
+| More than one `MetaDataVersion` | Warning `mdv_ignored`; only the first is built | §7 |
+| A name that collides or is illegal in CLARA | Rewritten, with warning `name_renamed` giving old → new | §7 |
+| An ODM construct CLARA does not model | Dropped with a warning, never silently (the loss list) | §8, REQ-ODM-053 |
+| A value fails validation, or names an unknown item or event | That record fails (`value_invalid`, `unknown_item`, `unknown_event`); the rest continue | §6.2, §7, REQ-ODM-041 |
+| A file without the CLARA extension | Imports with CLARA's defaults: not personal, not a direct identifier, not export-approved | §5, REQ-ODM-052 |
+| The client disconnects mid-export | The document stays truncated — no synthesized close — so a partial file cannot pass as complete; the export is still audited | §4.2, §6.1, REQ-ODM-025 |
+| A store failure after the first byte | The stream is the answer: it ends incomplete rather than switching to an error body | §6.1 |
+| A 403 before any byte is sent | The administration API's JSON error shape, not an XML document | §6.1 |
+| A level withholds a field | No `ItemDef`, `ItemRef` or `CodeList` for it: the file describes only what it delivers | §3.9 |
+| Imported labels and notes contain markup | Passed through the content policy and rendered escaped | §9, REQ-ODM-062 |

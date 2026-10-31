@@ -300,7 +300,7 @@ The read adds no disclosure: an account's own audit history is already its own t
 
 Reads go through the three endpoints below — the two of REQ-AUD-019 plus the export path REQ-AUD-031 adds (full contracts in `API_Endpoints_Design.md`):
 
-- `GET /api/v1/audit` — `is_admin` only; a non-admin gets the uniform 403 (REQ-API-078, finding F2). Both tables selected by `type=events|views`, reverse-chronological, `limit`/`cursor` pagination, filters: `project`, `user`, `event_type`, `from`, `to` (UTC).
+- `GET /api/v1/audit` — `is_admin` only; a non-admin gets the uniform 403 (REQ-API-078, finding F2). Both tables selected by `type=events|views`, reverse-chronological, `limit`/`cursor` pagination (`API_Endpoints_Design.md` §1), filters: `project`, `user`, `event_type`, `from`, `to` (UTC).
 - `GET /api/v1/projects/{id}/records/{record}/history` — chronological, per record; filters `instrument`, `event`, `field`; `limit`/`cursor`. Served by `idx_audit_events_record` (§6.4); the `field` filter matches `details.fields[].field` within the record-scoped page (REQ-API-080). History is transparent across the yearly rollover because queries always use the stable name (REQ-AUD-006).
 - `GET /api/v1/audit/export` — `is_admin` only, same gate as the listing (REQ-AUD-031); the same filters, no `limit`/`cursor`: every matching entry streams chronologically as CSV in a ZIP container (member `audit_events.csv` / `audit_record_views.csv`, written straight to the response — never buffered whole, REQ-TECH-011), and `estimate=1` answers `{rows, estimated_bytes}` for the > 1 GiB confirmation (REQ-AUD-032). Every export writes one `audit_export` entry (§3.5).
 
@@ -320,5 +320,32 @@ All three endpoints are read-only; no endpoint exists that writes, updates, or d
 
 | Item | Owner |
 |---|------|
-| ~~`limit`/`cursor` encoding for `/api/v1/audit` and record history~~ | **RESOLVED** — the pagination convention of `API_Endpoints_Design.md` §1 (opaque `cursor` encoding the last-seen `(created_at, id)`, `limit` default 50 / max 200, `next_cursor` `null` when exhausted) binds for both endpoints (§7) |
-| Should the Control Panel's **Events** log hide `record_read` unless it is selected? One entry per page view (§3.9) makes record reads the most numerous event type on a busy study, so the default listing of REQ-UI-016 would mostly show them | **OPEN** — web layer, once volume is observed at the reference scale (REQ-DB-025). Nothing is excluded today: every event type appears unless the `event_type` filter says otherwise, which keeps the filter bar the whole truth of the page (`User_Interface_Design.md` §3.6) |
+| Should the Control Panel's **Events** log hide `record_read` unless it is selected? One entry per page view (§3.9) makes record reads the most numerous event type on a busy study, so the default listing of REQ-UI-016 would mostly show them | **OPEN** — web layer, once volume is observed at the reference scale (REQ-DB-025). Nothing is excluded: every event type appears unless the `event_type` filter says otherwise, which keeps the filter bar the whole truth of the page (`User_Interface_Design.md` §3.6) |
+
+## 10. Rationale and Trade-offs
+
+Why the trail is built this way, and what each choice costs. The decision records DEV-AUD-1…6 (`Requirements/Audit_Logging_Requirements.md` §8) carry the requirement-level reasoning.
+
+- **The audit entry shares the operation's transaction** (§5, DEV-AUD-1). No change commits without its entry and no entry survives a rolled-back change. The cost: an audit write failure fails the operation it describes, so the trail's availability is the application's availability.
+- **Two tables, two shapes** (§4, §3.9). `audit_record_views` records data-API pulls keyed by the token used; `audit_events` records everything else, keyed by the acting user. A browser read has no token, so it is an event (`record_read`, DEV-AUD-6) rather than a view row with a nullable key.
+- **Year partitioning without application-visible names** (§6). Readers always use the stable names, so history is transparent across a rollover (§7). MariaDB routes inserts itself; SQLite cannot insert through a `UNION ALL` view, so its writer targets the current year's table (DEV-AUD-3). The composite key `(id, created_at)` is forced by MariaDB's partitioning rule (DEV-AUD-4): `id` alone is unique only within a year, and every reader pages on `(created_at, id)`.
+- **Whole states rather than deltas** (§3.4). A role change records the complete permission set before and after, so a reviewer never reconstructs it from a chain of edits; the cost is larger detail payloads.
+- **Values but never secrets** (§2). The trail is a business record and may hold stored values; it never holds a token value, a password, or a set-password link (§3.1, §3.4). Application logs hold neither (REQ-API-005).
+- **Rejected calls write no business entry** (§2, REQ-AUD-004). Only security-relevant rejections are recorded (`login_failure`, `admin_rejected`); a failed import or a 403 export leaves the trail as it was, so entries describe what happened, not what was attempted.
+- **Recency is asked of the trail** (§6.5). The project overview's "last worked in" order reads the trail through one more index instead of keeping a second, competing record of what the user did.
+
+## 11. Edge Cases and Failure Modes
+
+| Situation | Behavior | Specified in |
+|---|---|---|
+| The audit insert fails | The operation it describes rolls back; nothing is committed | §5, REQ-AUD-003 |
+| The audited operation rolls back | Its audit entries roll back with it, including recomputation and both projects' entries of a transfer | §3.2, §5 |
+| The first write of a new year (MariaDB) | The partition is added before the handler runs, because `ADD PARTITION` is DDL that commits implicitly and must not run inside an audited transaction | §6.1 |
+| The first write of a new year (SQLite) | The year's table and the view are created inside the caller's transaction, so a rollback leaves no half-built year | §6.2 |
+| A reader pages by `id` alone | Not supported: `id` repeats across years; pagination keys on `(created_at, id)` | §6.1, §6.2, §7 |
+| A rejected call (400/401/403) or a validation-failed import | No data-change, structure, export or record-view entry; only the security events of §3.1 | §2, REQ-AUD-004 |
+| A last-administrator change or a dependent-object deletion refused with 409 | Writes nothing | §3.4, §3.7, §3.8 |
+| The `record_read` write fails | The record is not shown: the browser gets the error page, so a stored record is never displayed unrecorded | §3.9 |
+| A named-source credential race fails on every source | Exactly one `login_failure` with the per-source outcomes in `attempts` | §3.1, DEV-AUD-5 |
+| An audit export is cancelled mid-stream | The export event records the rows delivered; `truncated` says whether the stream ended early | §3.5, §7 |
+| Record reads dominate a busy study's event log | Nothing is excluded by default; whether to hide `record_read` unless selected is an open item | §9 |

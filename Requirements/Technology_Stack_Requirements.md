@@ -86,12 +86,14 @@ Defines the mandatory technology constraints and the non-functional requirements
 | ASM-TECH-2 | Bootstrap and any small JS utility (none beyond vanilla ES2020, apart from critical-function libraries admitted under REQ-TECH-026) are vendored locally; no CDN dependency in production. |
 | ASM-TECH-3 | The Go API and PHP app run on the same host or a trusted internal network segment. |
 
-## 5. Deviations from Plan
+## 5. Decision Records
 
-| ID | Deviation | Rationale |
-|---|------|------|
-| DEV-TECH-1 | REQ-TECH-023's blanket "no Composer dependencies" relaxed to an allowlisted exception for critical functions (GD-25) | Owner decision (2026-09-28): authentication and i18n are security- and correctness-critical; a vetted standard library is lower risk than hand-rolled protocol code. The exception is bounded by the allowlist, pinning, local vendoring, and re-review on bump — not open-ended. `AGENTS.md` "Stack facts" updated accordingly (REQ-TECH-026). |
-| DEV-TECH-2 | Bootstrap theme files (Bootswatch `darkly` and `yeti`) admitted as selectable alternate stylesheets | Owner decision (2026-09-28, GD-26; "allow bootstrap themes like darkly and yeti in assets/"): themes are full-replacement vendored CSS with remote references stripped (REQ-TECH-027); installation-wide default via `UI_THEME` (REQ-CFG-031) plus a per-user override (REQ-UI-040/041, REQ-API-122). |
+Each record states a decision this area made where the master spec, another requirement, or a common default points elsewhere, and why. The IDs are stable anchors cited by the requirements above.
+
+| ID | Decision | Rationale |
+|------|------|------|
+| DEV-TECH-1 | Composer dependencies are admitted only for critical functions on an allowlist (GD-25, REQ-TECH-026); otherwise the PHP layer uses the standard distribution. | Owner decision. Authentication and i18n are security- and correctness-critical, and a vetted standard library is lower risk there than hand-rolled protocol code. A blanket ban would force exactly that hand-rolling; an open door would admit dependencies nobody reviews. The exception is bounded by the allowlist, pinning, local vendoring, and re-review on every version bump. `AGENTS.md` "Stack facts" states the same rule. |
+| DEV-TECH-2 | Bootstrap theme files (Bootswatch `darkly` and `yeti`) are admitted as selectable alternate stylesheets. | Owner decision (GD-26; "allow bootstrap themes like darkly and yeti in assets/"). Themes are full-replacement vendored CSS with remote references stripped (REQ-TECH-027), so they add no runtime dependency and no network access; the installation default comes from `UI_THEME` (REQ-CFG-031), with a per-user override (REQ-UI-040/041, REQ-API-122). |
 
 ## 6. Open Items
 

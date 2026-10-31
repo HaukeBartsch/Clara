@@ -117,7 +117,7 @@ Each exported column carries the transformation of **its own (instrument, event)
 - columns belonging to no pair — the record identifier (GD-8), `redcap_event_name`, the repeat markers — follow the **most protective** export level among the pairs actually in scope, so nothing leaves the system less protected than the weakest part of the request;
 - the `sensitivity` recorded in the audit event is that most protective level, together with the count of pairs dropped for want of a level (`Audit_Logging_Design.md` §3.5); the UI badge shows the same (REQ-UI-020).
 
-The cross-arm "lowest level wins" rule of the per-arm model is gone with the granularity change: it existed so that a member with mixed arm levels was not silently downgraded, and mixing now happens per column instead (D-4 revised 2026-10-03). The `arm` parameter of the administration endpoint (`API_Endpoints_Design.md` §4.14) stays as a scope selector, no longer as the escape hatch for a downgrade.
+No level is shared across columns: a member with mixed levels is never downgraded as a whole, because each column carries its own pair's level (D-4). The `arm` parameter of the administration endpoint (`API_Endpoints_Design.md` §4.14) is a scope selector only.
 
 ### 4.4 What the pipeline does not touch
 
@@ -145,9 +145,9 @@ Fixed by `Database_Schema_Design.md` §8 (normative) and `System_Configuration_D
 
 1. On the first anonymized export of a record (or by the §7.4 action), compute and persist:
    `offset_days = ANON_DATE_SHIFT_MIN + SHA-256(project_id ‖ ':' ‖ record_id ‖ ':' ‖ ANON_SALT) mod (ANON_DATE_SHIFT_MAX − ANON_DATE_SHIFT_MIN + 1)` in `anon_offsets` (REQ-DB-023, DEV-DB-3).
-2. Every later shift of that record uses the persisted offset — consistent per record across time and across exports (plan: \"consistent for each patient\").
+2. Every later shift of that record uses the persisted offset — consistent per record across time and across exports (REQ-EXP-033).
 3. The shift applies to the **date part** of the value only; the time part and the collection offset `±HH:MM` are preserved (GD-16, REQ-VAL-041).
-4. Deterministic (salted hash), not random — a deliberate refinement of the plan's \"random number of days\" (see §11): a truly random offset would break the consistency the plan itself requires.
+4. Deterministic (salted hash), not random (DEV-EXP-2): a random offset per export would break that consistency.
 
 ## 6. Filters and Record Scope
 
@@ -196,7 +196,7 @@ A value already in its target form is left alone and counts as unchanged. The ac
 - Every data-API invocation additionally → a record-view row (`audit_record_views`, `Audit_Logging_Design.md` §4) regardless of initiator (external caller such as Fiona, or the PHP layer; REQ-AUD-013, ASM-API-3/ASM-AUD-2).
 - Rejected invocations (invalid token, `export_none`, no visibility) write no `export` event and no record-view row (REQ-AUD-004); security-relevant rejections are logged per `Audit_Logging_Design.md` §3.1.
 - Reads that return no record values write no record-view row (REQ-AUD-015).
-- The `end-provision` action (§7.2) → a `project_ended` event (details: `{\"provision\":\"delete\"|\"anonymize\",\"records_affected\":…,\"values_affected\":…}`) — a new event type to register in the `Audit_Logging_Design.md` §3 catalog (§12).
+- The `end-provision` action (§7.2) → a `project_ended` event (details: `{\"provision\":\"delete\"|\"anonymize\",\"records_affected\":…,\"values_affected\":…}`) — registered in the `Audit_Logging_Design.md` §3.3 catalog.
 
 ## 9. Configuration
 
@@ -216,9 +216,9 @@ No new variables — the canonical inventory is `System_Configuration_Design.md`
 | D-1 | field categories with the fail-safe property (§4.1): the record identifier (GD-8) and every `email`/`MRN` validation-type field is a direct identifier — removed at both non-full levels, flagged as personal or not |
 | D-2 | the fixed four-step pipeline (§4.2); \"removed\" = the column is absent from the output; personal fields are hashed, not removed |
 | D-3 | free text = `field_type = text`; gated by `export_approved` at `export_de_identified` (DEV-DB-2, plan \"free text … unless explicitly approved for export\") |
-| D-4 | export applies **per (instrument, event) pair** — each column at its own level, an unpermitted pair contributes no columns, 403 only when nothing in scope is permitted, and pair-less columns take the most protective level in scope (§4.3; revised 2026-10-03, previously "the lowest level among the exported arms") |
+| D-4 | export applies **per (instrument, event) pair** — each column at its own level, an unpermitted pair contributes no columns, 403 only when nothing in scope is permitted, and pair-less columns take the most protective level in scope (§4.3) |
 | D-5 | the field hash is the full 64-character SHA-256 hex over salt, project, field, value — deterministic, untruncated, salted (§5.1) |
-| D-6 | the master spec's per-choice columns are realized by the matrix expansion of REQ-DB-014; no 1/0 coding unless the row choices are defined as 1/0 (§3.2) |
+| D-6 | the master spec's per-choice 1/0 columns: a `checkbox` field exports one column per choice in the three-underscore notation (REQ-EXP-053); a matrix exports one column per expanded row field (REQ-DB-014), 1/0-coded only where the row choices are defined as 1/0 (§3.2, DEV-EXP-3) |
 | D-7 | the end provision is an explicit one-shot `is_admin` action, not a scheduled job (§7) |
 | D-8 | a `filterLogic` reference outside what the response delivers verbatim is **refused at the reference** (§6, REQ-EXP-054) rather than evaluated over the permitted values only: reading a hidden value as blank would fail open for a predicate like `is_blank([hidden])` and silently restate a cohort definition, which in an EDC is worse than a 400. The refusal carries the unparseable expression's body, so it adds no field enumeration |
 
@@ -276,14 +276,41 @@ No new variables — the canonical inventory is `System_Configuration_Design.md`
 | date shift "consistent for each patient" (plan; REQ-DB-023) | per-record persisted offset, reused on every export: §5.2 |
 | free text "excluded unless explicitly approved" (plan; REQ-DB-013) | `export_approved` gates free text at `export_de_identified`: §4.1, D-3 |
 | "end-provision execution" (charter in-scope, BR-009) | one-shot `is_admin` action, delete/anonymize, idempotent, audited: §7 |
-| plan's per-instrument access levels (Full/Anonymized/None) | the GD-2 export levels sit on the (instrument, event) pair of a role grant, which is per-instrument control with the event added and one more level in the ladder (REQ-AUTH-017/069); per-field control stays with the `personal_information`/`export_approved` flags (deviation DEV-1 revised 2026-10-03) |
-| master-spec per-choice columns (`demo_habits__1/2`, 1/0) | matrix expansion (REQ-DB-014): §3.2, D-6 |
+| plan's per-instrument access levels (Full/Anonymized/None) | the GD-2 export levels sit on the (instrument, event) pair of a role grant, which is per-instrument control with the event added and one more level in the ladder (REQ-AUTH-017/069); per-field control stays with the `personal_information`/`export_approved` flags (DEV-EXP-1) |
+| master-spec per-choice columns (`demo_habits__1/2`, 1/0) | `checkbox` per-choice columns (REQ-EXP-053) and matrix expansion (REQ-DB-014): §3.2, D-6 |
 
 ## 12. Open Items
 
 | Item | Owner |
 |---|------|
-| ~~register `POST /api/v1/projects/{id}/end-provision` in `API_Endpoints_Design.md` §4 and `openapi/openapi.json`~~ | **RESOLVED (2026-09-23)** — `API_Endpoints_Design.md` §4.20 (rules unchanged, §7.2); the path is in the scaffold's `api/openapi/openapi.json` |
-| ~~register the `project_ended` event type in the `Audit_Logging_Design.md` §3 event catalog~~ | **RESOLVED (2026-09-23)** — `Audit_Logging_Design.md` §3.3 (rules unchanged, §7.2/§8) |
-| ~~end-provision action card on the project screen for `is_admin`~~ | **RESOLVED (2026-09-23)** — `User_Interface_Design.md` §6.5 (rules unchanged, §7) |
 | the end-provision decision per project (delete vs. anonymize) — instrument data (e.g. `DataTransferProjects`) or an external record | operations / project owner |
+
+## 13. Rationale and Trade-offs
+
+Why the export pipeline works this way, and what each choice costs. The local decisions D-1…D-8 (§10.1) and the decision records DEV-EXP-1…6 (`Requirements/Data_Export_Anonymization_Requirements.md` §9) carry the full reasoning.
+
+- **Fail-safe identifiers** (§4.1, D-1). The record identifier and every flagged field never leave untransformed below `export_full`, even when nobody marked them personal; the validation-type preset extends this to identifier-shaped data. The cost is that clearing a preset flag needs an explicit action and a designer warning.
+- **One level per pair, not per export** (§4.3, D-4). Each column carries its own (instrument, event) pair's level, so a member with mixed levels is never downgraded as a whole and one pair's stricter level never weakens another's. Columns that belong to no pair take the most protective level in scope — the conservative choice for the one place where pairs meet.
+- **Deterministic, persisted date shift** (§5.2, DEV-EXP-2). A salted hash gives each record one offset across all exports, so intervals stay comparable; persisting it on first use keeps it stable if the salt or range changes later. Random per-export offsets would let repeated exports narrow down the true date.
+- **Untruncated salted hashes** (§5.1, D-5). The full 64-character SHA-256 over salt, project, field and value keeps hashes collision-resistant and project-scoped; it is pseudonymization, recoverable by anyone holding the salt, which is why the salt is a production-required secret (§9).
+- **Filters select, levels transform** (§6). A filter can narrow what is returned but never raises sensitivity, and a `filterLogic` reference to a value the response would not deliver verbatim is refused rather than evaluated over hidden data (D-8): reading a hidden value as blank would silently change a cohort definition.
+- **One pipeline for every format** (§1, REQ-ODM-021). CSV, JSON and ODM share the same steps, so a new format cannot become an untransformed path by accident.
+- **End provision is a one-shot operator action** (§7, D-7). The stack has no scheduler, and destroying or irreversibly anonymizing clinical data is a decision someone takes knowingly; the cost is that nothing happens automatically at the REK end date.
+
+## 14. Edge Cases and Failure Modes
+
+| Situation | Behavior | Specified in |
+|---|---|---|
+| A pair in scope is `export_none` | It contributes no columns; the rest of the export proceeds | §4.3 |
+| No pair in scope is permitted | 403; no `export` event and no record-view row | §4.3, §8 |
+| A `fields[]` entry names a column its pair's level removes | Silently absent from the output; the filter never escalates sensitivity | §6, REQ-API-092 |
+| `filterLogic` references a value the response does not deliver verbatim | Refused before any record is read, with the same 400 body as a malformed expression | §6, D-8, REQ-EXP-054 |
+| A holder has an active data access group | Only that group's records are exported; without a group, all records | §6, REQ-AUTH-045 |
+| A date-time value is shifted | Only the date part moves; time and collection offset are preserved | §5.2 |
+| A record is first exported at `export_de_identified` | Its offset is computed and persisted; every later export reuses it | §5.2, REQ-DB-023 |
+| `ANON_SALT` is absent in production | The API refuses to start | §9, `System_Configuration_Design.md` §4.1 |
+| A cell starts with a formula-triggering character | Neutralized in every cell, header cells included | §3.3, `Data_Validation_Design.md` §5.3 |
+| The end provision runs a second time | 409; the `project_ended` event is the idempotency state | §7.2 |
+| The end provision fails midway | Nothing changes: the data change and its audit row share one transaction | §7.2 |
+| A project after `provision=anonymize` | Every read and export, including `export_full`, returns the anonymized values; irreversible | §7.4 |
+| Unknown REDCap parameters (`exportSurveyFields`, …) | Accepted and ignored | §3.4, DEV-API-2 |

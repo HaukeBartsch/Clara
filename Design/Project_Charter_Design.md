@@ -87,7 +87,7 @@ The system is exactly these four components and no others. There is no scheduler
 | GD-15 | Event ordering: timepoint events by `period`, then no-timepoint events in user order (canonical per-arm order) | `Database_Schema_Design.md` §5; `API_Endpoints_Design.md` §4.9 (events-order endpoint) |
 | GD-16 | Date/date-time values carry the collection timezone; stored as collected, never converted | `Data_Validation_Design.md` §4.1 (canonical storage); `Data_Export_Anonymization_Design.md` §5.2 (shift preserves the offset) |
 | GD-17 | Simplified `projects` table; removed attributes are ordinary instrument data, no special handling | `Database_Schema_Design.md` §4 (REQ-DB-032); `API_Endpoints_Design.md` §4.5 (creation body) |
-| GD-18 | Table-based authentication: local password path (ordering superseded by named-source parallel resolution, DEV-AUTH-14); bootstrap password from configuration | `Authentication_Authorization_Design.md` §2.6 (sequence F), §2.9; `System_Configuration_Design.md` §3.3 |
+| GD-18 | Table-based authentication: local password path (tried in parallel with LDAP under a selected source name, DEV-AUTH-14); bootstrap password from configuration | `Authentication_Authorization_Design.md` §2.6 (sequence F), §2.9; `System_Configuration_Design.md` §3.3 |
 | GD-19 | Account validity period + inactivity auto-disable, re-enableable by an administrator | `Authentication_Authorization_Design.md` §4.4 (account active rule); `System_Configuration_Design.md` §3.10 |
 | GD-20 | Project modes (development / production / analysis): admin-only transitions with any open staging set closed first, staging with breaking-change warning in production, data entry disabled in analysis with the same warning guarding immediate setup changes there | `API_Endpoints_Design.md` §4.21; `Database_Schema_Design.md` §4/§5 (`projects.mode`, `project_staging`); `User_Interface_Design.md` §6.6–§6.8; `Audit_Logging_Design.md` §3.8 |
 | GD-21 | Two-factor authentication: by-user `off`/`totp`/`email` second factor on the CLARA-verified login paths, self-service enrollment with recovery codes, installation-wide mandate (`AUTH_REQUIRE_2FA`), administrator reset | `Authentication_Authorization_Design.md` §2.3 step 1.5/§2.7 (sequence G); `API_Endpoints_Design.md` §4.3/§4.4 (`/users/me/tfa/*`); `User_Interface_Design.md` §2.2/§2.5; `System_Configuration_Design.md` §3.11 |
@@ -134,3 +134,26 @@ Single-area open items (endpoint encoding, audit `details` shapes, configuration
 |---|------|
 | the per-project end-provision decision (delete vs. anonymize at the REK end date) — BR-009; spans export, storage, UI, and API | operations / project owner (rules fixed in `Data_Export_Anonymization_Design.md` §7) |
 | exact reverse-proxy configuration file for the deployment target (reverse-proxy component, §2.1) | operations — the rule set ships as `deploy/nginx/clara.conf` and `deploy/apache2/clara.conf`; per-host `server_name` and certificate remain theirs (rules fixed in `Technology_Stack_Design.md` §5) |
+
+## 9. Rationale and Trade-offs
+
+Why the system is decomposed this way, and what each choice costs. The global decisions GD-1…26 (`Requirements/Project_Charter_Requirements.md` §5) carry the owner-level reasoning; the area documents carry the rest.
+
+- **Four components and nothing else** (§2.1). No scheduler, message broker or separate storage service: fewer moving parts to operate in a hospital environment. The cost is that time-based actions — the end provision, the inactivity auto-disable — happen when an operator or a login triggers them, not on a clock.
+- **A single writer** (§2.2). Only the Go API opens a database connection, so validation, authorization and audit sit on the one path every write takes. A PHP page cannot bypass them because it has no driver to bypass them with.
+- **PHP owns the session; the API owns every decision** (GD-1, §2.2). The browser never reaches the API or holds a project token, so a stolen browser session is bounded by what the PHP session can do, and the API needs no session store.
+- **REDCap compatibility on the data API, a clean contract on the administration API** (§2.2). External callers such as FIONA keep working unchanged against `POST /api/`; the internal surface is free to be versioned REST (`API_Endpoints_Design.md` §1).
+- **One code base on SQLite and MariaDB** (success criterion 5). Development needs no database server; the cost is SQL limited to the features both share, with the exceptions listed in `Database_Schema_Design.md` §10.
+- **Exposure by routing** (§2.2). Only the data API and the PHP pages are publicly routable; the administration API's safety depends on the reverse proxy and the bind address, which is why production refuses a reachable bind without an explicit exception (`System_Configuration_Design.md` §4.1).
+
+## 10. Edge Cases and Failure Modes
+
+| Situation | Behavior | Specified in |
+|---|---|---|
+| The Go API is down or unreachable from PHP | PHP renders a dedicated line naming the backend service as responsible (web-layer 502) | `User_Interface_Design.md` §3.4 |
+| The database is unreachable at API start | The API refuses to start | `Technology_Stack_Design.md` §5 |
+| An external request presents the internal headers | The reverse proxy strips them before the request reaches any component | §2.2, `Technology_Stack_Design.md` §5 |
+| An external request reaches for `/api/v1/*` | Not routable; only `POST /api/` and the PHP routes are public | §2.2 |
+| The REK end date passes | Nothing happens automatically; the end provision is a one-shot administrator action | §2.3, `Data_Export_Anonymization_Design.md` §7 |
+| A data-entry write fails validation or its audit write fails | Nothing of that record is stored; the audit row and the data change share one transaction | §2.3, `Audit_Logging_Design.md` §5 |
+| A project is in analysis mode | Imports and survey submissions are refused; setup edits apply with a breaking-change guard | §2.3, `API_Endpoints_Design.md` §4.21 |

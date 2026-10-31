@@ -71,10 +71,12 @@ Go layers from data the API already exposes.
 | ASM-AI-1 | Administrators' workstations have WebGPU-capable browsers and enough VRAM for the installed quantized tool-calling model (a q4-class 8B model needs roughly 4–5 GB); the page degrades to a message, not a crash, when they do not. |
 | ASM-AI-2 | Model artifacts are placed under `web/assets/models/` at installation time by `tools/fetch_assistant_model.sh` (network available then); production hosts serve them without ever fetching them. |
 
-## 8. Deviations
+## 8. Decision Records
 
-| ID | Deviation | Source |
+Each record states a decision this area made where the master spec, another requirement, or a common default points elsewhere, and why. The IDs are stable anchors cited by the requirements above.
+
+| ID | Decision | Rationale |
 |---|---|---|
-| DEV-AI-1 | The Control Panel's section list (REQ-UI-047) gains **Assistant** between Monitoring and Configuration Check. Owner instruction of 2026-10-16; the closed-list rule is amended by this entry. | REQ-UI-047 |
-| DEV-AI-2 | The MCP client and server are hand-written minimal implementations (browser ES module; PHP JSON-RPC over the existing router) instead of an SDK: the npm SDK needs a build step forbidden by REQ-TECH-001, and no PHP library is admissible outside the critical-function allowlist (REQ-TECH-026). Only the subset REQ-AI-004/005 names is implemented; conformance is checked against the protocol shapes. | REQ-TECH-001, REQ-TECH-026 |
-| DEV-AI-3 | Linear mixed effects models and ggplot2/matplotlib graphics from the master spec's use-case list are deferred to a follow-up requirement set: they need a stats runtime this area deliberately does not add (owner decision 2026-10-16 — "leave out the stats runtime for now; display stats values using text/tables and d3.js graphics"). Marginal statistics and t-tests cover the near-term analysis questions. | VISION §"Later: alternative admin WebLLM interface" |
+| DEV-AI-1 | The Control Panel's section list (REQ-UI-047) includes **Assistant**, between Monitoring and Configuration Check. | Owner instruction. REQ-UI-047 fixes a closed list of sections; this record is the amendment that admits the new one. |
+| DEV-AI-2 | The MCP client and server are hand-written minimal implementations — a browser ES module and a PHP JSON-RPC endpoint on the existing router — implementing only the subset REQ-AI-004/005 names. | The npm MCP SDK needs a build step (forbidden, REQ-TECH-001), and no PHP MCP library is admissible outside the critical-function allowlist (REQ-TECH-026). The cost is that conformance is checked against the protocol shapes rather than inherited from a reference implementation. |
+| DEV-AI-3 | Linear mixed effects models and ggplot2/matplotlib graphics from the master spec's use-case list (VISION §"Later: alternative admin WebLLM interface") are out of scope for this area; marginal statistics and t-tests cover the analysis questions, shown as text, tables and d3.js graphics. | Both need a statistics runtime this area deliberately does not add (owner decision: "leave out the stats runtime for now; display stats values using text/tables and d3.js graphics"). They belong to a follow-up requirement set. |

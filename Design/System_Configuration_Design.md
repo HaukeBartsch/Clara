@@ -302,8 +302,8 @@ OTP_MAIL_FROM=
 | `anon_salt` configuration key (`Database_Schema_Design.md` §12) | `ANON_SALT` + range keys, §3.6 |
 | finite value-length cap key (`Data_Validation_Design.md` §11) | `MAX_VALUE_BYTES`, §3.7 |
 | date-shift "sane defaults" (REQ-CFG-016) | 0…364 days, §3.6 |
-| rate-limit keys (REQ-CFG-020) | superseded 2026-09-27 (master spec "Rate limitter", DEV-CFG-3): enable flag and per-source-IP threshold moved to `system_settings` edited in the admin interface (`API_Endpoints_Design.md` §4.22); env keeps only `TRUSTED_PROXY_CIDRS`, §3.9 |
-| session settings (REQ-CFG-017) | §3.8, 8 h default per REQ-AUTH-015; idle timeout (30 min) and rotation interval (15 min) added 2026-10-11 (DEV-AUTH-17) |
+| rate-limit keys (REQ-CFG-020) | not environment keys (master spec "Rate limitter", DEV-CFG-3): enable flag and per-source-IP threshold live in `system_settings` edited in the admin interface (`API_Endpoints_Design.md` §4.22); env keeps only `TRUSTED_PROXY_CIDRS`, §3.9 |
+| session settings (REQ-CFG-017) | §3.8, 8 h default per REQ-AUTH-015; idle timeout (30 min) and rotation interval (15 min) (DEV-AUTH-17) |
 | bootstrap local password (GD-18, master spec "Details") | `ADMIN_BOOTSTRAP_PASSWORD`, §3.3; startup rule §4.1; redaction §4.4 |
 | inactivity auto-disable rule key (GD-19, master spec "Details") | `AUTH_INACTIVITY_LIMIT_DAYS` (default 180, 0 = off), §3.10 |
 | default collection timezone (GD-16, master spec "Details") | `APP_TIMEZONE` (IANA name, default `UTC`), §3.10 |
@@ -313,3 +313,34 @@ OTP_MAIL_FROM=
 ## 7. Open Items
 
 None.
+
+## 8. Rationale and Trade-offs
+
+Why configuration works this way, and what each choice costs. The decision records DEV-CFG-1…7 (`Requirements/System_Configuration_Requirements.md` §4) carry the requirement-level reasoning.
+
+- **Environment variables only, read once** (§2, §4.3). One mechanism for both components, no configuration files to parse and no reload path to secure. The cost: every change needs a restart (ASM-CFG-2).
+- **Fail at startup, not at first use** (§4.1). A missing or invalid value refuses startup with a message naming each problem, so a misconfiguration is found by whoever deploys, not by the first user who reaches the affected feature.
+- **Production refuses development defaults** (§4.1). The development service token, an absent salt, a non-`Secure` session cookie and an unexplained non-loopback bind are each fatal under `APP_ENV=production`; development stays convenient without the convenience leaking into production.
+- **Security posture stays in the environment; tunables may live in the database** (§3.9, DEV-CFG-3, DEV-CFG-4). Rate-limit thresholds are edited in the administration interface; the trusted-proxy range, the 2FA mandate and code lifetimes are not, because an administrator able to change them at runtime could weaken the boundary they protect.
+- **Secrets never appear in output** (§4.4). The startup dump prints the effective non-secret configuration and masks every secret as `***`, so the dump is safe to paste into a support request.
+- **No identity provider is required** (§4.1, DEV-CFG-1). Without OAuth2 or LDAP the bootstrap administrator's password is required instead, so a fresh installation always has one way in.
+
+## 9. Edge Cases and Failure Modes
+
+| Situation | Behavior | Specified in |
+|---|---|---|
+| A required variable is missing or invalid | The API exits non-zero naming each problem; PHP shows an operator-readable boot page, without a stack trace in production | §4.1, REQ-CFG-004/005 |
+| A variable is set both in the process environment and in `.env` | The process environment wins | §2, REQ-CFG-002 |
+| `APP_ENV=production` with the development `INTERNAL_SERVICE_TOKEN`, or one under 32 bytes | Startup is refused | §3.3, §4.1 |
+| `API_ADDR` binds a non-loopback address in production without `API_ALLOW_REMOTE=1` | Startup is refused | §3.1, §4.1, REQ-CFG-033 |
+| `ANON_SALT` or `WEB_PUBLIC_URL` absent in production | Startup is refused | §4.1 |
+| `SESSION_COOKIE_SECURE=0` in production | Startup is refused | §3.8, §4.1, REQ-AUTH-075 |
+| Neither an OAuth2 provider nor an LDAP server, and no `ADMIN_BOOTSTRAP_PASSWORD` | Startup is refused | §4.1, DEV-CFG-1 |
+| `SMTP_HOST` unset | The email second factor is unavailable; startup continues | §4.1, REQ-CFG-028 |
+| `SMTP_HOST` set without a parseable `OTP_MAIL_FROM` | Startup is refused | §4.1 |
+| `UI_THEME` names an unknown theme, or `MONITORING_PERIOD_MINUTES` is outside 1…1440 | Startup is refused | §3.12, §3.13, §4.1 |
+| A `*_NAMES` entry is empty after trimming | Rejected at startup | §3.4, §4.1 |
+| `OAUTH2_JWKS_TTL=0`, or `OAUTH2_N_ID_TOKEN_ALG` set to `none` or an HMAC algorithm | Startup is refused | §3.4 |
+| `OAUTH2_N_REQUIRE_EMAIL_VERIFIED` or `OAUTH2_N_NONCE_REQUIRED` is not a boolean | Ignored; the default applies | §3.4 |
+| `DB_CONNECTION=sqlite` with `DB_HOST`/`DB_PORT`/`DB_USERNAME`/`DB_PASSWORD` set | Ignored, with a startup warning | §4.2 |
+| An `X-Real-IP` header from an address outside `TRUSTED_PROXY_CIDRS` | Ignored by both components; the connection address is used | §3.9 |

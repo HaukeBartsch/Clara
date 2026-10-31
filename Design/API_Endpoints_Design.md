@@ -98,7 +98,7 @@ HTTP status mapping (REQ-API-039):
 | rate limit exceeded (when enabled) | 429 | `Rate limit exceeded` (with `Retry-After`, §3.9) |
 | import with per-record validation failures | 200 | — (per-record result codes, §3.7.2) |
 
-Error text never leaks internal implementation details (REQ-API-039, REQ-API-006). Keeping the detail out of the *response* does not mean throwing it away: every 500 logs the error behind it and the code site that produced it — a 500 that leaves no log line is undiagnosable, and one cost a per-statement-metrics hunt rather than a grep in October 2026. Tokens, parameters and record values never reach the log (REQ-API-005).
+Error text never leaks internal implementation details (REQ-API-039, REQ-API-006). Keeping the detail out of the *response* does not mean throwing it away: every 500 logs the error behind it and the code site that produced it — a 500 that leaves no log line is undiagnosable. Tokens, parameters and record values never reach the log (REQ-API-005).
 
 The uniform 401 `Invalid token` describes **credential states** — unknown, revoked, spent-by-account, or an inactive account — and stays indistinguishable across them (REQ-AUTH-032). A storage failure while resolving a token is not a statement about the token: it answers 500 like any other store failure, logged, and denies access just as firmly. Reporting it as `Invalid token` would tell an operator that someone used a bad credential while the database was down.
 
@@ -128,7 +128,7 @@ Any valid token for the project suffices. JSON response (array with one object):
 }]
 ```
 
-Standard REDCap project-info keys the system does not store are returned with neutral values (`"0"` / `""`) rather than omitted, so naive parsers keep working (REQ-API-018) — including `project_end_provision` since GD-17 (the end provision is no longer stored; if the owner records one, it is data in an instrument such as `DataTransferProjects`, REQ-DB-032). CSV: a single row of those key/value pairs. `has_repeating_instruments_or_events` is `"1"` once any (instrument, event) pair repeats (REQ-API-155).
+Standard REDCap project-info keys the system does not store are returned with neutral values (`"0"` / `""`) rather than omitted, so naive parsers keep working (REQ-API-018) — including `project_end_provision`, which is not stored (GD-17; if the owner records one, it is data in an instrument such as `DataTransferProjects`, REQ-DB-032). CSV: a single row of those key/value pairs. `has_repeating_instruments_or_events` is `"1"` once any (instrument, event) pair repeats (REQ-API-155).
 
 ### 3.4 `content=metadata` (REQ-API-019)
 
@@ -530,7 +530,7 @@ All three require `is_admin`; a call by a non-admin is rejected (403 `forbidden`
 
 Administrator (requires `is_admin`), REQ-API-116: `POST /api/v1/users/{id}/tfa/reset` — deletes the account's `user_two_factor` row back to `off` (lost device/email) and raises the account's `session_epoch` (REQ-AUTH-074); 200 `{ "status": "ok", "session_epoch": n }`; audit `tfa_reset`. No endpoint ever returns a secret, pending code, or recovery code outside its single enrollment/activation response.
 
-**Password lifecycle endpoints (GD-22/GD-23).** Administrator: `POST /api/v1/users/{id}/invite` — sends the invitation email with a single-use `invite` token to the account's address (REQ-AUTH-060); requires `is_admin`; 409 `smtp_not_configured` without a relay (the admin then sets the password directly); a re-invite replaces any outstanding invite token (the old link dies); 200 `{ "ok": true }` — the token value is never in the response; audit `user_invited` (REQ-API-117). Self-service: `PUT /api/v1/users/me/password` with `{ "current_password": "…", "new_password": "…" }` — current password verified against `password_hash` first (failure → 401 `bad_password`, audit-logged, counted toward the REQ-AUTH-035 lockout), then the new argon2id hash is stored and the account's `session_epoch` raised — its other sessions end — and the answer is 200 `{ "ok": true, "session_epoch": n }`, which the calling session adopts (REQ-AUTH-074, superseding DEV-AUTH-13); accounts without a local credential → 409 `no_local_credential`; audit `password_changed` (REQ-AUTH-061, REQ-API-118).
+**Password lifecycle endpoints (GD-22/GD-23).** Administrator: `POST /api/v1/users/{id}/invite` — sends the invitation email with a single-use `invite` token to the account's address (REQ-AUTH-060); requires `is_admin`; 409 `smtp_not_configured` without a relay (the admin then sets the password directly); a re-invite replaces any outstanding invite token (the old link dies); 200 `{ "ok": true }` — the token value is never in the response; audit `user_invited` (REQ-API-117). Self-service: `PUT /api/v1/users/me/password` with `{ "current_password": "…", "new_password": "…" }` — current password verified against `password_hash` first (failure → 401 `bad_password`, audit-logged, counted toward the REQ-AUTH-035 lockout), then the new argon2id hash is stored and the account's `session_epoch` raised — its other sessions end — and the answer is 200 `{ "ok": true, "session_epoch": n }`, which the calling session adopts (REQ-AUTH-074); accounts without a local credential → 409 `no_local_credential`; audit `password_changed` (REQ-AUTH-061, REQ-API-118).
 
 ### 4.5 Projects (REQ-API-049…052)
 
@@ -557,7 +557,7 @@ Administrator (requires `is_admin`), REQ-API-116: `POST /api/v1/users/{id}/tfa/r
 }
 ```
 
-The removed attributes — `end_provision`, the `option_*` flags, `agreed_to_end_user_contract`, `event_names` — are rejected as unknown attributes (400 `invalid_request`, REQ-API-052); if the owner wants them they are data in an ordinary instrument (e.g. `DataTransferProjects`, REQ-DB-032). A duplicate `project_name` → 409 `conflict`. Creation is single-arm (REQ-DB-011, DEV-API-4): the API creates **arm 1 only**, together with its first event **`baseline`** (`unique_event_name = baseline_arm_1`, timepoint `period = 0`) and one instrument **`instrument`** — every project holds at least one arm, event and instrument from creation on (§4.9/§4.10, REQ-API-050). Further events are added afterwards through `POST /api/v1/projects/{id}/events` (REQ-API-062; `event_names` is no longer part of creation, GD-17). 201 — the project object (`id` + the supplied fields + `creation_time`). Audit `project_created`.
+The removed attributes — `end_provision`, the `option_*` flags, `agreed_to_end_user_contract`, `event_names` — are rejected as unknown attributes (400 `invalid_request`, REQ-API-052); if the owner wants them they are data in an ordinary instrument (e.g. `DataTransferProjects`, REQ-DB-032). A duplicate `project_name` → 409 `conflict`. Creation is single-arm (REQ-DB-011, DEV-API-4): the API creates **arm 1 only**, together with its first event **`baseline`** (`unique_event_name = baseline_arm_1`, timepoint `period = 0`) and one instrument **`instrument`** — every project holds at least one arm, event and instrument from creation on (§4.9/§4.10, REQ-API-050). Further events are added afterwards through `POST /api/v1/projects/{id}/events` (REQ-API-062; creation takes no `event_names`, GD-17). 201 — the project object (`id` + the supplied fields + `creation_time`). Audit `project_created`.
 
 **`GET /api/v1/projects/{id}`** — data access ≥ `read_only` + project visibility. 200 — full metadata plus structure plus the acting user's effective permissions (REQ-API-126):
 
@@ -1035,7 +1035,7 @@ The response never carries a byte-order mark: the web UI writes one ahead of a C
 
 Known parameters validate strictly: `format`, `rawOrLabel`, or `rawOrLabelHeaders` outside their value sets, a `csvDelimiter` or `decimalCharacter` outside its set, or a non-numeric `arm` → 400 `invalid_request`; unknown parameter names stay accepted and ignored (REQ-API-017). A caller with no exportable arm — none by default, or any named arm `export_none` — gets 403 `forbidden`; a rejected call writes no audit entry (REQ-AUD-004).
 
-The response is streamed (REQ-TECH-011). Record selection follows the data-access-group rule (REQ-API-092). Sensitivity follows the acting user's export level **for the (instrument, event) pair of each exported column** (the REQ-API-026 ladder — `export_full` → full dataset; `export_no_identifiers` → identifier fields removed; `export_de_identified` → de-identified per §3.6.1; a pair at `export_none` contributes no columns). The single applied level of the old per-arm model is gone: an export spanning several arms or instruments applies several transformations side by side, one per column, and a stricter pair never weakens a more permissive one (REQ-EXP-003). Columns that belong to no pair — the record identifier (GD-8), `redcap_event_name`, repeat markers — follow the **most protective** export level among the pairs actually in scope, so nothing is delivered less protected than the weakest part of the request (D-4 revised). A request whose scope leaves no permitted pair is 403 `forbidden`. The audit event and the UI badge record that most protective level, plus the count of pairs dropped for want of a level — never a higher level some individual pair would have permitted.
+The response is streamed (REQ-TECH-011). Record selection follows the data-access-group rule (REQ-API-092). Sensitivity follows the acting user's export level **for the (instrument, event) pair of each exported column** (the REQ-API-026 ladder — `export_full` → full dataset; `export_no_identifiers` → identifier fields removed; `export_de_identified` → de-identified per §3.6.1; a pair at `export_none` contributes no columns). The single applied level of the old per-arm model is gone: an export spanning several arms or instruments applies several transformations side by side, one per column, and a stricter pair never weakens a more permissive one (REQ-EXP-003). Columns that belong to no pair — the record identifier (GD-8), `redcap_event_name`, repeat markers — follow the **most protective** export level among the pairs actually in scope, so nothing is delivered less protected than the weakest part of the request (D-4). A request whose scope leaves no permitted pair is 403 `forbidden`. The audit event and the UI badge record that most protective level, plus the count of pairs dropped for want of a level — never a higher level some individual pair would have permitted.
 
 Every call is audit-logged as an `export` event with `surface: "ui"`, the project, and the sensitivity level (REQ-API-076, BR-007, `Audit_Logging_Design.md` §3.5).
 
@@ -1080,7 +1080,7 @@ Entries MAY carry the `token` column and payload values — the trail is the sol
 
 `action` ∈ `create | update | delete`; for `create`, `old` is `null`; for `delete`, `new` is `null` and the `old` values are the deleted values (REQ-AUD-009). The endpoint is read-only with respect to the audit trail (REQ-AUD-002). The data entry form presents this per-field history — who entered or changed the value, when, and the old → new values — fetched from this endpoint (REQ-API-081; User_Interface plan, data entry form).
 
-`order=newest` serves the same entries in reverse chronological order (`created_at DESC, id DESC`) and the cursor pages backwards (`REQ-API-137`, DEV-API-23): each page's `next_cursor` continues from its last (oldest) row with a strictly-earlier condition. The filters apply within the page exactly as in `chrono`, so paging semantics are unchanged. This is the read direction the data entry form uses to derive current values — walking backwards it stops per field at the first entry seen (`User_Interface_Design.md` §8.3, closing its §11 open item 3). Any other `order` value → 400 `invalid_request`.
+`order=newest` serves the same entries in reverse chronological order (`created_at DESC, id DESC`) and the cursor pages backwards (`REQ-API-137`, DEV-API-23): each page's `next_cursor` continues from its last (oldest) row with a strictly-earlier condition. The filters apply within the page exactly as in `chrono`, so paging semantics are unchanged. This is the read direction the data entry form uses to derive current values — walking backwards it stops per field at the first entry seen (`User_Interface_Design.md` §8.3). Any other `order` value → 400 `invalid_request`.
 
 ### 4.17 Survey links (GD-9, REQ-API-082…085, REQ-API-145/146)
 
@@ -1182,7 +1182,7 @@ Audit: `project_ended` with the provision and the affected counts (`Audit_Loggin
 
 ### 4.21 Project modes and staging (GD-20, REQ-API-105…111)
 
-Every project is in exactly one mode (`projects.mode`, `Database_Schema_Design.md` §4): `development` (default for new projects), `production`, or `analysis`. Changing the mode belongs to `is_admin` alone — an installation admin user, **not** the project's own `project_admin`, who gets a 403 (GD-20, 2026-09-27). Staging is run by `project_admin` as before.
+Every project is in exactly one mode (`projects.mode`, `Database_Schema_Design.md` §4): `development` (default for new projects), `production`, or `analysis`. Changing the mode belongs to `is_admin` alone — an installation admin user, **not** the project's own `project_admin`, who gets a 403 (GD-20). Staging is run by `project_admin` as before.
 
 **`GET /api/v1/projects/{id}/mode`** — data access ≥ `read_only` + project visibility. 200:
 
@@ -1198,10 +1198,10 @@ Every project is in exactly one mode (`projects.mode`, `Database_Schema_Design.m
 | production → development | `{ "mode": "development" }` | all data kept; setup edits go back to applying directly, with no staging and no warning |
 | production → analysis | `{ "mode": "analysis" }` | all data kept; data entry stops for everyone from then on (REQ-API-109) |
 | analysis → production | `{ "mode": "production" }` | all data kept; setup changes go back behind a staging set (REQ-API-107) |
-| analysis → development | `{ "mode": "development" }` | all data kept — the way out of analysis without passing through production again (GD-20, 2026-09-27) |
+| analysis → development | `{ "mode": "development" }` | all data kept — the way out of analysis without passing through production again (GD-20) |
 | any other pair (incl. **development → analysis**) | — | 409 `conflict` — not an allowed transition: a project enters `analysis` only from `production`, where the data entry it disables has actually happened (GD-20 table) |
 
-**No mode change while a staging set is open.** Every transition in the table is rejected (409 `conflict`) until the open set is committed or discarded (REQ-API-105, GD-20 2026-09-27). The rule is stated for all transitions rather than only the ones leaving production because staging opens only in production and closing it is now a precondition of every way out.
+**No mode change while a staging set is open.** Every transition in the table is rejected (409 `conflict`) until the open set is committed or discarded (REQ-API-105, GD-20). The rule is stated for all transitions rather than only the ones leaving production because staging opens only in production and closing it is now a precondition of every way out.
 
 200 — `{ "mode": "<new mode>", "records_deleted": 0 }` (`records_deleted` set only for the delete-on-transition case). Audit `project_mode_changed` with old/new mode and the `keep_data` decision (`Audit_Logging_Design.md` §3.3).
 
@@ -1213,7 +1213,7 @@ Every project is in exactly one mode (`projects.mode`, `Database_Schema_Design.m
 | production | requires an open staging set; applies on commit (§4.21 staging below) | allowed — against the **active** design, also while a set is staged | per permissions |
 | analysis | allowed for admin users (`project_admin`); applies immediately — a **breaking** change must first be acknowledged (REQ-API-111) | **disabled** — 403 `Project in analysis mode` on every surface (REQ-API-109) | per permissions ("viewing and exporting remain available", GD-20) |
 
-**Setup changes in analysis mode (REQ-API-111, GD-20 2026-09-27).** No staging set — a `project_admin` edit lands on the live design exactly as it does in development. What analysis mode adds is a guard rather than a gate: an edit that classifies as **breaking** (table below) is rejected once — 409 `conflict`, naming the change and its reason — and applies when the same call returns with `{ "acknowledge_breaking": true }`. A non-breaking edit goes straight through with no round trip. The flag is accepted only in analysis mode: production routes structure changes through staging (REQ-API-107), where the acknowledgement happens at commit (REQ-API-108), and development warns about nothing.
+**Setup changes in analysis mode (REQ-API-111, GD-20).** No staging set — a `project_admin` edit lands on the live design exactly as it does in development. What analysis mode adds is a guard rather than a gate: an edit that classifies as **breaking** (table below) is rejected once — 409 `conflict`, naming the change and its reason — and applies when the same call returns with `{ "acknowledge_breaking": true }`. A non-breaking edit goes straight through with no round trip. The flag is accepted only in analysis mode: production routes structure changes through staging (REQ-API-107), where the acknowledgement happens at commit (REQ-API-108), and development warns about nothing.
 
 **Staging (production only, REQ-API-106/107).** One open staging set per project (`project_staging`, `Database_Schema_Design.md` §5): a JSON snapshot of the live design taken at start; all structure endpoints (§4.8–§4.12) then read and write the **staged** design for `project_admin` users (response shapes unchanged), while every data-facing endpoint keeps serving the **active** design until commit.
 
@@ -1230,7 +1230,7 @@ Every project is in exactly one mode (`projects.mode`, `Database_Schema_Design.m
 - **`POST /api/v1/projects/{id}/staging/commit`** — `project_admin`; body optionally `{ "acknowledge_breaking": true }`. The staged diff is classified per the table below; if it contains breaking changes and `acknowledge_breaking` is not `true` → 409 `conflict` listing them. On success the snapshot is applied to the live structure tables in **one transaction** (the whole set activates at once, GD-20) and the staging row is removed. 200 — `{ "applied": { "instruments": 2, "fields": 5, "events": 1, "mapping_pairs": 3 } }`. Audit `staging_committed` with the applied counts and the acknowledged breaking changes.
 - **`POST /api/v1/projects/{id}/staging/discard`** — `project_admin`. 204; the staging row is removed without applying. Audit `staging_discarded`.
 
-**A commit does not recompute calculated values (owner decision 2026-09-29).** A staged change to a `calculated` field's expression updates that field's dependency rows with the rest of the set, and the values already stored keep their previous result; REQ-VAL-037's same-transaction recomputation runs on the live paths (the field endpoints' own edits, import) but not at commit. Recomputing a whole project inside the commit transaction is deliberately out of scope — it is offered as a separate action instead, so an operator triggers it knowingly. Until that action exists, a deployment treats values derived from a committed expression change as stale.
+**A commit does not recompute calculated values.** A staged change to a `calculated` field's expression updates that field's dependency rows with the rest of the set, and the values already stored keep their previous result; REQ-VAL-037's same-transaction recomputation runs on the live paths (the field endpoints' own edits, import) but not at commit. Recomputing a whole project inside the commit transaction is deliberately out of scope — it is offered as a separate action instead, so an operator triggers it knowingly. Until that action exists, a deployment treats values derived from a committed expression change as stale.
 
 **Breaking-change classification (normative, REQ-API-108).** The rule: a change is breaking when it would make existing recorded data inconsistent or inaccessible; everything else is non-breaking.
 
@@ -1470,3 +1470,37 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirement.m
 | `GET/PUT /api/v1/settings` (§4.22) | `is_admin` |
 
 `is_admin` users hold all permission levels on every arm of every project (REQ-AUTH-023), so a permission requirement never excludes an administrator.
+
+## 6. Rationale and Trade-offs
+
+Why the endpoint contracts take their shape, and what each choice costs. The decision records DEV-API-1…32 (`Requirements/API_Endpoints_Requirement.md` §6) carry the full reasoning; this is the design-level summary.
+
+- **Caller compatibility outranks REST hygiene on the data API.** `POST /api/` keeps REDCap's parameter names, error strings and quirks (§3), unknown parameters are ignored rather than rejected (REQ-API-017), and the record operation is decided by the presence of `data`, as REDCap decides it (DEV-API-24). The recorded FIONA traffic is the contract (REQ-API-037). The one deliberate break is the token: body only, `GET` refused (DEV-API-30), because a credential in a URL ends up in access logs.
+- **Two surfaces, two trust models** (§3, §4). The data API trusts a project token; the administration API trusts the PHP layer's service token plus the named acting user (GD-1). Cross-project operations sit on the administration surface because only there is the acting account known (DEV-API-31, §4.27).
+- **A stateless API** (GD-1). Two-factor state lives in `user_two_factor`, the first-factor handle is an HMAC rather than a stored challenge (DEV-API-19), and sessions are revoked by an account epoch rather than a registry (DEV-API-25). The cost is that these mechanisms are more intricate than a server-side session would be.
+- **Non-disclosure over helpfulness.** An unentitled project or record answers a uniform 403, never 404 (§1, REQ-API-007); unknown, revoked and spent tokens and inactive accounts share one 401 (§3.2); `filterLogic` refusals use one body whether the expression is malformed or reads too high (§3.2). A caller learns less about why, and so does an attacker.
+- **All-or-nothing per record, not per call** (§3.7.2). One bad value stores nothing of its record while the other records proceed — the unit of consistency is the record. Unknown event names are the exception: they fail the whole request before any row is applied (§3.7.3), because they mean the caller's whole batch is aimed at the wrong design.
+- **Bounded requests and sparse answers.** Body size and parameter count are both bounded, because the first does not imply the second (§3.1, REQ-API-144); the record-status response lists only non-empty cells (DEV-API-26, §4.13), because the dense form grew with the design rather than the data and exhausted the web layer's memory.
+- **Streaming over buffering** (§4.13, REQ-TECH-011). Large reads stream, which brings the first records in a fraction of a second at a bounded memory cost; the whole read takes somewhat longer.
+- **Staged changes do not recompute calculated values at commit** (§4.21). Recomputing a whole project inside the commit transaction is deliberately out of scope; it is a separate action an operator triggers knowingly.
+
+## 7. Edge Cases and Failure Modes
+
+| Situation | Behavior | Specified in |
+|---|---|---|
+| A data-API request over 32 MiB or 250,000 parameters | 400 naming the limit, answered before the token lookup | §3.1, §3.2, REQ-API-144 |
+| A `multipart/form-data` body | 400 `Unsupported Content-Type`, not an empty parameter set read as `Invalid token` | §3.1 |
+| A storage failure while resolving a token | 500, logged, access denied — not `Invalid token`, which would misreport a database fault as a credential problem | §3.2 |
+| Import: one value in a record fails validation | Nothing of that record is stored; other records in the call proceed; per-record detail in a fixed order | §3.7.2, REQ-API-035, REQ-API-139 |
+| Import: an unknown event name anywhere in the batch | 400, no rows applied; each distinct value reported once | §3.7.3, REQ-API-140 |
+| Write to a project in analysis mode | 403 `Project in analysis mode` (data API); survey submissions included | §3.2, REQ-API-109 |
+| Two submissions race on one survey link | The conditional stamp lets one transaction store; the other rolls back to 410 with nothing written | §3.10 |
+| A spent survey link vs. a revoked or unknown one | 410 `Survey already submitted` vs. the shared 401 `Invalid token` | §3.2, §3.10 |
+| A caller exceeds the per-minute budget | 429 with `Retry-After`; the source IP stays blocked for the configured period, not extended by further calls | §3.9, REQ-API-113 |
+| A forwarded `X-Real-IP` from an untrusted peer | Ignored; the connection address is used | §3.9, REQ-API-125 |
+| A stale `X-Internal-Session-Epoch` | 401 `session_revoked`, `admin_rejected` audited; PHP ends the session | §4.2, REQ-API-147 |
+| A change that would leave zero enabled administrators | 409 `conflict`, nothing written, no audit entry | REQ-API-136, DEV-API-22 |
+| Deleting an arm with events or data, a group with records, or a field an expression references | 409 `conflict` | §4.2 |
+| A mode change while a staging set is open | 409 `conflict` for every transition | §4.21, REQ-API-105 |
+| A breaking setup change in analysis mode without acknowledgement | 409 naming the change; repeated with `acknowledge_breaking: true` it applies | §4.21, REQ-API-111 |
+| An unexpected server failure | 500 `internal` with no detail in the body; the error and its code site are logged, never tokens or values | §3.2, §4.2, REQ-API-005 |

@@ -353,3 +353,37 @@ Rules:
 **Design time** (creating or updating the field, REQ-API-068/069): the grammar parses; every source and output field names an existing value-carrying field of the same instrument; record-transfer target references resolve against the current database state — target project exists, event exists, target field exists, carries values and is active at that pair (REQ-VAL-046, REQ-DB-050); and a project-creation template exists when the instruction names one (REQ-VAL-047). An unknown target or template project is **named** in the rejection: a deliberate bounded disclosure of project-name existence (REQ-DB-050), accepted so typo'd references fail where the designer sees them — runtime authorization stays strict and never discloses (REQ-API-165, REQ-API-007). A rejection names the argument at fault in terms the designer typed it in: an operation carrying the wrong number of arguments answers with the shape it takes and how many the line gave it — so a stray fifth `create_project` argument reads as exactly that, not as a rejected field reference — and a project-name argument that is not a field of this instrument is answered by what it should have been.
 
 **Runtime**: every execution re-parses and re-resolves the whole config against the live design before writing anything (`API_Endpoints_Design.md` §4.27) — a target whose design moved under a saved config fails then (and its button goes absent per the availability probe, REQ-API-166), never silently writes to a stale position.
+
+## 13. Rationale and Trade-offs
+
+Why validation works this way, and what each choice costs. The decision records DEV-VAL-1…13 (`Requirements/Data_Validation_Requirements.md` §8) carry the requirement-level reasoning.
+
+- **One pipeline, one choke point** (§2). Every value — data-API import, UI data entry, survey link — passes the same ordered steps in the API, so no entry path can store what another would refuse. Client-side checks are advisory only (`User_Interface_Design.md` §8.4, REQ-VAL-002); the server is the gate.
+- **Rules come only from the data dictionary** (§2, REQ-VAL-003). There are no per-project or per-caller rule sets, so a design export carries every rule a value is held to, and an import into another project applies the same ones.
+- **All-or-nothing per record** (§2, REQ-VAL-008). A record is never half-written; other records in the same call are unaffected (`API_Endpoints_Design.md` §3.7.2).
+- **Partial records are first-class** (§8, DEV-VAL-5). `required` is presented and checked in the form but never rejects an import; completion is tracked by the record status dashboard. The cost is that the database can hold records a form would call incomplete — by design.
+- **Calculation problems yield an empty value, not a failed import** (§6.3, REQ-VAL-038). A missing operand or a division by zero must not block the entry of a valid value elsewhere; the problem is application-logged for the designer to fix.
+- **Branching is display-only** (§7, GD-13). It decides what the form shows, never what may be stored, so a branching change cannot invalidate stored data and no stored value depends on how an expression is read (DEV-VAL-13).
+- **REDCap's spellings are accepted as written** (§7.1, DEV-VAL-12). Dictionaries imported from REDCap keep their text choice codes, `or`/`and` keywords and `= ''` blank tests; the cost is a grammar with more than one spelling for the same thing.
+- **Sanitize at store, render as stored** (§5). Free-form text is sanitized to an HTML allowlist once, when stored, so every reader can render it without its own sanitizer; all other content is escaped at render (`User_Interface_Design.md` §3.2).
+
+## 14. Edge Cases and Failure Modes
+
+| Situation | Behavior | Specified in |
+|---|---|---|
+| Unknown field name in an import | `UNKNOWN_FIELD`; the record fails, the value is not stored | §2, DEV-VAL-1 |
+| A value for a `description`, `header`, `transfer` or `calculated` field | `NON_VALUE_FIELD` / `CALCULATED_READONLY` | §2 |
+| An empty value | "No value": clears a stored value or does nothing; an empty record identifier is `EMPTY_IDENTIFIER` | §2, REQ-VAL-024/026 |
+| An existing record's identifier is changed | `IDENTIFIER_CHANGE`; delete and re-import is the supported path | §2, DEV-VAL-3 |
+| A date that is not a calendar date (`2026-02-30`) or a time like `25:00` | `TYPE_INVALID` | §4.1 |
+| A date without an explicit zone | Stored with the zone of the call (`tz`, browser) or `APP_TIMEZONE`, never converted to UTC | §4.1, DEV-VAL-10 |
+| Free text with control characters or invalid UTF-8 | `CONTENT_INVALID`; tab and line feed are allowed, CR is normalized to LF | §5.1 |
+| A registry pattern that does not compile | The entry is unusable; assigning it at design time is rejected with a reason | §4.2 |
+| A calculation with a missing operand, non-numeric operand or division by zero | Empty result for that position; the import still succeeds; the problem is application-logged | §6.3 |
+| An unchecked checkbox box in a calculation or branching | Reads `0`, never a missing operand | §6.3, §7.3 |
+| Deleting a field a calculated expression references | Rejected until the expression no longer references it | §6.2 |
+| The transaction that triggered a recomputation rolls back | The recomputation rolls back with it | §6.3 |
+| Comparison where either side is a missing value | `0` for every operator, except the blank test with `''`, which is true | §7.3 |
+| Two date values in different collection offsets | Compared as absolute instants | §7.3 |
+| A shorthand `[field]` in branching vs. in `filterLogic` | Branching: the current event; `filterLogic`: the project's first event | §7.3, DEV-VAL-13 |
+| A transfer target whose design changed after the instruction was saved | Re-resolved at execution; a stale reference fails then instead of writing to a stale place | §12.2 |
