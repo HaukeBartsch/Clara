@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Development stack for the Playwright specs (REQ-TECH-028, Design/Technology_Stack_Design.md §6):
 # the real Go API on a throwaway SQLite file plus web/public under `php -S`, wired together with
-# the three authentication-source names the login spec asserts against.
+# the four authentication-source names the login spec asserts against.
 #
 #   ./e2e/dev-stack.sh                      # then, in another shell:
 #   CLARA_WEB_URL=http://127.0.0.1:8090 npx playwright test --config e2e/playwright.config.ts
@@ -20,10 +20,11 @@
 # refuses to start while either port is already taken (see the preflight section): an earlier run
 # still holding a port would leave the specs aimed at a stale server.
 #
-# Two of the three names point at directories that are not there (ports 1 and 2 never answer). That
+# Two of the four names point at directories that are not there (ports 1 and 2 never answer). That
 # is the fixture, not an oversight: an unreachable directory is the only way a browser can observe
 # "the sign-in service could not be reached" as distinct from "wrong password" (§2.2 step 4). A real
-# directory belongs to a deployment test, not to this harness.
+# directory belongs to a deployment test, not to this harness. A third name, "PingFed", stands for a
+# PingFederate OIDC provider, by default on port 3, where nothing answers either (see pingfed_* below).
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -39,6 +40,17 @@ bootstrap_email="admin@example.org"
 bootstrap_password="${stack_seed}-pw"
 service_token="${stack_seed}-svc"
 anon_salt="${stack_seed}-salt"
+
+# PingFederate behind the name "PingFed" (OAUTH2_1_*, as in .env.example's PingFederate example).
+# It is the name's only source, so choosing it goes straight into the provider's flow (REQ-AUTH-066);
+# by default nothing answers the issuer, so that flow fails at discovery. To sign in through a real
+# PingFederate, export CLARA_PINGFED_ISSUER (the `issuer` of its discovery document, copied
+# exactly), CLARA_PINGFED_CLIENT_ID and CLARA_PINGFED_CLIENT_SECRET, and register
+# http://127.0.0.1:<web port>/auth/callback as the client's redirect URI (the API's
+# WEB_PUBLIC_URL default).
+pingfed_issuer="${CLARA_PINGFED_ISSUER:-http://127.0.0.1:3}"
+pingfed_client_id="${CLARA_PINGFED_CLIENT_ID:-clara}"
+pingfed_client_secret="${CLARA_PINGFED_CLIENT_SECRET:-${stack_seed}-oidc}"
 
 # --- the database --------------------------------------------------------------
 db_engine="${CLARA_DB:-sqlite}"
@@ -130,6 +142,10 @@ esac
   ADMIN_BOOTSTRAP_PASSWORD="$bootstrap_password" \
   LOG_LEVEL_API=info \
   WEB_PUBLIC_URL="http://127.0.0.1:$web_port" \
+  OAUTH2_1_ISSUER="$pingfed_issuer" \
+  OAUTH2_1_CLIENT_ID="$pingfed_client_id" \
+  OAUTH2_1_CLIENT_SECRET="$pingfed_client_secret" \
+  OAUTH2_1_NAMES=PingFed \
   "$state/server") > "$state/api.log" 2>&1 &
 api_pid=$!
 
@@ -175,6 +191,9 @@ env APP_ENV=development \
   LDAP_SERVER_2_URL="ldap://127.0.0.1:2" \
   LDAP_SERVER_2_SEARCH_BASE="dc=hospital2,dc=example,dc=org" \
   LDAP_SERVER_2_NAMES="OUS (Oslo)" \
+  OAUTH2_1_ISSUER="$pingfed_issuer" \
+  OAUTH2_1_CLIENT_ID="$pingfed_client_id" \
+  OAUTH2_1_NAMES=PingFed \
   php -d auto_prepend_file="$state/repo-root.php" \
     -S "127.0.0.1:$web_port" -t "$root/web/public" "$root/web/public/index.php" \
     > "$state/web.log" 2>&1 &
@@ -201,7 +220,7 @@ cat <<EOF
 CLARA_WEB_URL=http://127.0.0.1:$web_port
 database: $db_engine$( [[ "$db_engine" == mariadb ]] && echo " ($mariadb_name)" )
 bootstrap administrator: $bootstrap_email / $bootstrap_password (local source "Local")
-source names: Local, Hospital 1 (unreachable directory), Hospital 2 (unreachable directory)
+source names: Ahus (Akerhus), OUS (Oslo) (unreachable directories), PingFed (PingFederate at $pingfed_issuer), Local
 logs: $state/api.log, $state/web.log
 
 Ctrl-C stops both. Specs:

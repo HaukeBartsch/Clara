@@ -629,13 +629,8 @@ final class Router
             return $this->view->render('errors/server', [
                 'title' => $this->i18n->t('error.server.page_title'),
                 'body' => $this->i18n->t('error.server.page_body'),
-                'ref_line' => $this->request->ref() !== ''
-                    ? $this->i18n->t('error.reference', ['ref' => $this->request->ref()])
-                    : '',
-                'detail' => $e !== null && $this->config->isDevelopment
-                    ? trim($e::class . ': ' . $e->getMessage()
-                        . ($e->endpoint() !== '' ? ' at ' . $e->endpoint() : ''))
-                    : '',
+                'ref_line' => Messages::referenceLine($this->i18n, $this->request->ref()),
+                'detail' => Messages::pageDetail($e, $this->config->isDevelopment),
             ], ['layout' => null]);
         } catch (\Throwable) {
             // The view itself failed (often a missing template): answer plainly.

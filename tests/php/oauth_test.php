@@ -8,6 +8,7 @@ use Clara\ApiClient;
 use Clara\Config;
 use Clara\Logger;
 use Clara\Oauth;
+use Clara\Request;
 use Clara\Session;
 
 function oauth_config(array $overrides = []): Config
@@ -255,5 +256,83 @@ describe('OAuth2 authorization code through the Go API (Sequence A)', function (
 
         assert_contains('revoked_gracefully', $body);
         assert_contains('provider_sent_a_twist', $body);
+    });
+});
+
+describe('a provider round trip that cannot start (§2.2)', function (): void {
+    $unavailable = [
+        'error' => 'provider_unavailable', 'message' => 'the authentication provider could not be reached', 'status' => 502,
+    ];
+
+    it('forgets the chosen name, so the next visit shows the picker instead of the same failure', function () use ($unavailable): void {
+        // A name whose only source is one provider starts its round trip from GET /login itself
+        // (REQ-AUTH-066). Remembered after a failed start, it would fail every later visit too.
+        api_route('/api/v1/auth/oauth/start', $unavailable, 502);
+        api_route('/api/v1/i18n/bundle', ['language' => 'en', 'strings' => []]);
+        $config = oauth_config(['OAUTH2_1_NAMES' => 'PingFed', 'LOCAL_LOGIN_NAMES' => 'Local']);
+        Session::selectSourceName('PingFed');
+
+        $response = router_for(new Request('GET', '/login', browser_headers(), [], [], [], 'a3f9c21e'), $config)->dispatch();
+
+        assert_same(503, $response->status());
+        assert_contains('The sign-in service could not be reached', $response->body());
+        // What the generic 500 page showed for debugging (REQ-UI-050); test_config is development.
+        assert_contains('Reference: a3f9c21e', $response->body());
+        assert_contains(
+            'Clara\ApiException: the authentication provider could not be reached at POST /api/v1/auth/oauth/start'
+                . ' (OAUTH2_1_ISSUER=https://idp.example.org)',
+            $response->body()
+        );
+        assert_contains('<a class="btn btn-primary btn-sm mt-3" href="/login">Back to sign-in</a>', $response->body());
+        assert_same('', Session::selectedSourceName());
+        assert_true(!isset($_SESSION['_oauth_txn']), 'a failed start leaves no transaction behind');
+
+        $again = router_for(http_request('GET', '/login', browser_headers()), $config)->dispatch();
+
+        assert_same(200, $again->status());
+        assert_contains('data-clara-source-picker', $again->body());
+        assert_same(1, api_calls_to('/api/v1/auth/oauth/start'));
+    });
+
+    it('keeps the provider address and the failing call off the page in production (REQ-UI-050)', function () use ($unavailable): void {
+        api_route('/api/v1/auth/oauth/start', $unavailable, 502);
+        api_route('/api/v1/i18n/bundle', ['language' => 'en', 'strings' => []]);
+        $config = oauth_config([
+            'OAUTH2_1_NAMES' => 'PingFed', 'LOCAL_LOGIN_NAMES' => 'Local',
+            'APP_ENV' => 'production', 'WEB_PUBLIC_URL' => 'https://csms.example.org',
+        ]);
+        Session::selectSourceName('PingFed');
+
+        $body = router_for(new Request('GET', '/login', browser_headers(), [], [], [], 'a3f9c21e'), $config)
+            ->dispatch()->body();
+
+        assert_contains('The sign-in service could not be reached', $body);
+        assert_contains('Reference: a3f9c21e', $body);
+        assert_not_contains('idp.example.org', $body);
+        assert_not_contains('/api/v1/', $body);
+    });
+
+    it('answers a provider button whose start fails with the same page', function () use ($unavailable): void {
+        api_route('/api/v1/auth/oauth/start', $unavailable, 502);
+        api_route('/api/v1/i18n/bundle', ['language' => 'en', 'strings' => []]);
+        $config = oauth_config([
+            'OAUTH2_2_ISSUER' => 'https://idp2.example.org',
+            'OAUTH2_2_CLIENT_ID' => 'csms',
+            'OAUTH2_2_NAMES' => 'Hospital 1',
+            'LOCAL_LOGIN_NAMES' => 'Local',
+        ]);
+        $_SESSION = ['csrf_token' => str_repeat('c', 64)];
+        Session::selectSourceName('Hospital 1');
+
+        $response = router_for(http_request(
+            'POST', '/login', browser_headers(),
+            ['csrf_token' => str_repeat('c', 64), 'provider' => '2'],
+            ['action' => 'oauth']
+        ), $config)->dispatch();
+
+        assert_same(503, $response->status());
+        assert_contains('href="/login">Back to sign-in</a>', $response->body());
+        assert_same(2, api_request_body('/api/v1/auth/oauth/start')['provider']);
+        assert_same('', Session::selectedSourceName());
     });
 });

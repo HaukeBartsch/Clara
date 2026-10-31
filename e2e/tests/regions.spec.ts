@@ -8,8 +8,9 @@ import { expect, test, type APIRequestContext, type Page } from "@playwright/tes
 // Members, projects and memberships are seeded through the administration API with the development
 // service token of e2e/dev-stack.sh, so each test sees exactly the projects it made — the bootstrap
 // administrator sees every project, and its region is left alone because other specs share it.
-// The dev stack configures no OAuth2 provider, so the role mapping itself is covered by the Go and
-// PHP suites (regions_test.go, regions_test.php); here the section shows its unconfigured state.
+// The dev stack's one OAuth2 provider (PingFed) reads no roles claim, so the role mapping itself is
+// covered by the Go and PHP suites (regions_test.go, regions_test.php); here the section shows its
+// unconfigured state.
 
 const API_URL = process.env.CLARA_API_URL ?? "http://127.0.0.1:8085"
 const SERVICE_TOKEN = process.env.CLARA_SERVICE_TOKEN ?? "clara-dev-481516-svc" // dev-stack.sh, development only

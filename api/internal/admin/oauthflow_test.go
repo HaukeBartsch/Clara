@@ -11,7 +11,9 @@ package admin
 // outage from claim release (the behaviours .env.example documents for it).
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -110,6 +112,42 @@ func TestOAuthDiagnosticSeparatesNoAnswerFromBadAnswer(t *testing.T) {
 	}
 	if report.DiscoveryStatus != 0 {
 		t.Errorf("discovery_status = %d, want 0 for a host that never answered", report.DiscoveryStatus)
+	}
+}
+
+// TestOAuthStartLogsWhereAndWhyTheProviderWasUnreachable keeps the cause of an outage findable:
+// the 502 says only "could not be reached", so the log line is the one place that names the
+// discovery URL tried and the reason it failed, and the response must not grow either.
+func TestOAuthStartLogsWhereAndWhyTheProviderWasUnreachable(t *testing.T) {
+	var logged bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+	defer slog.SetDefault(prev)
+
+	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	downURL := down.URL
+	down.Close() // the address stands, nothing listens
+
+	e := newEnv(t)
+	e.Cfg.OAuth2 = []config.OAuth2Provider{providerAtIssuer(downURL + "/idp")}
+
+	rec := e.do("POST", "/api/v1/auth/oauth/start", map[string]any{"provider": 1}, nil)
+	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), reasonProviderUnavail) {
+		t.Fatalf("start = %d %s, want 502 %s", rec.Code, rec.Body.String(), reasonProviderUnavail)
+	}
+	if strings.Contains(rec.Body.String(), downURL) {
+		t.Errorf("the response names the provider's address; only the log may: %s", rec.Body.String())
+	}
+
+	line := logged.String()
+	if !strings.Contains(line, "oauth provider unreachable") {
+		t.Fatalf("no unreachable-provider log line; log:\n%s", line)
+	}
+	if !strings.Contains(line, downURL+"/idp/.well-known/openid-configuration") {
+		t.Errorf("the log line does not name the discovery URL tried; log:\n%s", line)
+	}
+	if !strings.Contains(line, "dial tcp") {
+		t.Errorf("the log line does not name the cause; log:\n%s", line)
 	}
 }
 

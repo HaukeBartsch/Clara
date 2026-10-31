@@ -4,14 +4,16 @@ import { expect, test, type Page } from "@playwright/test"
 // stack: what the source picker offers for a name, and how a directory behind that name changes the
 // answer the user reads (Design/Technology_Stack_Design.md §6, REQ-TECH-028).
 //
-// `e2e/dev-stack.sh` starts an installation with three names — "Ahus (Akerhus)" and "OUS (Oslo)"
-// (directories pointed at ports nothing listens on) and "Local" (the API's own account store). The
+// `e2e/dev-stack.sh` starts an installation with four names — "Ahus (Akerhus)" and "OUS (Oslo)"
+// (directories pointed at ports nothing listens on), "PingFed" (a PingFederate OIDC provider) and
+// "Local" (the API's own account store). The
 // unreachable directories are the point: they are what makes "the directory was down" observable in a browser as
 // something other than "wrong password" (§2.2 step 4). As in smoke.spec.ts, no CLARA_WEB_URL means no
 // page tests — the suite stays green without an application to point at.
 
 const AHUS = "Ahus (Akerhus)"
 const OUS = "OUS (Oslo)"
+const PINGFED = "PingFed"
 // The dev stack's own bootstrap account (dev-stack.sh: "${stack_seed}-pw"), development only.
 const ADMIN_PASSWORD = "clara-dev-481516-pw"
 
@@ -33,7 +35,7 @@ test.describe("login through a named source (§2.9)", () => {
 
     await expect(page.locator("form[data-clara-source-picker]")).toBeVisible()
     // The institutions by name, the installation's own account store last (REQ-UI-042).
-    await expect(page.locator("form[data-clara-source-picker] label")).toHaveText([AHUS, OUS, "Local"])
+    await expect(page.locator("form[data-clara-source-picker] label")).toHaveText([AHUS, OUS, PINGFED, "Local"])
 
     // Nothing can verify a password until a name is chosen, so no form is offered for the empty
     // selection — a form whose every answer is "not recognised" is what §2.2 rules out.
@@ -149,5 +151,32 @@ test.describe("login through a named source (§2.9)", () => {
     await expect(sourceRadio(page, OUS)).toBeChecked()
     await expect(page.locator("form[data-clara-source-picker] input[type=radio]:checked")).toHaveCount(1)
     await expect(page.locator(".clara-sources")).toHaveClass(/clara-sources-chosen/)
+  })
+
+  test("a provider that cannot be reached leads back to the picker, not into a loop", async ({ page }) => {
+    // PingFed is that name's only source, so choosing it starts the provider's round trip at
+    // once (REQ-AUTH-066); the dev stack's default issuer never answers, so discovery fails.
+    await page.goto("/login")
+    await sourceRadio(page, PINGFED).click()
+
+    await expect(page.getByRole("heading", { level: 1, name: "Service unavailable" })).toBeVisible()
+    await expect(page.locator("body")).toContainText("The sign-in service could not be reached")
+    // What the page keeps for debugging (REQ-UI-050): the reference always, and on this
+    // development stack the API's reason, the failing call and the provider it could not reach.
+    await expect(page.locator("body")).toContainText(/Reference: \S+/)
+    await expect(page.locator("body")).toContainText("could not be reached at POST /api/v1/auth/oauth/start")
+    await expect(page.locator("body")).toContainText(/\(OAUTH2_1_ISSUER=https?:\/\/\S+\)/)
+
+    // The failed start forgot the name: the picker waits for a choice again rather than
+    // sending this session back into the same failing start (§2.2).
+    await page.getByRole("link", { name: "Back to sign-in" }).click()
+    // A followed link, unlike goto(), returns before login.js runs — and without it a chosen
+    // name is never submitted.
+    await page.waitForLoadState("load")
+    await expect(page.locator("form[data-clara-source-picker]")).toBeVisible()
+    await expect(page.locator("form[data-clara-source-picker] input[type=radio]:checked")).toHaveCount(0)
+
+    await chooseSource(page, "Local")
+    await expect(page.locator("#login-password")).toBeVisible()
   })
 })

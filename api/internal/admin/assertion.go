@@ -650,6 +650,9 @@ func discoveryFailure(err error) *assertionFailure {
 			"the provider's issuer does not match the one configured for it")
 	}
 	if isTransportFailure(err) {
+		// The response says only "could not be reached"; the error names the discovery URL
+		// and the cause — refused, DNS, TLS, timeout — which is what the operator acts on.
+		slog.Warn("oauth provider unreachable", "error", err) // a discovery URL, not token material (REQ-AUTH-036)
 		return newFailure(reasonProviderUnavail, http.StatusBadGateway,
 			"the authentication provider could not be reached")
 	}

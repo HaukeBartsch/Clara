@@ -104,6 +104,19 @@ describe('API errors → user messages (§3.4)', function (): void {
         assert_contains('Reference: a3f9c21e', $prod);
     });
 
+    it('gives an error page its reference always and its technical detail in development only (REQ-UI-050)', function (): void {
+        $e = new ApiException('provider_unavailable', 'the authentication provider could not be reached', 502, [], 'POST /api/v1/auth/oauth/start');
+
+        assert_same('Reference: a3f9c21e', Messages::referenceLine(translator(), 'a3f9c21e'));
+        assert_same('', Messages::referenceLine(translator(), ''));
+        assert_same(
+            'Clara\ApiException: the authentication provider could not be reached at POST /api/v1/auth/oauth/start',
+            Messages::pageDetail($e, true)
+        );
+        assert_same('', Messages::pageDetail($e, false), 'production keeps the internals off the page');
+        assert_same('', Messages::pageDetail(null, true));
+    });
+
     it('omits the reference from the generic line when the request has none', function (): void {
         $text = Messages::forApiException(translator(), failure('internal', '', 500));
 

@@ -73,6 +73,9 @@ return [
     'login.failure.expired' => 'This account’s validity period has ended — an administrator must extend it.',
     'login.failure.mfa_code' => 'That code is wrong or has expired.',
     'login.failure.provider_unavailable' => 'The sign-in service could not be reached. Please try again shortly.',
+    // The way back from a provider whose sign-in could not start (§2.2): the failed
+    // start forgot the chosen name, so /login shows the picker again.
+    'login.unavailable.back' => 'Back to sign-in',
     'login.failure.email_unverified' => 'Your identity provider did not verify your e-mail address. Please contact your administrator.',
     'login.failure.state_mismatch' => 'The sign-in attempt was interrupted. Please try again.',
     // The proof behind a challenge lapsed (REQ-API-131): not a wrong code, and

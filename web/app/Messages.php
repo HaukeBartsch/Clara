@@ -46,6 +46,28 @@ final class Messages
         };
     }
 
+    /**
+     * An error page's correlation-reference line (REQ-UI-050): what a user quotes and an
+     * operator greps the log for; '' when the request carries no reference.
+     */
+    public static function referenceLine(I18n $i18n, string $ref): string
+    {
+        return $ref !== '' ? $i18n->t('error.reference', ['ref' => $ref]) : '';
+    }
+
+    /**
+     * An error page's technical detail — exception class, the API's message and the failing
+     * call — in development only, and '' in every other environment (REQ-UI-050, REQ-API-006).
+     */
+    public static function pageDetail(?ApiException $e, bool $isDevelopment): string
+    {
+        if ($e === null || !$isDevelopment) {
+            return '';
+        }
+
+        return trim($e::class . ': ' . $e->getMessage() . ($e->endpoint() !== '' ? ' at ' . $e->endpoint() : ''));
+    }
+
     /** 429 with the wait the API asked for (REQ-AUTH-035). */
     public static function rateLimited(I18n $i18n, ApiException $e): string
     {

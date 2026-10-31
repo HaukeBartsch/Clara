@@ -46,7 +46,7 @@ final class LoginController extends Controller
             $providers = $this->auth->oauthProvidersFor($name);
 
             if (count($providers) === 1 && !$this->auth->offersCredentialForm($name)) {
-                return Response::redirect($this->auth->beginOauthRedirect($providers[0], $name));
+                return $this->startOauth($providers[0], $name);
             }
         }
 
@@ -83,13 +83,66 @@ final class LoginController extends Controller
 
         foreach ($providers as $provider) {
             if ((int) $provider['index'] === $wanted) {
-                return Response::redirect($this->auth->beginOauthRedirect($provider, $this->selectedName()));
+                return $this->startOauth($provider, $this->selectedName());
             }
         }
 
         // A provider the selected name does not offer is not offered — including the case
         // where a hand-made request names one under another name (§2.9).
         return $this->renderCredentials('', $this->i18n->t('login.failure.provider_unavailable'));
+    }
+
+    /**
+     * Sequence A step 1 for one provider, or the page saying it could not start (§2.2). The
+     * start fails before the browser leaves — at discovery, REQ-API-173 — and the chosen name
+     * is forgotten with it: kept, it would send every later visit to /login straight back
+     * into the same failing start, and this session could never reach the picker again.
+     *
+     * @param array<string, string|int> $provider one entry of Auth::oauthProvidersFor()
+     */
+    private function startOauth(array $provider, string $name): Response
+    {
+        try {
+            return Response::redirect($this->auth->beginOauthRedirect($provider, $name));
+        } catch (ApiException $e) {
+            Session::selectSourceName('');
+            // `reason`, not `code`: the logger drops every `code` value as a possible OAuth code.
+            $this->logger->warn('oauth start failed', [
+                'provider' => (string) $provider['issuer'],
+                'reason' => $e->code(),
+                'status' => (string) $e->status(),
+            ]);
+
+            $page = $this->standalone('errors/server', [
+                'title' => $this->i18n->t('error.server.page_title'),
+                'body' => Messages::loginFailure($this->i18n, $e),
+                // What the generic 500 page shows for a failure, for whoever has to debug it:
+                // the reference always, the API's reason and the failing call in development.
+                'ref_line' => Messages::referenceLine($this->i18n, $this->request->ref()),
+                'detail' => $this->withIssuer(Messages::pageDetail($e, $this->config->isDevelopment), $provider),
+                'back_href' => '/login',
+                'back_label' => $this->i18n->t('login.unavailable.back'),
+            ], ['titleKey' => 'error.server.page_title']);
+
+            // A render answers 200; this page reports a service that is down.
+            return Response::html($page->body(), 503);
+        }
+    }
+
+    /**
+     * The failing call names CLARA's own API, which answered; what could not be reached is
+     * the provider, so the detail names the setting that points at it. Development only, like
+     * the detail it extends: an empty detail stays empty (REQ-UI-050).
+     *
+     * @param array<string, string|int> $provider
+     */
+    private function withIssuer(string $detail, array $provider): string
+    {
+        if ($detail === '') {
+            return '';
+        }
+
+        return $detail . ' (OAUTH2_' . (int) $provider['index'] . '_ISSUER=' . (string) $provider['issuer'] . ')';
     }
 
     /**
