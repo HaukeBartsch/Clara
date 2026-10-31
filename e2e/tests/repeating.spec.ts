@@ -127,11 +127,11 @@ test.describe("repeating instruments (REQ-UI-054, REQ-UI-055)", () => {
     await form.locator("[data-clara-save]").click()
     await expect(success(page)).toContainText("visits")
 
-    // --- the dashboard: one dot, then "+" opens instance 2 ---
+    // --- the dashboard: one counter, then "+" opens instance 2 ---
     await page.locator("#clara-nav").getByRole("link", { name: "Record Status Dashboard" }).click()
     const cell = visitsCell(page, "RP001")
-    await expect(cell.locator(".clara-state")).toHaveCount(1)
-    await expect(cell.locator(".clara-state-some_data")).toHaveCount(1)
+    await expect(cell.locator("svg.counter")).toHaveCount(1)
+    await expect(cell.locator("svg.counter-yellow")).toHaveCount(1)
     await cell.locator("a.clara-instance-add").click()
     await expect(page).toHaveURL(/instrument=visits&instance=2/)
     await expect(page.locator('.clara-instance-nav [data-clara-instance="2"] a')).toHaveAttribute("aria-current", "page")
@@ -146,7 +146,7 @@ test.describe("repeating instruments (REQ-UI-054, REQ-UI-055)", () => {
     await expect(form.getByLabel("Visit note")).toHaveValue("first visit")
 
     await page.locator("#clara-nav").getByRole("link", { name: "Record Status Dashboard" }).click()
-    await expect(visitsCell(page, "RP001").locator(".clara-state")).toHaveCount(2)
+    await expect(visitsCell(page, "RP001").locator("svg.counter")).toHaveCount(2)
     await expect(visitsCell(page, "RP001").locator("a.clara-instance-add")).toHaveAttribute("data-instance", "3")
 
     // --- the data API exports one REDCap row per instance (REQ-API-155) ---
@@ -163,9 +163,9 @@ test.describe("repeating instruments (REQ-UI-054, REQ-UI-055)", () => {
     await setRepeating(page, false)
     await page.locator("#clara-nav").getByRole("link", { name: "Record Status Dashboard" }).click()
     await expect(page.locator('.clara-record-status [data-instrument="visits"]')).not.toHaveAttribute("data-repeating", "1")
-    await expect(visitsCell(page, "RP001").locator(".clara-state")).toHaveCount(1)
+    await expect(visitsCell(page, "RP001").locator("svg.counter")).toHaveCount(1)
     await setRepeating(page, true)
     await page.locator("#clara-nav").getByRole("link", { name: "Record Status Dashboard" }).click()
-    await expect(visitsCell(page, "RP001").locator(".clara-state")).toHaveCount(2)
+    await expect(visitsCell(page, "RP001").locator("svg.counter")).toHaveCount(2)
   })
 })

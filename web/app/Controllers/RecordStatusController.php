@@ -16,6 +16,10 @@
 // opens the next instance in the record view; the column header marks it. Which pairs repeat
 // is the instrument list's `repeating_events` (REQ-API-154), read once per render.
 //
+// Each indicator is a square of nine dots, the lit ones showing how many of the instrument's
+// fields hold a value (REQ-UI-081). That count is a read of its own (REQ-API-171), which the
+// same region relays when asked with `?counts=1`, so the grid never waits for it.
+//
 // New participant (§6.3): a record name typed by the user or proposed by the data API's
 // `generateNextRecordName` (REQ-API-023), then the record view opens on it; nothing is stored
 // until its first import (REQ-API-033), which also places it in the member's active data
@@ -114,6 +118,8 @@ final class RecordStatusController extends DataEntryController
             ] : null,
             // The explanation that takes the form's place for a viewer who holds no token.
             'notMember' => $offer && !$member,
+            // The completeness count's region (REQ-UI-081), read beside the rows.
+            'countUrl' => '/projects/' . $projectId . '/record-status?counts=1',
         ], [
             'scripts' => ['/assets/app.js', '/assets/js/record-status.js'],
             // The rows bind into a virtually rendered Tabulator grid (AGENTS.md "use Tabulator").
@@ -121,7 +127,7 @@ final class RecordStatusController extends DataEntryController
             'jsKeys' => ['js.loading', 'js.load_failed', 'js.retry', 'records.empty',
                 'records.state.no_data', 'records.state.some_data', 'records.state.finished',
                 'records.open_cell', 'records.open_instance', 'records.add_instance', 'records.more_instances',
-                'records.loading_count', 'records.load_incomplete'],
+                'records.loading_count', 'records.load_incomplete', 'records.count', 'records.count_none'],
         ], $mode);
     }
 
@@ -168,17 +174,19 @@ final class RecordStatusController extends DataEntryController
      * cell also lists its instances as `[instance, state]` pairs under the same key in
      * `instances` (REQ-API-156). Authorized like the page — the same detail read and
      * data-access gate — and disclosing exactly what the API's record-status read does: names
-     * and states, no values (REQ-API-074).
+     * and states, no values (REQ-API-074). With `?counts=1` the rows are the completeness
+     * count instead (countRow, REQ-API-171): names and counts, no values either.
      */
     public function data(): Response
     {
         $detail = $this->projectDetail();
         $this->requireDataAccess($detail);
         $projectId = $this->projectIdOf($detail);
+        $counts = $this->countsAsked();
 
         $records = [];
-        foreach ($this->api->get('/api/v1/projects/' . $projectId . '/record-status') as $row) {
-            $record = is_array($row) ? self::regionRow($row) : null;
+        foreach ($this->api->get('/api/v1/projects/' . $projectId . self::readOf($counts)) as $row) {
+            $record = is_array($row) ? self::rowOf($row, $counts) : null;
             if ($record !== null) {
                 $records[] = $record;
             }
@@ -190,17 +198,19 @@ final class RecordStatusController extends DataEntryController
     /**
      * The `records` region as newline-delimited JSON (REQ-UI-074, §6.3 Progressive load): the
      * API's streamed record-status read (REQ-API-172) relayed line by line, each record
-     * reshaped into the row data() serves, then the API's end line. Authorized like data()
-     * before anything is sent, so a refusal is still the region's JSON error; PHP holds one
-     * chunk of the transfer and its unfinished line, never the read.
+     * reshaped into the row data() serves, then the API's end line — the completeness count's
+     * read under `?counts=1` (REQ-UI-081). Authorized like data() before anything is sent, so
+     * a refusal is still the region's JSON error; PHP holds one chunk of the transfer and its
+     * unfinished line, never the read.
      */
     public function stream(): Response
     {
         $detail = $this->projectDetail();
         $this->requireDataAccess($detail);
-        $path = '/api/v1/projects/' . $this->projectIdOf($detail) . '/record-status';
+        $counts = $this->countsAsked();
+        $path = '/api/v1/projects/' . $this->projectIdOf($detail) . self::readOf($counts);
 
-        return Response::stream(function (StreamSink $sink) use ($path): void {
+        return Response::stream(function (StreamSink $sink) use ($path, $counts): void {
             $tail = '';
             try {
                 $this->api->stream($path, [],
@@ -220,13 +230,13 @@ final class RecordStatusController extends DataEntryController
                             'X-Accel-Buffering' => 'no',
                         ]);
                     },
-                    static function (string $chunk) use ($sink, &$tail): void {
+                    static function (string $chunk) use ($sink, $counts, &$tail): void {
                         // A chunk may end inside a line; that tail waits for the next chunk.
                         $lines = explode("\n", $tail . $chunk);
                         $tail = (string) array_pop($lines);
                         $out = '';
                         foreach ($lines as $line) {
-                            $out .= self::relayLine($line);
+                            $out .= self::relayLine($line, $counts);
                         }
                         if ($out !== '') {
                             $sink->write($out);
@@ -248,6 +258,29 @@ final class RecordStatusController extends DataEntryController
         });
     }
 
+    /** Whether the region is asked for the completeness count rather than the states (REQ-UI-081). */
+    private function countsAsked(): bool
+    {
+        return $this->request->query('counts') === '1';
+    }
+
+    /** The API read the region relays: the completeness count (REQ-API-171) or the states (REQ-API-074). */
+    private static function readOf(bool $counts): string
+    {
+        return $counts ? '/record-completeness' : '/record-status';
+    }
+
+    /**
+     * One record of the read as the region's row, shaped for the read it came from.
+     *
+     * @param array<mixed> $row
+     * @return array<string, mixed>|null
+     */
+    private static function rowOf(array $row, bool $counts): ?array
+    {
+        return $counts ? self::countRow($row) : self::regionRow($row);
+    }
+
     /** Sends an ordinary failure response through a stream's sink, before its first byte. */
     private static function fail(StreamSink $sink, Response $error): void
     {
@@ -261,7 +294,7 @@ final class RecordStatusController extends DataEntryController
      * then no longer matches what arrived, and the client reports a failed load rather than a
      * complete list (REQ-UI-074).
      */
-    private static function relayLine(string $line): string
+    private static function relayLine(string $line, bool $counts): string
     {
         $item = json_decode($line, true);
         if (!is_array($item)) {
@@ -269,7 +302,7 @@ final class RecordStatusController extends DataEntryController
         }
         $out = ($item['end'] ?? false) === true
             ? ['end' => true, 'records' => is_int($item['records'] ?? null) ? $item['records'] : -1]
-            : self::regionRow($item);
+            : self::rowOf($item, $counts);
 
         return $out === null ? '' : json_encode($out, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . "\n";
     }
@@ -304,6 +337,73 @@ final class RecordStatusController extends DataEntryController
 
         return ['record_id' => (string) $row['record_id'], 'events' => $events, 'cells' => (object) $cells,
             'instances' => (object) $instances];
+    }
+
+    /**
+     * One record of the completeness read (REQ-API-171) as the `?counts=1` region's row: each
+     * cell the read lists as `[filled, visible]` keyed `<unique_event_name>|<instrument>`, and a
+     * repeating cell's instances as `[instance, filled, visible]`; null for an entry without a
+     * record id. The record's sum and the hidden instruments are left out — no cell draws them
+     * (REQ-UI-081) — and, like the read, the row carries no value.
+     *
+     * @param array<mixed> $row
+     * @return array{record_id: string, counts: object, instances: object}|null
+     */
+    private static function countRow(array $row): ?array
+    {
+        if (!isset($row['record_id'])) {
+            return null;
+        }
+        $counts = [];
+        $instances = [];
+        foreach ((is_array($row['events'] ?? null) ? $row['events'] : []) as $event) {
+            $uen = (string) ($event['unique_event_name'] ?? '');
+            foreach ((is_array($event['instruments'] ?? null) ? $event['instruments'] : []) as $instrument) {
+                if (!is_array($instrument)) {
+                    continue;
+                }
+                $key = $uen . '|' . (string) ($instrument['name'] ?? '');
+                $counts[$key] = self::countOf($instrument);
+                if (is_array($instrument['instances'] ?? null)) {
+                    $instances[$key] = self::instanceCounts($instrument['instances']);
+                }
+            }
+        }
+
+        return ['record_id' => (string) $row['record_id'], 'counts' => (object) $counts,
+            'instances' => (object) $instances];
+    }
+
+    /**
+     * A count as `[filled, visible]`, neither below zero.
+     *
+     * @param array<mixed> $entry
+     * @return array{0: int, 1: int}
+     */
+    private static function countOf(array $entry): array
+    {
+        return [max(0, (int) ($entry['filled'] ?? 0)), max(0, (int) ($entry['visible'] ?? 0))];
+    }
+
+    /**
+     * A completeness `instances` list (REQ-API-156) as `[instance, filled, visible]` triples in
+     * ascending instance order; malformed entries are dropped.
+     *
+     * @param array<mixed> $instances
+     * @return list<array{0: int, 1: int, 2: int}>
+     */
+    public static function instanceCounts(array $instances): array
+    {
+        $out = [];
+        foreach ($instances as $entry) {
+            $n = is_array($entry) ? (int) ($entry['instance'] ?? 0) : 0;
+            if ($n >= 1) {
+                $out[$n] = [$n, ...self::countOf($entry)];
+            }
+        }
+        ksort($out);
+
+        return array_values($out);
     }
 
     /** A state the dashboard knows, or no_data. */

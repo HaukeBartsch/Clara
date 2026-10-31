@@ -560,6 +560,142 @@ h1 .clara-mode-badge {
 .clara-state-some_data { background-color: var(--bs-warning); border-color: var(--bs-warning-border-subtle); }
 .clara-state-finished { background-color: var(--bs-success); border-color: var(--bs-success-border-subtle); }
 
+/* The dashboard's completeness counter (§6.3, REQ-UI-081), after the master spec's CSS ("Visual
+   appearence"): its variables as they stand, and its counting — `counter-<n>` turns on n + 1
+   of the nine tiles, in the spec's order; a marker without a `counter-<n>` class has none on.
+   The page holds the spec's SVG once (web/views/partials/counter-sprite.php) and every marker
+   draws it with a `<use>`, so markers differ only in their classes. A `<use>` copy of the SVG
+   is out of reach of the spec's selectors (`svg.counter-2 path.index-3` matches no tile of the
+   copy), but inherited values reach it. So the marker carries the spec's tile style, which its
+   tiles inherit, and its `counter-<n>` class names the tiles that are on as `--index-<i>`, which
+   each tile of the one SVG reads; the table below is the spec's, tile for tile. */
+:root {
+  --fill-color-off: light-dark(#AAA, #555);
+  --fill-color-on: light-dark(#555, #AAA);
+  --line-color: #FFF;
+  --line-width: 12;
+  --fill-opacity: 0.8;
+}
+
+svg.counter {
+  fill: var(--fill-color-off);
+  stroke: var(--line-color);
+  stroke-width: var(--line-width);
+  fill-opacity: var(--fill-opacity);
+}
+
+#clara-counter .index-0 { fill: var(--index-0, var(--fill-color-off)); }
+#clara-counter .index-1 { fill: var(--index-1, var(--fill-color-off)); }
+#clara-counter .index-2 { fill: var(--index-2, var(--fill-color-off)); }
+#clara-counter .index-3 { fill: var(--index-3, var(--fill-color-off)); }
+#clara-counter .index-4 { fill: var(--index-4, var(--fill-color-off)); }
+#clara-counter .index-5 { fill: var(--index-5, var(--fill-color-off)); }
+#clara-counter .index-6 { fill: var(--index-6, var(--fill-color-off)); }
+#clara-counter .index-7 { fill: var(--index-7, var(--fill-color-off)); }
+#clara-counter .index-8 { fill: var(--index-8, var(--fill-color-off)); }
+
+svg.counter-0 {
+  --index-3: var(--fill-color-on);
+}
+svg.counter-1 {
+  --index-6: var(--fill-color-on);
+  --index-3: var(--fill-color-on);
+}
+svg.counter-2 {
+  --index-6: var(--fill-color-on);
+  --index-3: var(--fill-color-on);
+  --index-0: var(--fill-color-on);
+}
+svg.counter-3 {
+  --index-6: var(--fill-color-on);
+  --index-3: var(--fill-color-on);
+  --index-0: var(--fill-color-on);
+  --index-4: var(--fill-color-on);
+}
+svg.counter-4 {
+  --index-6: var(--fill-color-on);
+  --index-3: var(--fill-color-on);
+  --index-0: var(--fill-color-on);
+  --index-4: var(--fill-color-on);
+  --index-7: var(--fill-color-on);
+}
+svg.counter-5 {
+  --index-6: var(--fill-color-on);
+  --index-3: var(--fill-color-on);
+  --index-0: var(--fill-color-on);
+  --index-4: var(--fill-color-on);
+  --index-7: var(--fill-color-on);
+  --index-1: var(--fill-color-on);
+}
+svg.counter-6 {
+  --index-6: var(--fill-color-on);
+  --index-3: var(--fill-color-on);
+  --index-0: var(--fill-color-on);
+  --index-4: var(--fill-color-on);
+  --index-7: var(--fill-color-on);
+  --index-1: var(--fill-color-on);
+  --index-5: var(--fill-color-on);
+}
+svg.counter-7 {
+  --index-6: var(--fill-color-on);
+  --index-3: var(--fill-color-on);
+  --index-0: var(--fill-color-on);
+  --index-4: var(--fill-color-on);
+  --index-7: var(--fill-color-on);
+  --index-1: var(--fill-color-on);
+  --index-5: var(--fill-color-on);
+  --index-8: var(--fill-color-on);
+}
+svg.counter-8 {
+  --index-6: var(--fill-color-on);
+  --index-3: var(--fill-color-on);
+  --index-0: var(--fill-color-on);
+  --index-4: var(--fill-color-on);
+  --index-7: var(--fill-color-on);
+  --index-1: var(--fill-color-on);
+  --index-5: var(--fill-color-on);
+  --index-8: var(--fill-color-on);
+  --index-2: var(--fill-color-on);
+}
+
+/* The counter's colouring is a class of its own beside `counter-<n>` (§6.3): grey is the spec's
+   on/off pair above, used as is; amber (some data) and green (finished) are the dashboard's
+   state colours — on in the colour the single state dot was filled with, off in the colour of
+   its border — so every installed theme supplies their shades in light and dark (REQ-UI-040). */
+svg.counter.counter-yellow {
+  --fill-color-off: var(--bs-warning-border-subtle);
+  --fill-color-on: var(--bs-warning);
+}
+
+svg.counter.counter-green {
+  --fill-color-off: var(--bs-success-border-subtle);
+  --fill-color-on: var(--bs-success);
+}
+
+/* The spec's lines are white, the page's background on a light theme; on a dark one they take
+   the dark background, so the gaps between the tiles stay gaps rather than turning into white
+   rules. */
+[data-bs-theme=dark] {
+  --line-color: var(--bs-body-bg);
+}
+
+/* The holder of the counter's one SVG draws nothing and takes no room; it stays in the document,
+   where every marker's `<use>` finds it. */
+.clara-counter-sprite {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+/* Sized here rather than inline as in the spec: a little above the text so the share reads at a
+   glance in a condensed table row. */
+svg.counter {
+  width: 1.25rem;
+  height: 1.25rem;
+  vertical-align: middle;
+}
+
 .clara-state-link {
   display: inline-block;
   padding: 0.125rem 0.375rem;
@@ -591,12 +727,12 @@ h1 .clara-mode-badge {
 }
 
 /* In the dashboard's virtually rendered grid every row keeps one height: a repeating cell's
-   dots stay on one line, and the column is as wide as the most a cell can show — five dots,
-   "+k" with a three-digit k, and "+" — so a row that only renders while scrolling is never
-   clipped (record-status.js). */
+   dots stay on one line, and the column is as wide as the most a cell can show — five
+   indicators, "+k" with a three-digit k, and "+" — so a row that only renders while scrolling
+   is never clipped (record-status.js). */
 .clara-record-status-grid .clara-instances {
   flex-wrap: nowrap;
-  min-width: 11rem;
+  min-width: 12.5rem;
 }
 
 .clara-instance-more,

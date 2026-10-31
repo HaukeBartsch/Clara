@@ -8,7 +8,11 @@
  * that head as the column structure and replaces the table with a virtually rendered Tabulator
  * grid (AGENTS.md "use Tabulator"). Each cell is a link to the record view on that (record,
  * event, instrument) carrying the three-state colour code: grey no data, amber some data, green
- * finished (§6.3). No field value is ever on this page (REQ-API-074).
+ * finished (§6.3), on the master spec's 3×3 counter whose "on" tiles show how many of the
+ * instrument's fields hold a value (REQ-UI-081) — a count record-status.js reads from $countUrl
+ * beside the rows, and draws by cloning the marker from the page's template; every marker
+ * draws the page's one counter SVG and differs from the others only in its classes. No field
+ * value is ever on this page (REQ-API-074).
  *
  * New participant (§6.3): the control the project's naming mode offers — type a record ID, or
  * one click that assigns the next number (REQ-UI-052), never both; present only for a member
@@ -17,7 +21,7 @@
  * the form's place instead of an affordance that would only fail at Save.
  *
  * Reads: $arms, $newRecord (null | {arms, name, arm, naming}), $notMember, $statusUrl,
- * $recordBase.
+ * $countUrl, $recordBase.
  */
 
 use Clara\View;
@@ -68,13 +72,22 @@ $activeArm = (int) ($arms[0]['arm_num'] ?? 0);
     </div>
 <?php endif; ?>
 
-<!-- The colour code (§6.3). -->
-<p class="small mb-2 clara-legend">
-    <?php foreach (['no_data', 'some_data', 'finished'] as $state): ?>
-        <span class="clara-state clara-state-<?= $state ?>" aria-hidden="true"></span>
+<!-- The counter SVG, once for every marker on the page (REQ-UI-081). -->
+<?php require __DIR__ . '/../partials/counter-sprite.php'; ?>
+
+<!-- The colour code (§6.3) on the completeness counter (REQ-UI-081): each state in its colouring
+     with an example count — none, four and all nine tiles on. -->
+<p class="small mb-1 clara-legend">
+    <?php foreach (['no_data' => '', 'some_data' => 'counter-yellow counter-3', 'finished' => 'counter-green counter-8'] as $state => $counterClass): ?>
+        <?php require __DIR__ . '/../partials/counter.php'; ?>
         <span class="me-3"><?= View::e($view->t('records.state.' . $state)) ?></span>
     <?php endforeach; ?>
 </p>
+<!-- The marker record-status.js clones into every cell, adding its colouring and count. -->
+<template id="clara-counter-marker"><?php $counterClass = ''; require __DIR__ . '/../partials/counter.php'; ?></template>
+<p class="small text-body-secondary mb-2"><?= View::e($view->t('records.dots.help')) ?></p>
+<!-- Shown by record-status.js when the count cannot be read: the dots then show the state only. -->
+<p class="small text-danger mb-2 clara-counts-failed" role="status" hidden><?= View::e($view->t('records.counts_failed')) ?></p>
 
 <?php if ($arms === []): ?>
     <p class="clara-region-empty"><?= View::e($view->t('records.no_arms')) ?></p>
@@ -113,7 +126,7 @@ $activeArm = (int) ($arms[0]['arm_num'] ?? 0);
                 <!-- The arm's `records` region: the table below is its column structure and loading
                      state until record-status.js builds the grid in its place. -->
                 <div class="clara-record-status" data-arm="<?= $num ?>" data-region="records" data-source="<?= View::e($statusUrl) ?>"
-                     data-record-base="<?= View::e($recordBase) ?>" data-columns="<?= $columns ?>">
+                     data-count-source="<?= View::e($countUrl) ?>" data-record-base="<?= View::e($recordBase) ?>" data-columns="<?= $columns ?>">
                     <div class="table-responsive">
                         <table class="table table-sm table-bordered align-middle">
                             <thead>

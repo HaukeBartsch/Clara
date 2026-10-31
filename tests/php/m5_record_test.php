@@ -109,7 +109,7 @@ function m5_entry(string $action, string $event, array $fields, string $at = '20
 }
 
 /** Every read the two pages make, in fake-transport match order (specific before prefix). */
-function m5_queue(string $level = 'view_edit', string $mode = 'development', bool $projectAdmin = false, ?array $status = null, ?array $history = null, bool $rights = false, ?array $link = null, ?string $naming = null, bool $member = true): void
+function m5_queue(string $level = 'view_edit', string $mode = 'development', bool $projectAdmin = false, ?array $status = null, ?array $history = null, bool $rights = false, ?array $link = null, ?string $naming = null, bool $member = true, ?array $completeness = null): void
 {
     queue_shell();
     api_route('/api/v1/projects/3/mode', ['mode' => $mode, 'staging_open' => false]);
@@ -123,6 +123,20 @@ function m5_queue(string $level = 'view_edit', string $mode = 'development', boo
             ['unique_event_name' => 'baseline_arm_1', 'instruments' => [['name' => 'intake', 'state' => 'some_data'], ['name' => 'scores', 'state' => 'finished']]],
             ['unique_event_name' => 'follow_up_arm_1', 'instruments' => [['name' => 'intake', 'state' => 'mystery']]],
         ]],
+    ]);
+    // The completeness count beside it (REQ-API-171): a repeating cell with its instances out
+    // of order, a hidden instrument, and a count no client should take at face value.
+    api_route('/api/v1/projects/3/record-completeness', $completeness ?? [
+        ['record_id' => '8DISC001', 'filled' => 4, 'visible' => 13, 'events' => [
+            ['unique_event_name' => 'baseline_arm_1', 'hidden' => ['scores'], 'instruments' => [
+                ['name' => 'intake', 'filled' => 3, 'visible' => 4, 'instances' => [
+                    ['instance' => 2, 'filled' => 1, 'visible' => 4], ['instance' => 1, 'filled' => 3, 'visible' => 4]]],
+            ]],
+            ['unique_event_name' => 'follow_up_arm_1', 'hidden' => [], 'instruments' => [
+                ['name' => 'intake', 'filled' => -2, 'visible' => '5'],
+            ]],
+        ]],
+        ['record_id' => '8DISC002', 'filled' => 0, 'visible' => 0, 'events' => []],
     ]);
     api_route('/api/v1/projects/3/instrument-event-mapping', [['arm_num' => 1, 'mapping' => [
         'intake' => ['baseline_arm_1', 'follow_up_arm_1'], 'scores' => ['baseline_arm_1']]]]);
@@ -159,9 +173,9 @@ function m5_ndjson(array $rows, ?int $end): string
  * Answers the dashboard's read with `$body`. Set in place, so the fragment keeps its place ahead
  * of the sidebar's `/api/v1/projects` prefix in the fake transport's match order.
  */
-function m5_status_stream(string $body, int $status = 200): void
+function m5_status_stream(string $body, int $status = 200, string $read = 'record-status'): void
 {
-    $GLOBALS['api_routes']['/api/v1/projects/3/record-status'] = [['status' => $status, 'body' => $body,
+    $GLOBALS['api_routes']['/api/v1/projects/3/' . $read] = [['status' => $status, 'body' => $body,
         'headers' => ['Content-Type' => $status === 200 ? 'application/x-ndjson' : 'application/json']]];
 }
 
@@ -382,11 +396,25 @@ describe('Record Status Dashboard (§6.3, REQ-UI-019)', function (): void {
         assert_contains('/assets/js/record-status.js', $body);
         // The rows bind into a Tabulator grid, whose theme the page links (§3.8).
         assert_contains('/assets/vendor/tabulator/tabulator_bootstrap5.min.css', $body);
-        assert_contains('clara-state-finished', $body);
+        // The legend draws the states on the master spec's counter — grey as is, amber and green
+        // in their own colouring class — the page carries the counter the script clones, and the
+        // region names the count's read beside its own (REQ-UI-081).
+        assert_contains('<svg class="counter" aria-hidden="true" focusable="false"><use href="#clara-counter"></use></svg>', $body);
+        assert_contains('<svg class="counter counter-yellow counter-3" aria-hidden="true" focusable="false"><use href="#clara-counter"></use></svg>', $body);
+        assert_contains('<svg class="counter counter-green counter-8"', $body);
+        assert_contains('<template id="clara-counter-marker"><svg class="counter"', $body);
+        // The spec's SVG is on the page once, as the symbol every marker draws — the three
+        // legend markers and the template's — so markers differ only in their classes.
+        assert_contains('<symbol id="clara-counter" viewBox="0 0 590 590">', $body);
+        assert_same(9, substr_count($body, '<path class="index-'));
+        assert_same(4, substr_count($body, '<use href="#clara-counter"></use>'));
+        assert_contains('data-count-source="/projects/3/record-status?counts=1"', $body);
+        assert_contains('class="small text-danger mb-2 clara-counts-failed" role="status" hidden', $body);
         // The entry is now built and allowed, and it is the page on screen.
         assert_contains('href="/projects/3/record-status"', $body);
         // The page itself reads no record: the rows are the data region (REQ-UI-044).
         assert_same(0, api_calls_to('/record-status'));
+        assert_same(0, api_calls_to('/record-completeness'));
     });
 
     it('offers a new participant at view_edit, not at read_only, and never in analysis mode', function (): void {
@@ -523,6 +551,47 @@ describe('Record Status Dashboard (§6.3, REQ-UI-019)', function (): void {
         // The same failure line the buffered region answers.
         $buffered = json_decode(m5_get('/projects/3/record-status', [], json_headers())->body(), true);
         assert_same($buffered['message'], $body['message']);
+    });
+
+    it('serves the completeness count under ?counts=1 as [filled, visible] per cell, and no values (REQ-UI-081)', function (): void {
+        sign_in();
+        m5_queue();
+
+        $response = m5_get('/projects/3/record-status', ['counts' => '1'], json_headers());
+
+        assert_same(200, $response->status());
+        // An empty map stays a JSON object, which the client indexes by key.
+        assert_contains('"counts":{},"instances":{}', $response->body());
+        $payload = json_decode($response->body(), true);
+        // The record's sum and the hidden list are not relayed; a count below zero or not an
+        // integer reaches the client as one; instances come in order.
+        assert_same([
+            ['record_id' => '8DISC001', 'counts' => ['baseline_arm_1|intake' => [3, 4], 'follow_up_arm_1|intake' => [0, 5]],
+                'instances' => ['baseline_arm_1|intake' => [[1, 3, 4], [2, 1, 4]]]],
+            ['record_id' => '8DISC002', 'counts' => [], 'instances' => []],
+        ], $payload['records']);
+        // The count is its own read: the states are not read for it.
+        assert_same(1, api_calls_to('/record-completeness'));
+        assert_same(0, api_calls_to('/record-status'));
+    });
+
+    it('streams the completeness count as NDJSON under ?counts=1 (REQ-UI-074, REQ-UI-081)', function (): void {
+        sign_in();
+        m5_queue();
+        m5_status_stream(m5_ndjson([
+            ['record_id' => '8DISC001', 'filled' => 3, 'visible' => 4, 'events' => [
+                ['unique_event_name' => 'baseline_arm_1', 'hidden' => [], 'instruments' => [['name' => 'intake', 'filled' => 3, 'visible' => 4]]],
+            ]],
+        ], 1), read: 'record-completeness');
+
+        $sink = m5_stream(m5_get('/projects/3/record-status', ['counts' => '1'], ndjson_headers()));
+
+        assert_same(200, $sink->status);
+        assert_same('application/x-ndjson; charset=UTF-8', $sink->headers['Content-Type']);
+        assert_same('{"record_id":"8DISC001","counts":{"baseline_arm_1|intake":[3,4]},"instances":{}}' . "\n"
+            . '{"end":true,"records":1}' . "\n", $sink->body());
+        assert_true(in_array('Accept: application/x-ndjson', api_headers_for('/record-completeness'), true));
+        assert_same(0, api_calls_to('/record-status'));
     });
 
     it('refuses a streamed read without data access before any row is read', function (): void {

@@ -196,6 +196,13 @@ test.describe("data entry and the record view (M5)", () => {
     await page.getByRole("link", { name: "← Record Status Dashboard" }).click()
     const someData = page.locator("[data-region='records'] [data-record='M5001'] [data-state]")
     await expect(someData).toHaveAttribute("data-state", "some_data")
+    // Its counter shows how many of the counted fields hold a value (REQ-UI-081): age, sex, the
+    // pregnancy question its branching shows and notes — not the identifier, not the
+    // calculation — are all filled, so all nine tiles are on while the state stays amber.
+    const someCounter = someData.locator("svg.counter")
+    await expect(someCounter).toHaveAttribute("data-lit", "9")
+    await expect(someCounter).toHaveClass("counter counter-yellow counter-8")
+    await expect(someData.locator("a")).toHaveAttribute("title", /Some data, 4 of 4 fields filled/)
     await someData.locator("a").click()
     await expect(page).toHaveURL(/\/records\/M5001\?event=baseline_arm_1&instrument=instrument$/)
 
@@ -223,6 +230,11 @@ test.describe("data entry and the record view (M5)", () => {
     await page.getByRole("link", { name: "← Record Status Dashboard" }).click()
     const cell = page.locator("[data-region='records'] [data-record='M5001'] [data-state]")
     await expect(cell).toHaveAttribute("data-state", "finished")
+    // Notes was cleared: 3 of 4 is seven tiles of nine, and one stays off however close the
+    // share comes (REQ-UI-081).
+    await expect(cell.locator("svg.counter")).toHaveAttribute("data-lit", "7")
+    await expect(cell.locator("svg.counter")).toHaveClass("counter counter-green counter-6")
+    await expect(cell.locator("a")).toHaveAttribute("title", /Finished, 3 of 4 fields filled/)
 
     // --- what is stored: the cleared value is gone, the untouched ones are intact (GD-14) ---
     const exported = await request.post(`${API_URL}/api/`, {
