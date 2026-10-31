@@ -17,7 +17,7 @@ $pageTitle = $pageTitle ?? ($titleKey !== '' ? $view->t($titleKey) : '');
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title><?= View::e($pageTitle === '' ? $view->t('app.name') : $pageTitle . ' · ' . $view->t('app.name')) ?></title>
+<?php require __DIR__ . '/../partials/head-meta.php'; ?>
     <link rel="stylesheet" href="<?= View::e($view->stylesheetHref()) ?>">
     <link rel="stylesheet" href="/assets/app.css">
     <?= $view->jsStringBlock() ?>

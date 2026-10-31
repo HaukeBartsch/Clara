@@ -45,7 +45,7 @@ $controlPanel = $view->isAdmin() && Navigation::controlPanelExists();
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title><?= View::e($pageTitle === '' ? $view->t('app.name') : $pageTitle . ' · ' . $view->t('app.name')) ?></title>
+<?php require __DIR__ . '/../partials/head-meta.php'; ?>
 
     <!-- Exactly one Bootstrap stylesheet: the standard file or one installed theme
          (REQ-UI-040). app.css is hand-written and theme-independent. -->

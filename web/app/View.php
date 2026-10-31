@@ -145,6 +145,15 @@ final class View
         return $this->request->path();
     }
 
+    /**
+     * An absolute URL under WEB_PUBLIC_URL (REQ-CFG-018), for the Open Graph tags a link
+     * preview reads off-site (REQ-UI-080). The configured origin, never the Host header.
+     */
+    public function publicUrl(string $path): string
+    {
+        return $this->config->webPublicUrl . $path;
+    }
+
     /** True when this navigation item is the page on screen (exact or nested). */
     public function isActive(string $path): bool
     {

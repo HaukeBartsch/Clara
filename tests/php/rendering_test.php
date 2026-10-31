@@ -231,6 +231,51 @@ describe('response headers (REQ-TECH-020)', function (): void {
     });
 });
 
+describe('document head (REQ-UI-080)', function (): void {
+    /** The parts of the head both layouts must carry, checked on one rendered page. */
+    $assertHead = static function (string $body, string $origin): void {
+        assert_contains('<meta name="robots" content="noindex, nofollow">', $body);
+        assert_contains('<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">', $body);
+        assert_contains('<meta name="theme-color" content="#15304f">', $body);
+        assert_contains('<link rel="icon" href="/assets/icons/clara.svg" type="image/svg+xml">', $body);
+        assert_contains('<link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png">', $body);
+        assert_contains('<meta property="og:site_name" content="CLARA">', $body);
+        assert_contains('<meta property="og:image" content="' . $origin . '/assets/icons/clara-512.png">', $body);
+
+        preg_match('#<title>([^<]*)</title>#', $body, $title);
+        assert_contains('<meta property="og:title" content="' . $title[1] . '">', $body, 'og:title is the document title');
+    };
+
+    it('carries the head on the standalone layout, with URLs from WEB_PUBLIC_URL', function () use ($assertHead): void {
+        $config = test_config(['WEB_PUBLIC_URL' => 'https://clara.example.org/']);
+        $headers = browser_headers() + ['host' => 'attacker.example'];
+
+        $body = router_for(http_request('GET', '/login', $headers), $config)->dispatch()->body();
+
+        $assertHead($body, 'https://clara.example.org');
+        assert_contains('<meta property="og:url" content="https://clara.example.org/login">', $body);
+        assert_not_contains('attacker.example', $body, 'a client-supplied Host never becomes a link');
+    });
+
+    it('carries the same head on the application shell', function () use ($assertHead): void {
+        sign_in();
+        queue_shell();
+        queue_sidebar_projects();
+
+        $body = router_for(http_request('GET', '/', browser_headers()))->dispatch()->body();
+
+        assert_contains('clara-shell', $body);
+        $assertHead($body, 'http://localhost:8000');
+        assert_same(1, substr_count($body, '<title>'), 'the partial owns the one title');
+    });
+
+    it('links only icons the /assets handler serves', function (): void {
+        foreach (['clara.svg', 'clara-32.png', 'apple-touch-icon.png', 'clara-512.png'] as $icon) {
+            assert_true(clara_resolve_asset('/assets/icons/' . $icon) !== '', $icon . ' is served');
+        }
+    });
+});
+
 describe('configuration validation (REQ-CFG-005)', function (): void {
     it('refuses to start without the service secret (REQ-CFG-013)', function (): void {
         $error = assert_throws(ConfigError::class, static function (): void {
