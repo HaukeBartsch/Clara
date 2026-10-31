@@ -5,8 +5,9 @@
 // they sit follows the shape of the box, in CSS, so a wide box reads across and a narrow one stacks.
 // The server renders the grid with its loading line and this module fills it from the same route's
 // JSON (REQ-UI-032, REQ-UI-044), then re-reads it while the page is visible so the grid stays
-// current (REQ-UI-073). One module for one surface (REQ-UI-045); no UI string appears here — every
-// label comes from the injected data-i18n block (REQ-UI-008).
+// current (REQ-UI-073). The boxes are grouped by region — the user's own first — and ranked by
+// recency inside each group (REQ-UI-076). One module for one surface (REQ-UI-045); no UI string
+// appears here — every label comes from the injected data-i18n block (REQ-UI-008).
 
 import { el, fetchJson, fill, ready, t } from "../app.js"
 
@@ -83,6 +84,51 @@ function rank(projects) {
     })
     .sort((a, b) => compareDays(a.days, b.days)
       || String(a.project.project_name).localeCompare(String(b.project.project_name), undefined, { sensitivity: "base" }))
+}
+
+/** The REQ-DB-006 code order PHP renders onto the grid (REQ-UI-076); empty when it is missing. */
+function regionOrder(grid) {
+  try {
+    const order = JSON.parse(grid.dataset.claraRegionOrder || "[]")
+    return Array.isArray(order) ? order.map(String) : []
+  } catch (error) {
+    return []
+  }
+}
+
+/**
+ * Splits the ranked list into region groups (REQ-UI-076): the group the API flags as the acting user's
+ * region (`in_preferred_region`) first, the others in REQ-DB-006 order, and a code outside that order
+ * after them, in code order. Each group keeps the ranked order, so recency still decides inside it —
+ * and the tiers stay recency-only, so a project of another region used today keeps its wide box.
+ */
+function groupByRegion(ranked, order) {
+  const groups = new Map()
+  ranked.forEach((entry) => {
+    const code = String(entry.project.organization || "")
+    if (!groups.has(code)) {
+      groups.set(code, { code, preferred: false, entries: [] })
+    }
+    const group = groups.get(code)
+    group.entries.push(entry)
+    group.preferred = group.preferred || entry.project.in_preferred_region === true
+  })
+  const position = (code) => (order.includes(code) ? order.indexOf(code) : order.length)
+
+  return Array.from(groups.values()).sort((a, b) => Number(b.preferred) - Number(a.preferred)
+    || position(a.code) - position(b.code)
+    || (a.code < b.code ? -1 : a.code > b.code ? 1 : 0))
+}
+
+/** A group's heading row, spanning the grid: "Your region: OUS · 214", "Ahus · 120". */
+function groupHeading() {
+  return el("li", { class: "clara-project-group" }, el("h2", { class: "h6 mb-0" }))
+}
+
+function headingText(group) {
+  const params = { region: group.code || "—", count: String(group.entries.length) }
+
+  return t(group.preferred ? "dashboard.group.preferred" : "dashboard.group.region", params)
 }
 
 // A date says less than a day count and more than a word, so the box shows "today", "yesterday", or
@@ -204,12 +250,16 @@ let listed = false
 // The box each project id is drawn in. A project keeps its box across refreshes, so a redraw rewrites
 // what changed instead of rebuilding the grid — which made Safari jump the page back to the top.
 let boxes = new Map()
+// The heading each region group is drawn under, by organization code — kept the same way as the boxes.
+let headings = new Map()
 
 /**
  * Brings the grid and the heading's count to the list in place (REQ-UI-073): each project's box is
  * reused and repainted, a box moves only where the order changed, a new project gets a new box, and
  * whatever is left over — a project no longer visible, the loading or failure line — goes. The
  * scroll position stays where the reader left it, and keyboard focus on the project that had it.
+ * With projects in more than one region each group starts with its heading (REQ-UI-076); with one
+ * region there is none, and the grid is the single ranked list.
  */
 function render(grid, projects) {
   const ranked = rank(projects)
@@ -223,21 +273,35 @@ function render(grid, projects) {
   // no-access page, §2.3): an installation with no projects yet.
   if (!ranked.length) {
     boxes = new Map()
+    headings = new Map()
     fill(grid, [message(t("dashboard.empty"), false)])
     return
   }
 
+  const groups = groupByRegion(ranked, regionOrder(grid))
+  const titled = groups.length > 1
   const kept = new Map()
-  const wanted = ranked.map((entry) => {
-    const box = boxes.get(entry.project.id) || projectBox(entry.project)
-    paint(box, entry)
-    kept.set(entry.project.id, box)
-    return box
+  const keptHeadings = new Map()
+  const wanted = []
+  groups.forEach((group) => {
+    if (titled) {
+      const heading = headings.get(group.code) || groupHeading()
+      setText(heading.firstElementChild, headingText(group))
+      keptHeadings.set(group.code, heading)
+      wanted.push(heading)
+    }
+    group.entries.forEach((entry) => {
+      const box = boxes.get(entry.project.id) || projectBox(entry.project)
+      paint(box, entry)
+      kept.set(entry.project.id, box)
+      wanted.push(box)
+    })
   })
   boxes = kept
+  headings = keptHeadings
 
-  // Whatever is not a box to show — a project no longer visible, the loading or failure line — goes
-  // first, so it cannot stand in the way of the boxes after it.
+  // Whatever is not a box or heading to show — a project no longer visible, a region with nothing left,
+  // the loading or failure line — goes first, so it cannot stand in the way of what comes after it.
   const shown = new Set(wanted)
   Array.from(grid.children).filter((child) => !shown.has(child)).forEach((child) => child.remove())
 

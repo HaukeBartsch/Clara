@@ -16,6 +16,7 @@ declare(strict_types=1);
 
 namespace Clara\Controllers;
 
+use Clara\Regions;
 use Clara\Response;
 
 final class DashboardController extends Controller
@@ -40,6 +41,8 @@ final class DashboardController extends Controller
 
         return $this->page('dashboard', [
             'projects' => $projects,
+            // The order the region groups follow after the user's own (REQ-UI-076): REQ-DB-006's.
+            'regionOrder' => Regions::codes(),
         ], [
             'titleKey' => 'dashboard.title',
             // The shared runtime plus this page's own section module — a page
@@ -53,7 +56,7 @@ final class DashboardController extends Controller
                 'dashboard.project.records', 'dashboard.project.instruments', 'dashboard.project.fields',
                 'dashboard.project.open', 'dashboard.project.last_used',
                 'dashboard.project.last_used.today', 'dashboard.project.last_used.yesterday',
-                'dashboard.project.never_used',
+                'dashboard.project.never_used', 'dashboard.group.preferred', 'dashboard.group.region',
             ],
         ]);
     }

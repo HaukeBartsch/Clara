@@ -10,6 +10,7 @@
 use Clara\View;
 
 /** @var list<array<string, mixed>> $projects */
+/** @var list<array{code: string, preferred: bool, projects: list<array<string, mixed>>}> $projectGroups */
 /** @var array<string, string> $form */
 /** @var array<string, string> $organizations code => display text ('' = translated) */
 $form = $form ?? [];
@@ -137,22 +138,39 @@ foreach ($projects as $project) {
             <th scope="col"><span class="visually-hidden"><?= View::e($view->t('admin.users.actions')) ?></span></th>
         </tr>
         </thead>
-        <tbody>
         <?php if ($projects === []): ?>
+            <tbody>
             <tr><td colspan="3" class="clara-region-empty"><?= View::e($view->t('admin.projects.empty')) ?></td></tr>
+            </tbody>
         <?php endif; ?>
-        <?php foreach ($projects as $project): ?>
-            <tr>
-                <td>
-                    <a href="/projects/<?= (int) $project['id'] ?>"><?= View::e($project['project_name']) ?></a>
-                    <div class="text-body-secondary small"><?= View::e($project['organization']) ?></div>
-                </td>
-                <td class="clara-stat"><?= (int) $project['record_count'] ?></td>
-                <td class="text-end">
-                    <a class="btn btn-sm btn-outline-secondary" href="/admin?section=projects&amp;edit=<?= (int) $project['id'] ?>"><?= View::e($view->t('admin.projects.edit')) ?></a>
-                </td>
-            </tr>
+        <?php
+        // One body per region (REQ-UI-077): with more than one, each opens with a divider row
+        // carrying the overview's heading text; with a single region there is none.
+        $titled = count($projectGroups) > 1;
+        ?>
+        <?php foreach ($projectGroups as $group): ?>
+            <tbody<?= $titled ? ' class="table-group-divider"' : '' ?>>
+            <?php if ($titled): ?>
+                <tr class="clara-project-group-row">
+                    <th scope="rowgroup" colspan="3" class="small"><?= View::e($view->t(
+                        $group['preferred'] ? 'dashboard.group.preferred' : 'dashboard.group.region',
+                        ['region' => $group['code'] !== '' ? $group['code'] : '—', 'count' => (string) count($group['projects'])]
+                    )) ?></th>
+                </tr>
+            <?php endif; ?>
+            <?php foreach ($group['projects'] as $project): ?>
+                <tr>
+                    <td>
+                        <a href="/projects/<?= (int) $project['id'] ?>"><?= View::e($project['project_name']) ?></a>
+                        <div class="text-body-secondary small"><?= View::e($project['organization']) ?></div>
+                    </td>
+                    <td class="clara-stat"><?= (int) $project['record_count'] ?></td>
+                    <td class="text-end">
+                        <a class="btn btn-sm btn-outline-secondary" href="/admin?section=projects&amp;edit=<?= (int) $project['id'] ?>"><?= View::e($view->t('admin.projects.edit')) ?></a>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody>
         <?php endforeach; ?>
-        </tbody>
     </table>
 </div>

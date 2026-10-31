@@ -20,6 +20,7 @@ use Clara\ConfigCheck;
 use Clara\LdapRace;
 use Clara\MonitoringStressTest;
 use Clara\Navigation;
+use Clara\Regions;
 use Clara\Response;
 use Clara\Session;
 use Clara\StreamSink;
@@ -88,6 +89,7 @@ final class ControlPanelController extends Controller
     {
         return match ($section['key'] ?? '') {
             'users' => $this->usersPage(),
+            'regions' => $this->regionsPage(),
             'projects' => $this->projectsPage(),
             'audits' => $this->auditsPage(),
             'translations' => $this->translationsPage(),
@@ -151,6 +153,7 @@ final class ControlPanelController extends Controller
                 ? $provider['redirect_uri']
                 : $this->config->webPublicUrl . '/auth/callback',
             'email_attr' => $provider['email_attr'],
+            'roles_attr' => $provider['roles_attr'],
             'names' => $provider['names'],
         ], $this->config->oauthProviders);
         $servers = array_map(static fn (array $server): array => [
@@ -165,6 +168,7 @@ final class ControlPanelController extends Controller
         ], $this->config->ldapServers);
 
         return $this->section('auth', 'admin/auth_test', 'admin.auth.title', [
+            'regionLabel' => fn (string $code): string => Regions::label($this->i18n, $code),
             'providers' => $providers,
             'servers' => $servers,
             'report' => $report,
@@ -187,10 +191,13 @@ final class ControlPanelController extends Controller
             'nav' => [
                 'headingKey' => 'admin.title',
                 'items' => array_map(
-                    static fn (array $section): array => [
+                    fn (array $section): array => [
                         'path' => '/admin?section=' . $section['key'],
                         'labelKey' => $section['labelKey'],
                         'active' => $section['key'] === $key,
+                        // New provider role values wait beside "Regions" wherever the panel shows
+                        // (§5.13): the only signal that roles have arrived.
+                        'badge' => $section['key'] === 'regions' ? $this->newRoleValueCount() : null,
                     ],
                     Navigation::availableAdminSections()
                 ),
@@ -414,6 +421,209 @@ final class ControlPanelController extends Controller
         return trim($this->request->field('email'));
     }
 
+    // --- Regions (§5.13, REQ-UI-078) ----------------------------------------------
+
+    /** The new-value count of this request, read once (§5.13); null = nothing to show. */
+    private ?int $newRoleValues = null;
+    private bool $newRoleValuesRead = false;
+
+    /** The configured OAuth2 providers that read a roles claim (REQ-CFG-037). */
+    private function roleReadingProviders(): array
+    {
+        return array_values(array_filter(
+            $this->config->oauthProviders,
+            static fn (array $provider): bool => $provider['roles_attr'] !== ''
+        ));
+    }
+
+    /**
+     * How many role values no administrator has decided on (REQ-UI-078). Only a sign-in through a
+     * provider that reads a roles claim records an undecided value, so without one there is
+     * nothing to count and no read is spent; a failed read shows no count rather than failing
+     * the page the panel belongs to.
+     */
+    private function newRoleValueCount(): ?int
+    {
+        if (!$this->newRoleValuesRead) {
+            $this->newRoleValuesRead = true;
+            if ($this->roleReadingProviders() !== []) {
+                try {
+                    $rows = $this->api->get('/api/v1/provider-roles');
+                    $count = count(array_filter(is_array($rows) ? $rows : [],
+                        static fn (mixed $row): bool => is_array($row) && empty($row['reviewed'])));
+                    $this->newRoleValues = $count > 0 ? $count : null;
+                } catch (ApiException $e) {
+                    $this->logger->info('provider roles count unavailable', ['code' => $e->code(), 'status' => $e->status()]);
+                }
+            }
+        }
+
+        return $this->newRoleValues;
+    }
+
+    /** A provider's display name for the grid and the add form: its first login name, else its issuer. */
+    private static function providerName(array $provider): string
+    {
+        return $provider['names'][0] ?? $provider['issuer'];
+    }
+
+    /**
+     * The section renders its heading, the add form and an empty grid; `regions.js` binds the
+     * rows from this route's JSON (REQ-UI-044) as a Tabulator grid, since a provider can release
+     * hundreds of values (AGENTS.md "use Tabulator").
+     *
+     * @param array<string, string> $form the add form's sticky values
+     */
+    private function regionsPage(string $error = '', array $form = []): Response
+    {
+        $readers = $this->roleReadingProviders();
+
+        return $this->section('regions', 'admin/regions', 'admin.regions.title', [
+            'error' => $error,
+            'form' => $form,
+            'newCount' => $this->newRoleValueCount() ?? 0,
+            'providers' => array_map(static fn (array $provider): array => [
+                'issuer' => $provider['issuer'],
+                'name' => self::providerName($provider),
+            ], $readers),
+            'regionOptions' => Regions::options($this->i18n),
+        ], [
+            'scripts' => ['/assets/js/regions.js'],
+            'styles' => ['/assets/vendor/tabulator/tabulator_bootstrap5.min.css'],
+            'jsKeys' => [
+                'js.load_failed', 'js.retry', 'js.loading',
+                'admin.regions.provider', 'admin.regions.value', 'admin.regions.seen', 'admin.regions.first_seen',
+                'admin.regions.last_seen', 'admin.regions.region', 'admin.regions.new', 'admin.regions.choose',
+                'admin.regions.no_region', 'admin.regions.never', 'admin.regions.remove', 'admin.regions.remove_confirm',
+                'admin.regions.empty', 'admin.regions.filter',
+                'dashboard.project.last_used.today', 'dashboard.project.last_used.yesterday',
+            ],
+        ]);
+    }
+
+    /** The section's data region: the mapping with each row's provider named (§5.13). */
+    private function regionsData(): Response
+    {
+        $names = [];
+        foreach ($this->config->oauthProviders as $provider) {
+            $names[$provider['issuer']] = self::providerName($provider);
+        }
+        $rows = $this->api->get('/api/v1/provider-roles');
+        $out = [];
+        foreach (is_array($rows) ? $rows : [] as $row) {
+            if (!is_array($row) || !isset($row['id'])) {
+                continue;
+            }
+            $issuer = (string) ($row['issuer'] ?? '');
+            $out[] = [
+                'id' => (int) $row['id'],
+                'issuer' => $issuer,
+                'provider' => $names[$issuer] ?? $issuer,
+                'role_value' => (string) ($row['role_value'] ?? ''),
+                'region' => is_string($row['region'] ?? null) ? $row['region'] : null,
+                'reviewed' => !empty($row['reviewed']),
+                'seen_count' => (int) ($row['seen_count'] ?? 0),
+                'first_seen_at' => is_string($row['first_seen_at'] ?? null) ? $row['first_seen_at'] : null,
+                'last_seen_at' => is_string($row['last_seen_at'] ?? null) ? $row['last_seen_at'] : null,
+            ];
+        }
+
+        return Response::json(['rows' => $out]);
+    }
+
+    /**
+     * A posted region: a code of REQ-DB-006, '' for "No region" (null), or false for anything
+     * else — refused here before the API refuses it again.
+     */
+    private function postedRegion(): string|null|false
+    {
+        $region = $this->request->field('region');
+        if ($region === '') {
+            return null;
+        }
+
+        return Regions::isCode($region) ? $region : false;
+    }
+
+    /** POST ?action=map_role — decide on a value (§5.13): `PUT /api/v1/provider-roles/{id}`. */
+    public function mapRole(): Response
+    {
+        $id = $this->idParam($this->request->field('id'));
+        $region = $this->postedRegion();
+        if ($id === 0 || $region === false) {
+            $this->flashDanger($this->invalidRequest(...array_merge($id === 0 ? ['id'] : [], $region === false ? ['region'] : [])));
+
+            return $this->toSection('regions');
+        }
+        try {
+            $this->api->put('/api/v1/provider-roles/' . $id, ['region' => $region]);
+        } catch (ApiException $e) {
+            $this->logger->info('role mapping rejected', ['code' => $e->code(), 'status' => $e->status()]);
+            $this->flashDanger($this->apiFailureMessage($e));
+
+            return $this->toSection('regions');
+        }
+        $this->flashSuccess($this->i18n->t('admin.regions.mapped'));
+
+        return $this->toSection('regions');
+    }
+
+    /** POST ?action=add_role — enter a value before a sign-in carries it: `POST /api/v1/provider-roles`. */
+    public function addRole(): Response
+    {
+        $form = [
+            'issuer' => trim($this->request->field('issuer')),
+            'role_value' => trim($this->request->field('role_value')),
+            'region' => $this->request->field('region'),
+        ];
+        $issuers = array_column($this->roleReadingProviders(), 'issuer');
+        $region = $this->postedRegion();
+        $bad = array_merge(
+            in_array($form['issuer'], $issuers, true) ? [] : ['issuer'],
+            $form['role_value'] === '' || mb_strlen($form['role_value']) > 255 ? ['role_value'] : [],
+            $region === false ? ['region'] : []
+        );
+        if ($bad !== []) {
+            return $this->regionsPage($this->invalidRequest(...$bad), $form);
+        }
+        try {
+            $this->api->post('/api/v1/provider-roles', [
+                'issuer' => $form['issuer'], 'role_value' => $form['role_value'], 'region' => $region,
+            ]);
+        } catch (ApiException $e) {
+            $this->logger->info('role value add rejected', ['code' => $e->code(), 'status' => $e->status()]);
+
+            return $this->regionsPage($e->status() === 409
+                ? $this->i18n->t('admin.regions.duplicate')
+                : $this->apiFailureMessage($e), $form);
+        }
+        $this->flashSuccess($this->i18n->t('admin.regions.added', ['value' => $form['role_value']]));
+
+        return $this->toSection('regions');
+    }
+
+    /** POST ?action=remove_role — `DELETE /api/v1/provider-roles/{id}`; the value returns as new when seen again. */
+    public function removeRole(): Response
+    {
+        $id = $this->idParam($this->request->field('id'));
+        if ($id === 0) {
+            $this->flashDanger($this->invalidRequest('id'));
+
+            return $this->toSection('regions');
+        }
+        try {
+            $this->api->delete('/api/v1/provider-roles/' . $id);
+        } catch (ApiException $e) {
+            $this->logger->info('role value removal rejected', ['code' => $e->code(), 'status' => $e->status()]);
+            $this->flashDanger($this->apiFailureMessage($e));
+
+            return $this->toSection('regions');
+        }
+        $this->flashSuccess($this->i18n->t('admin.regions.removed'));
+
+        return $this->toSection('regions');
+    }
+
     // --- Projects (§5.2, REQ-UI-012) --------------------------------------------
 
     /** @param array<string, string> $form sticky create/edit values */
@@ -427,8 +637,15 @@ final class ControlPanelController extends Controller
             }
         }
 
+        // Grouped like the overview, the administrator's own region first, but in name order inside
+        // each group: this list is for finding a project, not for resuming one (REQ-UI-077).
+        $projects = $this->visibleProjects();
+        usort($projects, static fn (array $a, array $b): int =>
+            strcasecmp($a['project_name'], $b['project_name']) ?: $a['id'] <=> $b['id']);
+
         return $this->section('projects', 'admin/projects', 'admin.projects.title', [
-            'projects' => $this->visibleProjects(),
+            'projects' => $projects,
+            'projectGroups' => Regions::group($projects),
             'organizations' => self::ORGANIZATIONS,
             'error' => $error,
             'form' => $form,
@@ -787,6 +1004,9 @@ final class ControlPanelController extends Controller
             $facts['stress_test'] = $this->monitoringStressStatus();
 
             return Response::json($facts);
+        }
+        if (($section['key'] ?? '') === 'regions') {
+            return $this->regionsData();
         }
         if (($section['key'] ?? '') !== 'translations') {
             return Response::notAcceptable();

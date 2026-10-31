@@ -185,6 +185,16 @@
   grid-column: 1 / -1;
 }
 
+/* A region group's heading (REQ-UI-076) spans every track, so each group starts on a row of its own. */
+.clara-project-group {
+  grid-column: 1 / -1;
+  margin-top: 0.75rem;
+}
+
+.clara-project-group:first-child {
+  margin-top: 0;
+}
+
 /* The card is the containing block of the name's `.stretched-link::after`, which Bootstrap positions
    absolutely over its nearest positioned ancestor. Without `relative` here every box's overlay resolves
    against the page instead — all of them covering it at the same z-index, so the last box in the grid

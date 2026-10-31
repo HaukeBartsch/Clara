@@ -63,7 +63,7 @@ describe('Control Panel (§5, REQ-UI-047)', function (): void {
         // Every built section is present in the panel's canonical order (§5).
         $body = $response->body();
         $positions = array_map(static fn (string $s): int|false => strpos($body, 'href="/admin?section=' . $s . '"'),
-            ['projects', 'users', 'audits', 'translations', 'settings', 'monitoring', 'assistant', 'auth', 'check', 'api']);
+            ['projects', 'users', 'regions', 'audits', 'translations', 'settings', 'monitoring', 'assistant', 'auth', 'check', 'api']);
         assert_true(!in_array(false, $positions, true), 'every section has its panel entry');
         $sorted = $positions;
         sort($sorted);

@@ -303,6 +303,16 @@ final class ConfigCheck
         };
         if ($config->oauthProviders !== []) {
             $checks[] = self::result('web.oidc_email_verified', self::INFO, 'required', [], '§14');
+            // Which providers' roles set a user's preferred region (REQ-CFG-037): a fact, not a finding.
+            $roles = [];
+            foreach ($config->oauthProviders as $provider) {
+                if ($provider['roles_attr'] !== '') {
+                    $roles[] = 'OAUTH2_' . $provider['index'] . '_ROLES_ATTR=' . $provider['roles_attr'];
+                }
+            }
+            $checks[] = $roles === []
+                ? self::result('web.oidc_roles', self::INFO, 'unset', [], '§14')
+                : self::result('web.oidc_roles', self::INFO, 'set', ['list' => implode(', ', $roles)], '§14');
         }
 
         return $checks;

@@ -266,6 +266,13 @@ final class Router
             'handler' => 'startMonitoringStressTest', 'guard' => 'admin', 'action' => 'monitoring_stress_test'],
         ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
             'handler' => 'saveTranslations', 'guard' => 'admin', 'action' => 'save_translations'],
+        // The Regions section (§5.13, REQ-UI-078): map, add and remove provider role values.
+        ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
+            'handler' => 'mapRole', 'guard' => 'admin', 'action' => 'map_role'],
+        ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
+            'handler' => 'addRole', 'guard' => 'admin', 'action' => 'add_role'],
+        ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
+            'handler' => 'removeRole', 'guard' => 'admin', 'action' => 'remove_role'],
         // The Clara assistant's read-write switch (REQ-AI-006): a session flag only — every MCP
         // tool call is separately gated server-side against it.
         ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,

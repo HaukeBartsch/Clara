@@ -78,12 +78,13 @@ $statusClass = [
             <th scope="col"><?= View::e($view->t('admin.users.last_login')) ?></th>
             <th scope="col"><?= View::e($view->t('admin.users.valid_until')) ?></th>
             <th scope="col"><?= View::e($view->t('admin.users.tfa')) ?></th>
+            <th scope="col"><?= View::e($view->t('admin.users.region')) ?></th>
             <th scope="col"><span class="visually-hidden"><?= View::e($view->t('admin.users.actions')) ?></span></th>
         </tr>
         </thead>
         <tbody>
         <?php if ($users === []): ?>
-            <tr><td colspan="8" class="clara-region-empty"><?= View::e($view->t('admin.users.empty')) ?></td></tr>
+            <tr><td colspan="9" class="clara-region-empty"><?= View::e($view->t('admin.users.empty')) ?></td></tr>
         <?php endif; ?>
         <?php foreach ($users as $user): ?>
             <?php
@@ -94,6 +95,10 @@ $statusClass = [
             $isAdmin = !empty($user['is_admin']);
             $tfa = (string) ($user['tfa_method'] ?? 'off');
             $local = ($user['auth_source'] ?? '') === 'local';
+            // The effective region and where it came from (REQ-UI-079, REQ-API-176).
+            $region = is_string($user['region'] ?? null) ? $user['region'] : '';
+            $regionSource = is_string($user['preferred_region'] ?? null) ? 'own'
+                : (($user['automatic_region_source'] ?? '') === 'assignment' ? 'assignment' : 'provider');
             ?>
             <tr class="<?= $status === 'auto_disabled' ? 'table-danger' : '' ?>" data-user-id="<?= $id ?>">
                 <td><?= View::e($email) ?>
@@ -112,6 +117,12 @@ $statusClass = [
                 <td class="text-nowrap"><?= View::e(($user['last_login_at'] ?? null) === null ? $view->t('admin.users.never') : (string) $user['last_login_at']) ?></td>
                 <td class="text-nowrap"><?= View::e(($user['valid_until'] ?? null) === null ? $view->t('admin.users.indefinite') : (string) $user['valid_until']) ?></td>
                 <td><span class="badge <?= $tfa === 'off' ? 'text-bg-light' : 'text-bg-info' ?>"><?= View::e($tfa) ?></span></td>
+                <td class="text-nowrap">
+                    <?php if ($region === ''): ?>—<?php else: ?>
+                        <?= View::e($region) ?>
+                        <div class="text-body-secondary small"><?= View::e($view->t('admin.users.region.' . $regionSource)) ?></div>
+                    <?php endif; ?>
+                </td>
                 <td class="text-end">
                     <details class="clara-row-actions">
                         <summary class="btn btn-sm btn-outline-secondary"><?= View::e($view->t('admin.users.manage')) ?></summary>

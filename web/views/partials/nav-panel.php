@@ -12,7 +12,7 @@
 
 use Clara\View;
 
-/** @var array{headingKey?: string, items: list<array{path: string, labelKey: string, active?: bool}>} $nav */
+/** @var array{headingKey?: string, items: list<array{path: string, labelKey: string, active?: bool, badge?: ?int}>} $nav */
 $items = $nav['items'];
 $headingKey = $nav['headingKey'] ?? 'app.name';
 ?>
@@ -39,6 +39,9 @@ $headingKey = $nav['headingKey'] ?? 'app.name';
                        <?= $active ? ' aria-current="page"' : '' ?>
                        href="<?= View::e($item['path']) ?>">
                         <?= View::e($view->t($item['labelKey'])) ?>
+                        <?php if (($item['badge'] ?? null) !== null): ?>
+                            <span class="badge rounded-pill text-bg-warning ms-1"><?= (int) $item['badge'] ?></span>
+                        <?php endif; ?>
                     </a>
                 </li>
             <?php endforeach; ?>

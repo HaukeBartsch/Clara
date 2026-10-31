@@ -22,8 +22,11 @@ use Clara\View;
 <!-- Populated by assets/js/dashboard.js from GET / with Accept: application/json, and re-read every
      two seconds while the page is visible, together with the count above (REQ-UI-073). The role stays on
      the list because app.css removes its bullets, and Safari drops the list semantics of a bulleted
-     list once it has none — the count of projects is what a listener is there to hear. -->
-<ul class="clara-projects" role="list" data-region="projects">
+     list once it has none — the count of projects is what a listener is there to hear. The projects are
+     grouped by region, the user's own first and the rest in the order data-clara-region-order gives
+     (REQ-UI-076). -->
+<ul class="clara-projects" role="list" data-region="projects"
+    data-clara-region-order="<?= View::e((string) json_encode($regionOrder ?? [], JSON_UNESCAPED_UNICODE)) ?>">
     <li class="clara-project-cell clara-project-cell--message">
         <p class="clara-region-empty mb-0"><?= View::e($view->t('js.loading')) ?></p>
     </li>

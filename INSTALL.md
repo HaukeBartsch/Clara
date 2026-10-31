@@ -850,7 +850,7 @@ All of these are `.env` settings. Restart afterwards (`systemctl restart clara-a
 
 | Feature | Variables | Notes |
 |---|---|---|
-| OAuth2 / OpenID Connect (up to 3) | `OAUTH2_n_ISSUER`, `OAUTH2_n_CLIENT_ID`, `OAUTH2_n_CLIENT_SECRET`, `OAUTH2_n_EMAIL_ATTR`, `OAUTH2_n_NAMES` | Register the redirect URI `https://clara.example.org/auth/callback` with the provider. It defaults to `WEB_PUBLIC_URL` + `/auth/callback`. |
+| OAuth2 / OpenID Connect (up to 3) | `OAUTH2_n_ISSUER`, `OAUTH2_n_CLIENT_ID`, `OAUTH2_n_CLIENT_SECRET`, `OAUTH2_n_EMAIL_ATTR`, `OAUTH2_n_NAMES`, `OAUTH2_n_ROLES_ATTR` | Register the redirect URI `https://clara.example.org/auth/callback` with the provider. It defaults to `WEB_PUBLIC_URL` + `/auth/callback`. |
 | LDAP (up to 3) | `LDAP_SERVER_n_URL`, `LDAP_SERVER_n_SEARCH_BASE`, `LDAP_SERVER_n_BIND_DN`, `LDAP_SERVER_n_BIND_PASSWORD`, `…_UID_ATTR`, `…_EMAIL_ATTR`, `…_NAME_ATTR`, `…_NAMES` | Prefer `ldaps://`. Trust the directory's CA by copying it to `/etc/pki/ca-trust/source/anchors/` and running `update-ca-trust`. All directories under one login name are tried in parallel. |
 | Login-page names | `LOCAL_LOGIN_NAMES`, `OAUTH2_n_NAMES`, `LDAP_SERVER_n_NAMES` | Comma-separated names users pick on the login page (REQ-CFG-032). Leave them all unset for one implicit default. |
 | Email (login codes, invitations, password resets) | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY` (`starttls`/`tls`/`none`), `SMTP_USERNAME`, `SMTP_PASSWORD`, `OTP_MAIL_FROM` | Without `SMTP_HOST` the email methods are unavailable. `OTP_MAIL_FROM` is required once `SMTP_HOST` is set. |
@@ -860,6 +860,15 @@ All of these are `.env` settings. Restart afterwards (`systemctl restart clara-a
 | Rate limiting | *(no variable)* | Enable it and set the thresholds in the administration interface (system settings). It is off by default. |
 
 `ADMIN_BOOTSTRAP_PASSWORD` may be left empty once at least one OAuth2 provider or LDAP server is configured.
+
+**Preferred region from provider roles (optional).** Each user has a preferred region, and the project overview lists that region's projects first. Users can choose it on their account page. Without a choice, it comes from the provider's roles at sign-in:
+
+1. Set `OAUTH2_n_ROLES_ATTR` to the claim that carries the role or group values, for example `memberOf`. The claim can be in the ID token or in the userinfo response; in PingFederate, add it to the OIDC policy's attribute contract. Restart the API.
+2. In the Control Panel, run **Authentication Test** for the provider. Its region preview lists the values that were released and what the mapping says about each.
+3. In **Regions**, map each value to a region, or to *No region*. Values seen at sign-in arrive as *new* and are counted beside **Regions** in the left panel. You can also add a value before anyone signs in with it.
+4. A mapping applies to each account at its next sign-in. It never overrides a region the user chose themselves, and it grants no access.
+
+When an administrator adds a member who has no region yet, the administrator's own region becomes that member's first value. A later sign-in with mapped roles replaces it.
 
 ### 14.1 The in-browser assistant (optional)
 

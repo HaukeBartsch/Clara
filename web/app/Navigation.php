@@ -25,6 +25,8 @@ final class Navigation
         return [
             ['key' => 'projects', 'labelKey' => 'admin.section.projects', 'built' => true],
             ['key' => 'users', 'labelKey' => 'admin.section.users', 'built' => true],
+            // The provider role mapping of the preferred region (§5.13, REQ-UI-078).
+            ['key' => 'regions', 'labelKey' => 'admin.section.regions', 'built' => true],
             ['key' => 'audits', 'labelKey' => 'admin.section.audits', 'built' => true],
             ['key' => 'translations', 'labelKey' => 'admin.section.translations', 'built' => true],
             ['key' => 'settings', 'labelKey' => 'admin.section.settings', 'built' => true],

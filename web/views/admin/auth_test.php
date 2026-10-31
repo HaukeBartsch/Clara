@@ -64,6 +64,7 @@ $oauth = ($report['kind'] ?? '') === 'oauth' ? $report : [];
                 <dt class="col-sm-3"><?= View::e($view->t('admin.auth.client_id')) ?></dt><dd class="col-sm-9"><?= View::e($provider['client_id']) ?></dd>
                 <dt class="col-sm-3"><?= View::e($view->t('admin.auth.redirect_uri')) ?></dt><dd class="col-sm-9"><?= View::e($provider['redirect_uri']) ?></dd>
                 <dt class="col-sm-3"><?= View::e($view->t('admin.auth.email_claim')) ?></dt><dd class="col-sm-9"><?= View::e($provider['email_attr']) ?></dd>
+                <dt class="col-sm-3"><?= View::e($view->t('admin.auth.roles_claim')) ?></dt><dd class="col-sm-9"><?= View::e($provider['roles_attr'] !== '' ? $provider['roles_attr'] : $view->t('admin.auth.roles_claim.none')) ?></dd>
                 <dt class="col-sm-3"><?= View::e($view->t('admin.auth.names')) ?></dt><dd class="col-sm-9"><?= View::e(implode(', ', $provider['names'])) ?></dd>
             </dl>
             <form method="post" action="/admin?action=test_oauth">
@@ -160,5 +161,44 @@ $oauth = ($report['kind'] ?? '') === 'oauth' ? $report : [];
                 <pre class="small bg-body-tertiary p-3 rounded"><?= View::e((string) json_encode($oauthClaims, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE)) ?></pre>
             <?php endif; ?>
         <?php endforeach; ?>
+        <?php
+        // The region preview (§5.12, Authentication_Authorization_Design.md §2.11/§2.12): what the
+        // mapping says about each role value and the region a sign-in would set. Nothing was recorded.
+        $preview = is_array($oauth['region_preview'] ?? null) ? $oauth['region_preview'] : [];
+        $previewValues = is_array($preview['values'] ?? null) ? array_filter($preview['values'], 'is_array') : [];
+        ?>
+        <?php if ($preview !== []): ?>
+            <h3 class="h6"><?= View::e($view->t('admin.auth.region_preview')) ?></h3>
+            <p class="small mb-1"><?= View::e(empty($preview['claim_present'])
+                ? $view->t('admin.auth.region_preview.absent', ['claim' => (string) ($preview['claim'] ?? '')])
+                : $view->t('admin.auth.region_preview.claim', ['claim' => (string) ($preview['claim'] ?? '')])) ?></p>
+            <?php if ($previewValues !== []): ?>
+                <div class="table-responsive">
+                    <table class="table table-sm small align-middle mb-2">
+                        <thead><tr>
+                            <th scope="col"><?= View::e($view->t('admin.regions.value')) ?></th>
+                            <th scope="col"><?= View::e($view->t('admin.regions.region')) ?></th>
+                        </tr></thead>
+                        <tbody>
+                        <?php foreach ($previewValues as $row): ?>
+                            <?php
+                            $rowRegion = is_string($row['region'] ?? null) ? $row['region'] : '';
+                            $mapped = match (true) {
+                                empty($row['listed']) => $view->t('admin.auth.region_preview.unlisted'),
+                                empty($row['reviewed']) => $view->t('admin.regions.undecided'),
+                                $rowRegion === '' => $view->t('admin.regions.no_region'),
+                                default => $rowRegion,
+                            };
+                            ?>
+                            <tr><td><?= View::e((string) ($row['value'] ?? '')) ?></td><td><?= View::e($mapped) ?></td></tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            <?php endif; ?>
+            <p class="small"><?= View::e(is_string($preview['region'] ?? null)
+                ? $view->t('admin.auth.region_preview.result', ['region' => $regionLabel($preview['region'])])
+                : $view->t('admin.auth.region_preview.none')) ?></p>
+        <?php endif; ?>
     </section>
 <?php endif; ?>

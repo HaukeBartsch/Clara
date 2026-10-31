@@ -73,7 +73,7 @@ use Clara\View;
         <form method="post" action="/account?action=set_region" class="d-flex flex-wrap align-items-center gap-2">
             <?= $view->csrfField() ?>
             <label class="form-label mb-0 clara-account-label" for="clara-region"><?= View::e($view->t('account.region.label')) ?></label>
-            <select class="form-select form-select-sm w-auto" id="clara-region" name="region" aria-describedby="clara-region-help">
+            <select class="form-select form-select-sm w-auto mw-100" id="clara-region" name="region" aria-describedby="clara-region-help">
                 <option value=""<?= $own === '' ? ' selected' : '' ?>><?= View::e($automaticText) ?></option>
                 <?php foreach ($regionOptions as $code => $text): ?>
                     <option value="<?= View::e($code) ?>"<?= $own === $code ? ' selected' : '' ?>><?= View::e($text) ?></option>
