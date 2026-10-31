@@ -199,9 +199,11 @@ The terms and reference codes used across `Requirements/` and `Design/`. Each en
 | `is_admin` | The installation administrator flag on a user. Implies every permission on every project; only it may change a project's mode. | GD-4, GD-20, REQ-AUTH-023 |
 | ODM | CDISC Operational Data Model XML (versions 1.3.2 and 2.0), used to export and import a project's structure and data. | `ODM_Interchange_Requirements.md` |
 | personal field | A field flagged `personal_information` that is not a direct identifier. Hashed at `export_de_identified`, kept at the levels above. | REQ-EXP-022 |
+| preferred region | The organization code (REQ-DB-006 enumeration) whose projects a user sees first on the project overview: the user's own choice, else a region set automatically from provider roles at sign-in or, failing that, from the administrator who assigned them to a project. Orders presentation only, never access. | REQ-DB-052, REQ-AUTH-088/089, REQ-UI-076 |
 | project mode | `development` (everything allowed), `production` (setup changes go through a staging set; breaking changes warned before commit), or `analysis` (data entry disabled). Only `is_admin` changes it. | GD-20, BR-013 |
 | project token | The UUID of one (user, project) assignment. A data-API caller sends it as the `token` parameter in the request body. | GD-5, REQ-API-010 |
 | `project_admin` | A role flag: manage the structure and metadata of that one project. | GD-2 |
+| provider role mapping | The administrator-maintained list that pairs a role value released by an OpenID Connect provider with a region, or records that it names none. Sign-ins add the values they carry; no account is linked to a value. | REQ-DB-053, REQ-API-177/178 |
 | provider subject link | The stored (issuer, subject) pair binding an OpenID Connect identity to an account. Account resolution prefers it over the email address. | REQ-AUTH-080, REQ-DB-051 |
 | record | One participant's data within a project, named by the value of the record identifier field. | GD-8 |
 | record identifier field | The first field, by position, of the earliest instrument that has fields. Its value is the record name (`record_id`). | GD-8 |

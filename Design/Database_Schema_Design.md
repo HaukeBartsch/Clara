@@ -80,6 +80,9 @@ CREATE TABLE IF NOT EXISTS users (               -- REQ-DB-008 (GD-18/GD-19)
     ui_language   VARCHAR(8)  NOT NULL DEFAULT 'en',  -- GD-12
     ui_theme      VARCHAR(16),                       -- nullable; installed theme id (bootstrap|darkly|yeti); NULL = follow installation default UI_THEME (GD-26, REQ-DB-008)
     session_epoch INTEGER NOT NULL DEFAULT 0,    -- raised to end every PHP session of the account: password writes, disables, 2FA reset, replay (REQ-AUTH-074, migration 0012)
+    preferred_region        VARCHAR(16),         -- nullable; the user's own choice, a projects.organization code; NULL = automatic (REQ-DB-052, migration 0020)
+    automatic_region        VARCHAR(16),         -- nullable; set from provider roles at sign-in or as the assignment placeholder; NULL = none
+    automatic_region_source VARCHAR(10),         -- provider | assignment; NULL exactly when automatic_region is NULL
     created_at    DATETIME NOT NULL
 );
 
@@ -111,7 +114,19 @@ CREATE TABLE IF NOT EXISTS provider_subject_links (  -- REQ-DB-051 (REQ-AUTH-080
     created_at  DATETIME NOT NULL,               -- UTC; first verified login
     PRIMARY KEY (issuer, subject)                -- one provider subject names one account
 );
-CREATE INDEX IF NOT EXISTS idx_provider_subject_links_user ON provider_subject_links (user_id);  -- "what else is this account linked to" (conflict review, Authentication_Authorization_Design.md §2.10 step 8)
+CREATE INDEX IF NOT EXISTS idx_provider_subject_links_user ON provider_subject_links (user_id);
+
+CREATE TABLE IF NOT EXISTS provider_role_regions (   -- REQ-DB-053 (REQ-AUTH-088, DEV-DB-18); migration 0020
+    id            INTEGER PRIMARY KEY,
+    issuer        VARCHAR(500) NOT NULL,         -- same value as OAUTH2_N_ISSUER
+    role_value    VARCHAR(255) NOT NULL,         -- verbatim as the provider sent it; longer values are never recorded
+    region        VARCHAR(16),                   -- projects.organization code; NULL = undecided (reviewed 0) or "names no region" (reviewed 1)
+    reviewed      INTEGER NOT NULL DEFAULT 0,    -- 1 once an administrator mapped the value or marked it as naming no region
+    first_seen_at DATETIME,                      -- UTC; NULL for a mapping entered before any sign-in carried the value
+    last_seen_at  DATETIME,                      -- UTC; the latest sign-in that carried it
+    seen_count    INTEGER NOT NULL DEFAULT 0,    -- sign-ins that carried it
+    UNIQUE (issuer, role_value)                  -- no user column: who holds a value is not stored (DEV-DB-18)
+);  -- "what else is this account linked to" (conflict review, Authentication_Authorization_Design.md §2.10 step 8)
 
 CREATE TABLE IF NOT EXISTS roles (               -- REQ-DB-009 (GD-2)
     id             INTEGER PRIMARY KEY,
@@ -156,6 +171,8 @@ CREATE INDEX IF NOT EXISTS idx_user_projects_user ON user_projects (user_id);
 ```
 
 Notes: `organization` and the level enums are enforced by the API's allowlists (SQLite `CHECK` is not portable); `ON DELETE SET NULL` on `role_id` means deleting a role leaves the assignment role-less (full permissions) — the API's role-deletion rule (REQ-API-059) is the authority on when deletion is allowed.
+
+**Region columns** (REQ-DB-052/053, master spec "Organization by hospital regions"). `preferred_region`, `automatic_region` and `provider_role_regions.region` hold codes of the `projects.organization` enumeration and are checked against the same API allowlist. That list lives once in Go (`admin.Organizations`, in REQ-DB-006 order — the order also breaks ties when sign-in roles map to several regions, `Authentication_Authorization_Design.md` §2.12). PHP keeps only the display text. The effective region is `COALESCE(preferred_region, automatic_region)`. It is computed where it is read and never stored, so choosing "Automatic" takes effect without a write to `automatic_region`. A sign-in records its role values with one dialect upsert per value (§10): an insert enters a new value as unreviewed with `seen_count = 1`; an update raises `seen_count`, sets `last_seen_at`, and sets `first_seen_at` only while it is still `NULL`. The unique key (`VARCHAR(500)` + `VARCHAR(255)`) has the same 3,020-byte utf8mb4 size as `provider_subject_links`' primary key, so the same row-format rule applies (§10).
 
 ## 5. Project Structure
 
@@ -457,7 +474,7 @@ Reference scale (REQ-DB-025): 100 projects × 10,000 records × 200 fields × 10
 | `VARCHAR(n)` | `TEXT` (affinity check only) | `VARCHAR(n)` |
 | `IF [NOT] EXISTS` on indexes | `CREATE INDEX IF NOT EXISTS`, `DROP INDEX IF EXISTS name` | `CREATE INDEX IF NOT EXISTS`, `DROP INDEX IF EXISTS name ON table` — required, not cosmetic: each DDL statement commits on its own, so an index migration stopped halfway is not rolled back, and the guards let the next start finish it (migration 0016) |
 | unique key over 3072 bytes (`data`: four `VARCHAR(255)` utf8mb4 columns) | an ordinary B-tree; answers any leading prefix of the key | kept as a `HASH` "long unique" index: enforces uniqueness only — it answers no prefix lookup (hence `idx_data_project_record`, migration 0019) and cannot back a foreign key (hence an index led by `project_id` for `fk_data_project`, migration 0016) |
-| primary key near the 3072-byte limit (`provider_subject_links`: `VARCHAR(500)` + `VARCHAR(255)`) | no limit | 3,020 bytes in utf8mb4 — fits the default `DYNAMIC` row format only. A server set to `innodb_default_row_format=COMPACT` (767-byte limit) MUST be switched back rather than the columns shortened: a truncated subject would bind two people to one account (REQ-DB-051) |
+| primary key near the 3072-byte limit (`provider_subject_links`: `VARCHAR(500)` + `VARCHAR(255)`; the same width for the `provider_role_regions` unique key) | no limit | 3,020 bytes in utf8mb4 — fits the default `DYNAMIC` row format only. A server set to `innodb_default_row_format=COMPACT` (767-byte limit) MUST be switched back rather than the columns shortened: a truncated subject would bind two people to one account (REQ-DB-051) |
 | yearly audit rollover | per-year tables + `VIEW` (no partitions) | `PARTITION BY RANGE (YEAR(created_at))` |
 | append-only enforcement | application-level (no such operation exposed) | grant `INSERT, SELECT` only to the app account |
 | foreign keys | `PRAGMA foreign_keys=ON` on every connection (DSN pragma, verified at startup — see the note below) | enforced (InnoDB) |
@@ -487,6 +504,7 @@ Reference scale (REQ-DB-025): 100 projects × 10,000 records × 200 fields × 10
 | account validity and inactivity (master spec "Details", GD-19) | `users.valid_until` (NULL = indefinite) + `users.last_login_at` (§4); auto-disable rule in `Authentication_Authorization_Design.md` §4.4 |
 | two-factor authentication (master spec "Details", GD-21) | `user_two_factor` — one row per user, method/secret/replay step/pending-code hash/recovery hashes (§4); verification and enrollment in `Authentication_Authorization_Design.md` §2.7 |
 | account onboarding and password lifecycle (GD-22/GD-23) | `password_tokens` — single-use hashed invite/reset tokens (§4); issuance, email, and completion in `Authentication_Authorization_Design.md` §2.8 |
+| preferred region (master spec "Organization by hospital regions") | `users.preferred_region` / `automatic_region` / `automatic_region_source` and `provider_role_regions` (§4, REQ-DB-052/053, migration `0020_preferred_region.sql` for both dialects); derivation and placeholder rules in `Authentication_Authorization_Design.md` §2.12 and `API_Endpoints_Design.md` §4.6 |
 | project modes (master spec "Project modes", GD-20) | `projects.mode` (`development` default, §4) + `project_staging` JSON-snapshot table (§5 — the live structure tables stay untouched while a set is open); transition/staging rules normative in `API_Endpoints_Design.md` §4.21 |
 
 ## 12. Open Items
@@ -499,7 +517,7 @@ Reference scale (REQ-DB-025): 100 projects × 10,000 records × 200 fields × 10
 
 ## 13. Rationale and Trade-offs
 
-Why the schema takes its shape, and what each choice costs. The decision records DEV-DB-1…17 (`Requirements/Database_Schema_Requirements.md` §5) carry the table-level reasoning.
+Why the schema takes its shape, and what each choice costs. The decision records DEV-DB-1…18 (`Requirements/Database_Schema_Requirements.md` §5) carry the table-level reasoning.
 
 - **EAV for record data** (§6). One `data` row per stored value, keyed by (project, record, event, repeating instrument, instance, field), lets a project's design change — fields added, renamed, moved, repeating switched on — without DDL, and keeps REDCap's flat export shape a projection rather than a table layout. The cost is that every record read is a range scan over many rows, which is what the (`project_id`, `record_id`) indexes of §9 exist to bound.
 - **One logical schema, two dialects** (§1, §10). The DDL is written in the subset common to SQLite and MariaDB, and every difference is listed in §10, so development and production run the same queries. The cost: no `ENUM` or `CHECK` constraints (enumerations are API allowlists), and features one dialect lacks are worked around rather than used.
@@ -519,6 +537,8 @@ Why the schema takes its shape, and what each choice costs. The decision records
 | Code inside a transaction reads through a second pooled connection | It sees the state before the transaction began; the `*Tx` store methods are required, and a test caps the pool at one connection to catch violations | §10 |
 | A MariaDB index migration stops halfway | DDL is not rolled back; the `IF [NOT] EXISTS` guards let the next start finish it | §10 |
 | MariaDB runs with `innodb_default_row_format=COMPACT` | `provider_subject_links`' primary key does not fit; the server must be switched back to `DYNAMIC`, never the columns shortened | §10, REQ-DB-051 |
+| A region code is withdrawn from the REQ-DB-006 enumeration | Stored `preferred_region`, `automatic_region` and mapping values keep it; it still matches projects stored under the same code, and the selectors show it as an extra option, as the project form does | §4 |
+| A sign-in carries a role value longer than 255 characters | Not recorded and never mapped; the login proceeds | §4, `Authentication_Authorization_Design.md` §2.12 |
 | A lookup by a prefix of the `data` unique key on MariaDB | The hash "long unique" index answers none; `idx_data_project_record` serves it | §9, §10 |
 | A further instance stored at a pair that no longer repeats | Stays in `data`, hidden from every reader until the pair repeats again | §6 |
 | Removing an instrument that is a survey, the first instrument, or holds the record identifier | Refused | §6, REQ-API-154 |

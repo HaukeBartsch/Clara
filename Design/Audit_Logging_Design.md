@@ -108,7 +108,7 @@ Field renames are `field_updated` with `"changes":{"name":{"old":"…","new":"�
 |---|---|---|
 | `user_created` | REQ-API-047 | `{"email":"…","display_name":"…","re_enabled":false}` — `re_enabled:true` when a disabled account is re-enabled |
 | `user_updated` | REQ-API-048/136 | `{"email":"…","enabled":0,"is_admin":{"old":1,"new":0}}` — one key per changed attribute; a grant/revoke of `is_admin` rides this event, no separate type (a rejected last-admin change writes nothing) |
-| `membership_changed` | REQ-API-054 | `{"member_email":"…","action":"add or role_change or remove","role":"data-entry or null"}` |
+| `membership_changed` | REQ-API-054 | `{"member_email":"…","action":"add or role_change or remove","role":"data-entry or null"}`, plus `"region_placeholder":"OUS"` on an add that set the member's placeholder region (REQ-API-179, REQ-AUD-036) |
 | `token_issued` | first issuance via REQ-API-054 (REQ-AUTH-030) | `{"member_email":"…"}` — the token value is never in `details` (REQ-API-005) |
 | `token_rotated` | REQ-API-055 | `{"member_email":"…"}` |
 | `token_revoked` | member removal or explicit revocation (REQ-AUTH-030) | `{"member_email":"…","reason":"member_removed or explicit"}` |
@@ -117,6 +117,8 @@ Field renames are `field_updated` with `"changes":{"name":{"old":"…","new":"�
 | `role_updated` | REQ-API-143 | `{"role_id":7,"name":"data-manager","before":{"arms":{…},"grants":[…]},"after":{…}}` — one entry per applied edit, the whole permission set on each side so a reviewer never reconstructs it from deltas; names, levels and rights only, never record values (REQ-AUD-012) |
 | `i18n_updated` | REQ-API-100 | `{"language":"nb","key":"ui.dashboard.title","action":"set or removed"}` |
 | `settings_updated` | `PUT /api/v1/settings` changes at least one key (REQ-API-112, REQ-AUD-027) | `{"changes":{"rate_limit_rpm":{"old":"600","new":"300"},"rate_limit_enabled":{"old":"false","new":"true"}}}` — same old/new shape as `project_updated`; a PUT that changes nothing writes no entry (REQ-AUD-004) |
+| `region_mapping_changed` | an administrator enters, maps, marks or removes a provider role value — `POST`/`PUT`/`DELETE /api/v1/provider-roles…` (REQ-API-178, REQ-AUD-036) | `{"issuer":"…","role_value":"…","action":"add or update or remove","region":{"old":"OUS or null","new":"Ahus or null"}}` — `null` on a reviewed row means "names no region"; a PUT that changes nothing writes no entry. Sign-ins that record or derive regions write no event, and role values never enter `login_success` details (REQ-AUTH-084) |
+| `preferred_region_changed` | a user changes their own region — `PUT /api/v1/users/me/region` (REQ-API-175, REQ-AUD-036) | `{"old":"OUS or null","new":"Ahus or null"}` — the user's own choice on each side, `null` = Automatic; an unchanged value writes no entry |
 
 ### 3.5 Export events (REQ-AUD-011, BR-008)
 

@@ -490,10 +490,11 @@ Processing (in order, `Authentication_Authorization_Design.md` §2.3): for `sour
 { "id": 3, "email": "user@example.org", "display_name": "User", "enabled": true, "is_admin": true,
   "auth_source": "oauth2", "ui_language": "en", "ui_theme": null,
   "last_login_at": "2026-09-20 08:14:05", "valid_until": null, "status": "active",
-  "tfa_method": "off", "session_epoch": 0 }
+  "tfa_method": "off", "session_epoch": 0,
+  "region": "OUS", "preferred_region": null, "automatic_region": "OUS", "automatic_region_source": "provider" }
 ```
 
-`last_login_at` is `null` when the account has never logged in; `valid_until` is `null` when indefinite; `status` ∈ `active | disabled | expired | auto_disabled` (derived — GD-19, REQ-AUTH-052/053); `ui_theme` is `null` when the account follows the installation default theme (`UI_THEME`, GD-26, REQ-DB-008); `session_epoch` is the account's session epoch, which PHP keeps in the session it establishes and presents as `X-Internal-Session-Epoch` (REQ-AUTH-074).
+`last_login_at` is `null` when the account has never logged in; `valid_until` is `null` when indefinite; `status` ∈ `active | disabled | expired | auto_disabled` (derived — GD-19, REQ-AUTH-052/053); `ui_theme` is `null` when the account follows the installation default theme (`UI_THEME`, GD-26, REQ-DB-008); `session_epoch` is the account's session epoch, which PHP keeps in the session it establishes and presents as `X-Internal-Session-Epoch` (REQ-AUTH-074). The four region values are those of §4.30 (REQ-API-176): `region` is the effective region, `null` when the account has none.
 
 **`POST /api/v1/auth/logout`** — records the `logout` audit event (REQ-AUTH-008) and returns 200. Destruction of the PHP session remains the PHP layer's responsibility, performed after this call (GD-1, REQ-AUTH-015; `Authentication_Authorization_Design.md` §2.4).
 
@@ -538,8 +539,10 @@ Administrator (requires `is_admin`), REQ-API-116: `POST /api/v1/users/{id}/tfa/r
 
 ```json
 [ { "id": 33, "project_name": "MOBA", "organization": "NAT EU", "record_count": 42, "instrument_count": 5, "field_count": 128,
-    "last_accessed_at": "2026-10-20 08:00:00" } ]
+    "last_accessed_at": "2026-10-20 08:00:00", "in_preferred_region": false } ]
 ```
+
+`in_preferred_region` is `true` when `organization` equals the acting user's effective region, `COALESCE(preferred_region, automatic_region)` from the user row the call has already loaded (REQ-API-049, REQ-DB-052). It is `false` for every project when the user has no region. It is computed after the visibility filter, from the region as it stands at that call. So a region changed in another session — a placeholder set by an administrator, a choice made in a second tab — regroups an open overview on its next two-second read without waiting for a new sign-in (`User_Interface_Design.md` §4). Like `last_accessed_at`, it leaves the list in name order: grouping is the page's presentation (REQ-UI-076/077). A per-project flag keeps the response a plain array, which every existing consumer already reads.
 
 `last_accessed_at` is the **acting user's** newest audit event in that project — `SELECT project_id, MAX(created_at) FROM audit_events WHERE user_id = ? AND project_id IS NOT NULL GROUP BY project_id`, one read for the whole list (never one per project), served by `idx_audit_events_user_project` (`Audit_Logging_Design.md` §6.4). The stored UTC text passes through unformatted, and `null` means this account has never generated an event in that project — a project-less event (a login) belongs to no project (REQ-UI-071). It is what the overview orders its boxes by; this endpoint stays in name order, because recency is one page's presentation rather than a property of the list.
 
@@ -599,7 +602,7 @@ Both endpoints require `is_admin` (master spec: administrator users assign users
 
 **`PUT /api/v1/projects/{id}/users/{uid}`** — the single mutation point for membership (REQ-API-054):
 
-- **Add** a member: body `{ "role": "data-entry" }` (`"role": null` or omitted = role-less). → 201 — the member object **with the new token** (returned once, for display to the administrator; REQ-API-055). Audit `membership_changed` (action `add`) + `token_issued`.
+- **Add** a member: body `{ "role": "data-entry" }` (`"role": null` or omitted = role-less). → 201 — the member object **with the new token** (returned once, for display to the administrator; REQ-API-055). Audit `membership_changed` (action `add`) + `token_issued`. **Region placeholder** (REQ-API-179): in the same transaction, if the new member's `preferred_region` and `automatic_region` are both `NULL`, the acting administrator has an effective region, and the member is not the administrator, the member's row gets `automatic_region` = that region and `automatic_region_source = 'assignment'`, and the `membership_changed` details carry `"region_placeholder": "<code>"`. The update is conditional on both columns still being `NULL` (`… WHERE id = ? AND preferred_region IS NULL AND automatic_region IS NULL`), so a concurrent sign-in that derived a region, or a choice the member made in the meantime, is never overwritten. A role change, rotation or removal never touches the region.
 - **Change the role**: body `{ "role": "data-manager" }` or `{ "role": null }` (role-less = full permissions, REQ-AUTH-022). → 200. Audit `membership_changed` (action `role_change`).
 - **Rotate the token**: body `{ "rotate_token": true }` → 200 — the member object **with the new token**; the previous token is invalid immediately (REQ-AUTH-030, REQ-API-055). Audit `token_rotated`.
 - **Remove** a member: body `{ "remove": true }` → 200; the member's token is invalid immediately (REQ-API-055, REQ-AUTH-030). Audit `membership_changed` (action `remove`) + `token_revoked`.
@@ -1416,6 +1419,39 @@ Values arrive through the same pipeline `format=csv|json` uses (`dataapi.RunExpo
 
 Neither route is called directly by the browser: the administrator-only PHP UI proxies the export and import through the internal service-token boundary (REQ-ODM-005, DEV-ODM-6, REQ-TECH-018).
 
+### 4.30 Preferred region (REQ-API-175…178, master spec "Organization by hospital regions")
+
+A region is a code of the `projects.organization` enumeration (REQ-DB-006), validated against the one Go allowlist (`Database_Schema_Design.md` §4); any other value is 400 `invalid_request`. How regions are derived at sign-in is `Authentication_Authorization_Design.md` §2.12, and the placeholder set when a member is added is §4.6.
+
+**`GET /api/v1/users/me/region`** — any authenticated user, about themselves. 200:
+
+```json
+{ "region": "OUS", "preferred_region": null, "automatic_region": "OUS", "automatic_region_source": "provider" }
+```
+
+`region` is the effective region (`preferred_region`, else `automatic_region`, else `null`); `automatic_region_source` is `provider`, `assignment` or `null`. The account page reads this endpoint rather than the session copy of the user object, because an administrator's assignment can set a placeholder after the session began.
+
+**`PUT /api/v1/users/me/region`** — any authenticated user, acting on themselves (mirrors `PUT /users/me/ui-theme`, §4.19). Body `{ "region": "Ahus" }` sets the user's own choice; `{ "region": null }` clears it ("Automatic"), and the automatic region applies at once. The attribute is required: an empty body is 400. 200 — the region state as for GET. An applied change writes `preferred_region_changed` `{"old": <code|null>, "new": <code|null>}` (REQ-AUD-036); a PUT that changes nothing writes no entry (REQ-AUD-004).
+
+**`GET /api/v1/provider-roles`** — `is_admin`. 200, unreviewed rows first, then by `issuer` and `role_value`:
+
+```json
+[ { "id": 12, "issuer": "https://idp.example.org/idp", "role_value": "HSO-OUS-Forskning", "region": null, "reviewed": false,
+    "first_seen_at": "2026-10-30 07:12:44", "last_seen_at": "2026-10-31 08:01:09", "seen_count": 37 },
+  { "id": 4, "issuer": "https://idp.example.org/idp", "role_value": "HSO-Ahus-Ansatt", "region": "Ahus", "reviewed": true,
+    "first_seen_at": "2026-10-02 09:30:00", "last_seen_at": "2026-10-31 07:55:12", "seen_count": 412 } ]
+```
+
+The list is not paginated: it holds distinct role values, not sign-ins, and the sign-in bound of 50 values (`Authentication_Authorization_Design.md` §2.12) keeps a provider's contribution bounded by its own vocabulary. The response names the issuer only; PHP shows each provider's login display name beside it from its own configuration.
+
+**`POST /api/v1/provider-roles`** — `is_admin`. Body `{ "issuer": "…", "role_value": "…", "region": "<code>" | null }` enters a value no sign-in has carried yet, as reviewed, with `first_seen_at`, `last_seen_at` = `null` and `seen_count` = 0. `issuer` MUST equal a configured `OAUTH2_N_ISSUER` (400 otherwise); `role_value` is trimmed, 1–255 characters. An existing (`issuer`, `role_value`) pair is 409 `conflict`. 201 — the row. Audit `region_mapping_changed` with action `add`.
+
+**`PUT /api/v1/provider-roles/{id}`** — `is_admin`. Body `{ "region": "<code>" }` maps the value; `{ "region": null }` records that it names no region. Both set `reviewed`. 200 — the row. Audit `region_mapping_changed` with action `update` and the old and new region; a PUT that changes neither the region nor `reviewed` writes no entry. Unknown `{id}` is 404 `not_found`, here and on DELETE (§4.2).
+
+**`DELETE /api/v1/provider-roles/{id}`** — `is_admin`. Removes the row. A later sign-in carrying the value enters it again as unreviewed. 200 `{ "ok": true }`. Audit `region_mapping_changed` with action `remove`.
+
+None of these endpoints touches an account. A changed mapping reaches each holder of the value at their next sign-in, and never a user who chose their own region (REQ-AUTH-088).
+
 ## 5. Permission summary
 
 The normative endpoint → permission mapping is in `API_Endpoints_Requirements.md` §4.22; it is reproduced here as an overview:
@@ -1461,6 +1497,8 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirements.
 | `GET /api/v1/system/metrics` (§4.25, REQ-API-163) | `is_admin` only |
 | `GET /api/v1/system/blocked-ips` (§4.26, REQ-API-164) | `is_admin` only |
 | `GET /i18n/languages`, `PUT /users/me/ui-language`, `PUT /users/me/ui-theme` (§4.19) | any authenticated user |
+| `GET/PUT /users/me/region` (§4.30, REQ-API-175) | any authenticated user (self) |
+| `GET/POST /api/v1/provider-roles`, `PUT/DELETE /api/v1/provider-roles/{id}` (§4.30, REQ-API-177/178) | `is_admin` |
 | `GET/PUT /i18n/strings` | `is_admin` |
 | `POST …/end-provision` (§4.20) | `is_admin` (BR-009) |
 | `GET …/mode` (§4.21) | data access ≥ `read_only` + visibility |
@@ -1499,6 +1537,9 @@ Why the endpoint contracts take their shape, and what each choice costs. The dec
 | A caller exceeds the per-minute budget | 429 with `Retry-After`; the source IP stays blocked for the configured period, not extended by further calls | §3.9, REQ-API-113 |
 | A forwarded `X-Real-IP` from an untrusted peer | Ignored; the connection address is used | §3.9, REQ-API-125 |
 | A stale `X-Internal-Session-Epoch` | 401 `session_revoked`, `admin_rejected` audited; PHP ends the session | §4.2, REQ-API-147 |
+| A member is added while their sign-in derives a region | The placeholder update is conditional on both region columns still being `NULL`; whichever commits first stands, and a provider region still replaces a placeholder at a later sign-in | §4.6, REQ-API-179 |
+| An administrator without a region adds a member without one | No placeholder; the member's region stays none | §4.6 |
+| `PUT /users/me/region` with a code outside the enumeration | 400 `invalid_request`; nothing stored | §4.30 |
 | A change that would leave zero enabled administrators | 409 `conflict`, nothing written, no audit entry | REQ-API-136, DEV-API-22 |
 | Deleting an arm with events or data, a group with records, or a field an expression references | 409 `conflict` | §4.2 |
 | A mode change while a staging set is open | 409 `conflict` for every transition | §4.21, REQ-API-105 |

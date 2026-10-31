@@ -100,13 +100,15 @@ API processing (in order):
 1.5. **Two-factor gate** (GD-21, REQ-AUTH-055/058, only for `source = "local"` or `"ldap"`): if the account's method is not `off`, a call without `mfa_code` → 401 `mfa_required` (body names the method); with an invalid, expired, or already-used code → audit `login_failure` (`bad_mfa_code`) + 401 `bad_mfa_code`; valid codes (§2.7) proceed and are recorded against replay. If `AUTH_REQUIRE_2FA` is on and the method is `off` → 401 `tfa_enrollment_required` (no audit failure — the first factor succeeded; enrollment follows, §2.7). Until this gate passes, no user object is returned and steps 3–5 do not run.
 2. **Bootstrap promotion** (REQ-AUTH-007, GD-4, DEV-AUTH-15): if the email equals `ADMIN_BOOTSTRAP_EMAIL` and no row exists, create it as an enabled administrator — the first-installation setup case; on a first installation without an IdP, the row's `password_hash` is provisioned from `ADMIN_BOOTSTRAP_PASSWORD` at startup (REQ-AUTH-051). Login never re-enables a disabled account and sets `is_admin = 1` on an existing enabled row only when the source is `local` or no other enabled administrator exists — after setup, administration is assigned through `PUT /api/v1/users/{id}` (REQ-API-136), not by the bootstrap path; the invariant that at least one enabled administrator remains is REQ-AUTH-068.
 3. Update the row's `auth_source` to the call's `source` (REQ-AUTH-005) and set `last_login_at` to now (UTC, REQ-AUTH-053).
+3.5. **Region from provider roles** (only `source = "oauth2"` from a provider with `OAUTH2_N_ROLES_ATTR` set, REQ-AUTH-088): record the role values the verified assertion carries and, when one maps to a region, set the automatic region (§2.12). This step never refuses a login.
 4. Record `login_success` (audit) — `source=ui`, acting user set, no token; when the gate of step 1.5 applied, its details name the factor used (`totp`, `email`, or `recovery`, REQ-AUD-028).
 5. Return the user object.
 
 Response (200):
 
 ```json
-{ "id": 3, "email": "user@example.org", "display_name": "User", "is_admin": true, "auth_source": "oauth2", "ui_language": "en", "ui_theme": null }
+{ "id": 3, "email": "user@example.org", "display_name": "User", "is_admin": true, "auth_source": "oauth2", "ui_language": "en", "ui_theme": null,
+  "region": "OUS", "preferred_region": null, "automatic_region": "OUS", "automatic_region_source": "provider" }
 ```
 
 The API is stateless with respect to sessions: it MUST NOT create or store a session (GD-1, REQ-API-044).
@@ -215,8 +217,24 @@ Runs in the API on the `source = "oauth2"` leg of Sequence C, **before any accou
 The Control Panel's Authentication Test section is guarded by the normal `is_admin` route guard. It enumerates only the immutable sources parsed from environment configuration; it accepts no caller-supplied host, issuer, or endpoint.
 
 - **LDAP:** a CSRF-protected POST names one configured server index and carries the test username/password. PHP launches the existing isolated LDAP child with that server's configured search credentials and a five-second timeout. The check reports search and user-bind outcomes, the configured identity attributes, and a bounded allowlist of returned `uid`, `mail`, `cn`, `memberOf`, `groups`, and `roles` values. No login API call or CLARA session is made. The entered password remains only in the request and child stdin.
-- **OAuth/OIDC:** a CSRF-protected POST starts the configured authorization-code/PKCE flow and marks its single-use session transaction as `auth_test`. The existing callback verifies state, exchanges the code server-side, then stores a one-time report and redirects to the diagnostic section; it never calls the login API or establishes a CLARA session. The report includes discovered endpoint URLs, endpoint status, and only allowlisted non-secret claims (`iss`, `sub`, email/name claims, groups/roles, and assurance claims). Claims are not interpreted as CLARA roles.
+- **OAuth/OIDC:** a CSRF-protected POST starts the configured authorization-code/PKCE flow and marks its single-use session transaction as `auth_test`. The existing callback verifies state, exchanges the code server-side, then stores a one-time report and redirects to the diagnostic section; it never calls the login API or establishes a CLARA session. The report includes discovered endpoint URLs, endpoint status, and only allowlisted non-secret claims (`iss`, `sub`, email/name claims, groups/roles, and assurance claims). Claims are not interpreted as CLARA roles. For a provider with `OAUTH2_N_ROLES_ATTR` set, the report also names that claim, includes it under the same bounds even when its name is outside the allowlist, and shows the region each value currently maps to and the region a sign-in would set (§2.12) — a preview for setting up the mapping. The test records nothing in the mapping and changes no account.
 - Both reports are escaped when rendered, bounded, and one-time session data. Passwords, bind credentials, client secrets, authorization codes, access tokens, and ID tokens are excluded from report data, HTML, and logs; the reference proxy formats omit query strings and referrers. Failed requests return generic translated outcomes and technical stage/status information only.
+
+### 2.12 Preferred region from provider roles (REQ-AUTH-088/089, DEV-AUTH-19)
+
+Sequence C runs this as step 3.5 on the `source = "oauth2"` leg, for a provider whose `OAUTH2_N_ROLES_ATTR` is set (REQ-CFG-037). By then Sequence J has verified the assertion and resolved the account (§2.10 step 8); the user object has not been returned yet. **It never refuses a login.** Every failure below degrades to "no region information", and the login completes as it would without the key.
+
+1. **Read the claim** named by `OAUTH2_N_ROLES_ATTR` from the verified ID token's payload. When the token does not carry it, read it from the userinfo response held to the token's `sub` (§2.10 step 6), fetching that response for this purpose if step 6 did not need it. PingFederate makes this common: its ID-token claims and `/idp/userinfo.openid` are released independently, so an attribute contract may release roles to userinfo only. A userinfo failure at this point is logged with its status alone and treated as an absent claim.
+2. **Normalize.** A JSON string is one value; an array contributes its string elements; any other type contributes nothing. Values are trimmed, empty ones dropped and duplicates collapsed. At most the first 50 distinct values are taken, and a value longer than 255 characters is skipped. Both limits are logged as counts, never as values.
+3. **Record** each value against the provider's issuer in `provider_role_regions` (REQ-DB-053) with one dialect upsert per value, in the login's transaction (`Database_Schema_Design.md` §4): a new pair enters unreviewed, and a known pair is marked seen again.
+4. **Derive.** Collect the regions of the reviewed rows among those values. If there is at least one, the first in REQ-DB-006 order (OUS, Ahus, SØ, SiV, ST, SSHF, SI, VVHF, SUN, NAT EU, OTHER) becomes `users.automatic_region`, with `automatic_region_source = 'provider'`. This replaces an earlier provider value or an assignment placeholder (`API_Endpoints_Design.md` §4.6). If no value maps, the row is left as it is. `preferred_region` is never written here.
+5. **Return** the user object with its region values (REQ-API-176), so the session starts with the derived region.
+
+**What is kept.** Role values are kept per provider without any account (DEV-DB-18). The table tells an administrator which values exist and how common they are, never who holds one. As a result, a mapping changed in the Control Panel reaches an account at its next sign-in. Role values never enter the `login_success` details (REQ-AUTH-084) or the logs; the sign-in writes no audit event of its own for them (REQ-AUD-036).
+
+**Why it cannot authorize** (REQ-AUTH-089). The region is read in exactly two places: the per-project `in_preferred_region` flag of `GET /api/v1/projects`, computed after the visibility filter (`API_Endpoints_Design.md` §4.5), and the account page's region state (§4.30 there). No authorization path (§4) reads the region columns or the mapping. A forged or mistaken role value therefore reorders one user's own list and nothing else.
+
+**Other sources.** LDAP and local accounts take no region from a directory. They receive the assignment placeholder (REQ-API-179) or choose their own region (REQ-UI-075).
 
 ## 3. Session Schema (GD-1)
 
@@ -415,11 +433,12 @@ Rules:
 - **Whether the provider echoes `nonce`** is an observed fact, not a documented one — PingFederate's OIDC policy settings expose no nonce option and its discovery sample shows none. `OAUTH2_N_NONCE_REQUIRED` stays at `0` until one live exchange has been inspected per provider (REQ-AUTH-079).
 - **The JSON type of `email_verified`** under the mapping a given installation chooses, and whether that directory can attest verification at all. If it cannot, the honest configuration is to say so in the installation notes rather than map a constant true (REQ-AUTH-078).
 - **Provider version floor and entitlements.** Back-channel logout needs PingFederate 11.3 or newer and RP-initiated logout 12.0 or newer; nothing public gates these behind an entitlement, but licensing is by managed identities and enforcement can be by licence key, so both are confirmations to obtain rather than assumptions to design on (ASM-AUTH-6).
+- **Which PingFederate attribute carries the region roles**, and whether the attribute contract releases it to the ID token or to userinfo only, is installation-specific. The installation records the claim name in `OAUTH2_N_ROLES_ATTR` and checks it with the Authentication Test (§2.11) before relying on sign-in regions. Reading LDAP `memberOf` for the same mapping is not designed.
 - **A pairwise subject's sector identifier** must be recorded per installation and treated as immutable: changing it invalidates every stored `sub` and orphans the account links built with it (REQ-AUTH-080).
 
 ## 10. Rationale and Trade-offs
 
-Why authentication and authorization are built this way, and what each choice costs. The decision records DEV-AUTH-1…18 (`Requirements/Authentication_Authorization_Requirements.md` §6) carry the requirement-level reasoning.
+Why authentication and authorization are built this way, and what each choice costs. The decision records DEV-AUTH-1…19 (`Requirements/Authentication_Authorization_Requirements.md` §6) carry the requirement-level reasoning.
 
 - **PHP owns the session; the API owns every decision** (GD-1, §3, §6). The browser talks only to PHP, and the API re-reads the acting user on every call (§4), so a permission change takes effect on the next request without re-authentication. The cost is one account read per call, and a service secret whose holder can act as any user — which is why the administration API must not be reachable from other hosts (§1.2, REQ-CFG-033).
 - **The API verifies provider logins itself** (§2.10, DEV-AUTH-18). PHP keeps only the single-use browser transaction; the Go API redeems the code and verifies the ID token before any account lookup, so the web layer's word alone never opens a session. LDAP still rests on PHP's word, because the bind happens in PHP (§2.2, §6).
@@ -442,6 +461,9 @@ Why authentication and authorization are built this way, and what each choice co
 | `email_verified` absent, `false`, or the string `"true"` | Refused as `email_unverified` | §2.10, REQ-AUTH-078 |
 | Userinfo answers about a different subject, or cannot be reached | Different subject → refused; unreachable → `provider_unavailable`, without spending the address's lockout | §2.1, §2.10 |
 | Subject link and address point at different accounts | Refused, with an administrator-actionable audit entry; the API never guesses | §2.10, REQ-AUTH-080 |
+| The roles claim is absent, not a string or list, or userinfo fails while reading it | No region information; the login completes, and the automatic region stays as it was | §2.12 |
+| A sign-in's role values map to several regions | The first in REQ-DB-006 order wins; the user can choose another on the account page | §2.12 |
+| A role value is mapped after its holders have signed in | Each holder gets the region at their next sign-in; a user who chose their own region keeps it | §2.12, DEV-DB-18 |
 | An LDAP server is unreachable during a race | That attempt settles as failed after its own timeout; the others continue | §2.2, §2.9 |
 | Every source under a name fails | One `login_failure`: `provider_unavailable` if all were unreachable, otherwise `bad_credentials`; a disabled or expired account shows its specific reason | §2.2, §2.9 |
 | Five failed logins for one address within 10 minutes | Further attempts rejected for 15 minutes (429) before any directory or hash is contacted; a username is expanded to the address first | §2.5, REQ-AUTH-087 |

@@ -72,6 +72,7 @@ Per provider `N` (1…3):
 | `OAUTH2_N_MIN_ACR` | api | comma-separated values | empty | — | assurance gate: `acr` must be one of these or `amr` must contain one; empty = no gate (REQ-CFG-035, REQ-AUTH-081) |
 | `OAUTH2_N_NONCE_REQUIRED` | api | `0`\|`1` | `0` | — | `1` refuses an ID token without `nonce`; `0` means "not yet observed", not "satisfied" (REQ-CFG-035, REQ-AUTH-079) |
 | `OAUTH2_N_ID_TOKEN_ALG` | api | JWS algorithm | `RS256` | — | the pinned signing algorithm; any value outside the asymmetric RS/PS/ES/EdDSA set — including `none` and the HMAC family — is a startup error (REQ-CFG-035, REQ-AUTH-077) |
+| `OAUTH2_N_ROLES_ATTR` | api (web: display only) | claim name | empty | — | the claim carrying the provider's role values for the preferred-region default, read from the verified ID token, else from userinfo; empty = the provider's roles are not read (REQ-CFG-037, REQ-AUTH-088, `Authentication_Authorization_Design.md` §2.12) |
 | `OAUTH2_N_NAMES` | web | comma-separated display names | unset → implicit default set | — | names this provider is selected by on the login page (master spec "Authentication order", REQ-CFG-032, REQ-AUTH-063/064); entries empty after trimming rejected at startup (§4.1) |
 
 Shared by all providers: `OAUTH2_JWKS_TTL` (api; positive integer seconds; default `3600`) bounds how long a fetched provider key set is reused before a scheduled refetch; an unknown `kid` refetches at once (REQ-CFG-035, REQ-AUTH-077).
@@ -185,6 +186,7 @@ The rate-limit **thresholds are not environment variables**: `rate_limit_enabled
 | when `SMTP_HOST` is set: `OTP_MAIL_FROM` set and parseable (email method active; unset SMTP → method unavailable, no startup failure) | required | required (REQ-CFG-028) |
 | `UI_THEME` ∈ {`bootstrap`, `darkly`, `yeti`} (default `bootstrap`) | required | required (GD-26, REQ-CFG-031) |
 | `MONITORING_PERIOD_MINUTES` is an integer ≥ 1 and ≤ 1440 (default `10`) | required | required (REQ-CFG-034) |
+| `OAUTH2_N_ROLES_ATTR`, when set, is one claim name — no whitespace, no comma | required | required (REQ-CFG-037) |
 
 The API refuses to start with a non-zero exit and a message naming each missing/invalid variable (REQ-CFG-004); the PHP app fails at entry-point boot with an operator-readable page and no stack trace in production (REQ-CFG-005).
 
@@ -238,6 +240,8 @@ OAUTH2_1_NAMES=Hospital 1
 #OAUTH2_1_NONCE_REQUIRED=0
 #OAUTH2_1_ID_TOKEN_ALG=RS256
 #OAUTH2_JWKS_TTL=3600
+# claim with the provider's role values; mapped to a preferred region in the Control Panel (REQ-CFG-037) — empty = not read
+#OAUTH2_1_ROLES_ATTR=
 
 # local (table-based) source names — optional; unset everywhere = one implicit default set
 #LOCAL_LOGIN_NAMES=Clinic A
@@ -316,7 +320,7 @@ None.
 
 ## 8. Rationale and Trade-offs
 
-Why configuration works this way, and what each choice costs. The decision records DEV-CFG-1…7 (`Requirements/System_Configuration_Requirements.md` §4) carry the requirement-level reasoning.
+Why configuration works this way, and what each choice costs. The decision records DEV-CFG-1…8 (`Requirements/System_Configuration_Requirements.md` §4) carry the requirement-level reasoning.
 
 - **Environment variables only, read once** (§2, §4.3). One mechanism for both components, no configuration files to parse and no reload path to secure. The cost: every change needs a restart (ASM-CFG-2).
 - **Fail at startup, not at first use** (§4.1). A missing or invalid value refuses startup with a message naming each problem, so a misconfiguration is found by whoever deploys, not by the first user who reaches the affected feature.
