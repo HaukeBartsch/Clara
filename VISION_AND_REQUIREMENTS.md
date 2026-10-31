@@ -1260,3 +1260,28 @@ svg.counter-8 .index-2 {
 ```
 
 
+## Organization by hospital regions
+
+Here is the current list of hospital regions in Helse Sør-Øst.
+
+```html
+<select class="form-select form-select-sm" id="project-organization" name="organization" required="">
+  <option value=""></option>
+  <option value="OUS">Oslo University Hospital, Rikshospitalet, Ullevål, Radiumhospitalet, Aker</option>
+  <option value="Ahus">Akershus University Hospital, Nordbyhagen (Lørenskog), Kongsvinger</option>
+  <option value="SØ">Sykehuset Østfold, Kalnes (Sarpsborg), Moss</option>
+  <option value="SiV">Sykehuset i Vestfold, Tønsberg, Larvik</option>
+  <option value="ST">Sykehuset Telemark, Skien, Notodden, Porsgrunn, Rjukan</option>
+  <option value="SSHF">Sørlandet Sykehus, Kristiansand, Arendal, Flekkefjord</option>
+  <option value="SI">Sykehuset Innlandet, Hamar, Elverum, Lillehammer, Gjøvik, Kongsvinger (psychiatry)</option>
+  <option value="VVHF">Vestre Viken, Drammen, Bærum, Ringerike (Hønefoss), Kongsberg</option>
+  <option value="SUN">Sunnaas Sykehus, Nesodden (Specialized rehabilitation hospital)</option>
+  <option value="NAT EU">NAT EU</option>
+  <option value="OTHER">Other</option>
+</select>
+```
+
+Each of the hospital regions can have hundreds of projects. A user that uses Clara might predominantly be interested in his/her own regions projects. Introduce a preferred region for each user (can be changed on the users account profile page). The initial value of the preferred region should come from PingFederates roles. The admin user should be able to edit this assignment as new roles are coming in from PingFederate (map PingFederate information to preferred region list). The project overview pages should be sorted (preferred region first). Ensure that "last used today" is specific for the current user and not system wide.
+
+If an administrator assigns a user to a project that administrators preferred region can serve as the first placeholder for the users preferred region.
+
