@@ -5,15 +5,20 @@
 // last field (§8.5), and the record actions beside it (§8.7).
 //
 // Reads per render (§12 rule 13): the project detail (permissions, arms and events), the
-// mode, the instruments (survey flag, instrument branching), the mapping, the record-status
-// read (this record's completion states, and whether it exists yet), the selected
-// instrument's fields, and the record history walked newest-first until every value the
-// form shows or its branching needs is settled (§8.3, REQ-API-137). The registry patterns and
-// the data access groups are read only when the form or the member needs them.
+// mode, the instruments (survey flag, instrument branching), the mapping, this record's own
+// row of the record-status read (its completion states, and whether it exists yet) and of the
+// completeness count (REQ-API-180), the selected instrument's fields, and the record history
+// walked newest-first until every value the form shows or its branching needs is settled
+// (§8.3, REQ-API-137). The registry patterns and the data access groups are read only when
+// the form or the member needs them.
+//
+// Above the form, the record's instrument table (§8.1, REQ-UI-082) — instruments as rows,
+// events as columns — carries the dashboard's completeness marker per (event, instrument),
+// each one opening that form of this record.
 //
 // A repeating instrument (REQ-UI-055) is filled out once per instance: `?instance=n` selects
-// one, the instance pills beside the instrument list switch between them, and "+" next to the
-// instrument's name opens the next. Its values travel with REDCap's `redcap_repeat_instrument`
+// one, the instance pills above the form switch between them, and "+" in the instrument's cell
+// of the table opens the next. Its values travel with REDCap's `redcap_repeat_instrument`
 // and `redcap_repeat_instance` (REQ-API-155); its completion, its history and its delete name the instance (REQ-API-156).
 //
 // Writes go through the data API with the member's own token (§8.6): values by
@@ -42,6 +47,9 @@ final class RecordController extends DataEntryController
     private const DEFAULT_FORMATS = ['date' => 'Y-m-d', 'datetime' => 'Y-m-d H:i'];
 
     private const SCRIPTS = ['/assets/app.js', '/assets/js/admin.js', '/assets/js/record.js'];
+
+    /** A repeating cell of the instrument table lists at most this many instances, as the dashboard's (REQ-UI-055). */
+    private const MAX_MARKERS = 5;
 
     private const JS_KEYS = [
         'admin.confirm.title', 'action.cancel', 'admin.confirm.ok', 'tfa.copied',
@@ -590,21 +598,13 @@ final class RecordController extends DataEntryController
                 }
             }
         }
-        // "+" beside each repeating instrument of this event opens its next instance — the one
-        // after the highest that holds anything (REQ-UI-055); offered where entry is.
-        $next = [];
-        foreach ($event['instruments'] ?? [] as $candidate) {
-            $name = (string) ($candidate['name'] ?? '');
-            if (!in_array($uen, is_array($candidate['repeating_events'] ?? null) ? $candidate['repeating_events'] : [], true)) {
-                continue;
-            }
-            $top = 0;
-            foreach ($instances[$uen . '|' . $name] ?? [] as [$n]) {
-                $top = max($top, $n);
-            }
-            $next[$name] = ['instance' => $top + 1,
-                'canAdd' => !$analysis && $permissions->canEditPair($uen, $name, $armNum)];
-        }
+        // The record's instrument table (§8.1, REQ-UI-082): the dashboard's markers for this one
+        // record, its count read beside its states (REQ-API-180) — not for a record nothing has
+        // stored yet, nor where there is no instrument to show. "+" in a repeating cell opens the
+        // instance after the highest that holds anything (REQ-UI-055); offered where entry is.
+        $counts = $exists && $instrument !== null ? $this->recordCounts($projectId, $record) : null;
+        $table = self::instrumentTable($arms, $instruments, $status, $counts,
+            static fn (string $atEvent, string $name, int $arm): bool => !$analysis && $permissions->canEditPair($atEvent, $name, $arm));
         $canEdit = !$analysis && $instrument !== null
             && $permissions->canEditPair($uen, $instrumentName, $armNum);
         $isSurvey = $instrument !== null && !empty($instrument['is_survey']);
@@ -663,12 +663,15 @@ final class RecordController extends DataEntryController
             'errors' => $errors,
             'states' => $states,
             'state' => $state,
+            // The record's instrument table (REQ-UI-082), and whether its counts failed to load
+            // — the markers then show the states only, and the page says so (REQ-UI-081).
+            'table' => $table,
+            'countsFailed' => $exists && $instrument !== null && $counts === null,
             // Repeating (REQ-UI-055): whether this form is one instance of several, which one,
-            // the instances to switch between, and the "+" targets per instrument.
+            // and the instances to switch between.
             'repeats' => $repeats,
             'instance' => $instance,
             'instanceList' => self::instancePills($instances[$uen . '|' . $instrumentName] ?? [], $instance),
-            'nextInstance' => $next,
             'analysis' => $analysis,
             'canEdit' => $canEdit,
             // Which of the three delete scopes this user may carry out (REQ-API-036/070).
@@ -800,7 +803,8 @@ final class RecordController extends DataEntryController
      */
     private function recordStates(int $projectId, string $record): ?array
     {
-        foreach ($this->api->get('/api/v1/projects/' . $projectId . '/record-status') as $row) {
+        // The record's own row (REQ-API-180): opening one record never reads the whole project.
+        foreach ($this->api->get('/api/v1/projects/' . $projectId . '/record-status', ['record' => $record]) as $row) {
             if (!is_array($row) || (string) ($row['record_id'] ?? '') !== $record) {
                 continue;
             }
@@ -820,6 +824,142 @@ final class RecordController extends DataEntryController
         }
 
         return null;
+    }
+
+    /**
+     * This record's completeness count from its own row of the count read (REQ-API-171/180):
+     * `[filled, visible]` per `<event>|<instrument>` cell the read lists, and a repeating cell's
+     * instances by number; null when the read fails — the table then shows the states only and
+     * says so (REQ-UI-081) — and empty when it does not list the record. Like the read, it
+     * carries no value.
+     *
+     * @return array{cells: array<string, array{0: int, 1: int}>, instances: array<string, array<int, array{0: int, 1: int}>>}|null
+     */
+    private function recordCounts(int $projectId, string $record): ?array
+    {
+        try {
+            $rows = $this->api->get('/api/v1/projects/' . $projectId . '/record-completeness', ['record' => $record]);
+        } catch (ApiException $e) {
+            $this->logger->info('record completeness unavailable', ['code' => $e->code(), 'status' => $e->status()]);
+
+            return null;
+        }
+        $cells = [];
+        $instances = [];
+        foreach (self::listOf($rows) as $row) {
+            if ((string) ($row['record_id'] ?? '') !== $record) {
+                continue;
+            }
+            foreach (self::listOf($row['events'] ?? null) as $event) {
+                foreach (self::listOf($event['instruments'] ?? null) as $instrument) {
+                    $key = (string) ($event['unique_event_name'] ?? '') . '|' . (string) ($instrument['name'] ?? '');
+                    $cells[$key] = [max(0, (int) ($instrument['filled'] ?? 0)), max(0, (int) ($instrument['visible'] ?? 0))];
+                    foreach (RecordStatusController::instanceCounts(is_array($instrument['instances'] ?? null)
+                        ? $instrument['instances'] : []) as [$n, $filled, $visible]) {
+                        $instances[$key][$n] = [$filled, $visible];
+                    }
+                }
+            }
+        }
+
+        return ['cells' => $cells, 'instances' => $instances];
+    }
+
+    /**
+     * The record's instrument table (§8.1, REQ-UI-082): the columns — every event of the
+     * structure that has an instrument, in its arm and event order — and a row per instrument
+     * mapped and readable at one of them, in position order, with a cell per column. A cell is
+     * null where the instrument is not at that event; otherwise it holds the pair's state and
+     * its markers as the dashboard's cell draws them (record-status.js) — one for the pair, or
+     * one per instance the read lists for a repeating pair (the first MAX_MARKERS, the rest
+     * counted in `more`; instance 1 alone when none is listed) — and in `add` the instance after
+     * the highest where "+" is offered (REQ-UI-055).
+     *
+     * A marker's count is `[filled, visible]` as the count read lists it, `[0, 0]` for a cell it
+     * leaves out — none of its counted fields holds a value — and null when there is no count:
+     * the record is not stored yet, or the read failed.
+     *
+     * @param list<array<string, mixed>> $arms        DataEntryController::structure
+     * @param list<array<string, mixed>> $instruments in position order
+     * @param array{states: array<string, string>, instances: array<string, list<array{0: int, 1: string}>>}|null $status
+     * @param array{cells: array<string, array{0: int, 1: int}>, instances: array<string, array<int, array{0: int, 1: int}>>}|null $counts
+     * @param callable(string, string, int): bool $canAdd whether "+" is offered on (event, instrument, arm)
+     * @return array{columns: list<array<string, mixed>>, rows: list<array{instrument: array<string, mixed>, repeats: bool, cells: list<array<string, mixed>|null>}>}
+     */
+    public static function instrumentTable(array $arms, array $instruments, ?array $status, ?array $counts, callable $canAdd): array
+    {
+        $columns = [];
+        foreach ($arms as $arm) {
+            foreach ($arm['events'] as $event) {
+                if ($event['instruments'] !== []) {
+                    $columns[] = ['unique_event_name' => (string) $event['unique_event_name'],
+                        'event_name' => (string) $event['event_name'], 'arm_num' => (int) $arm['arm_num'],
+                        'arm_name' => (string) $arm['name'],
+                        'mapped' => array_column($event['instruments'], null, 'name')];
+                }
+            }
+        }
+
+        $rows = [];
+        foreach ($instruments as $instrument) {
+            $name = (string) ($instrument['name'] ?? '');
+            $cells = [];
+            $repeatsSomewhere = false;
+            foreach ($columns as $column) {
+                $uen = $column['unique_event_name'];
+                if (!isset($column['mapped'][$name])) {
+                    $cells[] = null;
+                    continue;
+                }
+                $repeats = in_array($uen, is_array($instrument['repeating_events'] ?? null) ? $instrument['repeating_events'] : [], true);
+                $repeatsSomewhere = $repeatsSomewhere || $repeats;
+                $cells[] = self::tableCell($uen . '|' . $name, $repeats, $status, $counts,
+                    $repeats && $canAdd($uen, $name, $column['arm_num']));
+            }
+            if (array_filter($cells) !== []) {
+                $rows[] = ['instrument' => $instrument, 'repeats' => $repeatsSomewhere, 'cells' => $cells];
+            }
+        }
+
+        return ['columns' => array_map(static function (array $column): array {
+            unset($column['mapped']);
+
+            return $column;
+        }, $columns), 'rows' => $rows];
+    }
+
+    /**
+     * One mapped cell of the instrument table (instrumentTable).
+     *
+     * @param array{states: array<string, string>, instances: array<string, list<array{0: int, 1: string}>>}|null $status
+     * @param array{cells: array<string, array{0: int, 1: int}>, instances: array<string, array<int, array{0: int, 1: int}>>}|null $counts
+     * @return array{state: string, repeats: bool, markers: list<array{instance: int, state: string, count: array{0: int, 1: int}|null}>, more: int, add: int|null}
+     */
+    private static function tableCell(string $key, bool $repeats, ?array $status, ?array $counts, bool $offerAdd): array
+    {
+        $known = static fn (string $state): string => in_array($state, DataEntry::STATES, true) ? $state : 'no_data';
+        // A first instance's count is the cell's; a further one's its own (record-status.js countOf).
+        $countOf = static fn (int $n): ?array => $counts === null ? null
+            : (($n > 1 ? ($counts['instances'][$key][$n] ?? null) : ($counts['cells'][$key] ?? null)) ?? [0, 0]);
+        $state = $known((string) ($status['states'][$key] ?? 'no_data'));
+        if (!$repeats) {
+            return ['state' => $state, 'repeats' => false,
+                'markers' => [['instance' => 0, 'state' => $state, 'count' => $countOf(1)]], 'more' => 0, 'add' => null];
+        }
+
+        $listed = $status['instances'][$key] ?? [];
+        $shown = $listed !== [] ? $listed : [[1, 'no_data']];
+        $markers = [];
+        foreach (array_slice($shown, 0, self::MAX_MARKERS) as [$n, $instanceState]) {
+            $markers[] = ['instance' => (int) $n, 'state' => $known((string) $instanceState), 'count' => $countOf((int) $n)];
+        }
+        $top = 0;
+        foreach ($listed as [$n]) {
+            $top = max($top, (int) $n);
+        }
+
+        return ['state' => $state, 'repeats' => true, 'markers' => $markers,
+            'more' => max(0, count($shown) - self::MAX_MARKERS), 'add' => $offerAdd ? $top + 1 : null];
     }
 
     /**

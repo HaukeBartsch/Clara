@@ -113,7 +113,7 @@ async function openNewOnIntake(page: Page, record: string): Promise<void> {
 }
 
 async function openInstrument(page: Page, name: string): Promise<void> {
-  await page.locator(".clara-instrument-nav").getByRole("link", { name: new RegExp(name) }).click()
+  await page.locator(`.clara-instrument-nav td[data-instrument="${name}"] a.clara-state-link`).first().click()
   await expect(page.locator("form[data-clara-record-form]")).toHaveAttribute("data-instrument", name)
 }
 

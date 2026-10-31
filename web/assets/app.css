@@ -714,6 +714,20 @@ svg.counter {
   background-color: var(--bs-tertiary-bg);
 }
 
+/* The record's instrument table above the form (§8.1, REQ-UI-082): the open form's marker — or
+   "+" while a new instance is open — is ringed, and the instrument names stay in view while a
+   table of many events scrolls sideways on a narrow screen. */
+.clara-record-instruments [aria-current="page"] {
+  outline: 2px solid var(--bs-secondary-color);
+  outline-offset: -1px;
+}
+
+.clara-record-instruments .clara-instrument-name {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+}
+
 .clara-record-status th.clara-status-col {
   min-width: 4rem;
   white-space: nowrap;

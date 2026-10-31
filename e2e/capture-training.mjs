@@ -309,8 +309,7 @@ await page.locator("form.clara-record-form").waitFor()
 // 2. The record: the vitals form at baseline, filled and set to finished. A field's input carries
 //    its own id (#f-<field_name>), one per choice for a coded field.
 const recordUrl = page.url()
-await selectContaining("#record-event", "baseline").catch(() => {})
-await page.locator("[data-clara-instrument=vitals] a").first().click()
+await page.locator('.clara-instrument-nav td[data-event^="baseline"][data-instrument="vitals"] a.clara-state-link').first().click()
 await page.locator("#f-weight").waitFor()
 await page.fill("#f-weight", "72.5")
 await page.locator("#f-smoker-0").check()
@@ -327,7 +326,7 @@ await shot("03-collect-data/03.png")
 // 4. Back on the dashboard: one row per record, one dot per form at one event. Saving demographics
 //    without finishing it gives the middle colour of the legend.
 await page.goto(`${recordUrl.split("?")[0]}?event=baseline_arm_1`)
-await page.locator("[data-clara-instrument=demographics] a").first().click()
+await page.locator('.clara-instrument-nav td[data-event="baseline_arm_1"][data-instrument="demographics"] a.clara-state-link').first().click()
 await page.locator("form.clara-record-form").waitFor()
 await page.locator("[data-clara-save]").click()
 await page.locator(".alert-success").first().waitFor()

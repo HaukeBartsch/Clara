@@ -107,7 +107,7 @@ test.describe("instrument import (REQ-UI-053)", () => {
     await page.fill("#new-record-id", "IMP001")
     await page.getByRole("button", { name: "Create" }).click()
     await expect(page).toHaveURL(/\/records\/IMP001/)
-    await page.locator(".clara-instrument-nav").getByRole("link", { name: /studies/ }).click()
+    await page.locator('.clara-instrument-nav td[data-instrument="studies"] a.clara-state-link').first().click()
 
     const form = page.locator("form[data-clara-record-form]")
     const field = (name: string) => form.locator(`[data-clara-field="${name}"]`)
@@ -187,7 +187,7 @@ test.describe("instrument import (REQ-UI-053)", () => {
     await page.fill("#new-record-id", "WF001")
     await page.getByRole("button", { name: "Create" }).click()
     await expect(page).toHaveURL(/\/records\/WF001/)
-    await page.locator(".clara-instrument-nav").getByRole("link", { name: /studies/ }).click()
+    await page.locator('.clara-instrument-nav td[data-instrument="studies"] a.clara-state-link').first().click()
     const form = page.locator("form[data-clara-record-form]")
     await page.selectOption("#f-study_kind", "MR")
     await page.fill("#f-study_note", "workflow scanner note")

@@ -131,7 +131,7 @@ test.describe("moving a field (REQ-UI-056)", () => {
     await page.goto(page.url().replace(/\/design\/instruments\/\d+.*$/, "/records/MV001"))
     const age = form.getByRole("textbox", { name: "Age", exact: true })
     await expect(age).toHaveCount(0)
-    await page.locator('.clara-instrument-nav [data-clara-instrument="visits"] a.nav-link').click()
+    await page.locator('.clara-instrument-nav td[data-instrument="visits"] a.clara-state-link').first().click()
     await expect(age).toHaveValue("41")
 
     // --- the record identifier stays where it is while records exist (GD-8) ---

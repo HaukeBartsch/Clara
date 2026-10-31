@@ -6,7 +6,9 @@
 //
 // 1. Per-field history (§8.3, REQ-UI-026): a read-only modal fed by the route's `history`
 //    data region (REQ-UI-044), paged with the API cursor.
-// 2. The event picker submitting on change.
+//
+// The record's instrument table above the form (§8.1, REQ-UI-082) is plain links and needs no
+// script; form.js hides the open event's markers whose instrument branching is false.
 
 import { fillTimezone, readContext, wireBranching, wireDateNow, wireHints, wireRadioReset, wireRequired } from "./form.js"
 import { el, fetchJson, ready, t } from "../app.js"
@@ -102,18 +104,7 @@ function wireHistory(form) {
   }
 }
 
-// --- 2. the event picker ---
-
-function wireEventPicker() {
-  for (const picker of document.querySelectorAll("form[data-clara-autosubmit]")) {
-    picker.querySelector("[data-clara-autosubmit-button]")?.classList.add("d-none")
-    picker.querySelector("select")?.addEventListener("change", () => picker.requestSubmit())
-  }
-}
-
-
 ready(() => {
-  wireEventPicker()
   const form = document.querySelector("form[data-clara-record-form]")
   if (!form) return
 

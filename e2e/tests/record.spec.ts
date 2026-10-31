@@ -190,6 +190,12 @@ test.describe("data entry and the record view (M5)", () => {
     await expect(page.locator("#f-notes")).toHaveValue("first visit")
     // The calculated result comes back through the history like any value (REQ-VAL-036).
     await expect(page.locator("output#f-dbl")).toHaveText("84")
+    // The record's table above the form draws this form's marker as the dashboard does below
+    // (REQ-UI-082): the same colouring and tiles, marked as the open one.
+    const ownMarker = page.locator('.clara-instrument-nav td[data-event="baseline_arm_1"][data-instrument="instrument"] a.clara-state-link')
+    await expect(ownMarker).toHaveAttribute("aria-current", "page")
+    await expect(ownMarker.locator("svg.counter")).toHaveClass("counter counter-blue counter-8")
+    await expect(ownMarker.locator("svg.counter")).toHaveAttribute("data-lit", "9")
 
     // The dashboard derives "some data" (blue) from the stored values (§6.3), and its
     // cell opens this very form.

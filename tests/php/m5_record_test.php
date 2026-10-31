@@ -314,6 +314,18 @@ describe('M5 data-entry rules (DataEntry)', function (): void {
         assert_true(DataEntry::validTimezone('+01:00'));
         assert_true(!DataEntry::validTimezone("Europe/Oslo\r\nX: y"));
     });
+
+    it('lights the counter\'s tiles as the dashboard does, in integers (§6.3, REQ-UI-081)', function (): void {
+        // [filled, visible] → tiles on: none without a value, nine only when all are filled,
+        // and between the two the rounded share kept within 1…8 (record-status.js litTiles).
+        foreach ([[0, 4, 0], [3, 0, 0], [4, 4, 9], [5, 4, 9], [3, 4, 7], [1, 2, 5], [1, 100, 1], [99, 100, 8]] as [$filled, $visible, $lit]) {
+            assert_same($lit, DataEntry::litTiles($filled, $visible), $filled . ' of ' . $visible);
+        }
+        assert_same('counter-blue counter-6', DataEntry::counterClass('some_data', 7));
+        assert_same('counter-green counter-8', DataEntry::counterClass('finished', 9));
+        assert_same('counter-yellow', DataEntry::counterClass('unverified', 0));
+        assert_same('', DataEntry::counterClass('no_data', 0), 'grey is the counter\'s own');
+    });
 });
 
 describe('date and date-time entry controls (§8.2, REQ-UI-072)', function (): void {
@@ -794,6 +806,79 @@ describe('record view (§8, REQ-UI-025…027)', function (): void {
         assert_contains('limit=200', $history[0]['url']);
     });
 
+    it('lays the record out as instruments by event, each cell the dashboard\'s marker (§8.1, REQ-UI-082)', function (): void {
+        sign_in();
+        m5_queue();
+
+        $body = m5_get('/projects/3/records/8DISC001', ['event' => 'baseline_arm_1', 'instrument' => 'intake'])->body();
+
+        // No event dropdown and no instrument pills: one table, events as columns in order.
+        assert_not_contains('id="record-event"', $body);
+        assert_not_contains('nav-pills mb-3', $body);
+        $table = substr($body, (int) strpos($body, '<table class="table table-sm table-bordered align-middle w-auto mb-0 clara-instrument-nav'));
+        $table = substr($table, 0, (int) strpos($table, '</table>'));
+        preg_match_all('/<th scope="col" class="small text-center[^"]*"\s+data-event="([a-z_0-9]+)"/', $table, $events);
+        assert_same(['baseline_arm_1', 'follow_up_arm_1'], $events[1]);
+        preg_match_all('/<tr data-instrument="([a-z_]+)">/', $table, $rows);
+        assert_same(['intake', 'scores'], $rows[1]);
+        assert_contains('aria-label="Instruments of 8DISC001 by event"', $table);
+        // The counter SVG is on the page once; every marker draws it (REQ-UI-081).
+        assert_same(1, substr_count($body, '<symbol id="clara-counter"'));
+
+        // The open cell: the state's colouring, its share of tiles (3 of 4 → 7), labelled with both.
+        assert_contains('<td class="text-center table-active" data-event="baseline_arm_1"', $table);
+        assert_contains('href="/projects/3/records/8DISC001?event=baseline_arm_1&amp;instrument=intake"', $table);
+        assert_contains('title="8DISC001 — intake at baseline: Some data, 3 of 4 fields filled"', $table);
+        assert_contains('aria-current="page"><svg class="counter counter-blue counter-6" data-lit="7"', $table);
+        // A cell the count leaves out holds no counted value; a state the page does not know is grey.
+        assert_contains('title="8DISC001 — scores at baseline: Finished, no field filled"', $table);
+        assert_contains('<svg class="counter counter-green" data-lit="0"', $table);
+        assert_contains('title="8DISC001 — intake at follow up: No data, no field filled"', $table);
+        assert_contains('<svg class="counter" data-lit="0"', $table);
+        assert_contains('href="/projects/3/records/8DISC001?event=follow_up_arm_1&amp;instrument=intake"', $table);
+        assert_same(1, substr_count($table, 'aria-current="page"'), 'only the open form is marked');
+        // scores is not mapped to follow up: an empty cell, no marker.
+        assert_same(3, substr_count($table, 'class="clara-state-link"'));
+        // Instrument branching travels for the open event's cells only (§8.4).
+        assert_contains('data-clara-instrument="scores" data-clara-branching="[baseline_arm_1][age] &gt; 18"', $table);
+        assert_same(1, substr_count($table, 'data-clara-branching='));
+
+        // This record's own rows of both reads, never the whole project's (REQ-API-180).
+        foreach (['/record-status', '/record-completeness'] as $read) {
+            $calls = array_values(array_filter($GLOBALS['api_calls'], static fn (array $c): bool => str_contains($c['url'], $read)));
+            assert_same(1, count($calls), $read);
+            assert_contains('record=8DISC001', $calls[0]['url']);
+        }
+        assert_not_contains('clara-counts-failed', $body);
+    });
+
+    it('says so when the count cannot be read, the markers keeping their states (REQ-UI-081)', function (): void {
+        sign_in();
+        m5_queue();
+        $GLOBALS['api_routes']['/api/v1/projects/3/record-completeness'] = [['status' => 500,
+            'body' => (string) json_encode(['error' => 'internal', 'message' => 'store gone']), 'headers' => []]];
+
+        $response = m5_get('/projects/3/records/8DISC001', ['event' => 'baseline_arm_1', 'instrument' => 'intake']);
+        $body = $response->body();
+
+        assert_same(200, $response->status(), 'the form still renders');
+        assert_contains('clara-counts-failed', $body);
+        assert_contains('title="8DISC001 — intake at baseline: Some data"', $body);
+        assert_contains('<svg class="counter counter-blue" aria-hidden="true"', $body);
+        assert_not_contains('data-lit=', $body, 'no count, no tiles');
+    });
+
+    it('reads no count for a participant nothing has stored yet', function (): void {
+        sign_in();
+        m5_queue(status: []);
+
+        $body = m5_get('/projects/3/records/8DISC042', ['event' => 'baseline_arm_1', 'instrument' => 'intake'])->body();
+
+        assert_same(0, api_calls_to('/record-completeness'));
+        assert_contains('title="8DISC042 — scores at baseline: No data"', $body);
+        assert_not_contains('clara-counts-failed', $body);
+    });
+
     it('records the open before it reads the values, naming the triple and no value (REQ-AUD-035, REQ-API-167)', function (): void {
         sign_in();
         m5_queue();
@@ -846,6 +931,7 @@ describe('record view (§8, REQ-UI-025…027)', function (): void {
         m5_get('/projects/3/records/8DISC001');
 
         assert_same(0, m5_count('POST', '/read'), 'no pair rendered, so nothing was disclosed');
+        assert_same(0, api_calls_to('/record-completeness'), 'no table, so no count to read');
     });
 
     it('shows a read_only member the values and no submit control (REQ-UI-003)', function (): void {

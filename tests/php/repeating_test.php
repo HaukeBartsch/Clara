@@ -177,11 +177,54 @@ describe('repeating instruments on the dashboard and the record view (REQ-UI-055
         foreach (['1', '2', '4'] as $n) {
             assert_contains('data-clara-instance="' . $n . '"', $body);
         }
-        // "+" beside the name opens the instance after the highest.
+        // "+" in the instrument's cell of the table opens the instance after the highest.
         assert_contains('data-clara-add-instance="5"', $body);
         assert_contains('instrument=visits&amp;instance=5', $body);
         // Deleting here deletes this instance.
         assert_contains('Delete instance #2', $body);
+    });
+
+    it('draws a repeating cell of the record\'s table as the dashboard does: a marker per instance, then "+" (REQ-UI-082)', function (): void {
+        sign_in();
+        rep_record_queue();
+
+        $body = m5_get('/projects/3/records/8DISC001', ['event' => 'baseline_arm_1', 'instrument' => 'visits', 'instance' => '2'])->body();
+
+        $cell = substr($body, (int) strpos($body, '<td class="text-center table-active" data-event="baseline_arm_1"'));
+        $cell = substr($cell, 0, (int) strpos($cell, '</td>'));
+        assert_contains('data-instrument="visits"', $cell);
+        assert_contains('<span class="clara-instances" data-clara-instrument="visits">', $cell);
+        preg_match_all('/instrument=visits&amp;instance=(\d+)"/', $cell, $links);
+        assert_same(['1', '2', '4', '5'], $links[1], 'the listed instances, then "+"');
+        assert_contains('title="8DISC001 — visits #2 at baseline: Finished, no field filled"', $cell);
+        assert_same(1, substr_count($cell, 'aria-current="page"'), 'the open instance');
+        assert_contains('aria-current="page"><svg class="counter counter-green"', $cell);
+        assert_contains('title="8DISC001 — visits #4 at baseline: No data, no field filled"', $cell, 'a state made safe');
+        // The row says the instrument repeats.
+        assert_contains('visits <span aria-hidden="true">⟳</span>', $body);
+    });
+
+    it('lists the first five instances of a cell and links the rest, as the dashboard does', function (): void {
+        $arms = [['arm_num' => 1, 'name' => '', 'events' => [
+            ['unique_event_name' => 'baseline_arm_1', 'event_name' => 'baseline', 'instruments' => [['name' => 'visits']]],
+            ['unique_event_name' => 'empty_arm_1', 'event_name' => 'empty', 'instruments' => []],
+        ]]];
+        $instruments = [['name' => 'intake', 'repeating_events' => []], ['name' => 'visits', 'repeating_events' => ['baseline_arm_1']]];
+        $listed = array_map(static fn (int $n): array => [$n, 'some_data'], range(1, 7));
+        $table = RecordController::instrumentTable($arms, $instruments,
+            ['states' => ['baseline_arm_1|visits' => 'some_data'], 'instances' => ['baseline_arm_1|visits' => $listed]],
+            ['cells' => ['baseline_arm_1|visits' => [1, 2]], 'instances' => ['baseline_arm_1|visits' => [3 => [2, 2]]]],
+            static fn (): bool => false);
+
+        // An event without an instrument is no column; an instrument at no column is no row.
+        assert_same(['baseline_arm_1'], array_column($table['columns'], 'unique_event_name'));
+        assert_same(['visits'], array_map(static fn (array $row): string => $row['instrument']['name'], $table['rows']));
+        $cell = $table['rows'][0]['cells'][0];
+        assert_same([1, 2, 3, 4, 5], array_column($cell['markers'], 'instance'));
+        assert_same(2, $cell['more']);
+        assert_same(null, $cell['add'], 'no "+" where entry is not offered');
+        // The first instance's count is the cell's, a further one's its own, and an unlisted one none filled.
+        assert_same([[1, 2], [0, 0], [2, 2]], array_slice(array_column($cell['markers'], 'count'), 0, 3));
     });
 
     it('shows a new instance as empty and among the pills', function (): void {

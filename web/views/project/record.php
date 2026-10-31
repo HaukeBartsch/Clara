@@ -2,10 +2,11 @@
 /**
  * Project page — the record view and data-entry form (§8, REQ-UI-025…027).
  *
- * One (record, event, instrument) at a time (§8.1): the event picker and the instruments
- * mapped to the chosen event above the form; the fields in position order with their current
- * values filled in (§8.3); the completion state as the last field (§8.5); the record actions
- * below (§8.7).
+ * One (record, event, instrument) at a time (§8.1): the record's instrument table above the
+ * form — instruments as rows, events as columns, each cell the dashboard's completeness marker
+ * opening that form (REQ-UI-082); the fields in position order with their current values
+ * filled in (§8.3); the completion state as the last field (§8.5); the record actions below
+ * (§8.7).
  *
  * What a member may do decides what is emitted (REQ-UI-003): a `read_only` member — and
  * everyone in analysis mode (REQ-UI-035) — gets the values as text and no submit control;
@@ -15,13 +16,13 @@
  * REQ-UI-031) can tell a removed value from one that was never there; record.js adds the
  * advisory checks and the branching evaluator (§8.4) and never changes what is sent.
  *
- * A repeating instrument (REQ-UI-055) is one instance at a time: "+" beside its name opens
- * the next instance, the instance pills switch between the existing ones, and every form of
- * the page names the open instance.
+ * A repeating instrument (REQ-UI-055) is one instance at a time: its cell of the table holds a
+ * marker per instance and "+" for the next, the instance pills switch between the existing
+ * ones, and every form of the page names the open instance.
  *
  * Reads: $record, $exists, $recordUrl, $statusUrl, $arms, $armNum, $event, $instrument,
- * $items, $identifier, $prefill, $draft, $errors, $states, $state, $repeats, $instance,
- * $instanceList, $nextInstance, $analysis, $canEdit, $deleteScopes, $isSurvey, $canLink,
+ * $items, $identifier, $prefill, $draft, $errors, $states, $state, $table, $countsFailed,
+ * $repeats, $instance, $instanceList, $analysis, $canEdit, $deleteScopes, $isSurvey, $canLink,
  * $link, $transferAccess, $groups, $patterns, $formats, $clientContext.
  */
 
@@ -34,8 +35,9 @@ $iid = (int) ($instrument['id'] ?? 0);
 $act = static fn (string $action): string => $recordUrl . '?action=' . $action;
 $here = ['event' => $uen, 'instrument' => $instrumentName, 'iid' => $iid]
     + ($repeats ? ['repeating' => '1', 'instance' => (string) $instance] : []);
-$openUrl = static fn (string $name, int $n = 0): string => $recordUrl . '?' . http_build_query(
-    ['event' => $uen, 'instrument' => $name] + ($n > 0 ? ['instance' => $n] : []), '', '&', PHP_QUERY_RFC3986);
+$cellUrl = static fn (string $atEvent, string $name, int $n = 0): string => $recordUrl . '?' . http_build_query(
+    ['event' => $atEvent, 'instrument' => $name] + ($n > 0 ? ['instance' => $n] : []), '', '&', PHP_QUERY_RFC3986);
+$openUrl = static fn (string $name, int $n = 0): string => $cellUrl($uen, $name, $n);
 $hidden = static function (array $fields): string {
     $out = '';
     foreach ($fields as $name => $value) {
@@ -50,6 +52,13 @@ $stateBadge = [
     'unverified' => 'clara-state-unverified',
     'finished' => 'clara-state-finished',
 ];
+// A marker's state and count as its label names them — neither told by colour or tiles alone
+// (REQ-UI-081), the same words as the dashboard's (record-status.js stateLabel).
+$stateLabel = static fn (string $state, ?array $count): string => $view->t('records.state.' . $state)
+    . ($count === null ? '' : ', ' . ($count[0] > 0
+        ? $view->t('records.count', ['filled' => (string) $count[0], 'visible' => (string) $count[1]])
+        : $view->t('records.count_none')));
+$multiArm = count(array_unique(array_column($table['columns'], 'arm_num'))) > 1;
 
 ?>
 <nav class="small mb-1" aria-label="<?= View::e($view->t('records.title')) ?>">
@@ -65,53 +74,118 @@ $stateBadge = [
     <div class="alert alert-secondary py-2 clara-analysis-closed"><?= View::e($view->t('record.analysis_notice')) ?></div>
 <?php endif; ?>
 
-<!-- §8.1: pick the event, then one of the instruments mapped to it (REQ-DB-012). -->
-<form method="get" action="<?= View::e($recordUrl) ?>" class="row g-2 align-items-end mb-2 clara-event-picker" data-clara-autosubmit>
-    <div class="col-sm-6 col-md-4">
-        <label class="form-label mb-0 small" for="record-event"><?= View::e($view->t('record.event')) ?></label>
-        <select class="form-select form-select-sm" id="record-event" name="event">
-            <?php foreach ($arms as $arm): ?>
-                <optgroup label="<?= View::e($view->t('roles.arm', ['arm' => (string) $arm['arm_num']]) . ($arm['name'] !== '' ? ' — ' . $arm['name'] : '')) ?>">
-                    <?php foreach ($arm['events'] as $option): ?>
-                        <option value="<?= View::e($option['unique_event_name']) ?>"<?= $option['unique_event_name'] === $uen ? ' selected' : '' ?>>
-                            <?= View::e($option['event_name']) ?></option>
+<?php if ($table['rows'] !== []): ?>
+    <!-- §8.1, REQ-UI-082: the record's instruments (rows) by event (columns, in order), each
+         cell the dashboard's completeness marker opening that form of this record. The counter
+         SVG is on the page once; every marker draws it (REQ-UI-081). -->
+    <?php require __DIR__ . '/../partials/counter-sprite.php'; ?>
+    <?php if ($countsFailed): ?>
+        <p class="small text-danger mb-2 clara-counts-failed" role="status"><?= View::e($view->t('records.counts_failed')) ?></p>
+    <?php endif; ?>
+    <div class="table-responsive mb-3">
+        <table class="table table-sm table-bordered align-middle w-auto mb-0 clara-instrument-nav clara-record-instruments"
+               aria-label="<?= View::e($view->t('record.instruments', ['record' => $record])) ?>">
+            <thead>
+            <?php if ($multiArm): ?>
+                <tr>
+                    <th scope="col" rowspan="2" class="align-bottom clara-instrument-name"><?= View::e($view->t('record.instrument')) ?></th>
+                    <?php
+                    // One header cell per arm over its events, which the columns list in order.
+                    $spans = [];
+                    foreach ($table['columns'] as $column) {
+                        $last = array_key_last($spans);
+                        if ($last !== null && $spans[$last]['arm_num'] === $column['arm_num']) {
+                            $spans[$last]['span']++;
+                        } else {
+                            $spans[] = ['arm_num' => $column['arm_num'], 'name' => $column['arm_name'], 'span' => 1];
+                        }
+                    }
+                    ?>
+                    <?php foreach ($spans as $span): ?>
+                        <th scope="colgroup" colspan="<?= (int) $span['span'] ?>" class="text-center">
+                            <?= View::e($view->t('roles.arm', ['arm' => (string) $span['arm_num']]) . ($span['name'] !== '' ? ' — ' . $span['name'] : '')) ?></th>
                     <?php endforeach; ?>
-                </optgroup>
+                </tr>
+            <?php endif; ?>
+            <tr>
+                <?php if (!$multiArm): ?>
+                    <th scope="col" class="clara-instrument-name"><?= View::e($view->t('record.instrument')) ?></th>
+                <?php endif; ?>
+                <?php foreach ($table['columns'] as $column): ?>
+                    <th scope="col" class="small text-center text-nowrap<?= $column['unique_event_name'] === $uen ? ' table-active' : '' ?>"
+                        data-event="<?= View::e($column['unique_event_name']) ?>" title="<?= View::e($column['unique_event_name']) ?>">
+                        <?= View::e($column['event_name']) ?></th>
+                <?php endforeach; ?>
+            </tr>
+            </thead>
+            <tbody>
+            <?php foreach ($table['rows'] as $row): ?>
+                <?php $name = (string) $row['instrument']['name']; ?>
+                <tr data-instrument="<?= View::e($name) ?>">
+                    <th scope="row" class="small fw-normal text-nowrap clara-instrument-name<?= $name === $instrumentName ? ' table-active' : '' ?>">
+                        <?= View::e($name) ?><?php if ($row['repeats']): ?> <span aria-hidden="true">⟳</span><?php endif; ?>
+                        <?php if (!empty($row['instrument']['is_survey'])): ?><span class="badge text-bg-light border ms-1"><?= View::e($view->t('record.survey_badge')) ?></span><?php endif; ?>
+                    </th>
+                    <?php foreach ($row['cells'] as $i => $cell): ?>
+                        <?php if ($cell === null): ?>
+                            <td></td>
+                            <?php continue; ?>
+                        <?php endif; ?>
+                        <?php
+                        $column = $table['columns'][$i];
+                        $atEvent = $column['unique_event_name'];
+                        $eventLabel = $column['event_name'];
+                        $open = $atEvent === $uen && $name === $instrumentName;
+                        // Instrument branching is evaluated for the open event only, whose values
+                        // the evaluator holds (§8.4): form.js hides that marker while it is false.
+                        $branching = $atEvent === $uen ? (string) ($row['instrument']['branching_logic'] ?? '') : '';
+                        ?>
+                        <td class="text-center<?= $open ? ' table-active' : '' ?>" data-event="<?= View::e($atEvent) ?>"
+                            data-instrument="<?= View::e($name) ?>" data-state="<?= View::e($cell['state']) ?>">
+                            <span<?= $cell['repeats'] ? ' class="clara-instances"' : '' ?> data-clara-instrument="<?= View::e($name) ?>"<?= $branching !== '' ? ' data-clara-branching="' . View::e($branching) . '"' : '' ?>>
+                                <?php foreach ($cell['markers'] as $marker): ?>
+                                    <?php
+                                    $n = (int) $marker['instance'];
+                                    $count = $marker['count'];
+                                    $lit = $count === null ? 0 : DataEntry::litTiles($count[0], $count[1]);
+                                    $label = $n > 0
+                                        ? $view->t('records.open_instance', ['record' => $record, 'instrument' => $name, 'event' => $eventLabel,
+                                            'instance' => (string) $n, 'state' => $stateLabel($marker['state'], $count)])
+                                        : $view->t('records.open_cell', ['record' => $record, 'instrument' => $name, 'event' => $eventLabel,
+                                            'state' => $stateLabel($marker['state'], $count)]);
+                                    $current = $open && ($n === 0 || $n === $instance);
+                                    $counterClass = DataEntry::counterClass($marker['state'], $lit);
+                                    $counterLit = $count === null ? null : $lit;
+                                    ?>
+                                    <a class="clara-state-link" href="<?= View::e($cellUrl($atEvent, $name, $n)) ?>"
+                                       title="<?= View::e($label) ?>" aria-label="<?= View::e($label) ?>"<?= $current ? ' aria-current="page"' : '' ?>><?php require __DIR__ . '/../partials/counter.php'; ?></a>
+                                <?php endforeach; ?>
+                                <?php if ($cell['more'] > 0): ?>
+                                    <?php $more = $view->t('records.more_instances', ['count' => (string) $cell['more']]); ?>
+                                    <a class="clara-instance-more" href="<?= View::e($cellUrl($atEvent, $name)) ?>"
+                                       title="<?= View::e($more) ?>" aria-label="<?= View::e($more) ?>">+<?= (int) $cell['more'] ?></a>
+                                <?php endif; ?>
+                                <?php if ($cell['add'] !== null): ?>
+                                    <?php $addLabel = $view->t('records.add_instance', ['record' => $record, 'instrument' => $name,
+                                        'event' => $eventLabel, 'instance' => (string) $cell['add']]); ?>
+                                    <!-- "+" opens the instrument's next instance at this event (REQ-UI-055). -->
+                                    <a class="clara-instance-add" href="<?= View::e($cellUrl($atEvent, $name, (int) $cell['add'])) ?>"
+                                       title="<?= View::e($addLabel) ?>" aria-label="<?= View::e($addLabel) ?>"
+                                       data-clara-add-instance="<?= (int) $cell['add'] ?>"<?= $open && $instance === $cell['add'] ? ' aria-current="page"' : '' ?>>+</a>
+                                <?php endif; ?>
+                            </span>
+                        </td>
+                    <?php endforeach; ?>
+                </tr>
             <?php endforeach; ?>
-        </select>
+            </tbody>
+        </table>
     </div>
-    <div class="col-auto"><button class="btn btn-sm btn-outline-secondary" type="submit" data-clara-autosubmit-button><?= View::e($view->t('record.go')) ?></button></div>
-</form>
+<?php endif; ?>
 
 <?php if ($instrument === null): ?>
     <p class="clara-region-empty"><?= View::e($view->t('record.no_instruments')) ?></p>
 <?php else: ?>
-    <ul class="nav nav-pills mb-3 clara-instrument-nav">
-        <?php foreach ($event['instruments'] as $candidate): ?>
-            <?php
-            $name = (string) $candidate['name'];
-            $candidateState = $states[$uen . '|' . $name] ?? 'no_data';
-            ?>
-            <li class="nav-item d-flex align-items-center" data-clara-instrument="<?= View::e($name) ?>"
-                <?= ($candidate['branching_logic'] ?? '') !== '' ? ' data-clara-branching="' . View::e($candidate['branching_logic']) . '"' : '' ?>>
-                <a class="nav-link py-1<?= $name === $instrumentName ? ' active' : '' ?>"<?= $name === $instrumentName ? ' aria-current="page"' : '' ?>
-                   href="<?= View::e($openUrl($name)) ?>">
-                    <span class="clara-state <?= $stateBadge[$candidateState] ?? $stateBadge['no_data'] ?>"
-                          title="<?= View::e($view->t('records.state.' . $candidateState)) ?>"></span>
-                    <?= View::e($name) ?><?php if (isset($nextInstance[$name])): ?> <span aria-hidden="true">⟳</span><?php endif; ?>
-                    <?php if (!empty($candidate['is_survey'])): ?><span class="badge text-bg-light border ms-1"><?= View::e($view->t('record.survey_badge')) ?></span><?php endif; ?>
-                </a>
-                <?php if (!empty($nextInstance[$name]['canAdd'])): ?>
-                    <?php $addLabel = $view->t('records.add_instance', ['record' => $record, 'instrument' => $name,
-                        'event' => (string) ($event['event_name'] ?? $uen), 'instance' => (string) $nextInstance[$name]['instance']]); ?>
-                    <!-- "+" opens the instrument's next instance (REQ-UI-055). -->
-                    <a class="clara-instance-add ms-1" href="<?= View::e($openUrl($name, $nextInstance[$name]['instance'])) ?>"
-                       title="<?= View::e($addLabel) ?>" aria-label="<?= View::e($addLabel) ?>"
-                       data-clara-add-instance="<?= (int) $nextInstance[$name]['instance'] ?>">+</a>
-                <?php endif; ?>
-            </li>
-        <?php endforeach; ?>
-    </ul>
 
     <?php if ($repeats): ?>
         <!-- The instances of this repeating instrument at this event (REQ-UI-055). -->

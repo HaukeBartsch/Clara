@@ -219,9 +219,16 @@ func (h *Handler) loadStatusScope(w http.ResponseWriter, r *http.Request) (*stat
 			return nil, false
 		}
 	}
+	// `?record=` narrows both reads to that one record (REQ-API-180) — the
+	// record view's own row — and to none when it is not visible, so the
+	// filter tells nothing the full read would not.
+	one := r.URL.Query().Get("record")
 	visible := make([]db.RecordEntity, 0, len(entities))
 	for _, re := range entities {
 		if group != 0 && !(re.DagGroupID.Valid && re.DagGroupID.Int64 == group) {
+			continue
+		}
+		if one != "" && re.RecordID != one {
 			continue
 		}
 		visible = append(visible, re)

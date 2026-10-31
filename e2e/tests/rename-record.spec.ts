@@ -190,7 +190,7 @@ test.describe("an imported instrument with spaces in its name (REQ-UI-053, REQ-U
     await page.fill("#new-record-id", "UP001")
     await page.getByRole("button", { name: "Create" }).click()
     await expect(page).toHaveURL(/\/records\/UP001/)
-    await page.locator(`.clara-instrument-nav [data-clara-instrument="${RENAMED}"] a.nav-link`).click()
+    await page.locator(`.clara-instrument-nav td[data-instrument="${RENAMED}"] a.clara-state-link`).first().click()
 
     const form = page.locator("form[data-clara-record-form]")
     // The identifier is shown, never edited (GD-8): the record's own name in a read-only input.

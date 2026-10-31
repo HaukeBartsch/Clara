@@ -8,7 +8,8 @@
 //   * the submission policy (GD-14, REQ-UI-031): exactly the fields that carry a value plus
 //     the fields whose stored value the user removed;
 //   * the native date controls of the form (§8.2, REQ-UI-072) and the values they post;
-//   * the per-field detail of a rejected import (§3.7.2, §8.6 step 4).
+//   * the per-field detail of a rejected import (§3.7.2, §8.6 step 4);
+//   * the completeness counter's tiles and classes for a count (§6.3, REQ-UI-081).
 
 declare(strict_types=1);
 
@@ -27,6 +28,13 @@ final class DataEntry
 
     /** The states a user assigns and the API stores; the other two are derived (REQ-API-110). */
     public const ASSIGNED_STATES = ['unverified', 'finished'];
+
+    /** A completeness counter's tiles (REQ-UI-081). */
+    public const COUNTER_TILES = 9;
+
+    /** A state's colouring of the counter (§6.3): grey is the counter's own, the rest a class each. */
+    private const COUNTER_COLORING = ['no_data' => '', 'some_data' => 'counter-blue',
+        'unverified' => 'counter-yellow', 'finished' => 'counter-green'];
 
     /**
      * The validation types entered through a native date control, with the only format each one
@@ -60,6 +68,34 @@ final class DataEntry
             && mb_strlen($name) <= 100
             && trim($name) === $name
             && preg_match('/[\x00-\x1F\x7F\/\\\\]/', $name) === 0;
+    }
+
+    /**
+     * How many of the counter's nine tiles a `[filled, visible]` count turns on (§6.3, REQ-UI-081):
+     * none while no counted field holds a value, all nine only once every one does, and between
+     * the two the share rounded but kept within 1…8 — in integers, as record-status.js counts,
+     * so the record view and the dashboard light the same tiles for the same two numbers.
+     */
+    public static function litTiles(int $filled, int $visible): int
+    {
+        if ($filled <= 0 || $visible <= 0) {
+            return 0;
+        }
+        if ($filled >= $visible) {
+            return self::COUNTER_TILES;
+        }
+
+        return min(self::COUNTER_TILES - 1,
+            max(1, intdiv(2 * self::COUNTER_TILES * $filled + $visible, 2 * $visible)));
+    }
+
+    /**
+     * A counter marker's classes after `counter` (partials/counter.php): the state's colouring,
+     * then the spec's counting class for `$lit` tiles on — `counter-<lit − 1>`, none for none.
+     */
+    public static function counterClass(string $state, int $lit): string
+    {
+        return trim((self::COUNTER_COLORING[$state] ?? '') . ($lit > 0 ? ' counter-' . ($lit - 1) : ''));
     }
 
     /** True for a field the form renders as an input (§8.2). */

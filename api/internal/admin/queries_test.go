@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -295,6 +296,37 @@ func TestRecordStatusDAG(t *testing.T) {
 	e.decode(rec, &rows)
 	if len(rows) != 2 {
 		t.Fatalf("admin sees all records: %+v", rows)
+	}
+
+	// `?record=` narrows both reads to that record (REQ-API-180) — and to none
+	// when the caller cannot see it, as the full read would not list it either.
+	for _, read := range []string{"record-status", "record-completeness"} {
+		for _, c := range []struct {
+			actor  *db.User
+			record string
+			want   []string
+		}{
+			{grouped, "R1", []string{"R1"}},
+			{grouped, "R2", []string{}},
+			{admin, "R2", []string{"R2"}},
+			{admin, "R9", []string{}},
+		} {
+			rec := e.do("GET", "/api/v1/projects/"+itoa(projectID)+"/"+read+"?record="+c.record, nil, c.actor)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s?record=%s: got %d %s", read, c.record, rec.Code, rec.Body.String())
+			}
+			var listed []struct {
+				RecordID string `json:"record_id"`
+			}
+			e.decode(rec, &listed)
+			got := []string{}
+			for _, row := range listed {
+				got = append(got, row.RecordID)
+			}
+			if !reflect.DeepEqual(got, c.want) {
+				t.Fatalf("%s?record=%s as %s: got %v, want %v", read, c.record, c.actor.Email, got, c.want)
+			}
+		}
 	}
 }
 

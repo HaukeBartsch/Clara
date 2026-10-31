@@ -121,7 +121,7 @@ test.describe("repeating instruments (REQ-UI-054, REQ-UI-055)", () => {
     await form.locator("[data-clara-save]").click()
     await expect(success(page)).toContainText("RP001")
 
-    await page.locator('.clara-instrument-nav [data-clara-instrument="visits"] a.nav-link').click()
+    await page.locator('.clara-instrument-nav td[data-instrument="visits"] a.clara-state-link').first().click()
     await expect(page.locator(".clara-instance-nav")).toBeVisible()
     await form.getByLabel("Visit note").fill("first visit")
     await form.locator("[data-clara-save]").click()
@@ -144,6 +144,12 @@ test.describe("repeating instruments (REQ-UI-054, REQ-UI-055)", () => {
     // Instance 1 kept its own value.
     await page.locator('.clara-instance-nav [data-clara-instance="1"] a').click()
     await expect(form.getByLabel("Visit note")).toHaveValue("first visit")
+    // The record's table draws the visits cell as the dashboard does (REQ-UI-082): a counter per
+    // instance, the open one marked, then "+" for the third.
+    const tableCell = page.locator('.clara-instrument-nav td[data-event="baseline_arm_1"][data-instrument="visits"]')
+    await expect(tableCell.locator("svg.counter")).toHaveCount(2)
+    await expect(tableCell.locator('a[aria-current="page"]')).toHaveAttribute("href", /instrument=visits&instance=1$/)
+    await expect(tableCell.locator("a.clara-instance-add")).toHaveAttribute("data-clara-add-instance", "3")
 
     await page.locator("#clara-nav").getByRole("link", { name: "Record Status Dashboard" }).click()
     await expect(visitsCell(page, "RP001").locator("svg.counter")).toHaveCount(2)

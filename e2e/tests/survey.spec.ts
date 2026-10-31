@@ -192,7 +192,7 @@ test.describe("public survey page (M6)", () => {
     await page.fill("#new-record-id", "S002")
     await page.locator(".clara-new-record").getByRole("button", { name: "Create" }).click()
     await expect(page.locator(".clara-record-new")).toBeVisible()
-    await page.locator(".clara-instrument-nav").getByRole("link", { name: /feedback/ }).click()
+    await page.locator('.clara-instrument-nav td[data-instrument="feedback"] a.clara-state-link').first().click()
 
     const section = page.locator(".clara-survey-link")
     await expect(section).toContainText("Getting a link stores S002 as a participant first.")
@@ -203,7 +203,7 @@ test.describe("public survey page (M6)", () => {
     // --- back on the same (record, event, instrument): stored, and the live link to copy ---
     await expect(page.locator(".clara-record-new")).toHaveCount(0)
     await expect(page.getByText("S002 was stored as a participant and a survey link was issued.")).toBeVisible()
-    await expect(page.locator("#record-event")).toHaveValue("baseline_arm_1")
+    await expect(page.locator("form[data-clara-record-form]")).toHaveAttribute("data-event", "baseline_arm_1")
     const link = await page.locator("#clara-survey-url").inputValue()
     expect(link.startsWith(`${baseURL}/s/`)).toBeTruthy()
     // WebKit knows no "clipboard-write" permission — there a click's user gesture is enough to write.
