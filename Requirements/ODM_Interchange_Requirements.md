@@ -1,9 +1,9 @@
 # ODM Interchange — Requirements Analysis
 
-**Project:** Clinical Study Management System (REDCap API Replacement)\
+**Project:** CLARA — Clinical Logbook for Automated Research Assistance (REDCap API Replacement)\
 **Source:** `VISION_AND_REQUIREMENTS.md` (master spec); seeded from the area plan `Plan/ODM_Interchange.md`, retired 2026-10-28 and kept in history (`git show 2b0c371:Plan/ODM_Interchange.md`)\
 **Status:** Approved for development handoff\
-**Date:** 2026-10-23
+**Created:** 2026-10-23
 
 ## 1. Purpose
 
@@ -17,7 +17,7 @@ The surrounding machinery is specified elsewhere and is not restated here:
 | which columns a caller may see, per (instrument, event) pair | `Authentication_Authorization_Requirements.md` (REQ-AUTH-017/018/023/069) |
 | value grammars, choice codes, content policy, length caps | `Data_Validation_Requirements.md` (REQ-VAL-016/021/022/024/032) |
 | project structure the design half describes | `Database_Schema_Requirements.md` (REQ-DB-011…014/042/047) |
-| streaming and body bounds | `Technology_Stack_Requirements.md` (REQ-TECH-011), `API_Endpoints_Requirement.md` (REQ-API-144) |
+| streaming and body bounds | `Technology_Stack_Requirements.md` (REQ-TECH-011), `API_Endpoints_Requirements.md` (REQ-API-144) |
 | audit of an export or an import | `Audit_Logging_Requirements.md` (REQ-AUD-004/011/014) |
 
 `Design/ODM_Interchange_Design.md` is normative for the element mapping, the CLARA extension namespace, and the algorithms (O-1…O-8).

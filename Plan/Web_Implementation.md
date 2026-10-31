@@ -41,7 +41,7 @@ These shape or block the work downstream. All five are closed (P0-a and P0-b on 
 
 *Amended 2026-10-03:* the block gained the two rights and the `grants[]` list when permissions moved from arm to (instrument, event) pair (REQ-AUTH-069); the shape above is the current one.
 
-Specified as **REQ-API-126** (`Requirements/API_Endpoints_Requirement.md` §4.4; rationale recorded as DEV-API-18), documented in `Design/API_Endpoints_Design.md` §4.5, implemented in `api/internal/admin/projects.go` over the same `authz.Effective` result the boundary applies, covered by `TestProjectDetailCarriesEffectivePermissions`. What the web layer relies on:
+Specified as **REQ-API-126** (`Requirements/API_Endpoints_Requirements.md` §4.4; rationale recorded as DEV-API-18), documented in `Design/API_Endpoints_Design.md` §4.5, implemented in `api/internal/admin/projects.go` over the same `authz.Effective` result the boundary applies, covered by `TestProjectDetailCarriesEffectivePermissions`. What the web layer relies on:
 
 - one entry per project arm, always, plus one `grants[]` entry per mapped (instrument, event) pair of a visible arm — an ungranted arm reports `no_access` / `export_none` and an ungranted pair reports its arm's default, so a level is never inferred from a missing row (`REQ-AUTH-019/069`). The list is the same cardinality as the record status dashboard it gates, and arrives in arm-then-event order so PHP walks it without sorting;
 - `is_admin` and role-less members see `view_edit` + both rights / `export_full` on every arm and pair plus `project_admin: true` (`REQ-AUTH-023/022`) — no special-casing in PHP;

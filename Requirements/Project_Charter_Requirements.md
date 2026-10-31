@@ -1,9 +1,9 @@
 # Project Charter — Requirements Analysis
 
-**Project:** Clinical Study Management System (REDCap API Replacement)\
+**Project:** CLARA — Clinical Logbook for Automated Research Assistance (REDCap API Replacement)\
 **Source:** `VISION_AND_REQUIREMENTS.md` (master spec); seeded from the area plan `Plan/Project_Charter.md`, retired 2026-10-28 and kept in history (`git show 2b0c371:Plan/Project_Charter.md`)\
 **Status:** Approved for development handoff\
-**Date:** 2026-09-18
+**Created:** 2026-09-18
 
 ## 1. Purpose
 
@@ -134,7 +134,7 @@ These decisions were made explicit with the project owner and are binding for al
 | Area | Requirements document |
 |---|------|
 | AI assistant | `AI_Assistant_Requirements.md` |
-| API surface | `API_Endpoints_Requirement.md` |
+| API surface | `API_Endpoints_Requirements.md` |
 | Security | `Authentication_Authorization_Requirements.md` |
 | Audit | `Audit_Logging_Requirements.md` |
 | Export/anonymization | `Data_Export_Anonymization_Requirements.md` |
@@ -155,7 +155,7 @@ The terms and reference codes used across `Requirements/` and `Design/`. Each en
 
 | Code | Meaning | Defined in |
 |---|---|---|
-| `REQ-<AREA>-nnn` | A requirement. IDs are stable: never renumbered, never reused. `<AREA>` names the document: `AI`, `API` (`API_Endpoints_Requirement.md`), `AUD` (Audit_Logging), `AUTH` (Authentication_Authorization), `CFG` (System_Configuration), `DB` (Database_Schema), `EXP` (Data_Export_Anonymization), `ODM` (ODM_Interchange), `TECH` (Technology_Stack), `UI` (User_Interface), `VAL` (Data_Validation). The same IDs appear in code comments and tests. | the area's Requirements document |
+| `REQ-<AREA>-nnn` | A requirement. IDs are stable: never renumbered, never reused. `<AREA>` names the document: `AI`, `API` (`API_Endpoints_Requirements.md`), `AUD` (Audit_Logging), `AUTH` (Authentication_Authorization), `CFG` (System_Configuration), `DB` (Database_Schema), `EXP` (Data_Export_Anonymization), `ODM` (ODM_Interchange), `TECH` (Technology_Stack), `UI` (User_Interface), `VAL` (Data_Validation). The same IDs appear in code comments and tests. | the area's Requirements document |
 | `ASM-<AREA>-n` | An assumption the area's requirements rely on. If it stops holding, every requirement citing it needs review. | "Assumptions" section of the area's Requirements document |
 | `DEV-<AREA>-n` | A decision record: a choice the area made where the master spec, another requirement, or a common default points elsewhere, with the reason. | "Decision Records" section of the area's Requirements document |
 | `BR-nnn` | Business requirement. | §3 |

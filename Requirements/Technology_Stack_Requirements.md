@@ -1,9 +1,9 @@
 # Technology Stack — Requirements Analysis
 
-**Project:** Clinical Study Management System (REDCap API Replacement)\
+**Project:** CLARA — Clinical Logbook for Automated Research Assistance (REDCap API Replacement)\
 **Source:** `VISION_AND_REQUIREMENTS.md` (master spec); seeded from the area plan `Plan/Technology_Stack.md`, retired 2026-10-28 and kept in history (`git show 2b0c371:Plan/Technology_Stack.md`)\
 **Status:** Approved for development handoff\
-**Date:** 2026-09-18
+**Created:** 2026-09-18
 
 ## 1. Purpose
 
@@ -60,7 +60,7 @@ Defines the mandatory technology constraints and the non-functional requirements
 
 | ID | Requirement |
 |---|---------|
-| REQ-TECH-017 | No secrets (DB credentials, service secret, OAuth client secrets, anonymization salt) MAY appear in source code or version control. |
+| REQ-TECH-017 | Secrets (DB credentials, service secret, OAuth client secrets, anonymization salt) MUST NOT appear in source code or version control. |
 | REQ-TECH-018 | The administration API MUST be unreachable from the public network; only the REDCap-compatible `/api/` endpoint is exposed externally (see `Authentication_Authorization_Requirements.md`). |
 | REQ-TECH-019 | Session cookies MUST be `HttpOnly`, `Secure` (production), `SameSite=Lax`. |
 | REQ-TECH-020 | All user-supplied content rendered in the UI MUST be escaped server-side; a Content-Security-Policy header MUST be sent by the web application. |

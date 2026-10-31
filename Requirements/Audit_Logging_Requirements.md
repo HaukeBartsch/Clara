@@ -1,9 +1,9 @@
 # Audit Logging — Requirements Analysis
 
-**Project:** Clinical Study Management System (REDCap API Replacement)\
+**Project:** CLARA — Clinical Logbook for Automated Research Assistance (REDCap API Replacement)\
 **Source:** `VISION_AND_REQUIREMENTS.md` (master spec); seeded from the area plan `Plan/Audit_Logging.md`, retired 2026-10-28 and kept in history (`git show 2b0c371:Plan/Audit_Logging.md`)\
 **Status:** Approved for development handoff\
-**Date:** 2026-09-19
+**Created:** 2026-09-19
 
 ## 1. Purpose
 

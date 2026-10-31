@@ -1,8 +1,8 @@
 # System Configuration — Design
 
-**Project:** Clinical Study Management System (REDCap API Replacement)\
+**Project:** CLARA — Clinical Logbook for Automated Research Assistance (REDCap API Replacement)\
 **Implements:** `Requirements/System_Configuration_Requirements.md`\
-**Date:** 2026-09-21
+**Created:** 2026-09-21
 
 ## 1. Purpose
 
@@ -300,7 +300,7 @@ OTP_MAIL_FROM=
 | Deferred in | Resolution here |
 |---|------|
 | `anon_salt` configuration key (`Database_Schema_Design.md` §12) | `ANON_SALT` + range keys, §3.6 |
-| finite value-length cap key (`Data_Validation_Design.md` §11) | `MAX_VALUE_BYTES`, §3.7 |
+| finite value-length cap key (`Data_Validation_Design.md` §12) | `MAX_VALUE_BYTES`, §3.7 |
 | date-shift "sane defaults" (REQ-CFG-016) | 0…364 days, §3.6 |
 | rate-limit keys (REQ-CFG-020) | not environment keys (master spec "Rate limitter", DEV-CFG-3): enable flag and per-source-IP threshold live in `system_settings` edited in the admin interface (`API_Endpoints_Design.md` §4.22); env keeps only `TRUSTED_PROXY_CIDRS`, §3.9 |
 | session settings (REQ-CFG-017) | §3.8, 8 h default per REQ-AUTH-015; idle timeout (30 min) and rotation interval (15 min) (DEV-AUTH-17) |

@@ -33,7 +33,7 @@ $sourcePath = $root . '/docs/Requirement_Relevance_Classification.md';
 $outputPath = $root . '/web/app/data/relevance_sankey.php';
 $check = ($argv[1] ?? '') === '--check';
 
-/** Functional area of a Requirements document: `API_Endpoints_Requirement.md` → `api-endpoints`. */
+/** Functional area of a Requirements document: `API_Endpoints_Requirements.md` → `api-endpoints`. */
 function areaOf(string $filename): ?string
 {
     if (!preg_match('#^Requirements/([A-Za-z_]+?)(?:_Requirement|_Requirements)\.md$#', $filename, $m)) {

@@ -1,8 +1,8 @@
 # Project Charter — Design
 
-**Project:** Clinical Study Management System (REDCap API Replacement)\
+**Project:** CLARA — Clinical Logbook for Automated Research Assistance (REDCap API Replacement)\
 **Implements:** `Requirements/Project_Charter_Requirements.md`\
-**Date:** 2026-09-23
+**Created:** 2026-09-23
 
 ## 1. Purpose
 

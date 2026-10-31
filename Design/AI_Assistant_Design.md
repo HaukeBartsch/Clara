@@ -1,8 +1,8 @@
 # AI Assistant — Design
 
-**Project:** Clinical Study Management System (REDCap API Replacement)\
+**Project:** CLARA — Clinical Logbook for Automated Research Assistance (REDCap API Replacement)\
 **Implements:** `Requirements/AI_Assistant_Requirements.md`\
-**Date:** 2026-10-16
+**Created:** 2026-10-16
 
 ## 1. Shape
 
@@ -203,7 +203,9 @@ Results are plain JSON numbers/strings; tool text summaries round to four signif
   go into `app-config.json` under the bundle's own `integrity` key (`.config`, `.model_lib`, `.tokenizer`), so
   the check repeats in the browser on every load and a directory modified after install fails with an
   `IntegrityError` instead of executing. Keys are per `MODEL_ID`, and pinning one model keeps another model's
-  entries in the same file.
+  entries in the same file. The repository does not carry the manifest yet: until a `--pin` run has been
+  reviewed and committed, the script refuses every install, and the assistant section shows its
+  no-model state (REQ-AI-012).
 
 ## 8. Tests
 

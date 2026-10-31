@@ -1,8 +1,8 @@
 # Technology Stack — Design
 
-**Project:** Clinical Study Management System (REDCap API Replacement)
+**Project:** CLARA — Clinical Logbook for Automated Research Assistance (REDCap API Replacement)
 **Implements:** `Requirements/Technology_Stack_Requirements.md`
-**Date:** 2026-09-21
+**Created:** 2026-09-21
 
 ## 1. Purpose
 

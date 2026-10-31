@@ -1,8 +1,8 @@
 # Database Schema — Design
 
-**Project:** Clinical Study Management System (REDCap API Replacement)
+**Project:** CLARA — Clinical Logbook for Automated Research Assistance (REDCap API Replacement)
 **Implements:** `Requirements/Database_Schema_Requirements.md`
-**Date:** 2026-09-19
+**Created:** 2026-09-19
 
 ## 1. Purpose and Conventions
 

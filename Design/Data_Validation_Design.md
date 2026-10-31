@@ -1,8 +1,8 @@
 # Data Validation — Design
 
-**Project:** Clinical Study Management System (REDCap API Replacement)\
+**Project:** CLARA — Clinical Logbook for Automated Research Assistance (REDCap API Replacement)\
 **Implements:** `Requirements/Data_Validation_Requirements.md`\
-**Date:** 2026-09-19
+**Created:** 2026-09-19
 
 ## 1. Purpose
 
@@ -269,7 +269,7 @@ When creating or updating a field (REQ-API-068/069) or instrument (REQ-API-065/1
 | `field_name` | `^[a-z0-9_]+$` (REQ-VAL-011); unique within the project (REQ-VAL-012); longer than 26 characters accepted — the warning after 26 is UI-only (REQ-VAL-013); reserved (design decision — the flat export row would otherwise be ambiguous, REQ-API-028): `redcap_event_name`, `redcap_repeat_instrument`, `redcap_repeat_instance` MUST NOT be used |
 | `validation_type` | always empty for `yesno` and `notes` (REQ-DB-043/044 — a supplied one is dropped, like `validation_min`/`max` elsewhere); otherwise empty, a built-in structured type (`integer`, `floating point`, `date`, `datetime`), or an existing validation-type registry name whose pattern compiles (§4.2; REQ-VAL-010/042) |
 | `validation_min`/`max` | if present, a valid number per the field's type (integer → §4 integer grammar; floating point → decimal grammar) and min ≤ max; ignored for other types (REQ-VAL-020) |
-| `choices` | stored as `code$label##code$label` (schema §1); codes non-empty, unique, matching `^[A-Za-z0-9_-]+$` and compared case-sensitively — for a `checkbox` `^[a-z0-9_]+$`, so `<field>___<code>` is a valid field name (REQ-VAL-022, REQ-DB-042); labels non-empty. **Input forms:** a value that parses as the stored encoding is taken as such; any other value is read as REDCap's `code, label \| code, label` — split on `\|` between choices and on the first comma inside a choice, code and label trimmed — and stored in the stored encoding. The two cannot be confused: a REDCap list's first code is followed by a comma, and no code may contain `$`, `,` or a space. A `yesno` field always stores `1$Yes##0$No` whatever is supplied (REQ-DB-043); a `notes` field stores none (REQ-DB-044); a **`transfer`** field holds free-text copy instructions in it instead — the code/label rules above apply to choice fields only, its text is validated per §12 (REQ-DB-050) |
+| `choices` | stored as `code$label##code$label` (schema §1); codes non-empty, unique, matching `^[A-Za-z0-9_-]+$` and compared case-sensitively — for a `checkbox` `^[a-z0-9_]+$`, so `<field>___<code>` is a valid field name (REQ-VAL-022, REQ-DB-042); labels non-empty. **Input forms:** a value that parses as the stored encoding is taken as such; any other value is read as REDCap's `code, label \| code, label` — split on `\|` between choices and on the first comma inside a choice, code and label trimmed — and stored in the stored encoding. The two cannot be confused: a REDCap list's first code is followed by a comma, and no code may contain `$`, `,` or a space. A `yesno` field always stores `1$Yes##0$No` whatever is supplied (REQ-DB-043); a `notes` field stores none (REQ-DB-044); a **`transfer`** field holds free-text copy instructions in it instead — the code/label rules above apply to choice fields only, its text is validated per §10 (REQ-DB-050) |
 | `field_annotation` | any text, stored as given (REQ-DB-046); `@READONLY` — matched as a whole word, in any letter case, wherever it stands in the text — makes the field read-only in the form and on the survey page; nothing else in the text has an effect |
 | `field_label`, `section_header` | any text, no length limit (DEV-DB-15) |
 | `validation_format` | (date/datetime) composed of the §4.1 tokens — `Y`, `m`, `d`, plus `H`, `i` for datetime — with the specified separators; empty → the §4.1 defaults |
@@ -280,30 +280,11 @@ Every rejection is a design-time error with a machine-readable reason (REQ-API-0
 
 **Rename (REQ-VAL-014):** renaming a field atomically renames its stored values in the same transaction (a single key update on the EAV layout, DEV-VAL-4) and is audit-logged (REQ-API-043); the new name is validated by the rules above before the write.
 
-## 10. Resolved Deferred Items
-
-| Deferred in | Resolution here |
-|---|------|
-| ASM-VAL-1 (canonical date forms) | dates `YYYY-MM-DD±HH:MM`; date-times `YYYY-MM-DD HH:MM±HH:MM` — the canonical form carries the timezone of collection (GD-16, REQ-VAL-041): offset from the import-supplied zone (browser tz / `tz` parameter) else `APP_TIMEZONE`; the API converts between the field's accepted format and the canonical form on store and on export; values are never converted to UTC (§4.1) |
-| ASM-VAL-2 (free-text length cap) | no application cap beyond the storage type by default (REQ-VAL-021); a finite cap MAY be set in configuration — the key is defined in `System_Configuration_Design.md` (§5.1) |
-| ASM-VAL-3 (partial records) | `required` is advisory at import; completion is tracked, not enforced (§8) |
-| ASM-VAL-4 (calculated-field details) | `*`/`/` before `+`/`-`, all left-associative, parentheses override; acyclic dependency graph; value stored at each active position; expression change → project-wide recomputation (§6) |
-| ASM-VAL-5 (free-form text details) | allowlist final (§5.2); disallowed markup is stripped with its text preserved; only `href` on `a`, schemes `http`/`https`/`mailto` |
-| ASM-VAL-6 (branching-logic details) | numeric / chronological / lexicographic comparison; missing referenced value → `0`; truthiness for bare references; `&&`/`\|\|` as the logical operators; function set final (§7) |
-
-## 11. Open Items
-
-| Item | Owner |
-|---|------|
-| finite value-length cap configuration key (if set) | `System_Configuration_Design.md` |
-| `details` JSON shape of the calculated-field recomputation audit event (REQ-AUD-023) | `Audit_Logging_Design.md` |
-| advisory client-side validation attributes per field type (mirror of §4) | `User_Interface_Design.md` |
-
-## 12. Transfer Fields (REQ-VAL-046)
+## 10. Transfer Fields (REQ-VAL-046)
 
 A `transfer` field carries no value of its own (REQ-VAL-006); its `choices` attribute holds **copy instructions** (REQ-DB-050) — a line-oriented text naming one target project and mapping fields of the transfer field's own instrument into one record there. The button that runs them executes through `API_Endpoints_Design.md` §4.27 (REQ-API-165/166); this section is the normative grammar.
 
-### 12.1 Instruction grammar
+### 10.1 Instruction grammar
 
 Operations are written one per line; the first token of a line is its keyword:
 
@@ -339,20 +320,39 @@ create_project [project_name]
 
 Rules:
 
-- **Lexing.** Line-oriented: `#` starts an end-of-line comment (the rest of the line is ignored), blank lines are ignored, whitespace separates tokens. A token is a bare lower-case identifier (`[a-z0-9_]+`) or one or more adjacent bracket groups — `[proj][baseline]` is one token, `[proj] [baseline]` two; names inside brackets may not contain brackets and are trimmed of surrounding whitespace. An argument that takes a **field of the current instrument** is written bare or in one bracket group: `record_name` and `[record_name]` are one and the same reference, and neither is ever a literal value typed in place of a reference. Whether a name *resolves* is the design-time check (§12.2), not the lexicon's.
+- **Lexing.** Line-oriented: `#` starts an end-of-line comment (the rest of the line is ignored), blank lines are ignored, whitespace separates tokens. A token is a bare lower-case identifier (`[a-z0-9_]+`) or one or more adjacent bracket groups — `[proj][baseline]` is one token, `[proj] [baseline]` two; names inside brackets may not contain brackets and are trimmed of surrounding whitespace. An argument that takes a **field of the current instrument** is written bare or in one bracket group: `record_name` and `[record_name]` are one and the same reference, and neither is ever a literal value typed in place of a reference. Whether a name *resolves* is the design-time check (§10.2), not the lexicon's.
 - **Record transfers.** Exactly one `create_record` must be first, followed by zero or more `copy` operations. The button transfers to exactly one target record, whose record name is the create operation's source value — which is what makes re-triggering an update of that record rather than a second record (REQ-API-165). A second `create_record` or a `copy` before it is rejected.
-- **Project creation.** `create_project <source_field> [<template_project> [<token_field> [<project_id_field>]]]` is a standalone alternative to record transfer, taking one to four arguments positionally. The value of `source_field` names the project — that argument is always a reference to a field of the transfer field's instrument, written `project_name` or `[project_name]` (VISION writes the bracketed form), never a project name typed in its place; brackets around it are the reference spelling, not the optionality marking of the grammar above. A second argument names the template — a bare token or one bracket group (use `[Template Project]` for spaces) — whose arms, events, instruments, fields and instrument/event mappings the new project copies; with no second argument it is created **empty**, carrying no structure at all until its first designer adds one. The two output fields sit behind the template positionally, so an empty-project button writes back neither token nor ID. Existing project names are a no-op either way. Every new project gives the acting user role-less project-admin membership and no other member; nothing on the project row records who raised it — that is the `project_created` audit entry's job (REQ-API-168). Optional output fields receive that membership's project token and the new project ID in the current record. Output fields must be distinct, non-calculated, value-carrying fields of the transfer field's instrument; output fields cannot be the project-name source. It cannot be combined with `create_record` or `copy` (REQ-VAL-047).
+- **Project creation.** `create_project <source_field> [<template_project> [<token_field> [<project_id_field>]]]` is a standalone alternative to record transfer, taking one to four arguments positionally. The value of `source_field` names the project — that argument is always a reference to a field of the transfer field's instrument, written `project_name` or `[project_name]` (the master spec writes the bracketed form), never a project name typed in its place; brackets around it are the reference spelling, not the optionality marking of the grammar above. A second argument names the template — a bare token or one bracket group (use `[Template Project]` for spaces) — whose arms, events, instruments, fields and instrument/event mappings the new project copies; with no second argument it is created **empty**, carrying no structure at all until its first designer adds one. The two output fields sit behind the template positionally, so an empty-project button writes back neither token nor ID. Existing project names are a no-op either way. Every new project gives the acting user role-less project-admin membership and no other member; nothing on the project row records who raised it — that is the `project_created` audit entry's job (REQ-API-168). Optional output fields receive that membership's project token and the new project ID in the current record. Output fields must be distinct, non-calculated, value-carrying fields of the transfer field's instrument; output fields cannot be the project-name source. It cannot be combined with `create_record` or `copy` (REQ-VAL-047).
 - **One target project.** Every record-transfer operation names the same target project as the `create_record`; instructions spanning two projects are rejected — one button fills one record in one project.
 - **Identifier equality.** The `create_record` second bracket group must name the target project's **record identifier field** (GD-8 on the target).
 - **Event resolution.** A copy into an event-enabled target names its event as a full `unique_event_name` (always accepted) or a plain `event_name` when it names exactly one of the target's events; an ambiguous or unknown name is rejected. An event-less target takes no event token — `[project][field]`; naming one there is rejected too. An event-enabled target needs **at least one copy**: the identifier rows are written at each distinct copied-into event, so a create_record alone would place the record's values nowhere.
-- **Field names.** Every `source_field` must name an existing value-carrying field of the transfer field's **same instrument** (§12.2, REQ-VAL-046) — non-value types and a checkbox's own row are neither source nor target; checkbox choice columns `<field>___<code>` (REQ-DB-042) may be both.
+- **Field names.** Every `source_field` must name an existing value-carrying field of the transfer field's **same instrument** (§10.2, REQ-VAL-046) — non-value types and a checkbox's own row are neither source nor target; checkbox choice columns `<field>___<code>` (REQ-DB-042) may be both.
 - **Caps.** The instruction text is bounded: 16384 characters, at most 256 operations per config (admin-entered stored text).
 
-### 12.2 Validation timing
+### 10.2 Validation timing
 
 **Design time** (creating or updating the field, REQ-API-068/069): the grammar parses; every source and output field names an existing value-carrying field of the same instrument; record-transfer target references resolve against the current database state — target project exists, event exists, target field exists, carries values and is active at that pair (REQ-VAL-046, REQ-DB-050); and a project-creation template exists when the instruction names one (REQ-VAL-047). An unknown target or template project is **named** in the rejection: a deliberate bounded disclosure of project-name existence (REQ-DB-050), accepted so typo'd references fail where the designer sees them — runtime authorization stays strict and never discloses (REQ-API-165, REQ-API-007). A rejection names the argument at fault in terms the designer typed it in: an operation carrying the wrong number of arguments answers with the shape it takes and how many the line gave it — so a stray fifth `create_project` argument reads as exactly that, not as a rejected field reference — and a project-name argument that is not a field of this instrument is answered by what it should have been.
 
 **Runtime**: every execution re-parses and re-resolves the whole config against the live design before writing anything (`API_Endpoints_Design.md` §4.27) — a target whose design moved under a saved config fails then (and its button goes absent per the availability probe, REQ-API-166), never silently writes to a stale position.
+
+## 11. Resolved Deferred Items
+
+| Deferred in | Resolution here |
+|---|------|
+| ASM-VAL-1 (canonical date forms) | dates `YYYY-MM-DD±HH:MM`; date-times `YYYY-MM-DD HH:MM±HH:MM` — the canonical form carries the timezone of collection (GD-16, REQ-VAL-041): offset from the import-supplied zone (browser tz / `tz` parameter) else `APP_TIMEZONE`; the API converts between the field's accepted format and the canonical form on store and on export; values are never converted to UTC (§4.1) |
+| ASM-VAL-2 (free-text length cap) | no application cap beyond the storage type by default (REQ-VAL-021); a finite cap MAY be set in configuration — the key is defined in `System_Configuration_Design.md` (§5.1) |
+| ASM-VAL-3 (partial records) | `required` is advisory at import; completion is tracked, not enforced (§8) |
+| ASM-VAL-4 (calculated-field details) | `*`/`/` before `+`/`-`, all left-associative, parentheses override; acyclic dependency graph; value stored at each active position; expression change → project-wide recomputation (§6) |
+| ASM-VAL-5 (free-form text details) | allowlist final (§5.2); disallowed markup is stripped with its text preserved; only `href` on `a`, schemes `http`/`https`/`mailto` |
+| ASM-VAL-6 (branching-logic details) | numeric / chronological / lexicographic comparison; missing referenced value → `0`; truthiness for bare references; `&&`/`\|\|` as the logical operators; function set final (§7) |
+
+## 12. Open Items
+
+| Item | Owner |
+|---|------|
+| finite value-length cap configuration key (if set) | `System_Configuration_Design.md` |
+| `details` JSON shape of the calculated-field recomputation audit event (REQ-AUD-023) | `Audit_Logging_Design.md` |
+| advisory client-side validation attributes per field type (mirror of §4) | `User_Interface_Design.md` |
 
 ## 13. Rationale and Trade-offs
 
@@ -386,4 +386,4 @@ Why validation works this way, and what each choice costs. The decision records 
 | Comparison where either side is a missing value | `0` for every operator, except the blank test with `''`, which is true | §7.3 |
 | Two date values in different collection offsets | Compared as absolute instants | §7.3 |
 | A shorthand `[field]` in branching vs. in `filterLogic` | Branching: the current event; `filterLogic`: the project's first event | §7.3, DEV-VAL-13 |
-| A transfer target whose design changed after the instruction was saved | Re-resolved at execution; a stale reference fails then instead of writing to a stale place | §12.2 |
+| A transfer target whose design changed after the instruction was saved | Re-resolved at execution; a stale reference fails then instead of writing to a stale place | §10.2 |
