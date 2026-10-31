@@ -1226,6 +1226,7 @@ return [
     'record.survey_badge' => 'survey',
     'record.reset' => 'Clear',
     'record.now' => 'Now',
+    'record.today' => 'Today',
     'record.readonly' => 'read-only',
     'record.yes' => 'Yes',
     'record.no' => 'No',

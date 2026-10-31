@@ -238,7 +238,7 @@ const nowIn = (format) => {
 }
 
 /**
- * The "now" button beside a date/date-time input (REQ-UI-072): it fills the control with the
+ * The today/now button beside a date/date-time input (REQ-UI-072): it fills the control with the
  * current date — and the time, for a `datetime-local` — in the format the field validates
  * against, which a text field with a non-default format needs as much as the native control.
  * The button ships hidden (a form without this module offers nothing it cannot do) and is

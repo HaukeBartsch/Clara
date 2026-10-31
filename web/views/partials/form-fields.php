@@ -275,8 +275,10 @@ $fieldAttrs = static function (array $field, ?string $staticValue = null) use ($
                            name="value[<?= View::e($name) ?>]" value="<?= View::e($control !== '' ? (string) $entered : $value) ?>"<?= $control === '' ? ' inputmode="' . $mode . '"' : '' ?>
                            <?= $format !== '' && $control === '' ? 'placeholder="' . View::e($format) . '"' : '' ?> autocomplete="off">
                     <?php if ($isDate): ?>
-                        <?php // The "now" shortcut: form.js fills the current date — and time, here — in this field's own format, and reveals the button with it. ?>
-                        <button class="btn btn-outline-secondary d-none" type="button" data-clara-now><?= View::e($view->t('record.now')) ?></button>
+                        <?php // The today/now shortcut (REQ-UI-072): form.js fills the current date — and time, here — in this field's own format, and reveals the button with it. ?>
+                        <?php // A date-only field cannot take a time, so its shortcut reads "Today"; only a datetime field's is "Now". ?>
+                        <?php $nowKey = $vt === 'datetime' ? 'record.now' : 'record.today'; ?>
+                        <button class="btn btn-outline-secondary d-none" type="button" data-clara-now><?= View::e($view->t($nowKey)) ?></button>
                     </div>
                     <?php endif; ?>
                 <?php endif; ?>
