@@ -152,6 +152,47 @@ func hasDataKey(m map[string][]string) bool {
 	return false
 }
 
+// redcapFormName is REDCap's unique instrument name for an instrument name as
+// this system stores it: lower case, every space an underscore. REDCap derives
+// that name from the instrument label and puts it in `forms[]`, while this
+// system stores one name that carries the label's capitals and spaces
+// (`incoming_studies` names the instrument "Incoming Studies" — FIONA's
+// recorded calls, REQ-API-037), so a forms[] entry is read in both spellings.
+// Instrument names are ASCII letters, digits, spaces and underscores (REQ-DB-011),
+// which those two rules cover on their own.
+func redcapFormName(name string) string {
+	return strings.ToLower(strings.ReplaceAll(name, " ", "_"))
+}
+
+// formSet is a forms[] filter: nil for no filter — every instrument — and
+// otherwise the names one call selects (REQ-API-015, REQ-API-022/024). Each
+// entry selects an instrument by its stored name and by REDCap's spelling of it,
+// in either direction, so `forms[]=incoming_studies` narrows a render to the
+// instrument "Incoming Studies" and the recorded exact spellings keep matching.
+// Both spellings select, so a project holding both an instrument "A B" and one
+// literally named "a_b" is selected by either entry: forms[] governs selection
+// only, never what the surviving columns carry, which stays the export level's
+// question (REQ-API-024, REQ-EXP-004).
+type formSet map[string]bool
+
+func toFormSet(names []string) formSet {
+	if len(names) == 0 {
+		return nil
+	}
+	set := make(formSet, 2*len(names))
+	for _, n := range names {
+		set[n] = true
+		set[redcapFormName(n)] = true
+	}
+	return set
+}
+
+// has reports whether the instrument named name is selected. A nil filter
+// selects every instrument.
+func (s formSet) has(name string) bool {
+	return s == nil || s[name] || s[redcapFormName(name)]
+}
+
 // Encoding is the response encoding (REQ-API-013): a present
 // returnFormat wins, then format, then the REDCap default csv.
 func (p Params) Encoding() string {

@@ -296,7 +296,7 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		// out (REQ-API-028): it names the row's record and widens no pair scope.
 		forced bool
 	}
-	wantForms := toSet(s.Forms)
+	wantForms := toFormSet(s.Forms)
 	wantFields := toSet(s.Fields)
 	var wanted []column
 	// The expanded dictionary puts every checkbox's choice columns right after
@@ -308,7 +308,7 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		}
 		// fields[] names a choice column directly or through its checkbox, which
 		// selects every choice column (REQ-EXP-053).
-		filtered := (wantForms != nil && !wantForms[f.Instrument]) ||
+		filtered := !wantForms.has(f.Instrument) ||
 			(wantFields != nil && !wantFields[f.FieldName] && !(f.isChoiceColumn() && wantFields[f.Parent]))
 		// Every row names its record (REQ-API-028): the identifier survives a filter
 		// that leaves it out, without bringing its instrument's pairs into scope.

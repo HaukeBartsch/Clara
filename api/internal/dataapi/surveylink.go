@@ -25,9 +25,12 @@ func (h *Handler) serveSurveyLink(ctx context.Context, w http.ResponseWriter, r 
 	case "":
 		writeError(w, enc, http.StatusBadRequest, "Invalid content")
 	case "metadata":
-		// forms[] may narrow the render, never widen it past the link.
+		// forms[] may narrow the render, never widen it past the link. A naming
+		// test, so it reads both spellings of the link's instrument: a caller
+		// asking for `incoming_studies` means "Incoming Studies" (redcapFormName).
+		linked := toFormSet([]string{sub.Instrument})
 		for _, f := range p.Forms {
-			if f != sub.Instrument {
+			if !linked.has(f) {
 				writeError(w, enc, http.StatusForbidden, "Permission denied")
 				return
 			}

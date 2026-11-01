@@ -217,7 +217,7 @@ func (h *Handler) contentMetadata(ctx context.Context, w http.ResponseWriter, en
 	// forms[] narrows the render to those instruments; a survey link has its
 	// own name forced here, so it sees one instrument's definitions and no
 	// other (API_Endpoints_Design.md §3.10, REQ-API-083).
-	wantForms := toSet(p.Forms)
+	wantForms := toFormSet(p.Forms)
 	fields, err := h.Store.ListFields(ctx, pid)
 	if err != nil {
 		h.storeError(w, enc, err)
@@ -225,7 +225,7 @@ func (h *Handler) contentMetadata(ctx context.Context, w http.ResponseWriter, en
 	}
 	rows := make([]metaRow, 0, len(fields))
 	for i, f := range fields {
-		if wantForms != nil && !wantForms[form[f.InstrumentID]] {
+		if !wantForms.has(form[f.InstrumentID]) {
 			continue
 		}
 		codes, labels, combined := splitChoices(f.Choices.String)
@@ -415,13 +415,7 @@ func (h *Handler) contentExportFieldNames(ctx context.Context, w http.ResponseWr
 
 	// Restrict to the requested forms when supplied (REQ-API-022); an empty
 	// forms[] means all fields.
-	var want map[string]bool
-	if len(p.Forms) > 0 {
-		want = make(map[string]bool, len(p.Forms))
-		for _, f := range p.Forms {
-			want[f] = true
-		}
-	}
+	want := toFormSet(p.Forms)
 
 	fields, err := h.Store.ListFields(ctx, pid)
 	if err != nil {
@@ -431,7 +425,7 @@ func (h *Handler) contentExportFieldNames(ctx context.Context, w http.ResponseWr
 	rows := make([]fieldNameRow, 0, len(fields))
 	for _, f := range fields {
 		name := form[f.InstrumentID]
-		if want != nil && !want[name] {
+		if !want.has(name) {
 			continue
 		}
 		rows = append(rows, fieldNameRow{FieldName: f.FieldName, FormName: name})
