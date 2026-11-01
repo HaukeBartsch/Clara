@@ -2,6 +2,7 @@ package dataapi
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -441,31 +442,33 @@ func (h *Handler) contentExportFieldNames(ctx context.Context, w http.ResponseWr
 	render(w, enc, p.Delimiter(), rows)
 }
 
-// nextNameRow is the content=generateNextRecordName object
-// (REQ-API-023), rendered as a single-row array like the other contents.
-type nextNameRow struct {
-	NextRecordName string `json:"next_record_name"`
-}
-
+// contentGenerateNextRecordName answers the next record name (REQ-API-023) as
+// REDCap does: the bare name as plain text — no header line, no JSON wrapping,
+// no line break — whatever format and returnFormat say (DEV-API-38). The
+// callers of the replaced system read the body as the name itself
+// (`int(...)`, `intval(...) + 1`). Errors keep the §3.2 encoding of the call.
 func (h *Handler) contentGenerateNextRecordName(ctx context.Context, w http.ResponseWriter, enc string, sub *subject, p Params) {
 	// Auto naming mode answers the next plain integer above every numeric
 	// record id of the project (REQ-DB-045, REQ-API-151); manual mode keeps
 	// the pattern generator untouched (REQ-DB-007).
+	var name string
 	if sub.Project.RecordNaming == db.RecordNamingAuto {
 		maxNum, err := h.Store.MaxNumericRecordID(ctx, sub.Project.ID)
 		if err != nil {
 			h.storeError(w, enc, err)
 			return
 		}
-		render(w, enc, p.Delimiter(), []nextNameRow{{NextRecordName: strconv.FormatInt(maxNum+1, 10)}})
-		return
+		name = strconv.FormatInt(maxNum+1, 10)
+	} else {
+		maxID, _, err := h.Store.MaxRecordID(ctx, sub.Project.ID)
+		if err != nil {
+			h.storeError(w, enc, err)
+			return
+		}
+		name = nextRecordName(sub.Project.ParticipantNames, maxID)
 	}
-	maxID, _, err := h.Store.MaxRecordID(ctx, sub.Project.ID)
-	if err != nil {
-		h.storeError(w, enc, err)
-		return
-	}
-	render(w, enc, p.Delimiter(), []nextNameRow{{NextRecordName: nextRecordName(sub.Project.ParticipantNames, maxID)}})
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = io.WriteString(w, name)
 }
 
 // nextRecordName computes the next record name for the project's naming

@@ -1514,34 +1514,97 @@ func TestRecordImportDataWinsOverAction(t *testing.T) {
 	}
 }
 
-// returnContent=count answers the number of rows applied and nothing else:
-// rejected rows are not counted, no per-row detail is rendered (REQ-API-142).
+// returnContent=count is REDCap's import: every row applies, answered with the
+// count, or none does, answered with a §3.2 error that names each refused row
+// (REQ-API-142, DEV-API-40). FIONA's callers detect a failed write by the
+// "error" key alone, so a refusal answered as a smaller count went unnoticed.
 func TestRecordImportCountResponse(t *testing.T) {
 	f := newRecordFixture(t)
+	created := auditCount(t, f.s, audit.RecordCreated)
 
+	// One refused row refuses the call: the valid row before it is rolled back.
 	form := url.Values{
 		"token": {"tok-edit"}, "content": {"record"}, "returnFormat": {"json"},
 		"returnContent": {"count"},
 		"data": {`[{"record_id":"8DISC010","redcap_event_name":"baseline_arm_1","age":"51"},` +
-			`{"record_id":"8DISC011","redcap_event_name":"baseline_arm_1","age":"abc"}]`},
+			`{"record_id":"8DISC011","redcap_event_name":"baseline_arm_1","age":"abc"},` +
+			`{"redcap_event_name":"baseline_arm_1","age":"52"}]`},
 	}
 	code, body := f.call(t, form)
+	mustStatus(t, code, 400, body)
+	var refusal map[string]string
+	if err := json.Unmarshal([]byte(body), &refusal); err != nil || len(refusal) != 1 {
+		t.Fatalf("refusal body = %s, want the single-key error object (%v)", body, err)
+	}
+	msg := refusal["error"]
+	for _, want := range []string{"Nothing was imported", "2 of 3 rows", `row 2 (record "8DISC011"): age: TYPE_INVALID`,
+		"row 3: record_id: CONTENT_INVALID"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error = %q, want it to contain %q", msg, want)
+		}
+	}
+	if strings.Index(msg, "row 2") > strings.Index(msg, "row 3") {
+		t.Errorf("error = %q, want the refused rows in input order", msg)
+	}
+	for _, id := range []string{"8DISC010", "8DISC011"} {
+		if got := storedValue(t, f, id, "baseline_arm_1", "age"); got != "" {
+			t.Errorf("%s stored age = %q after a refused call, want nothing", id, got)
+		}
+	}
+	if got := auditCount(t, f.s, audit.RecordCreated); got != created {
+		t.Errorf("record_created entries %d → %d after a refused call, want none", created, got)
+	}
+	// CSV encoding: the message line, still 400.
+	form.Set("returnFormat", "csv")
+	code, body = f.call(t, form)
+	mustStatus(t, code, 400, body)
+	if !strings.HasPrefix(body, "Nothing was imported") {
+		t.Errorf("csv refusal body = %q, want the message line", body)
+	}
+
+	// Every row valid: all apply, and a later row of the same record reads the
+	// earlier one inside the shared transaction (added, then updated).
+	form.Set("returnFormat", "json")
+	form.Set("data", `[{"record_id":"8DISC010","redcap_event_name":"baseline_arm_1","age":"51"},`+
+		`{"record_id":"8DISC010","redcap_event_name":"followup_arm_1","age":"52"},`+
+		`{"record_id":"8DISC011","redcap_event_name":"baseline_arm_1","age":"53"}]`)
+	code, body = f.call(t, form)
 	mustStatus(t, code, 200, body)
-	if strings.TrimSpace(body) != `{"count":1}` {
-		t.Fatalf("count body = %s, want {\"count\":1}", body)
+	if strings.TrimSpace(body) != `{"count":3}` {
+		t.Fatalf("count body = %s, want {\"count\":3}", body)
 	}
-	if got := storedValue(t, f, "8DISC010", "baseline_arm_1", "age"); got != "51" {
-		t.Errorf("applied row not stored (age = %q)", got)
+	for _, c := range []struct{ id, event, want string }{
+		{"8DISC010", "baseline_arm_1", "51"}, {"8DISC010", "followup_arm_1", "52"}, {"8DISC011", "baseline_arm_1", "53"},
+	} {
+		if got := storedValue(t, f, c.id, c.event, "age"); got != c.want {
+			t.Errorf("%s %s age = %q, want %s", c.id, c.event, got, c.want)
+		}
 	}
-	if got := storedValue(t, f, "8DISC011", "baseline_arm_1", "age"); got != "" {
-		t.Errorf("rejected row stored (age = %q), want nothing", got)
+	if got := auditCount(t, f.s, audit.RecordCreated); got != created+2 {
+		t.Errorf("record_created entries = %d, want %d", got, created+2)
 	}
 	// CSV encoding: a bare count line.
 	form.Set("returnFormat", "csv")
+	form.Set("data", `[{"record_id":"8DISC010","redcap_event_name":"baseline_arm_1","age":"54"}]`)
 	code, body = f.call(t, form)
 	mustStatus(t, code, 200, body)
 	if strings.TrimSpace(body) != "1" {
 		t.Errorf("csv count body = %q, want a bare 1", body)
+	}
+
+	// Without count mode each row still applies on its own (REQ-API-035): the
+	// result rows report the refusal and the valid row is stored.
+	code, body = f.call(t, url.Values{
+		"token": {"tok-edit"}, "content": {"record"}, "returnFormat": {"json"},
+		"data": {`[{"record_id":"8DISC012","redcap_event_name":"baseline_arm_1","age":"55"},` +
+			`{"record_id":"8DISC013","redcap_event_name":"baseline_arm_1","age":"abc"}]`},
+	})
+	res := importResults(t, code, body)
+	if len(res) != 2 || res[0].ImportRecordID != importAdded || res[1].ImportRecordID != importInvalid {
+		t.Fatalf("result rows = %v, want added then invalid", res)
+	}
+	if got := storedValue(t, f, "8DISC012", "baseline_arm_1", "age"); got != "55" {
+		t.Errorf("per-row mode: valid row age = %q, want 55", got)
 	}
 }
 

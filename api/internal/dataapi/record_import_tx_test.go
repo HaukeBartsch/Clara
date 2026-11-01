@@ -59,3 +59,47 @@ func TestRecordImportExistingRowReadsInsideTransaction(t *testing.T) {
 		t.Errorf("stored age = %q, want 44", got)
 	}
 }
+
+// TestRecordImportCountBatchReadsInsideTransaction is the same guard for
+// returnContent=count, whose rows share one transaction (REQ-API-142,
+// DEV-API-40): with a single-connection pool every read of every row — an
+// existing record's group check included — must run on that transaction, or
+// the call cannot be served at all.
+func TestRecordImportCountBatchReadsInsideTransaction(t *testing.T) {
+	f := newRecordFixture(t)
+	if res := f.importRows(t, importForm("tok-edit", map[string]string{
+		"record_id": "8DISC050", "form_name": "demo", "event_name": "baseline_arm_1", "age": "43",
+	})); len(res) != 1 || res[0].ImportRecordID != 1 {
+		t.Fatalf("seeding import = %v, want one row with import_record_id 1", res)
+	}
+
+	f.s.DB.SetMaxOpenConns(1)
+	defer f.s.DB.SetMaxOpenConns(10)
+
+	for _, tc := range []struct {
+		age1, age2 string
+		status     int
+	}{{"44", "45", http.StatusOK}, {"46", "abc", http.StatusBadRequest}} {
+		form := importForm("tok-edit",
+			map[string]string{"record_id": "8DISC050", "form_name": "demo", "event_name": "baseline_arm_1", "age": tc.age1},
+			map[string]string{"record_id": "8DISC051", "form_name": "demo", "event_name": "baseline_arm_1", "age": tc.age2},
+		)
+		form.Set("returnContent", "count")
+		req := httptest.NewRequest(http.MethodPost, "http://test/api/", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		ctx, cancel := context.WithTimeout(req.Context(), 5*time.Second)
+		rec := httptest.NewRecorder()
+		f.h.ServeHTTP(rec, req.WithContext(ctx))
+		cancel()
+		if rec.Code != tc.status {
+			t.Fatalf("count import with second age %q answered %d %s, want %d", tc.age2, rec.Code, rec.Body.String(), tc.status)
+		}
+	}
+	// The refused second call rolled back its valid first row (46).
+	if got := storedValue(t, f, "8DISC050", "baseline_arm_1", "age"); got != "44" {
+		t.Errorf("stored age = %q, want 44 from the applied call", got)
+	}
+	if got := storedValue(t, f, "8DISC051", "baseline_arm_1", "age"); got != "45" {
+		t.Errorf("stored age of 8DISC051 = %q, want 45", got)
+	}
+}

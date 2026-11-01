@@ -480,7 +480,7 @@ final class RecordStatusController extends DataEntryController
         $arm = $this->fieldId('arm');
 
         try {
-            $answer = $this->dataCall($projectId, ['content' => 'generateNextRecordName']);
+            $answer = $this->dataText($projectId, ['content' => 'generateNextRecordName']);
         } catch (ApiException $e) {
             $this->flashDanger($this->dataApiFailure($e));
 
@@ -511,7 +511,7 @@ final class RecordStatusController extends DataEntryController
         $arm = $this->fieldId('arm');
 
         try {
-            $answer = $this->dataCall($projectId, ['content' => 'generateNextRecordName']);
+            $answer = $this->dataText($projectId, ['content' => 'generateNextRecordName']);
         } catch (ApiException $e) {
             $this->flashDanger($this->dataApiFailure($e));
 
@@ -530,15 +530,14 @@ final class RecordStatusController extends DataEntryController
     }
 
     /**
-     * The name of a `generateNextRecordName` answer: the JSON form answers a one-element
-     * list; the object form is accepted as well.
-     *
-     * @param array<array-key, mixed> $answer
+     * The name of a `generateNextRecordName` answer: the bare name as plain text
+     * (REQ-API-023, DEV-API-38). Surrounding white space is no part of a record name; a
+     * body that still carries a line break or another control character is no name at all.
      */
-    private static function generatedName(array $answer): string
+    private static function generatedName(string $answer): string
     {
-        $row = isset($answer['next_record_name']) ? $answer : ($answer[0] ?? []);
+        $name = trim($answer);
 
-        return is_array($row) && is_scalar($row['next_record_name'] ?? null) ? (string) $row['next_record_name'] : '';
+        return preg_match('/[\x00-\x1F\x7F]/', $name) === 1 ? '' : $name;
     }
 }

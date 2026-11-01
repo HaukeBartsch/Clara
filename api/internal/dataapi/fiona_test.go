@@ -293,25 +293,25 @@ func TestFionaExportMetadata(t *testing.T) {
 // --- generateNextRecordName (PHP example) ---
 
 // TestFionaGenerateNextRecordName encodes the bare call of the PHP example —
-// token and content only. With no format or returnFormat the REDCap default
-// encoding is csv, so the answer is the CSV rendering of next_record_name:
-// one past the greatest seeded 8DISC record (REQ-API-023).
+// token and content only — and the callers that read its body as the name:
+// populateAutoID.py takes int(body) and upload-couplings-file.php intval(body)+1.
+// REDCap answers the bare name whatever the format, so does this API
+// (REQ-API-023, DEV-API-38): one past the greatest seeded 8DISC record.
 func TestFionaGenerateNextRecordName(t *testing.T) {
 	f := newFionaFixture(t)
 	code, body := do(t, f.h, url.Values{"token": {fionaToken}, "content": {"generateNextRecordName"}})
 	mustStatus(t, code, http.StatusOK, body)
-	if want := "next_record_name\n8DISC004\n"; body != want {
+	if want := "8DISC004"; body != want {
 		t.Errorf("body = %q, want %q", body, want)
 	}
 
-	// The same call with returnFormat=json (the JSON rendering).
+	// The same call with returnFormat=json answers the same body.
 	code, body = do(t, f.h, url.Values{
 		"token": {fionaToken}, "content": {"generateNextRecordName"}, "returnFormat": {"json"},
 	})
 	mustStatus(t, code, http.StatusOK, body)
-	out := decodeJSON(t, body)
-	if len(out) != 1 || out[0]["next_record_name"] != "8DISC004" {
-		t.Errorf("rows = %s, want next_record_name 8DISC004", body)
+	if body != "8DISC004" {
+		t.Errorf("returnFormat=json: body = %q, want the bare 8DISC004", body)
 	}
 }
 
@@ -571,8 +571,8 @@ func TestFionaExportFormKeepsRecordID(t *testing.T) {
 
 // TestFionaFilterLogicTransferLookup encodes the second PHP example: the
 // transfer lookup by SOP instance UID — forms[0]=transfers with
-// filterLogic=[transfer_mapped_uid]="<uid>". The filter keeps whole records
-// (REQ-API-025): only 8DISC002 carries the matching UID.
+// filterLogic=[transfer_mapped_uid]="<uid>". The filter keeps the rows it
+// holds for (REQ-API-025, DEV-API-39): only 8DISC002 carries the matching UID.
 func TestFionaFilterLogicTransferLookup(t *testing.T) {
 	f := newFionaFixture(t)
 	call := func(uid string) (int, string) {

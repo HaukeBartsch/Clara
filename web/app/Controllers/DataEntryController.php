@@ -161,6 +161,17 @@ abstract class DataEntryController extends ProjectPageController
         return $this->api->dataApi()->forMember($projectId, $params);
     }
 
+    /**
+     * `dataCall` for a call that answers plain text — `generateNextRecordName` answers the
+     * bare name as REDCap does (REQ-API-023, DEV-API-38).
+     *
+     * @param array<string, string|list<string>> $params
+     */
+    protected function dataText(int $projectId, array $params): string
+    {
+        return $this->api->dataApi()->textForMember($projectId, $params);
+    }
+
     /** @return list<array<string, mixed>> */
     protected static function listOf(mixed $value): array
     {

@@ -337,3 +337,74 @@ func TestRepeatingFormsEventsContent(t *testing.T) {
 		t.Fatalf("repeatingFormsEvents import: %d", code)
 	}
 }
+
+// TestRepeatingFilterLogicPerRow: filterLogic keeps rows, not records (REQ-API-025,
+// DEV-API-39). A reference to a field of the repeating instrument reads each
+// instance row's own value and the empty cell of every other row, so a match at a
+// later instance returns that instance — not the record's first instance, not its
+// whole record — and a match at instance 1 no longer drags the other instances
+// along. A reference to a non-repeating field still keeps every row of the record.
+func TestRepeatingFilterLogicPerRow(t *testing.T) {
+	f := newRecordFixture(t)
+	withRepeatingVisits(t, f)
+	f.importRows(t, importForm("tok-admin",
+		map[string]string{"record_id": "8DISC001", "redcap_event_name": "baseline_arm_1",
+			"redcap_repeat_instrument": "visits", "redcap_repeat_instance": "1", "visit_note": "a"},
+		map[string]string{"record_id": "8DISC001", "redcap_event_name": "baseline_arm_1",
+			"redcap_repeat_instrument": "visits", "redcap_repeat_instance": "2", "visit_note": "b", "symptoms___2": "1"},
+		map[string]string{"record_id": "8DISC001", "redcap_event_name": "baseline_arm_1",
+			"redcap_repeat_instrument": "visits", "redcap_repeat_instance": "3", "visit_note": "c"},
+		map[string]string{"record_id": "8DISC001", "redcap_event_name": "followup_arm_1", "form_name": "visits", "visit_note": "plain"},
+	))
+	type key struct{ record, event, instrument, instance string }
+	keys := func(rows []map[string]string) map[key]bool {
+		out := map[key]bool{}
+		for _, r := range rows {
+			out[key{r["record_id"], r["redcap_event_name"], r["redcap_repeat_instrument"], r["redcap_repeat_instance"]}] = true
+		}
+		return out
+	}
+	only := func(filter string, want ...key) {
+		t.Helper()
+		rows := f.exportJSON(t, "tok-admin", url.Values{"filterLogic": {filter}})
+		got := keys(rows)
+		if len(rows) != len(want) || len(got) != len(want) {
+			t.Fatalf("filter %s: rows %v, want %v", filter, rows, want)
+		}
+		for _, k := range want {
+			if !got[k] {
+				t.Fatalf("filter %s: row %v missing from %v", filter, k, rows)
+			}
+		}
+	}
+	inst := func(n string) key { return key{"8DISC001", "baseline_arm_1", "visits", n} }
+
+	// A later instance matches: that row alone (the case FIONA's second transfer is).
+	only(`[visit_note]="b"`, inst("2"))
+	only(`[visit_note]="c"`, inst("3"))
+	// Instance 1 matching keeps instance 1 only — the event's own row carries no
+	// visits cell, so it does not match either.
+	only(`[visit_note]="a"`, inst("1"))
+	// The event-qualified spelling reads the same instance values.
+	only(`[baseline_arm_1][visit_note]="b"`, inst("2"))
+	// A checkbox box of the repeating instrument reads per instance too.
+	only(`[symptoms(2)]="1"`, inst("2"))
+	// A non-repeating field reads the record's value on every row, so the whole
+	// record stays together, as before; combined with a repeating field it narrows.
+	all := []key{{"8DISC001", "baseline_arm_1", "", ""}, inst("1"), inst("2"), inst("3"),
+		{"8DISC001", "followup_arm_1", "", ""}}
+	only(`[age]="42"`, all...)
+	only(`[age]="42" && [visit_note]="c"`, inst("3"))
+	// visits does not repeat at follow-up: there it is an ordinary event value.
+	only(`[followup_arm_1][visit_note]="plain"`, all...)
+	// No row holds: no record, still 200.
+	only(`[visit_note]="zzz"`)
+
+	// The wide layout has one row per record: it is kept when any instance holds.
+	for filter, want := range map[string]int{`[visit_note]="c"`: 1, `[visit_note]="zzz"`: 0, `[age]="42"`: 1} {
+		rows := f.exportJSON(t, "tok-admin", url.Values{"type": {"wide"}, "filterLogic": {filter}})
+		if len(rows) != want || (want == 1 && rows[0]["record_id"] != "8DISC001") {
+			t.Errorf("wide filter %s: rows %v, want %d row(s) of 8DISC001", filter, rows, want)
+		}
+	}
+}

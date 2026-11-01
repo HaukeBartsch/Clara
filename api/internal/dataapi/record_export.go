@@ -223,6 +223,43 @@ func (h *Handler) contentRecordExport(w http.ResponseWriter, r *http.Request, en
 	})
 }
 
+// rowSpec is one flat export row of a record (§3.6.2, REQ-API-155): the event's
+// own row, or one instance of an instrument repeating at that event.
+type rowSpec struct {
+	event      string
+	instrument *dictInstrument // nil = the event's own row
+	instance   int
+	values     map[string]string // the instance's values (instance rows)
+}
+
+// wideRowHolds tests filterLogic against a wide export's single row of one record
+// (REQ-API-025, DEV-API-39). That row carries the whole record, so it holds when
+// the expression holds for the record's own values — its repeating fields read
+// empty there, as on a flat event row — or for any instance the export may show
+// of a pair repeating at one of its events, read as rowEval reads that instance.
+func wideRowHolds(filter *validate.LogicProgram, d *projectDict, rv recordValues, events []eventRow,
+	pairRefused func(event string, instrID int64) bool,
+	instancesOf func(event string, instr dictInstrument) []int,
+	instanceValues func(event, instrument string, instance int) map[string]string) bool {
+	if filter.Eval(rv.rowEval(d, "", "", nil)) {
+		return true
+	}
+	for _, e := range events {
+		ev := e.UniqueEventName
+		for _, instr := range d.instruments {
+			if !d.repeats(ev, instr.Name) || pairRefused(ev, instr.ID) {
+				continue
+			}
+			for _, n := range instancesOf(ev, instr) {
+				if filter.Eval(rv.rowEval(d, ev, instr.Name, instanceValues(ev, instr.Name, n))) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // filterMayRead reports whether every field reference of a compiled filterLogic
 // expression names a value this export delivers verbatim. A value the caller may
 // not export, or one that leaves only transformed — a stripped identifier, a
@@ -636,8 +673,10 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 	// finding F5). A reference to a value this response cannot carry verbatim
 	// answers the same 400 as a malformed one: one body, so the refusal adds no
 	// field enumeration to what the dictionary already lets the caller read
-	// (finding F6, REQ-EXP-054).
-	evaluate := func(_ recordValues) bool { return true }
+	// (finding F6, REQ-EXP-054). The program is tested per row below, as
+	// REDCap does: a repeating instance is kept or dropped on its own values
+	// (DEV-API-39).
+	var filter *validate.LogicProgram
 	if s.FilterLogic != "" {
 		prog, err := validate.CompileLogic(s.FilterLogic)
 		if err != nil {
@@ -648,7 +687,7 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 			s.fail(w, http.StatusBadRequest, "Invalid request")
 			return
 		}
-		evaluate = func(rv recordValues) bool { return prog.Eval(rv.eval(d)) }
+		filter = prog
 	}
 
 	labelValues := strings.EqualFold(s.RawOrLabel, "label")
@@ -974,8 +1013,114 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 			return
 		}
 		rv := valuesIndex(dvs)
-		if !evaluate(rv) {
-			continue
+		ri := d.instancesIndex(dvs)
+		// instanceValues is the value map of one instance: the first instance
+		// lives with the record's first-instance values (REQ-DB-048).
+		instanceValues := func(event, instrument string, instance int) map[string]string {
+			if instance <= 1 {
+				return rv[event]
+			}
+			return ri[instanceKey{event: event, instrument: instrument, instance: instance}]
+		}
+		// instancesOf lists the instances of a repeating instrument at an event
+		// that hold a value or an assignment, ascending (REQ-API-155).
+		instancesOf := func(event string, instr dictInstrument) []int {
+			var out []int
+			first := assigned[completionKey(id, event, instr.ID, 1)] != ""
+			for name := range instrValueFields[instr.ID] {
+				first = first || rv[event][name] != ""
+			}
+			if first {
+				out = append(out, 1)
+			}
+			seen := map[int]bool{}
+			for _, n := range ri.numbers(event, instr.Name) {
+				seen[n] = true
+			}
+			for _, n := range assignedFurther[completionKey(id, event, instr.ID, 1)] {
+				seen[n] = true
+			}
+			further := make([]int, 0, len(seen))
+			for n := range seen {
+				further = append(further, n)
+			}
+			sort.Ints(further)
+			return append(out, further...)
+		}
+
+		// flat: one row per (record, event) that holds data (§3.6.2) and —
+		// REDCap's layout — one row per instance of every instrument that
+		// repeats at that event, naming it in redcap_repeat_instrument and
+		// redcap_repeat_instance (REQ-API-155). The event's own row leaves the
+		// repeating instruments' columns empty; an instance row carries its
+		// own instrument's columns only.
+		var specs []rowSpec
+		if !wide {
+			// ownHolds reports a first-instance value at the event outside the
+			// instruments repeating there — the content of the event's own row.
+			ownHolds := func(event string) bool {
+				for name := range rv[event] {
+					if f, ok := d.byName[name]; !ok || !d.repeats(event, f.Instrument) {
+						return true
+					}
+				}
+				return false
+			}
+			if d.hasEvents {
+				for _, e := range events {
+					ev := e.UniqueEventName
+					// A row is written for an event that holds data and delivers at
+					// least one permitted column: pairs in scope that all refused
+					// would leave a line naming nothing but the event itself.
+					if emptied(ev) {
+						continue
+					}
+					if ownHolds(ev) {
+						specs = append(specs, rowSpec{event: ev})
+					}
+					for k := range d.instruments {
+						instr := &d.instruments[k]
+						if !d.repeats(ev, instr.Name) || !hasBlock[instr.ID] || pairRefused(ev, instr.ID) {
+							continue
+						}
+						for _, n := range instancesOf(ev, *instr) {
+							specs = append(specs, rowSpec{event: ev, instrument: instr, instance: n,
+								values: instanceValues(ev, instr.Name, n)})
+						}
+					}
+				}
+			} else if len(dvs) > 0 {
+				specs = append(specs, rowSpec{})
+			}
+		}
+
+		// filterLogic keeps rows, not records (REQ-API-025, DEV-API-39): each
+		// flat row is tested on what it carries, so of a record's repeating
+		// instances only those the expression holds for are written, and a
+		// record none of whose rows holds is skipped whole. The wide type has
+		// one row for the whole record, kept when the record's own values or
+		// any of its instances hold.
+		if filter != nil {
+			if wide {
+				if !wideRowHolds(filter, d, rv, events, pairRefused, instancesOf, instanceValues) {
+					continue
+				}
+			} else {
+				kept := specs[:0]
+				for _, rs := range specs {
+					instrument := ""
+					if rs.instrument != nil {
+						instrument = rs.instrument.Name
+					}
+					if filter.Eval(rv.rowEval(d, rs.event, instrument, rs.values)) {
+						kept = append(kept, rs)
+					}
+				}
+				if len(kept) == 0 {
+					continue
+				}
+				specs = kept
+			}
 		}
 		emitted++
 		if s.SurrogateKeys {
@@ -996,7 +1141,6 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 			}
 			offsetDays, offsetReady = off, true
 		}
-		ri := d.instancesIndex(dvs)
 		// present renders one stored value of column c at event: the
 		// transformations of its pair, then presentation (REQ-API-026).
 		present := func(c column, event, v string) string {
@@ -1111,90 +1255,8 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		instanceComplete := func(instr dictInstrument, event, id string, instance int) string {
 			return assignedCode(instr, event, id, instance)
 		}
-		// instanceValues is the value map of one instance: the first instance
-		// lives with the record's first-instance values (REQ-DB-048).
-		instanceValues := func(event, instrument string, instance int) map[string]string {
-			if instance <= 1 {
-				return rv[event]
-			}
-			return ri[instanceKey{event: event, instrument: instrument, instance: instance}]
-		}
-		// instancesOf lists the instances of a repeating instrument at an event
-		// that hold a value or an assignment, ascending (REQ-API-155).
-		instancesOf := func(event string, instr dictInstrument) []int {
-			var out []int
-			first := assigned[completionKey(id, event, instr.ID, 1)] != ""
-			for name := range instrValueFields[instr.ID] {
-				first = first || rv[event][name] != ""
-			}
-			if first {
-				out = append(out, 1)
-			}
-			seen := map[int]bool{}
-			for _, n := range ri.numbers(event, instr.Name) {
-				seen[n] = true
-			}
-			for _, n := range assignedFurther[completionKey(id, event, instr.ID, 1)] {
-				seen[n] = true
-			}
-			further := make([]int, 0, len(seen))
-			for n := range seen {
-				further = append(further, n)
-			}
-			sort.Ints(further)
-			return append(out, further...)
-		}
-
 		if !wide {
-			// flat: one row per (record, event) that holds data (§3.6.2) and —
-			// REDCap's layout — one row per instance of every instrument that
-			// repeats at that event, naming it in redcap_repeat_instrument and
-			// redcap_repeat_instance (REQ-API-155). The event's own row leaves the
-			// repeating instruments' columns empty; an instance row carries its
-			// own instrument's columns only.
-			type rowSpec struct {
-				event      string
-				instrument *dictInstrument // nil = the event's own row
-				instance   int
-				values     map[string]string // the instance's values (instance rows)
-			}
-			// ownHolds reports a first-instance value at the event outside the
-			// instruments repeating there — the content of the event's own row.
-			ownHolds := func(event string) bool {
-				for name := range rv[event] {
-					if f, ok := d.byName[name]; !ok || !d.repeats(event, f.Instrument) {
-						return true
-					}
-				}
-				return false
-			}
-			var specs []rowSpec
-			if d.hasEvents {
-				for _, e := range events {
-					ev := e.UniqueEventName
-					// A row is written for an event that holds data and delivers at
-					// least one permitted column: pairs in scope that all refused
-					// would leave a line naming nothing but the event itself.
-					if emptied(ev) {
-						continue
-					}
-					if ownHolds(ev) {
-						specs = append(specs, rowSpec{event: ev})
-					}
-					for k := range d.instruments {
-						instr := &d.instruments[k]
-						if !d.repeats(ev, instr.Name) || !hasBlock[instr.ID] || pairRefused(ev, instr.ID) {
-							continue
-						}
-						for _, n := range instancesOf(ev, *instr) {
-							specs = append(specs, rowSpec{event: ev, instrument: instr, instance: n,
-								values: instanceValues(ev, instr.Name, n)})
-						}
-					}
-				}
-			} else if len(dvs) > 0 {
-				specs = append(specs, rowSpec{})
-			}
+			// The rows were laid out, and filterLogic applied to them, above.
 			// slotValue renders one slot of one row; ok is false where the row
 			// carries nothing of that slot's pair.
 			slotValue := func(rs rowSpec, sl wideSlot) (string, bool) {

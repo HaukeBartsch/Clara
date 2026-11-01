@@ -688,7 +688,7 @@ describe('Record Status Dashboard (§6.3, REQ-UI-019)', function (): void {
     it('auto-names through the data API with the member token, cached for the session (§8.6)', function (): void {
         sign_in(['csrf_token' => M5_CSRF]);
         m5_queue();
-        api_route('data:content=generateNextRecordName', [['next_record_name' => '8DISC002']]);
+        api_route('data:content=generateNextRecordName', '8DISC002'); // the bare name (DEV-API-38)
 
         m5_post('/projects/3/record-status', ['arm' => '1'], 'auto_name');
         m5_post('/projects/3/record-status', ['arm' => '1'], 'auto_name');
@@ -729,7 +729,7 @@ describe('Record Status Dashboard (§6.3, REQ-UI-019)', function (): void {
     it('create_auto numbers the participant through the data API and opens the record at once', function (): void {
         sign_in(['csrf_token' => M5_CSRF]);
         m5_queue(naming: 'auto');
-        api_route('data:content=generateNextRecordName', [['next_record_name' => '7']]);
+        api_route('data:content=generateNextRecordName', '7');
 
         $response = m5_post('/projects/3/record-status', ['arm' => '1'], 'create_auto');
 

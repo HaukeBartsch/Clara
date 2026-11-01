@@ -410,17 +410,22 @@ func TestContentExportFieldNames(t *testing.T) {
 	}
 }
 
+// TestGenerateNextRecordName: the answer is the bare name as plain text, as
+// REDCap answers it — the same body for every format (REQ-API-023, DEV-API-38).
 func TestGenerateNextRecordName(t *testing.T) {
 	h, full, _ := testHandler(t)
-	code, body := do(t, h, url.Values{"token": {full}, "content": {"generateNextRecordName"}, "format": {"json"}})
-	mustStatus(t, code, http.StatusOK, body)
-	out := decodeJSON(t, body)
-	if len(out) != 1 {
-		t.Fatalf("want 1 row, got %d", len(out))
-	}
-	// 8DISC001 and 8DISC002 exist, so the next free name is 8DISC003 (REQ-API-023).
-	if out[0]["next_record_name"] != "8DISC003" {
-		t.Errorf("next_record_name = %v, want 8DISC003", out[0]["next_record_name"])
+	for _, format := range []string{"json", "csv", "xml", ""} {
+		params := url.Values{"token": {full}, "content": {"generateNextRecordName"}}
+		if format != "" {
+			params.Set("format", format)
+			params.Set("returnFormat", format)
+		}
+		code, body := do(t, h, params)
+		mustStatus(t, code, http.StatusOK, body)
+		// 8DISC001 and 8DISC002 exist, so the next free name is 8DISC003 (REQ-API-023).
+		if body != "8DISC003" {
+			t.Errorf("format %q: body = %q, want the bare 8DISC003", format, body)
+		}
 	}
 }
 
@@ -442,12 +447,7 @@ func TestGenerateNextRecordNameAutoMode(t *testing.T) {
 	next := func() string {
 		code, body := do(t, h, url.Values{"token": {full}, "content": {"generateNextRecordName"}, "format": {"json"}})
 		mustStatus(t, code, http.StatusOK, body)
-		out := decodeJSON(t, body)
-		if len(out) != 1 {
-			t.Fatalf("want 1 row, got %d", len(out))
-		}
-		s, _ := out[0]["next_record_name"].(string)
-		return s
+		return body // the bare name (DEV-API-38)
 	}
 
 	// The seeded records 8DISC001/8DISC002 are not numeric, so the counter

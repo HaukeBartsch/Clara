@@ -585,6 +585,39 @@ func (rv recordValues) eval(d *projectDict) validate.LogicEval {
 	}
 }
 
+// rowEval is the filterLogic reader of one export row (REQ-API-025, DEV-API-39):
+// the row at event whose repeating instrument is instrument ("" for the event's
+// own row) and whose instance values are instance. A field of an instrument that
+// repeats at the event a reference resolves to reads what that row carries — its
+// instance's value on that instrument's own instance row, empty on every other
+// row, as the row's own cell is (REQ-API-155). Every other reference reads the
+// record's value exactly as eval does, so a filter that names no repeating field
+// keeps or drops all of a record's rows together.
+func (rv recordValues) rowEval(d *projectDict, event, instrument string, instance map[string]string) validate.LogicEval {
+	ev := rv.eval(d)
+	recordValue := ev.Value
+	firstEvent := ""
+	if len(d.events) > 0 {
+		firstEvent = d.events[0].UniqueEventName
+	}
+	ev.Value = func(ref validate.Ref) string {
+		at := ref.Event
+		if at == "" {
+			at = firstEvent // the same fallback eval applies (REQ-API-025)
+		}
+		f, ok := d.byName[ref.Field]
+		if !ok || f.FieldName == d.identifier || !d.repeats(at, f.Instrument) {
+			// The identifier is the record's on every row (GD-8).
+			return recordValue(ref)
+		}
+		if instrument == f.Instrument && event == at {
+			return instance[ref.Field]
+		}
+		return ""
+	}
+	return ev
+}
+
 // fieldHash is the §5.1 anonymization hash for personal fields:
 // HEX(SHA-256(ANON_SALT ':' project_id ':' field_name ':' value)), full
 // 64-character digest, deterministic per (project, field, value).

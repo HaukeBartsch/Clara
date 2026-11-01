@@ -45,10 +45,35 @@ final class DataApi
      */
     public function forMember(int $projectId, array $params): array
     {
+        return $this->withMemberToken($projectId, fn (string $token): array => $this->call($token, $params));
+    }
+
+    /**
+     * `forMember` for a call whose success answer is plain text rather than JSON:
+     * `generateNextRecordName` answers the bare name, as REDCap does (REQ-API-023,
+     * DEV-API-38). Failures travel exactly as on `forMember`.
+     *
+     * @param array<string, string|list<string>> $params
+     */
+    public function textForMember(int $projectId, array $params): string
+    {
+        return $this->withMemberToken($projectId, fn (string $token): string => $this->send($token, $params));
+    }
+
+    /**
+     * Runs `$call` with the member's cached token and, on a 401 for a token rotated or
+     * revoked since it was cached (REQ-AUTH-030), once more with a freshly fetched one.
+     *
+     * @template T
+     * @param callable(string): T $call
+     * @return T
+     */
+    private function withMemberToken(int $projectId, callable $call): mixed
+    {
         $token = Session::cachedProjectToken($projectId) ?? $this->fetchToken($projectId);
 
         try {
-            return $this->call($token, $params);
+            return $call($token);
         } catch (ApiException $e) {
             if ($e->code() !== 'invalid_token') {
                 throw $e;
@@ -60,7 +85,7 @@ final class DataApi
         Session::forgetProjectToken($projectId);
         $this->logger->info('project token refreshed after 401', ['project' => $projectId]);
 
-        return $this->call($this->fetchToken($projectId), $params);
+        return $call($this->fetchToken($projectId));
     }
 
     /**
@@ -98,6 +123,26 @@ final class DataApi
      */
     public function call(string $token, array $params): array
     {
+        $body = $this->send($token, $params);
+        $decoded = json_decode($body, true);
+        if (!is_array($decoded)) {
+            $this->logger->error('data api returned an unreadable body', ['content' => (string) ($params['content'] ?? '')]);
+
+            throw new ApiException('internal', '', 502, [], 'POST /api/ content=' . (string) ($params['content'] ?? ''));
+        }
+
+        return $decoded;
+    }
+
+    /**
+     * Performs one call and answers the body of a success as sent; a failure — no answer
+     * at all, or a status of 400 and above with its §3.2 `{"error": …}` body — is thrown
+     * as the stable code `codeFor` maps it to.
+     *
+     * @param array<string, mixed> $params
+     */
+    private function send(string $token, array $params): string
+    {
         $body = self::encode(['token' => $token, 'format' => 'json', 'returnFormat' => 'json'] + $params);
         $headers = [
             'Accept: application/json',
@@ -117,8 +162,8 @@ final class DataApi
             throw new ApiException('unreachable', 'the API is not reachable', 502, [], 'POST /api/ content=' . $content);
         }
 
-        $decoded = json_decode($response['body'], true);
         if ($status >= 400) {
+            $decoded = json_decode($response['body'], true);
             $text = is_array($decoded) && is_string($decoded['error'] ?? null) ? $decoded['error'] : '';
             $code = self::codeFor($status, $text);
             if ($code === 'internal') {
@@ -127,13 +172,8 @@ final class DataApi
 
             throw new ApiException($code, $text, $status, [], 'POST /api/ content=' . $content);
         }
-        if (!is_array($decoded)) {
-            $this->logger->error('data api returned an unreadable body', ['content' => $content, 'status' => $status]);
 
-            throw new ApiException('internal', '', 502, [], 'POST /api/ content=' . $content);
-        }
-
-        return $decoded;
+        return (string) $response['body'];
     }
 
     /**

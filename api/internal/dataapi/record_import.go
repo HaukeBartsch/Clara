@@ -231,9 +231,26 @@ func (h *Handler) contentRecordImport(w http.ResponseWriter, r *http.Request, en
 		defer mu.Unlock()
 	}
 
+	// returnContent=count is REDCap's import: all rows or none (REQ-API-142,
+	// DEV-API-40). The rows share one transaction, and a refused row rolls back
+	// every row before it — its callers parse nothing but the count or an error
+	// object, so a refusal must be the error and not a smaller count. A survey
+	// link's call is its one submission (REQ-API-145) and keeps its own
+	// transaction: its failures are audit-logged outside it (REQ-AUD-021).
+	countMode := strings.EqualFold(p.ReturnContent, "count")
+	var batch *sql.Tx
+	if countMode && !sub.isLink() {
+		batch, err = h.Store.DB.BeginTx(ctx, nil)
+		if err != nil {
+			h.storeError(w, enc, err)
+			return
+		}
+		defer batch.Rollback()
+	}
+
 	results := make([]importRow, 0, len(rows))
 	for _, row := range rows {
-		res, fatal := h.importOneRow(ctx, sub, d, reg, p, row)
+		res, fatal := h.importOneRow(ctx, sub, d, reg, p, row, batch)
 		if fatal != nil {
 			switch fatal.(type) {
 			case *forbiddenError:
@@ -250,19 +267,47 @@ func (h *Handler) contentRecordImport(w http.ResponseWriter, r *http.Request, en
 		results = append(results, res)
 	}
 	// returnContent=count answers the number of rows applied — added and
-	// updated; rejected rows are not counted and their detail is not
-	// rendered (REQ-API-142). Any other value keeps the §3.7.2 result rows.
-	if strings.EqualFold(p.ReturnContent, "count") {
-		applied := 0
-		for _, res := range results {
-			if res.ImportRecordID == importAdded || res.ImportRecordID == importUpdated {
-				applied++
+	// updated — once every row was (REQ-API-142). Any other value keeps the
+	// §3.7.2 result rows, one per row, each applied on its own (REQ-API-035).
+	if countMode {
+		if message := refusedRowsMessage(results); message != "" {
+			writeError(w, enc, http.StatusBadRequest, message) // the deferred rollback stores nothing
+			return
+		}
+		if batch != nil {
+			if err := batch.Commit(); err != nil {
+				h.storeError(w, enc, err)
+				return
 			}
 		}
-		writeCount(w, enc, applied)
+		writeCount(w, enc, len(results))
 		return
 	}
 	render(w, enc, p.Delimiter(), results)
+}
+
+// refusedRowsMessage is the §3.2 error text of a count-mode import that refused
+// rows (REQ-API-142, DEV-API-40), or "" when every row applied: each refused row
+// in input order, by its 1-based position and record, with the detail the
+// result rows would carry — the same text, so this mode discloses nothing the
+// other does not.
+func refusedRowsMessage(results []importRow) string {
+	var refused []string
+	for i, res := range results {
+		if res.ImportRecordID == importAdded || res.ImportRecordID == importUpdated {
+			continue
+		}
+		where := "row " + strconv.Itoa(i+1)
+		if res.RecordID != "" {
+			where += " (record " + strconv.Quote(res.RecordID) + ")"
+		}
+		refused = append(refused, where+": "+strings.TrimPrefix(res.ImportFormName, "Validation error: "))
+	}
+	if len(refused) == 0 {
+		return ""
+	}
+	return "Nothing was imported: " + strconv.Itoa(len(refused)) + " of " + strconv.Itoa(len(results)) +
+		" rows were refused. " + strings.Join(refused, "; ")
 }
 
 func aggregateUnknownEventValues(rows []map[string]string, sub *subject, d *projectDict) string {
@@ -318,10 +363,12 @@ func aggregateUnknownEventValues(rows []map[string]string, sub *subject, d *proj
 }
 
 // importOneRow runs one data[] entry: validate everything first, then apply
-// the whole row in a single transaction (REQ-API-035). The fatal error is a
-// store failure — validation failures are response rows, not fatals.
+// the whole row in a single transaction (REQ-API-035) — its own, or batch when
+// the call applies all its rows or none (REQ-API-142), which this row then
+// neither commits nor rolls back. The fatal error is a store failure —
+// validation failures are response rows, not fatals.
 func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict, reg *validate.Registry,
-	p Params, row map[string]string) (importRow, error) {
+	p Params, row map[string]string, batch *sql.Tx) (importRow, error) {
 
 	// The record id travels under the record identifier's own field name —
 	// the first field of the earliest instrument with fields (GD-8) — exactly as an export
@@ -704,12 +751,17 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 		return fail(strings.Join(problems, "; "))
 	}
 
-	// --- apply: one transaction per record (REQ-API-035) ---
-	tx, err := h.Store.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return importRow{}, err
+	// --- apply: one transaction per record (REQ-API-035), or the batch's ---
+	// A refusal below returns before the first write, so a shared batch holds
+	// nothing of a refused row either.
+	tx := batch
+	if tx == nil {
+		var err error
+		if tx, err = h.Store.DB.BeginTx(ctx, nil); err != nil {
+			return importRow{}, err
+		}
+		defer tx.Rollback()
 	}
-	defer tx.Rollback()
 
 	oldValues, err := h.Store.ListDataValuesByRecordTx(ctx, tx, sub.Project.ID, recordID)
 	if err != nil {
@@ -931,8 +983,10 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
-		return importRow{}, err
+	if batch == nil {
+		if err := tx.Commit(); err != nil {
+			return importRow{}, err
+		}
 	}
 	code := importAdded
 	if existed {
