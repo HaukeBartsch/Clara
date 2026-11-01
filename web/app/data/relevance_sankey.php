@@ -21,7 +21,7 @@ return array (
       'column' => 0,
       'order' => 0,
       'area' => 'ai-assistant',
-      'codes' => 18,
+      'codes' => 20,
     ),
     1 => 
     array (
@@ -30,7 +30,7 @@ return array (
       'order' => 0,
       'prefix' => 'REQ-AI',
       'kind' => 'req',
-      'codes' => 13,
+      'codes' => 15,
     ),
     2 => 
     array (
@@ -56,7 +56,7 @@ return array (
       'column' => 0,
       'order' => 1,
       'area' => 'api-endpoints',
-      'codes' => 206,
+      'codes' => 222,
     ),
     5 => 
     array (
@@ -65,7 +65,7 @@ return array (
       'order' => 10,
       'prefix' => 'REQ-API',
       'kind' => 'req',
-      'codes' => 169,
+      'codes' => 179,
     ),
     6 => 
     array (
@@ -83,7 +83,7 @@ return array (
       'order' => 12,
       'prefix' => 'DEV-API',
       'kind' => 'dev',
-      'codes' => 31,
+      'codes' => 37,
     ),
     8 => 
     array (
@@ -91,7 +91,7 @@ return array (
       'column' => 0,
       'order' => 2,
       'area' => 'audit-logging',
-      'codes' => 44,
+      'codes' => 45,
     ),
     9 => 
     array (
@@ -100,7 +100,7 @@ return array (
       'order' => 20,
       'prefix' => 'REQ-AUD',
       'kind' => 'req',
-      'codes' => 35,
+      'codes' => 36,
     ),
     10 => 
     array (
@@ -126,7 +126,7 @@ return array (
       'column' => 0,
       'order' => 3,
       'area' => 'authentication-authorization',
-      'codes' => 110,
+      'codes' => 114,
     ),
     13 => 
     array (
@@ -135,7 +135,7 @@ return array (
       'order' => 30,
       'prefix' => 'REQ-AUTH',
       'kind' => 'req',
-      'codes' => 86,
+      'codes' => 89,
     ),
     14 => 
     array (
@@ -153,7 +153,7 @@ return array (
       'order' => 32,
       'prefix' => 'DEV-AUTH',
       'kind' => 'dev',
-      'codes' => 18,
+      'codes' => 19,
     ),
     16 => 
     array (
@@ -196,7 +196,7 @@ return array (
       'column' => 0,
       'order' => 5,
       'area' => 'data-validation',
-      'codes' => 65,
+      'codes' => 68,
     ),
     21 => 
     array (
@@ -205,7 +205,7 @@ return array (
       'order' => 50,
       'prefix' => 'REQ-VAL',
       'kind' => 'req',
-      'codes' => 47,
+      'codes' => 48,
     ),
     22 => 
     array (
@@ -223,7 +223,7 @@ return array (
       'order' => 52,
       'prefix' => 'DEV-VAL',
       'kind' => 'dev',
-      'codes' => 12,
+      'codes' => 14,
     ),
     24 => 
     array (
@@ -231,7 +231,7 @@ return array (
       'column' => 0,
       'order' => 6,
       'area' => 'database-schema',
-      'codes' => 69,
+      'codes' => 74,
     ),
     25 => 
     array (
@@ -240,7 +240,7 @@ return array (
       'order' => 60,
       'prefix' => 'REQ-DB',
       'kind' => 'req',
-      'codes' => 50,
+      'codes' => 53,
     ),
     26 => 
     array (
@@ -258,7 +258,7 @@ return array (
       'order' => 62,
       'prefix' => 'DEV-DB',
       'kind' => 'dev',
-      'codes' => 17,
+      'codes' => 19,
     ),
     28 => 
     array (
@@ -327,7 +327,7 @@ return array (
       'column' => 0,
       'order' => 9,
       'area' => 'system-configuration',
-      'codes' => 45,
+      'codes' => 47,
     ),
     36 => 
     array (
@@ -336,7 +336,7 @@ return array (
       'order' => 90,
       'prefix' => 'REQ-CFG',
       'kind' => 'req',
-      'codes' => 36,
+      'codes' => 37,
     ),
     37 => 
     array (
@@ -354,7 +354,7 @@ return array (
       'order' => 92,
       'prefix' => 'DEV-CFG',
       'kind' => 'dev',
-      'codes' => 7,
+      'codes' => 8,
     ),
     39 => 
     array (
@@ -397,7 +397,7 @@ return array (
       'column' => 0,
       'order' => 11,
       'area' => 'user-interface',
-      'codes' => 99,
+      'codes' => 111,
     ),
     44 => 
     array (
@@ -406,7 +406,7 @@ return array (
       'order' => 110,
       'prefix' => 'REQ-UI',
       'kind' => 'req',
-      'codes' => 72,
+      'codes' => 82,
     ),
     45 => 
     array (
@@ -424,7 +424,7 @@ return array (
       'order' => 112,
       'prefix' => 'DEV-UI',
       'kind' => 'dev',
-      'codes' => 24,
+      'codes' => 26,
     ),
     47 => 
     array (
@@ -432,7 +432,7 @@ return array (
       'column' => 2,
       'order' => 0,
       'class' => 'security',
-      'codes' => 444,
+      'codes' => 465,
     ),
     48 => 
     array (
@@ -440,7 +440,7 @@ return array (
       'column' => 2,
       'order' => 1,
       'class' => 'performance',
-      'codes' => 44,
+      'codes' => 50,
     ),
     49 => 
     array (
@@ -448,7 +448,7 @@ return array (
       'column' => 2,
       'order' => 2,
       'class' => 'workflow',
-      'codes' => 408,
+      'codes' => 442,
     ),
     50 => 
     array (
@@ -456,7 +456,7 @@ return array (
       'column' => 2,
       'order' => 3,
       'class' => 'scalability',
-      'codes' => 67,
+      'codes' => 69,
     ),
     51 => 
     array (
@@ -464,7 +464,7 @@ return array (
       'column' => 2,
       'order' => 4,
       'class' => 'resilience',
-      'codes' => 174,
+      'codes' => 184,
     ),
   ),
   'links' => 
@@ -473,7 +473,7 @@ return array (
     array (
       'source' => 'a-ai-assistant',
       'target' => 'g-ai-assistant-req',
-      'value' => 13,
+      'value' => 15,
     ),
     1 => 
     array (
@@ -491,13 +491,13 @@ return array (
     array (
       'source' => 'g-ai-assistant-req',
       'target' => 'c-workflow',
-      'value' => 5,
+      'value' => 6,
     ),
     4 => 
     array (
       'source' => 'g-ai-assistant-req',
       'target' => 'c-resilience',
-      'value' => 3,
+      'value' => 4,
     ),
     5 => 
     array (
@@ -539,37 +539,37 @@ return array (
     array (
       'source' => 'a-api-endpoints',
       'target' => 'g-api-endpoints-req',
-      'value' => 253,
+      'value' => 272,
     ),
     12 => 
     array (
       'source' => 'g-api-endpoints-req',
       'target' => 'c-security',
-      'value' => 87,
+      'value' => 92,
     ),
     13 => 
     array (
       'source' => 'g-api-endpoints-req',
       'target' => 'c-performance',
-      'value' => 10,
+      'value' => 12,
     ),
     14 => 
     array (
       'source' => 'g-api-endpoints-req',
       'target' => 'c-workflow',
-      'value' => 110,
+      'value' => 118,
     ),
     15 => 
     array (
       'source' => 'g-api-endpoints-req',
       'target' => 'c-scalability',
-      'value' => 8,
+      'value' => 9,
     ),
     16 => 
     array (
       'source' => 'g-api-endpoints-req',
       'target' => 'c-resilience',
-      'value' => 38,
+      'value' => 41,
     ),
     17 => 
     array (
@@ -605,13 +605,13 @@ return array (
     array (
       'source' => 'a-api-endpoints',
       'target' => 'g-api-endpoints-dev',
-      'value' => 38,
+      'value' => 44,
     ),
     23 => 
     array (
       'source' => 'g-api-endpoints-dev',
       'target' => 'c-security',
-      'value' => 14,
+      'value' => 15,
     ),
     24 => 
     array (
@@ -623,7 +623,7 @@ return array (
     array (
       'source' => 'g-api-endpoints-dev',
       'target' => 'c-workflow',
-      'value' => 16,
+      'value' => 21,
     ),
     26 => 
     array (
@@ -635,13 +635,13 @@ return array (
     array (
       'source' => 'a-audit-logging',
       'target' => 'g-audit-logging-req',
-      'value' => 47,
+      'value' => 48,
     ),
     28 => 
     array (
       'source' => 'g-audit-logging-req',
       'target' => 'c-security',
-      'value' => 31,
+      'value' => 32,
     ),
     29 => 
     array (
@@ -725,13 +725,13 @@ return array (
     array (
       'source' => 'a-authentication-authorization',
       'target' => 'g-authentication-authorization-req',
-      'value' => 121,
+      'value' => 126,
     ),
     43 => 
     array (
       'source' => 'g-authentication-authorization-req',
       'target' => 'c-security',
-      'value' => 85,
+      'value' => 88,
     ),
     44 => 
     array (
@@ -743,7 +743,7 @@ return array (
     array (
       'source' => 'g-authentication-authorization-req',
       'target' => 'c-workflow',
-      'value' => 21,
+      'value' => 23,
     ),
     46 => 
     array (
@@ -779,19 +779,19 @@ return array (
     array (
       'source' => 'a-authentication-authorization',
       'target' => 'g-authentication-authorization-dev',
-      'value' => 23,
+      'value' => 25,
     ),
     52 => 
     array (
       'source' => 'g-authentication-authorization-dev',
       'target' => 'c-security',
-      'value' => 17,
+      'value' => 18,
     ),
     53 => 
     array (
       'source' => 'g-authentication-authorization-dev',
       'target' => 'c-workflow',
-      'value' => 3,
+      'value' => 4,
     ),
     54 => 
     array (
@@ -875,19 +875,19 @@ return array (
     array (
       'source' => 'a-data-validation',
       'target' => 'g-data-validation-req',
-      'value' => 78,
+      'value' => 81,
     ),
     68 => 
     array (
       'source' => 'g-data-validation-req',
       'target' => 'c-security',
-      'value' => 13,
+      'value' => 14,
     ),
     69 => 
     array (
       'source' => 'g-data-validation-req',
       'target' => 'c-workflow',
-      'value' => 32,
+      'value' => 33,
     ),
     70 => 
     array (
@@ -899,7 +899,7 @@ return array (
     array (
       'source' => 'g-data-validation-req',
       'target' => 'c-resilience',
-      'value' => 31,
+      'value' => 32,
     ),
     72 => 
     array (
@@ -935,7 +935,7 @@ return array (
     array (
       'source' => 'a-data-validation',
       'target' => 'g-data-validation-dev',
-      'value' => 17,
+      'value' => 19,
     ),
     78 => 
     array (
@@ -947,7 +947,7 @@ return array (
     array (
       'source' => 'g-data-validation-dev',
       'target' => 'c-workflow',
-      'value' => 8,
+      'value' => 10,
     ),
     80 => 
     array (
@@ -965,13 +965,13 @@ return array (
     array (
       'source' => 'a-database-schema',
       'target' => 'g-database-schema-req',
-      'value' => 69,
+      'value' => 74,
     ),
     83 => 
     array (
       'source' => 'g-database-schema-req',
       'target' => 'c-security',
-      'value' => 15,
+      'value' => 17,
     ),
     84 => 
     array (
@@ -983,7 +983,7 @@ return array (
     array (
       'source' => 'g-database-schema-req',
       'target' => 'c-workflow',
-      'value' => 20,
+      'value' => 22,
     ),
     86 => 
     array (
@@ -995,7 +995,7 @@ return array (
     array (
       'source' => 'g-database-schema-req',
       'target' => 'c-resilience',
-      'value' => 15,
+      'value' => 16,
     ),
     88 => 
     array (
@@ -1013,13 +1013,13 @@ return array (
     array (
       'source' => 'a-database-schema',
       'target' => 'g-database-schema-dev',
-      'value' => 23,
+      'value' => 27,
     ),
     91 => 
     array (
       'source' => 'g-database-schema-dev',
       'target' => 'c-security',
-      'value' => 8,
+      'value' => 9,
     ),
     92 => 
     array (
@@ -1031,7 +1031,7 @@ return array (
     array (
       'source' => 'g-database-schema-dev',
       'target' => 'c-workflow',
-      'value' => 7,
+      'value' => 9,
     ),
     94 => 
     array (
@@ -1043,7 +1043,7 @@ return array (
     array (
       'source' => 'g-database-schema-dev',
       'target' => 'c-resilience',
-      'value' => 2,
+      'value' => 3,
     ),
     96 => 
     array (
@@ -1187,13 +1187,13 @@ return array (
     array (
       'source' => 'a-system-configuration',
       'target' => 'g-system-configuration-req',
-      'value' => 45,
+      'value' => 47,
     ),
     120 => 
     array (
       'source' => 'g-system-configuration-req',
       'target' => 'c-security',
-      'value' => 22,
+      'value' => 23,
     ),
     121 => 
     array (
@@ -1217,7 +1217,7 @@ return array (
     array (
       'source' => 'g-system-configuration-req',
       'target' => 'c-resilience',
-      'value' => 6,
+      'value' => 7,
     ),
     125 => 
     array (
@@ -1235,13 +1235,13 @@ return array (
     array (
       'source' => 'a-system-configuration',
       'target' => 'g-system-configuration-dev',
-      'value' => 11,
+      'value' => 12,
     ),
     128 => 
     array (
       'source' => 'g-system-configuration-dev',
       'target' => 'c-security',
-      'value' => 4,
+      'value' => 5,
     ),
     129 => 
     array (
@@ -1343,37 +1343,37 @@ return array (
     array (
       'source' => 'a-user-interface',
       'target' => 'g-user-interface-req',
-      'value' => 118,
+      'value' => 136,
     ),
     146 => 
     array (
       'source' => 'g-user-interface-req',
       'target' => 'c-security',
-      'value' => 36,
+      'value' => 39,
     ),
     147 => 
     array (
       'source' => 'g-user-interface-req',
       'target' => 'c-performance',
-      'value' => 6,
+      'value' => 9,
     ),
     148 => 
     array (
       'source' => 'g-user-interface-req',
       'target' => 'c-workflow',
-      'value' => 59,
+      'value' => 68,
     ),
     149 => 
     array (
       'source' => 'g-user-interface-req',
       'target' => 'c-scalability',
-      'value' => 1,
+      'value' => 2,
     ),
     150 => 
     array (
       'source' => 'g-user-interface-req',
       'target' => 'c-resilience',
-      'value' => 16,
+      'value' => 18,
     ),
     151 => 
     array (
@@ -1397,25 +1397,25 @@ return array (
     array (
       'source' => 'a-user-interface',
       'target' => 'g-user-interface-dev',
-      'value' => 28,
+      'value' => 31,
     ),
     155 => 
     array (
       'source' => 'g-user-interface-dev',
       'target' => 'c-security',
-      'value' => 5,
+      'value' => 6,
     ),
     156 => 
     array (
       'source' => 'g-user-interface-dev',
       'target' => 'c-performance',
-      'value' => 2,
+      'value' => 3,
     ),
     157 => 
     array (
       'source' => 'g-user-interface-dev',
       'target' => 'c-workflow',
-      'value' => 19,
+      'value' => 20,
     ),
     158 => 
     array (
