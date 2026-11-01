@@ -74,7 +74,7 @@ Format tokens (REDCap-style): `Y` = 4-digit year, `m` = 2-digit month, `d` = 2-d
 - **Canonical storage** (resolves ASM-VAL-1, matches `Database_Schema_Design.md` §1; **timezone of collection** — GD-16, REQ-VAL-041):
   - dates: `YYYY-MM-DD±HH:MM` — e.g. `2026-03-01+01:00`
   - date-times: `YYYY-MM-DD HH:MM±HH:MM` — e.g. `2026-03-01 09:30+01:00`
-  - the offset is `±HH:MM` (UTC is `+00:00`); the API appends the collection offset on store and returns the canonical form (offset included) on export — values are **stored as collected, never converted** (GD-7 continues to govern system timestamps only)
+  - the offset is `±HH:MM` (UTC is `+00:00`); the API appends the collection offset on store and returns the canonical form (offset included) on the administration and ODM exports, while the REDCap data-API record export writes the wall time alone, REDCap's format (DEV-VAL-14; an imported value without an offset that matches the stored wall time keeps the stored value, so the round trip rewrites nothing) — values are **stored as collected, never converted** (GD-7 continues to govern system timestamps only)
 - **Collection offset** (normative — REQ-VAL-041), in order:
   1. zone supplied with the import — the **browser's timezone** for UI data entry (the PHP layer resolves it to the offset of the value's date and passes it as `tz`), or the data-API import's optional `tz` parameter (IANA name, resolved to the offset at the value's date, or a direct `±HH:MM` offset);
   2. else `APP_TIMEZONE` (configuration, `System_Configuration_Design.md` §3.10; default `UTC`).

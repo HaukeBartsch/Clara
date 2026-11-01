@@ -53,9 +53,9 @@ No IdP tokens, LDAP passwords, or service-token values ever appear in payloads (
 | `record_updated` | import changing an existing record | shape below, `"action":"update"` |
 | `record_deleted` | `content=record&action=delete` (REQ-API-036) | shape below, `"action":"delete"` |
 | `calculated_recomputed` | every system-driven recomputation (REQ-AUD-023, REQ-VAL-038) | `{"record_id":"…","field":"total","old":"9","new":"11","trigger_field":"a","trigger_event":"e1_arm_1"}` |
-| `instrument_completed` | the user marks a (record, event, instrument) finished — `PUT …/completion` with `state=finished` (REQ-AUD-026, REQ-API-110) | `{"record_id":"8DISC042","event":"e1_arm_1","instrument":"intake"}` |
-| `instrument_unverified` | the user marks a (record, event, instrument) unverified — `PUT …/completion` with `state=unverified`, also from finished (REQ-AUD-026, REQ-API-110) | `{"record_id":"8DISC042","event":"e1_arm_1","instrument":"intake"}` |
-| `instrument_uncompleted` | the user clears either assignment (`state=unfinished`) (REQ-AUD-026) | `{"record_id":"8DISC042","event":"e1_arm_1","instrument":"intake"}` |
+| `instrument_completed` | the user marks a (record, event, instrument) finished — `PUT …/completion` with `state=finished` (REQ-AUD-026, REQ-API-110), or a data-API import row with `<instrument>_complete` = `2` (source `api`, REQ-API-134) | `{"record_id":"8DISC042","event":"e1_arm_1","instrument":"intake"}` |
+| `instrument_unverified` | the user marks a (record, event, instrument) unverified — `PUT …/completion` with `state=unverified`, also from finished (REQ-AUD-026, REQ-API-110), or an import row with `<instrument>_complete` = `1` (source `api`) | `{"record_id":"8DISC042","event":"e1_arm_1","instrument":"intake"}` |
+| `instrument_uncompleted` | the user clears either assignment (`state=unfinished`), or an import row with `<instrument>_complete` = `0` (source `api`) (REQ-AUD-026) | `{"record_id":"8DISC042","event":"e1_arm_1","instrument":"intake"}` |
 | `transfer_executed` | every executed cross-project transfer (`POST …/transfers`, REQ-API-165), written on the **source** project — even one that changed nothing downstream; never with values (REQ-AUD-034, REQ-AUD-007) | `{"field":"send_to_followup","target_project":"followup","target_record":"MOBA042","created":true,"copied":["age","sex"],"skipped_empty":["notes"]}` |
 
 Data-change shape (create / update / delete):

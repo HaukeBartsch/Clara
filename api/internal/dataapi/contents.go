@@ -214,10 +214,14 @@ func (h *Handler) contentMetadata(ctx context.Context, w http.ResponseWriter, en
 	for _, i := range ins {
 		form[i.ID] = i.Name
 	}
-	// forms[] narrows the render to those instruments; a survey link has its
-	// own name forced here, so it sees one instrument's definitions and no
-	// other (API_Endpoints_Design.md §3.10, REQ-API-083).
+	// forms[] and fields[] narrow the render to the fields they name together —
+	// a field named in fields[] or of an instrument named in forms[], as in
+	// REDCap (REQ-API-020, DEV-API-37); FIONA reads the one row it asks for with
+	// `fields[]=routing_dest_project`. A survey link has its own name forced
+	// into forms[] and fields[] cleared, so it sees one instrument's definitions
+	// and no other (API_Endpoints_Design.md §3.10, REQ-API-083).
 	wantForms := toFormSet(p.Forms)
+	wantFields := toSet(p.Fields)
 	fields, err := h.Store.ListFields(ctx, pid)
 	if err != nil {
 		h.storeError(w, enc, err)
@@ -225,8 +229,12 @@ func (h *Handler) contentMetadata(ctx context.Context, w http.ResponseWriter, en
 	}
 	rows := make([]metaRow, 0, len(fields))
 	for i, f := range fields {
-		if !wantForms.has(form[f.InstrumentID]) {
-			continue
+		if wantForms != nil || wantFields != nil {
+			inForms := wantForms != nil && wantForms.has(form[f.InstrumentID])
+			inFields := wantFields != nil && wantFields[f.FieldName]
+			if !inForms && !inFields {
+				continue
+			}
 		}
 		codes, labels, combined := splitChoices(f.Choices.String)
 		// REDCap carries the calculation expression in the same key as the

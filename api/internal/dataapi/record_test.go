@@ -261,8 +261,10 @@ func TestRecordExportFlatFull(t *testing.T) {
 	if base["contact_email"] != "participant@example.org" || base["secret"] != "top secret" {
 		t.Errorf("full export must keep identifiers at export_full: %v", base)
 	}
-	if base["visit_date"] != "2026-03-01+01:00" {
-		t.Errorf("full export must not shift dates: %v", base)
+	// Unshifted, and in REDCap's form: the wall time without the stored +01:00
+	// (DEV-VAL-14).
+	if base["visit_date"] != "2026-03-01" {
+		t.Errorf("full export must not shift dates and drops the offset: %v", base)
 	}
 	if rows[1]["redcap_event_name"] != "followup_arm_1" || rows[1]["age"] != "43" {
 		t.Errorf("followup row = %v", rows[1])
@@ -544,11 +546,13 @@ func TestRecordExportDeIdentified(t *testing.T) {
 	if m, _ := regexp.MatchString(`^[0-9A-F]{64}$`, r["secret"]); !m {
 		t.Errorf("personal hash is not 64 uppercase hex: %q", r["secret"])
 	}
-	if r["visit_date"] == "2026-03-01+01:00" || r["visit_date"] == "" {
+	if r["visit_date"] == "2026-03-01" || r["visit_date"] == "" {
 		t.Errorf("approved date must be shifted, got %q", r["visit_date"])
 	}
-	if m, _ := regexp.MatchString(`^[0-9]{4}-[0-9]{2}-[0-9]{2}\+01:00$`, r["visit_date"]); !m {
-		t.Errorf("shifted date lost its canonical form/offset: %q", r["visit_date"])
+	// The shift keeps the offset (§5.2); the data API then writes REDCap's form
+	// without it (DEV-VAL-14).
+	if m, _ := regexp.MatchString(`^[0-9]{4}-[0-9]{2}-[0-9]{2}$`, r["visit_date"]); !m {
+		t.Errorf("shifted date is not a bare YYYY-MM-DD: %q", r["visit_date"])
 	}
 	if r["status"] != "2" {
 		t.Errorf("structured values must pass through: %v", r)
@@ -692,7 +696,7 @@ func TestRecordExportFilterMatchesNothing(t *testing.T) {
 	empty("forms[] of no instrument", url.Values{"forms": {"no_such_form"}})
 	empty("forms[] wide", url.Values{"forms": {"no_such_form"}, "type": {"wide"}})
 	empty("fields[] of no field", url.Values{"fields": {"no_such_field"}})
-	empty("forms[] unknown with the identifier named", url.Values{"forms": {"no_such_form"}, "fields": {"record_id"}})
+	empty("fields[] and forms[] both of nothing", url.Values{"forms": {"no_such_form"}, "fields": {"no_such_field"}})
 
 	// CSV keeps its header and carries no data row: the file states its columns,
 	// which is all the filters left, and names no record anywhere.
@@ -736,6 +740,13 @@ func TestRecordExportFilterMatchesNothing(t *testing.T) {
 	rows = f.exportJSON(t, "tok-admin", url.Values{"fields": {"record_id"}})
 	if len(rows) != 3 || rows[0]["record_id"] != "8DISC001" {
 		t.Errorf("identifier-only export = %v, want one row per (record, event) holding data", rows)
+	}
+	// fields[] and forms[] select together (DEV-API-37): the identifier named in
+	// fields[] is selected whatever forms[] names, so an unknown form beside it
+	// answers like the identifier-only export rather than empty.
+	rows = f.exportJSON(t, "tok-admin", url.Values{"forms": {"no_such_form"}, "fields": {"record_id"}})
+	if len(rows) != 3 || rows[0]["record_id"] != "8DISC001" {
+		t.Errorf("identifier named beside an unknown form = %v, want the identifier-only rows", rows)
 	}
 	rows = f.exportJSON(t, "tok-de", url.Values{})
 	if len(rows) != 3 {
@@ -1535,8 +1546,8 @@ func TestRecordImportCountResponse(t *testing.T) {
 }
 
 // A row without form_name is flat (REQ-API-031): every supplied field stores
-// on its own instrument from the data dictionary. The event rules are
-// unchanged — this project has events, so a row must still name one.
+// on its own instrument from the data dictionary. A row naming no event fills
+// the project's first event (DEV-API-35); a named event must still exist.
 func TestRecordImportFlatRow(t *testing.T) {
 	f := newRecordFixture(t)
 
@@ -1556,14 +1567,31 @@ func TestRecordImportFlatRow(t *testing.T) {
 		t.Errorf("stored status = %q", got)
 	}
 
-	// A project with events still requires the flat row to name its event.
+	// A row naming no event fills the first event in canonical order — how FIONA
+	// writes to a project it knows without events (REQ-API-031, DEV-API-35).
 	code, body = f.call(t, url.Values{
 		"token": {"tok-edit"}, "content": {"record"}, "returnFormat": {"json"},
 		"data": {`[{"record_id":"8DISC014","age":"47"}]`},
 	})
+	res = importResults(t, code, body)
+	if len(res) != 1 || res[0].ImportRecordID != importAdded {
+		t.Fatalf("event-less flat row result = %v, want one added row", res)
+	}
+	if got := storedValue(t, f, "8DISC014", "baseline_arm_1", "age"); got != "47" {
+		t.Errorf("event-less row: stored age at the first event = %q, want 47", got)
+	}
+	if got := storedValue(t, f, "8DISC014", "followup_arm_1", "age"); got != "" {
+		t.Errorf("event-less row must fill the first event only, follow-up age = %q", got)
+	}
+
+	// A named event the project does not have is still refused, as a whole call.
+	code, body = f.call(t, url.Values{
+		"token": {"tok-edit"}, "content": {"record"}, "returnFormat": {"json"},
+		"data": {`[{"record_id":"8DISC015","redcap_event_name":"event_1_arm_1","age":"47"}]`},
+	})
 	mustStatus(t, code, 400, body)
-	if body != `{"error":"The following values of event_name are invalid: \"\""}` {
-		t.Fatalf("event-less flat row response = %s", body)
+	if body != `{"error":"The following values of redcap_event_name are invalid: event_1_arm_1"}` {
+		t.Fatalf("unknown event response = %s", body)
 	}
 }
 

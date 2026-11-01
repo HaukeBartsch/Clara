@@ -92,9 +92,15 @@ type ExportSpec struct {
 	// checked box exports its choice label and an unchecked one nothing; without
 	// it — REDCap's default — the boxes read Checked / Unchecked.
 	CheckboxLabel bool
-	Type          string // "" flat (normative) | "wide" (§3.6.2)
-	Enc           string // "csv" | "json"
-	Delimiter     rune   // CSV separator; 0 = comma (REQ-EXP-013)
+	// DropDateOffsets writes date and date-time values without their collection
+	// offset — `2026-10-31 10:40`, the wall time as collected — which is REDCap's
+	// export form and what FIONA parses (REQ-VAL-041, DEV-VAL-14). The data API
+	// sets it; the administration and ODM exports keep the canonical stored form,
+	// offset included. Storage is never touched.
+	DropDateOffsets bool
+	Type            string // "" flat (normative) | "wide" (§3.6.2)
+	Enc             string // "csv" | "json"
+	Delimiter       rune   // CSV separator; 0 = comma (REQ-EXP-013)
 	// Decimal is the decimalCharacter (REQ-EXP-015): the separator written into
 	// calculated and floating-point values, in either encoding; 0 keeps the
 	// stored form.
@@ -183,10 +189,12 @@ func (h *Handler) contentRecordExport(w http.ResponseWriter, r *http.Request, en
 		RawOrLabel:        p.RawOrLabel,
 		RawOrLabelHeaders: p.RawOrLabelHeaders,
 		CheckboxLabel:     strings.EqualFold(p.ExportCheckboxLabel, "true"),
-		Type:              p.Type,
-		Enc:               enc,
-		Delimiter:         p.Delimiter(),
-		Decimal:           p.Decimal(),
+		// REDCap's date form on the REDCap-compatible surface (DEV-VAL-14).
+		DropDateOffsets: true,
+		Type:            p.Type,
+		Enc:             enc,
+		Delimiter:       p.Delimiter(),
+		Decimal:         p.Decimal(),
 	})
 }
 
@@ -306,10 +314,16 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		if f.FieldType == "description" || f.FieldType == "header" || f.FieldType == "transfer" || f.isCheckboxParent() {
 			continue // carry no values, never appear (§3.2)
 		}
+		// fields[] and forms[] select together, as in REDCap (REQ-API-024,
+		// DEV-API-37): a column is in when its field is named in fields[] or its
+		// instrument in forms[]. FIONA asks `fields[]=study_instance_uid` with
+		// `forms[]=transfers` and reads the transfer columns from the answer.
 		// fields[] names a choice column directly or through its checkbox, which
 		// selects every choice column (REQ-EXP-053).
-		filtered := !wantForms.has(f.Instrument) ||
-			(wantFields != nil && !wantFields[f.FieldName] && !(f.isChoiceColumn() && wantFields[f.Parent]))
+		inForms := wantForms != nil && wantForms.has(f.Instrument)
+		inFields := wantFields != nil &&
+			(wantFields[f.FieldName] || (f.isChoiceColumn() && wantFields[f.Parent]))
+		filtered := (wantForms != nil || wantFields != nil) && !inForms && !inFields
 		// Every row names its record (REQ-API-028): the identifier survives a filter
 		// that leaves it out, without bringing its instrument's pairs into scope.
 		if filtered && f.FieldName != d.identifier {
@@ -501,12 +515,17 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 
 	// Completion columns (REQ-API-134): whole-instrument exports — full or
 	// forms[]-filtered — end every instrument's block with an
-	// `<instrument>_complete` slot; a fields[]-filtered export returns exactly
-	// the requested fields and carries none. d.fields — and with it cols — are
-	// grouped by instrument in position order, so first appearance is the
-	// right place; dictInstrument carries the survey flag (GD-9: always
-	// finished).
-	withComplete := wantFields == nil
+	// `<instrument>_complete` slot; a fields[]-only export returns exactly the
+	// requested fields and carries none. With both filters (their union,
+	// DEV-API-37) an instrument named in forms[] is exported whole and keeps
+	// its slot, while one reached only through fields[] does not. d.fields — and
+	// with it cols — are grouped by instrument in position order, so first
+	// appearance is the right place; dictInstrument carries the survey flag
+	// (GD-9: always finished).
+	withComplete := wantFields == nil || wantForms != nil
+	completeFor := func(instr dictInstrument) bool {
+		return wantFields == nil || (wantForms != nil && wantForms.has(instr.Name))
+	}
 	blockInstrs := make([]dictInstrument, 0, len(d.instruments))
 	hasBlock := map[int64]bool{}
 	for _, c := range cols {
@@ -737,7 +756,7 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 				header = append(header, headerOf(cols[i]))
 				slots = append(slots, wideSlot{col: i})
 			}
-			if withComplete {
+			if completeFor(instr) {
 				header = append(header, instr.Name+"_complete")
 				slots = append(slots, wideSlot{comp: &instr})
 			}
@@ -779,7 +798,7 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 				header = append(header, headerOf(cols[i]))
 				slots = append(slots, wideSlot{col: i, event: ev})
 			}
-			if withComplete {
+			if completeFor(instr) {
 				if len(fieldEvents) > 1 {
 					for _, e := range fieldEvents {
 						// The completion state belongs to the pair like any other
@@ -816,7 +835,7 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 						header = append(header, headerOf(cols[i])+suffix)
 						slots = append(slots, wideSlot{col: i, event: e.UniqueEventName, instance: n})
 					}
-					if withComplete && !pairRefused(e.UniqueEventName, instr.ID) {
+					if completeFor(instr) && !pairRefused(e.UniqueEventName, instr.ID) {
 						header = append(header, instr.Name+"_complete"+suffix)
 						slots = append(slots, wideSlot{comp: &instr, event: e.UniqueEventName, instance: n})
 					}
@@ -973,6 +992,9 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 			}
 			if rank == expDeIdentified && c.dateBrg && offsetReady {
 				v = shiftDatePart(v, offsetDays)
+			}
+			if s.DropDateOffsets && c.dateBrg {
+				v = withoutDateOffset(v) // after the shift, which keeps the offset (§5.2)
 			}
 			if labelValues && c.f.Choices.String != "" {
 				if l := validate.LabelForCode(c.f.Choices.String, v); l != "" {

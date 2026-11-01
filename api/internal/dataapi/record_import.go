@@ -153,6 +153,34 @@ var importMetaKeys = map[string]bool{
 	"redcap_repeat_instrument": true, "redcap_repeat_instance": true,
 }
 
+// completionStates maps REDCap's form-status codes of an imported
+// `<instrument>_complete` cell to the stored assignment (REQ-API-134,
+// DEV-API-36): 2 finished, 1 unverified, 0 none — the cell then reads its derived
+// state again, as after the completion endpoint's "unfinished" (REQ-API-110).
+var completionStates = map[string]string{
+	"0": "",
+	"1": db.CompletionUnverified,
+	"2": db.CompletionFinished,
+}
+
+// completionImport is one accepted `<instrument>_complete` cell of an import
+// row: the state to assign at the row's (event, instance), "" to clear it.
+type completionImport struct {
+	instr dictInstrument
+	state string
+}
+
+// completionDetails is the audit payload of instrument_completed /
+// instrument_unverified / instrument_uncompleted — the shape the completion
+// endpoint writes (admin/completion.go, Audit_Logging_Design.md §3.2): the cell
+// and nothing else, since a state carries no field value (REQ-AUD-026).
+type completionDetails struct {
+	RecordID   string `json:"record_id"`
+	Event      string `json:"event"`
+	Instrument string `json:"instrument"`
+	Instance   int    `json:"instance,omitempty"`
+}
+
 // linkLockStripes is how many independent locks the per-link serialisation uses
 // (handler.go): contention is between submissions of one link, so a fixed set of
 // stripes keyed by link id keeps unrelated calls apart without a map to grow.
@@ -253,6 +281,9 @@ func aggregateUnknownEventValues(rows []map[string]string, sub *subject, d *proj
 				continue
 			}
 		}
+		if event == "" {
+			continue // fills the first event (REQ-API-031, DEV-API-35)
+		}
 		if _, ok := d.eventArm[event]; ok {
 			continue
 		}
@@ -302,6 +333,9 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 		recordID = row[idKey]
 	}
 	formName := row["form_name"]
+	if in, ok := d.instrumentByName(formName); ok {
+		formName = in.Name // either spelling names the instrument (REQ-API-015)
+	}
 	// A rejected submission is audit-logged like an accepted one
 	// (REQ-AUD-021); nothing changed, so its field list is empty.
 	fail := func(msg string) (importRow, error) {
@@ -398,6 +432,14 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 				return importRow{}, errForbiddenRequest
 			}
 		}
+		if event == "" && !sub.isLink() {
+			// A row naming no event fills the project's first event in canonical
+			// order (GD-15) — REDCap's reading of a project without events, which
+			// is how FIONA writes to its Incoming project, never sending
+			// redcap_event_name (REQ-API-031, DEV-API-35). The pair gate below
+			// then checks that event like a named one.
+			event = d.firstEventName()
+		}
 		if _, ok := d.eventArm[event]; !ok {
 			return fail(eventKey + ": CONTENT_INVALID — unknown event '" + event + "'")
 		}
@@ -438,6 +480,12 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 	// of every form it carries, which is also where instance 1 of a repeating
 	// form lives (REQ-DB-048).
 	repeatInstrument := row["redcap_repeat_instrument"]
+	if in, ok := d.instrumentByName(repeatInstrument); ok {
+		// REDCap's spelling — `series` for "Series", as FIONA sends it — names
+		// the stored instrument, and storage keys use the stored name
+		// (REQ-API-155, DEV-API-36).
+		repeatInstrument = in.Name
+	}
 	instance := 1
 	if rawInstance := row["redcap_repeat_instance"]; repeatInstrument == "" {
 		// "1" alone is the first instance as well; anything more would be a
@@ -473,6 +521,11 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 	type pending struct {
 		field recField
 		value string // canonicalized, non-empty = set; empty = clear
+		// bareDate marks a date/date-time value supplied without an offset, whose
+		// offset this call appended. The data API exports dates that way
+		// (DEV-VAL-14), so the same wall time coming back is no change and keeps
+		// the stored offset (REQ-VAL-041).
+		bareDate bool
 	}
 	var pendings []pending
 	var problems []string
@@ -552,12 +605,14 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 			Choices:        f.Choices.String,
 		}
 		v := validate.ValidateValue(vf, raw, reg)
+		bareDate := false
 		if v == nil && raw != "" && (vf.ValidationType == "date" || vf.ValidationType == "datetime") {
 			canonical, ok := canonicalizeDate(raw, vf.ValidationType, f.ValidationFormat.String, offsetFor)
 			if !ok {
 				v = &validate.Violation{Code: validate.CodeTypeInvalid,
 					Message: "value '" + raw + "' is not a valid " + vf.ValidationType}
 			} else {
+				bareDate = withoutDateOffset(raw) == raw
 				raw = canonical
 			}
 		}
@@ -576,20 +631,70 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 			continue
 		}
 		raw = policy
-		pendings = append(pendings, pending{field: f, value: raw})
+		pendings = append(pendings, pending{field: f, value: raw, bareDate: bareDate})
 	}
 	// Unknown keys, in dictionary order (REQ-API-139): map iteration would
 	// shuffle this list between otherwise identical calls, so a caller
 	// diffing two responses — or an audit comparison of two rejected batches —
 	// could not tell whether the data changed.
-	var unknown []string
+	var unknown, completionKeys []string
 	for k := range row {
 		if importMetaKeys[k] {
 			continue
 		}
-		if _, ok := d.byName[k]; !ok {
-			unknown = append(unknown, k)
+		if _, ok := d.byName[k]; ok {
+			continue
 		}
+		// `<instrument>_complete` — REDCap's form-status column, in either
+		// spelling — sets the instrument's completion at the row's position
+		// (REQ-API-134, DEV-API-36). A survey link fills its form and nothing
+		// about its state (GD-9), and a project without events has no event to
+		// hold a state at, so for both the key stays unknown.
+		if _, ok := d.completionInstrument(k); ok && d.hasEvents && !sub.isLink() {
+			completionKeys = append(completionKeys, k)
+			continue
+		}
+		unknown = append(unknown, k)
+	}
+	sort.Strings(completionKeys)
+	var completions []completionImport
+	for _, k := range completionKeys {
+		raw := row[k]
+		if raw == "" {
+			// Not supplied (the REQ-VAL-024 reading of empty): REDCap's export
+			// leaves the slots of the row's other instruments empty.
+			continue
+		}
+		in, _ := d.completionInstrument(k)
+		own := formName
+		if repeatInstrument != "" {
+			own = repeatInstrument
+		}
+		if own != "" && in.Name != own {
+			problems = append(problems, k+": CONTENT_INVALID — '"+k+"' belongs to instrument '"+in.Name+
+				"', not '"+own+"'")
+			continue
+		}
+		state, ok := completionStates[raw]
+		if !ok {
+			problems = append(problems, k+": "+string(validate.CodeChoiceInvalid)+" — value '"+raw+
+				"' of '"+k+"' must be 0, 1 or 2")
+			continue
+		}
+		if !d.mapsPair(in.ID, event) {
+			problems = append(problems, k+": CONTENT_INVALID — instrument '"+in.Name+
+				"' is not mapped to event '"+event+"'")
+			continue
+		}
+		if in.IsSurvey {
+			continue // always exports 2 and takes no assignment (GD-9): accepted as a no-op
+		}
+		// The pair gate of the values (REQ-AUTH-069) applies to the state too:
+		// setting it needs view_edit at the instrument's own pair.
+		if authz.DataRank(sub.pairAt(d.eventIDOf(event), in.ID, d.eventArm[event]).Data) < lvlViewEdit {
+			return importRow{}, errForbiddenRequest
+		}
+		completions = append(completions, completionImport{instr: in, state: state})
 	}
 	sort.Strings(unknown)
 	for _, k := range unknown {
@@ -659,6 +764,12 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 	for _, pd := range pendings {
 		values := target()
 		oldV := values[pd.field.FieldName]
+		if pd.bareDate && oldV != "" && withoutDateOffset(oldV) == withoutDateOffset(pd.value) {
+			// The stored wall time sent back without its offset, as the data API
+			// exported it (DEV-VAL-14): unchanged, and collected where it was
+			// collected — the stored offset stays (REQ-VAL-041).
+			pd.value = oldV
+		}
 		dv := &db.DataValue{ProjectID: sub.Project.ID, RecordID: recordID,
 			UniqueEventName: event, RepeatingInstrument: slotInstrument, RepeatingInstanceNumber: slotNumber,
 			FieldName: pd.field.FieldName, Value: pd.value}
@@ -696,6 +807,46 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 			re.DagGroupID = sql.NullInt64{Int64: *groupID, Valid: true}
 		}
 		if err := h.Store.CreateRecordEntityTx(ctx, tx, re); err != nil {
+			return importRow{}, err
+		}
+	}
+
+	// Completion states from `<instrument>_complete` (REQ-API-134, DEV-API-36):
+	// the same writes and audit entries as the completion endpoint
+	// (admin/completion.go, REQ-API-110), inside this record's transaction. A
+	// state already held changes nothing and writes no entry (REQ-API-042).
+	for _, c := range completions {
+		eventID := d.eventIDOf(event)
+		var changed bool
+		eventType := audit.InstrumentUncompleted
+		if c.state == "" {
+			changed, err = h.Store.ClearInstrumentCompletionTx(ctx, tx, sub.Project.ID, recordID,
+				eventID, c.instr.ID, instance)
+		} else {
+			eventType = audit.InstrumentCompleted
+			if c.state == db.CompletionUnverified {
+				eventType = audit.InstrumentUnverified
+			}
+			changed, err = h.Store.SetInstrumentCompletionTx(ctx, tx, sub.Project.ID, recordID,
+				eventID, c.instr.ID, instance, c.state, sub.actorUserID())
+		}
+		if err != nil {
+			return importRow{}, err
+		}
+		if !changed {
+			continue
+		}
+		if err := h.AuditTx(ctx, tx, audit.Entry{Token: p.Token,
+			EventType:    eventType,
+			Source:       audit.SourceAPI,
+			UserID:       sub.actorUserID(),
+			Email:        sub.actorEmail(),
+			ProjectID:    sub.Project.ID,
+			ArmNum:       d.eventArm[event],
+			TargetRecord: recordID,
+			Details: completionDetails{RecordID: recordID, Event: event, Instrument: c.instr.Name,
+				Instance: furtherInstance(instance)},
+		}); err != nil {
 			return importRow{}, err
 		}
 	}

@@ -119,6 +119,55 @@ func (d *projectDict) hasRepeating() bool {
 	return len(d.repeating) > 0
 }
 
+// instrumentByName resolves an instrument a caller names to the stored one: the
+// stored name exactly first, then REDCap's unique instrument name of it — lower
+// case, every space an underscore (redcapFormName). FIONA writes
+// `redcap_repeat_instrument` = `series` and `<instrument>_complete` keys in
+// REDCap's spelling for the instruments "Series" and "Incoming Studies"
+// (REQ-API-015, REQ-API-155, DEV-API-36). The exact pass keeps a stored name
+// winning over a REDCap spelling that happens to collide with it.
+func (d *projectDict) instrumentByName(name string) (dictInstrument, bool) {
+	if name == "" {
+		return dictInstrument{}, false
+	}
+	for _, in := range d.instruments {
+		if in.Name == name {
+			return in, true
+		}
+	}
+	want := redcapFormName(name)
+	for _, in := range d.instruments {
+		if redcapFormName(in.Name) == want {
+			return in, true
+		}
+	}
+	return dictInstrument{}, false
+}
+
+// completionInstrument resolves an import key of the form
+// `<instrument>_complete` — REDCap's form-status column, in either spelling of
+// the instrument (REQ-API-134, DEV-API-36). A project field that happens to end
+// in `_complete` is a field, never this key: callers ask only for keys the
+// dictionary does not know.
+func (d *projectDict) completionInstrument(key string) (dictInstrument, bool) {
+	base, ok := strings.CutSuffix(key, "_complete")
+	if !ok {
+		return dictInstrument{}, false
+	}
+	return d.instrumentByName(base)
+}
+
+// firstEventName is the project's first event in canonical order (GD-15): the
+// event a field reference without one reads in filterLogic, and the event an
+// import row naming none fills (REQ-API-031, DEV-API-35). "" for a project
+// without events.
+func (d *projectDict) firstEventName() string {
+	if len(d.events) == 0 {
+		return ""
+	}
+	return d.events[0].UniqueEventName
+}
+
 // checkboxColumns returns the derived value-column entries a checkbox field
 // expands into (REQ-DB-042). Each carries the parent's instrument and
 // sensitivity flags; its Choices are the one coding of a checked box
@@ -696,6 +745,21 @@ func shiftDatePart(value string, offsetDays int) string {
 
 // isDateBearing reports whether a field's values carry a date part that the
 // de-identified pipeline shifts (Data_Export_Anonymization_Design.md §4.1).
+// withoutDateOffset drops the collection offset from a canonical date or
+// date-time value — `2026-10-31 10:40+02:00` reads `2026-10-31 10:40`, the wall
+// time as collected — which is the form REDCap exports and FIONA parses
+// (REQ-VAL-041, DEV-VAL-14). Anything not in canonical form is returned as it
+// is: the value is never converted, only its suffix left out.
+func withoutDateOffset(value string) string {
+	if m := canonicalTimeRE.FindStringSubmatch(value); m != nil {
+		return strings.TrimSuffix(value, m[3])
+	}
+	if m := canonicalDateRE.FindStringSubmatch(value); m != nil {
+		return strings.TrimSuffix(value, m[2])
+	}
+	return value
+}
+
 func isDateBearing(f db.Field) bool {
 	vt := f.ValidationType.String
 	return vt == "date" || vt == "datetime"

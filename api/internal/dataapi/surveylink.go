@@ -36,6 +36,9 @@ func (h *Handler) serveSurveyLink(ctx context.Context, w http.ResponseWriter, r 
 			}
 		}
 		p.Forms = []string{sub.Instrument}
+		// fields[] adds to forms[] (their union, DEV-API-37), so it could name a
+		// field of another instrument; a link's render stays its own instrument.
+		p.Fields = nil
 		// Called directly rather than through requireData: a link holds no
 		// arm levels, and §3.10 grants this call by the link itself.
 		h.contentMetadata(ctx, w, enc, sub, p)
