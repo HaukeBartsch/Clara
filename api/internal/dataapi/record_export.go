@@ -386,6 +386,9 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 			}
 		}
 	}
+	// noRows marks an export whose filters left no value column in scope at all,
+	// which then emits no row (see the `permitted == 0` branch below).
+	noRows := false
 	if permitted == 0 && dropped > 0 {
 		// Pairs in scope and none of them exportable: 403, and a rejection writes
 		// nothing to either audit table (REQ-AUD-004).
@@ -396,6 +399,13 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		// The filters left no pair at all: nothing to disclose and no level to
 		// state, so the value-carrying columns stay out and the floor says so.
 		floor = expNone
+		// And no row: with no pair in scope nothing can carry a value, so every
+		// row would name less than its record — which REQ-API-028 admits no row
+		// to do. The export answers empty, as REDCap answers a `forms[]` entry
+		// naming no instrument of the project. Emitting the rows anyway would
+		// also say which events exist while naming no record at them, the reading
+		// §4.3 suppresses for an event whose every pair was refused.
+		noRows = true
 	}
 
 	// visible[i] lists the events where column i appears. A pair that may not
@@ -550,6 +560,13 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		return
 	}
 	wantRecords := toSet(s.Records)
+	if noRows {
+		// Nothing this file could write names a record, so it reads none of them:
+		// the response carries its header and no row (REQ-API-028). The
+		// filterLogic check below still runs, so a malformed expression answers
+		// 400 here exactly as it did before.
+		ids = nil
+	}
 
 	// filterLogic: a malformed expression is a client error, caught before
 	// any output starts (REQ-API-025; grammar of Data_Validation_Design.md §7).

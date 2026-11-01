@@ -665,6 +665,89 @@ func TestRecordExportNoneForbidden(t *testing.T) {
 	}
 }
 
+// TestRecordExportFilterMatchesNothing: a filter that leaves no value column in
+// scope — the ordinary case being a forms[] entry naming no instrument of the
+// project — answers with no rows at all, because every row names its record
+// (REQ-API-028) and no row of such a file could. Rows naming only an event are
+// what §4.3 suppresses for an event whose every pair was refused, and the filter
+// case has nothing better to say. The identifier asked for by name (fields[]=
+// <identifier>) is unaffected: it brings its own instrument's pairs into scope.
+func TestRecordExportFilterMatchesNothing(t *testing.T) {
+	f := newRecordFixture(t)
+	ctx := context.Background()
+
+	empty := func(label string, extra url.Values) {
+		t.Helper()
+		before := auditCount(t, f.s, audit.Export)
+		rows := f.exportJSON(t, "tok-admin", extra)
+		if len(rows) != 0 {
+			t.Errorf("%s: rows = %v, want none", label, rows)
+		}
+		// An export that answered empty still audited as one (REQ-AUD-013).
+		if got := auditCount(t, f.s, audit.Export); got != before+1 {
+			t.Errorf("%s: audit events = %d, want %d", label, got, before+1)
+		}
+	}
+
+	empty("forms[] of no instrument", url.Values{"forms": {"no_such_form"}})
+	empty("forms[] wide", url.Values{"forms": {"no_such_form"}, "type": {"wide"}})
+	empty("fields[] of no field", url.Values{"fields": {"no_such_field"}})
+	empty("forms[] unknown with the identifier named", url.Values{"forms": {"no_such_form"}, "fields": {"record_id"}})
+
+	// CSV keeps its header and carries no data row: the file states its columns,
+	// which is all the filters left, and names no record anywhere.
+	code, body := f.call(t, url.Values{
+		"token": {"tok-admin"}, "content": {"record"}, "returnFormat": {"csv"}, "csvDelimiter": {""},
+		"forms": {"no_such_form"},
+	})
+	mustStatus(t, code, 200, body)
+	if strings.Count(strings.TrimSuffix(body, "\n"), "\n") != 0 {
+		t.Errorf("csv = %q, want a header line and no rows", body)
+	}
+
+	// An empty answer is still a refused expression when the expression is bad:
+	// the filterLogic check runs before any output, whatever the filters left.
+	code, body = f.call(t, url.Values{
+		"token": {"tok-admin"}, "content": {"record"}, "returnFormat": {"json"},
+		"forms": {"no_such_form"}, "filterLogic": {"[age] = = 3"},
+	})
+	mustStatus(t, code, 400, body)
+
+	// An instrument of the project that is mapped to no event leaves no pair
+	// either: same answer, through the same branch.
+	if _, err := f.s.AddInstrument(ctx, &db.Instrument{ProjectID: f.pid, Name: "unmapped", Position: 9}); err != nil {
+		t.Fatalf("AddInstrument: %v", err)
+	}
+	empty("forms[] of an unmapped instrument", url.Values{"forms": {"unmapped"}})
+
+	// What the filters do match keeps naming its record, and a level that removes
+	// the identifier column keeps its rows (the de-identified export below has no
+	// identifier column yet carries one row per record and event — §4.2 step 1,
+	// not this rule).
+	rows := f.exportJSON(t, "tok-admin", url.Values{"forms": {"demo"}})
+	if len(rows) != 3 {
+		t.Fatalf("rows = %d, want the three of demo: %v", len(rows), rows)
+	}
+	for i, row := range rows {
+		if row["record_id"] == "" {
+			t.Errorf("row %d = %v, want the record identifier", i, row)
+		}
+	}
+	rows = f.exportJSON(t, "tok-admin", url.Values{"fields": {"record_id"}})
+	if len(rows) != 3 || rows[0]["record_id"] != "8DISC001" {
+		t.Errorf("identifier-only export = %v, want one row per (record, event) holding data", rows)
+	}
+	rows = f.exportJSON(t, "tok-de", url.Values{})
+	if len(rows) != 3 {
+		t.Fatalf("de-identified rows = %d, want 3: %v", len(rows), rows)
+	}
+	for i, row := range rows {
+		if _, ok := row["record_id"]; ok {
+			t.Errorf("row %d = %v, want no identifier column at de-identified strength", i, row)
+		}
+	}
+}
+
 func TestRecordExportFilterLogic(t *testing.T) {
 	f := newRecordFixture(t)
 	rows := f.exportJSON(t, "tok-admin", url.Values{"filterLogic": {"[baseline_arm_1][age] < 40"}})

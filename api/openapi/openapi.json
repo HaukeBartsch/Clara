@@ -113,7 +113,7 @@
                 },
                 "recordExportForms": {
                   "summary": "Forms — whole instruments: forms[]",
-                  "description": "Each instrument's block ends with `<instrument>_complete` (REQ-API-134) in REDCap's codes: `2` finished, `1` unverified, `0` otherwise — with values or without; at an event the instrument is not mapped to that cell is empty. The record identifier is always included, even when its instrument is not among `forms[]` (REQ-API-028).",
+                  "description": "Each instrument's block ends with `<instrument>_complete` (REQ-API-134) in REDCap's codes: `2` finished, `1` unverified, `0` otherwise — with values or without; at an event the instrument is not mapped to that cell is empty. The record identifier is always included, even when its instrument is not among `forms[]` (REQ-API-028); a `forms[]` entry naming no instrument of the project leaves no value column in scope and returns no rows at all (REQ-API-028).",
                   "value": { "token": "8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "content": "record", "format": "json", "type": "flat", "forms[0]": "imaging", "returnFormat": "json" }
                 },
                 "recordExportEvents": {
