@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"strconv"
+	"strings"
 )
 
 // MaxRecordID returns the lexicographically greatest record id that holds at
@@ -108,6 +109,48 @@ func (s *Store) ListRecordIDs(ctx context.Context, projectID int64, dagGroupID *
 			return nil, err
 		}
 		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// ListRecordIDsChangedBetween returns the records of a project with an audit
+// entry of one of eventTypes at or after from and before before — UTC
+// "YYYY-MM-DD HH:MM:SS", the form every audit timestamp is written in; an empty
+// bound leaves that side open. It answers the data API's change window
+// (REQ-API-181): the audit trail records each change of a record's values and
+// states in the transaction that made it (GD-3), so it is the record's change
+// log. idx_audit_events_type (project_id, event_type, created_at) serves it.
+func (s *Store) ListRecordIDsChangedBetween(ctx context.Context, projectID int64, eventTypes []string, from, before string) (map[string]bool, error) {
+	out := map[string]bool{}
+	if len(eventTypes) == 0 {
+		return out, nil
+	}
+	q := `SELECT DISTINCT target_record FROM audit_events
+		 WHERE project_id = ? AND target_record IS NOT NULL
+		 AND event_type IN (?` + strings.Repeat(", ?", len(eventTypes)-1) + `)`
+	args := []any{projectID}
+	for _, t := range eventTypes {
+		args = append(args, t)
+	}
+	if from != "" {
+		q += ` AND created_at >= ?`
+		args = append(args, from)
+	}
+	if before != "" {
+		q += ` AND created_at < ?`
+		args = append(args, before)
+	}
+	rows, err := s.DB.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
 	}
 	return out, rows.Err()
 }

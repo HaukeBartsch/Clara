@@ -18,19 +18,23 @@ import (
 // Unknown parameters are accepted and dropped — existing callers keep
 // working (REQ-API-017).
 type Params struct {
-	Token             string
-	Content           string
-	Action            string
-	Format            string
-	ReturnFormat      string
-	Type              string
-	CSVDelimiter      string
-	DecimalCharacter  string
-	Records           []string
-	Fields            []string
-	Forms             []string
-	Events            []string
-	FilterLogic       string
+	Token            string
+	Content          string
+	Action           string
+	Format           string
+	ReturnFormat     string
+	Type             string
+	CSVDelimiter     string
+	DecimalCharacter string
+	Records          []string
+	Fields           []string
+	Forms            []string
+	Events           []string
+	FilterLogic      string
+	// DateRangeBegin and DateRangeEnd are REDCap's change window for the record
+	// export (REQ-API-181), as sent; parseChangeWindow reads them.
+	DateRangeBegin    string
+	DateRangeEnd      string
 	RawOrLabel        string
 	RawOrLabelHeaders string
 	// ExportCheckboxLabel is REDCap's flag for checkbox values in label mode
@@ -129,6 +133,8 @@ func ParseParams(r *http.Request) (Params, error) {
 		Forms:               list("forms"),
 		Events:              list("events"),
 		FilterLogic:         single("filterLogic"),
+		DateRangeBegin:      single("dateRangeBegin"),
+		DateRangeEnd:        single("dateRangeEnd"),
 		RawOrLabel:          single("rawOrLabel"),
 		RawOrLabelHeaders:   single("rawOrLabelHeaders"),
 		ExportCheckboxLabel: single("exportCheckboxLabel"),

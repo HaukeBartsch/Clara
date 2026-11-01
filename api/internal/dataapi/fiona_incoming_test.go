@@ -11,7 +11,8 @@ package dataapi
 // unchanged. They cover the owner decisions DEV-API-35 (no event names the
 // first), DEV-API-36 (`<instrument>_complete` and REDCap instrument spelling on
 // import), DEV-API-37 (fields[] ∪ forms[]) and DEV-VAL-14 (dates without the
-// offset on the data API). Named TestFiona* so ci/run.sh runs them.
+// offset on the data API), and the change window of REQ-API-181
+// (`dateRangeBegin`). Named TestFiona* so ci/run.sh runs them.
 
 import (
 	"context"
@@ -512,4 +513,154 @@ func (f *incomingFixture) okExport(t *testing.T, form url.Values) string {
 	code, body := do(t, f.h, form)
 	mustStatus(t, code, 200, body)
 	return body
+}
+
+// populateAutoID.py getIncomingData: the AutoID run asks only for studies
+// changed in the last 14 days (`dateRangeBegin`, REQ-API-181). Without the
+// window it read every study ever received and could open transfer requests for
+// old ones. The window is the half-open [begin, end) over the audited data
+// changes, completion states included, read in APP_TIMEZONE.
+func TestFionaIncomingDateRange(t *testing.T) {
+	f := newIncomingFixture(t)
+	ctx := context.Background()
+	clock := time.Date(2026, 10, 1, 8, 0, 0, 0, time.UTC)
+	f.h.Audit.Now = func() time.Time { return clock }
+	if err := f.h.Audit.EnsureYear(ctx); err != nil {
+		t.Fatalf("EnsureYear: %v", err)
+	}
+	// Record ids sort ascending in an export, so the old study comes first.
+	const oldStudy, newStudy = "1.2.3.4.1001", "1.2.3.4.1002"
+	study := func(uid string) []map[string]any {
+		return []map[string]any{{"study_instance_uid": uid, "study_description": "MR Brain",
+			"study_patient_id": "P-" + uid[len(uid)-4:]}}
+	}
+	f.importCount(t, study(oldStudy)) // arrives 2026-10-01 08:00 UTC
+	clock = time.Date(2026, 10, 20, 8, 0, 0, 0, time.UTC)
+	f.importCount(t, study(newStudy))
+
+	// FIONA's call verbatim, its begin 14 days before "now" (2026-10-29 here).
+	autoID := func(begin, end string) []map[string]any {
+		t.Helper()
+		form := url.Values{"token": {incomingToken}, "content": {"record"}, "format": {"json"}, "type": {"flat"},
+			"fields[0]": {"study_aetitle_addressed"}, "fields[1]": {"study_instance_uid"},
+			"fields[2]": {"transfer_project_name"}, "fields[3]": {"study_patient_id"},
+			"rawOrLabel": {"raw"}, "rawOrLabelHeaders": {"raw"}, "exportCheckboxLabel": {"false"},
+			"exportSurveyFields": {"false"}, "exportDataAccessGroups": {"false"}, "returnFormat": {"json"}}
+		if begin != "" {
+			form.Set("dateRangeBegin", begin)
+		}
+		if end != "" {
+			form.Set("dateRangeEnd", end)
+		}
+		return decodeJSON(t, f.okExport(t, form))
+	}
+	uids := func(rows []map[string]any) string {
+		seen := map[string]bool{}
+		var out []string
+		for _, r := range rows {
+			if u := fmt.Sprint(r["study_instance_uid"]); !seen[u] {
+				seen[u] = true
+				out = append(out, u)
+			}
+		}
+		return strings.Join(out, ",")
+	}
+
+	if got := uids(autoID("", "")); got != oldStudy+","+newStudy {
+		t.Fatalf("no window: want both studies, got %q", got)
+	}
+	if got := uids(autoID("2026-10-15 08:00:00", "")); got != newStudy {
+		t.Errorf("last 14 days: want only %s, got %q", newStudy, got)
+	}
+
+	// A completion state is a data change (REDCap logs its form status as data):
+	// setting it on the old study brings that study into the window.
+	clock = time.Date(2026, 10, 25, 10, 0, 0, 0, time.UTC)
+	f.importCount(t, []map[string]any{{"study_instance_uid": oldStudy, "incoming_studies_complete": 2}})
+	if got := uids(autoID("2026-10-15 08:00:00", "")); got != oldStudy+","+newStudy {
+		t.Errorf("after the completion change: want both studies, got %q", got)
+	}
+
+	// Half-open: the begin is inclusive, the end exclusive.
+	if got := uids(autoID("2026-10-20 08:00:00", "2026-10-25 10:00:00")); got != newStudy {
+		t.Errorf("[new study's change, old study's change): want %s, got %q", newStudy, got)
+	}
+	if got := uids(autoID("2026-10-01", "2026-10-20 08:00")); got != oldStudy {
+		t.Errorf("[2026-10-01, new study's change): want %s, got %q", oldStudy, got)
+	}
+	// A window holding no change is an empty export, not an error.
+	if rows := autoID("2026-11-01 00:00:00", ""); len(rows) != 0 {
+		t.Errorf("future window: want no rows, got %v", rows)
+	}
+	if rows := autoID("2026-10-25 10:00:00", "2026-10-01 00:00:00"); len(rows) != 0 {
+		t.Errorf("begin after end: want no rows, got %v", rows)
+	}
+
+	// The bounds are the deployment's wall time, DST included: in Europe/Oslo
+	// the new study's change (2026-10-20 08:00 UTC) happened at 10:00 summer
+	// time, and the old study's completion (2026-10-25 10:00 UTC) at 11:00 —
+	// summer time ended that morning.
+	f.h.Cfg.AppTimezone = "Europe/Oslo"
+	if got := uids(autoID("2026-10-20 10:00:00", "2026-10-25 11:00:00")); got != newStudy {
+		t.Errorf("Oslo [10:00 on the 20th, 11:00 on the 25th): want %s, got %q", newStudy, got)
+	}
+	if got := uids(autoID("2026-10-20 10:00:01", "2026-10-25 11:00:00")); got != "" {
+		t.Errorf("Oslo from 10:00:01: want nothing, got %q", got)
+	}
+	if got := uids(autoID("2026-10-25 11:00:00", "")); got != oldStudy {
+		t.Errorf("Oslo from 11:00 on the 25th: want %s, got %q", oldStudy, got)
+	}
+	f.h.Cfg.AppTimezone = "UTC"
+
+	// The export audit row records the window as sent, and only when sent.
+	lastExportFilters := func() map[string]any {
+		t.Helper()
+		var details string
+		if err := f.s.DB.QueryRowContext(ctx, `SELECT details FROM audit_events
+			WHERE project_id = ? AND event_type = ? ORDER BY id DESC LIMIT 1`, f.pid, audit.Export).Scan(&details); err != nil {
+			t.Fatalf("export audit row: %v", err)
+		}
+		var d struct {
+			Filters map[string]any `json:"filters"`
+		}
+		if err := json.Unmarshal([]byte(details), &d); err != nil {
+			t.Fatalf("export audit details %q: %v", details, err)
+		}
+		return d.Filters
+	}
+	autoID("2026-10-15 08:00:00", "")
+	if fl := lastExportFilters(); fl["date_range_begin"] != "2026-10-15 08:00:00" || fl["date_range_end"] != nil {
+		t.Errorf("audit filters with a begin: %v", fl)
+	}
+	autoID("", "")
+	if fl := lastExportFilters(); fl["date_range_begin"] != nil {
+		t.Errorf("audit filters without a window carry date_range_begin: %v", fl)
+	}
+
+	// A malformed bound is refused before any record is read, and audits nothing.
+	exports := func() int {
+		t.Helper()
+		var n int
+		if err := f.s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_events WHERE project_id = ? AND event_type = ?`,
+			f.pid, audit.Export).Scan(&n); err != nil {
+			t.Fatalf("count exports: %v", err)
+		}
+		return n
+	}
+	before := exports()
+	for _, c := range []struct{ key, value, want string }{
+		{"dateRangeBegin", "2026-13-01 00:00:00", "Invalid dateRangeBegin"},
+		{"dateRangeBegin", "2026-02-30", "Invalid dateRangeBegin"},
+		{"dateRangeBegin", "2026-10-15T08:00:00", "Invalid dateRangeBegin"},
+		{"dateRangeEnd", "yesterday", "Invalid dateRangeEnd"},
+	} {
+		form := url.Values{"token": {incomingToken}, "content": {"record"}, "format": {"json"}, c.key: {c.value}}
+		code, body := do(t, f.h, form)
+		if code != 400 || !strings.Contains(body, c.want) {
+			t.Errorf("%s=%q: want 400 %q, got %d %s", c.key, c.value, c.want, code, body)
+		}
+	}
+	if after := exports(); after != before {
+		t.Errorf("refused windows wrote %d export audit rows", after-before)
+	}
 }

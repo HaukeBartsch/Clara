@@ -81,6 +81,13 @@ type ExportSpec struct {
 	Fields      []string
 	Forms       []string
 	FilterLogic string
+	// ChangedFrom and ChangedBefore are the change window of REQ-API-181 as UTC
+	// audit timestamps ("YYYY-MM-DD HH:MM:SS"): only records with a data change
+	// in [ChangedFrom, ChangedBefore) are read. "" leaves that side open; both
+	// empty is no window. DateRangeBegin/DateRangeEnd are the parameters as sent,
+	// for the audit filters.
+	ChangedFrom, ChangedBefore   string
+	DateRangeBegin, DateRangeEnd string
 	// FilterEvents is the events[] call parameter for the audit filters —
 	// distinct from Events, which on the administration surface carries the
 	// candidate arms' events rather than a filter the caller supplied.
@@ -136,6 +143,20 @@ func (h *Handler) RunExport(w http.ResponseWriter, r *http.Request, s ExportSpec
 
 func (h *Handler) contentRecordExport(w http.ResponseWriter, r *http.Request, enc string, sub *subject, p Params) {
 	ctx := r.Context()
+	// The change window is read first: a malformed bound is the caller's error,
+	// answered before any record is read and with nothing audited (REQ-API-181,
+	// REQ-AUD-004).
+	loc := h.appLocation()
+	changedFrom, ok := changeWindowBound(p.DateRangeBegin, loc)
+	if !ok {
+		writeError(w, enc, http.StatusBadRequest, "Invalid dateRangeBegin")
+		return
+	}
+	changedBefore, ok := changeWindowBound(p.DateRangeEnd, loc)
+	if !ok {
+		writeError(w, enc, http.StatusBadRequest, "Invalid dateRangeEnd")
+		return
+	}
 	d, err := h.loadDict(ctx, sub.Project.ID)
 	if err != nil {
 		h.storeError(w, enc, err)
@@ -185,6 +206,10 @@ func (h *Handler) contentRecordExport(w http.ResponseWriter, r *http.Request, en
 		Fields:            p.Fields,
 		Forms:             p.Forms,
 		FilterLogic:       p.FilterLogic,
+		ChangedFrom:       changedFrom,
+		ChangedBefore:     changedBefore,
+		DateRangeBegin:    p.DateRangeBegin,
+		DateRangeEnd:      p.DateRangeEnd,
 		FilterEvents:      p.Events,
 		RawOrLabel:        p.RawOrLabel,
 		RawOrLabelHeaders: p.RawOrLabelHeaders,
@@ -577,6 +602,23 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 	if err != nil {
 		s.failStore(w, err)
 		return
+	}
+	if s.ChangedFrom != "" || s.ChangedBefore != "" {
+		// The change window (REQ-API-181) narrows the list before any value is
+		// read, so a narrow window reads only the records inside it.
+		changed, err := h.Store.ListRecordIDsChangedBetween(ctx, s.ProjectID, recordChangeEvents,
+			s.ChangedFrom, s.ChangedBefore)
+		if err != nil {
+			s.failStore(w, err)
+			return
+		}
+		kept := ids[:0]
+		for _, id := range ids {
+			if changed[id] {
+				kept = append(kept, id)
+			}
+		}
+		ids = kept
 	}
 	wantRecords := toSet(s.Records)
 	if noRows {
@@ -1290,6 +1332,14 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		"forms":        nonNil(s.Forms),
 		"events":       nonNil(s.FilterEvents),
 		"filter_logic": s.FilterLogic,
+	}
+	// The change window joins the filters only when supplied, so every other
+	// export keeps the entry shape it always had (REQ-API-181).
+	if s.DateRangeBegin != "" {
+		filters["date_range_begin"] = s.DateRangeBegin
+	}
+	if s.DateRangeEnd != "" {
+		filters["date_range_end"] = s.DateRangeEnd
 	}
 	instrList := make([]string, 0, len(instruments))
 	for i := range instruments {
