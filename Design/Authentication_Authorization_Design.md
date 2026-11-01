@@ -389,6 +389,7 @@ Rules:
 ## 5. API Token Mechanics (GD-5)
 
 - One token per (user, project) assignment: UUID v4 (128-bit, `crypto/rand`), stored in `user_projects.token` (`CHAR(36)`), globally unique (REQ-AUTH-029).
+- **Adopted REDCap token** (REQ-AUTH-090, DEV-AUTH-20): an administrator may replace a member's token with an existing REDCap value, so a client that has it hard-coded (FIONA) keeps working. The value must match `^[0-9A-F]{32}$` — REDCap's form, 128 bits — and fits the same column; it is looked up by the same single indexed query, so the data API does not distinguish the two forms. It cannot collide with a survey-link token, which is a 36-character UUID. Uniqueness is checked before the write, and the `UNIQUE` index still decides a race; either case is a 409 and changes nothing. The adoption is audited as `token_rotated` with `"adopted": true`, never with the value, and the value is not returned. A later rotation replaces it with a CLARA-issued UUID.
 - Accepted **only** as the `token` request-body/query parameter of the REDCap protocol — never an `Authorization` header (REQ-AUTH-031, REQ-API-010).
 - Validation is a single indexed lookup (REQ-AUTH-032); a missing/invalid token yields the same 401 `Invalid token` response whether or not the token exists (REQ-API-011).
 - Rotation (REQ-AUTH-030): the new value replaces the old in the single row — the previous token is invalid immediately; audit `token_issued` / `token_rotated` / `token_revoked` (`Audit_Logging_Design.md` §3.4).

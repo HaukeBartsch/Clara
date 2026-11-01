@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -766,6 +767,51 @@ func (s *Store) RotateAssignmentToken(ctx context.Context, userID, projectID int
 		return "", fmt.Errorf("rotate token: no assignment for user %d in project %d", userID, projectID)
 	}
 	return tok, nil
+}
+
+// ErrTokenInUse is an adoption whose value another assignment already holds
+// (REQ-AUTH-090): nothing is written.
+var ErrTokenInUse = errors.New("token already in use")
+
+// AdoptAssignmentToken sets the row's token to an existing REDCap token value
+// (REQ-AUTH-090, DEV-AUTH-20); the previous token is invalid immediately, as on
+// a rotation. changed is false when the member already holds the value. The
+// format check is the caller's. The holder check names the conflict, and the
+// UNIQUE index still decides a race between two adoptions of one value.
+func (s *Store) AdoptAssignmentToken(ctx context.Context, userID, projectID int64, token string) (changed bool, err error) {
+	heldBy := func() (bool, error) {
+		h, err := s.GetAssignmentByToken(ctx, token)
+		if err != nil || h == nil {
+			return false, err
+		}
+		if h.UserID == userID && h.ProjectID == projectID {
+			return false, nil
+		}
+		return true, nil
+	}
+	if a, err := s.GetAssignment(ctx, userID, projectID); err != nil {
+		return false, err
+	} else if a != nil && a.Token == token {
+		return false, nil
+	}
+	if other, err := heldBy(); err != nil {
+		return false, err
+	} else if other {
+		return false, ErrTokenInUse
+	}
+	res, err := s.DB.ExecContext(ctx,
+		`UPDATE user_projects SET token = ? WHERE user_id = ? AND project_id = ?`,
+		token, userID, projectID)
+	if err != nil {
+		if other, herr := heldBy(); herr == nil && other {
+			return false, ErrTokenInUse
+		}
+		return false, err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return false, fmt.Errorf("adopt token: no assignment for user %d in project %d", userID, projectID)
+	}
+	return true, nil
 }
 
 // RemoveAssignment deletes the membership row; its token is invalid

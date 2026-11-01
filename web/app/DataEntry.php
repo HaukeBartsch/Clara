@@ -164,17 +164,6 @@ final class DataEntry
     }
 
     /**
-     * A free-text field: `text` without a validation type, or `notes` — multi-line free text
-     * (Data_Validation_Design.md §5, REQ-DB-044).
-     */
-    public static function isFreeText(array $field): bool
-    {
-        $type = $field['field_type'] ?? '';
-
-        return $type === 'notes' || ($type === 'text' && (string) ($field['validation_type'] ?? '') === '');
-    }
-
-    /**
      * The choices a form shows for a field: a yesno field's fixed coding (`1` = Yes, `0` = No)
      * carries the labels of the interface language (REQ-DB-043) — `$t` translates a key — and
      * every other field its stored labels.

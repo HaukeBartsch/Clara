@@ -73,8 +73,9 @@ describe('escaping (REQ-UI-004, REQ-TECH-020)', function (): void {
         assert_true(strlen(View::e("bad \xC3\x28 value")) > 0);
     });
 
-    it('keeps htmlAllowed the one pass-through for sanitized storage', function (): void {
-        assert_same('<b>note</b>', View::htmlAllowed('<b>note</b>'));
+    it('has no pass-through for stored HTML: a stored value is escaped like any text (DEV-VAL-15)', function (): void {
+        assert_true(!method_exists(View::class, 'htmlAllowed'));
+        assert_same('&lt;MPR Thick Range&gt;', View::e('<MPR Thick Range>'));
     });
 });
 

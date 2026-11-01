@@ -37,7 +37,6 @@ REQ-TECH-023 permits database drivers, the OpenAPI/Swagger UI static bundle, and
 |---|------|
 | `modernc.org/sqlite` | SQLite driver — pure Go, so the static-binary rule (REQ-TECH-013) holds without cgo |
 | `github.com/go-sql-driver/mysql` | MariaDB driver |
-| `github.com/microcosm-cc/bluemonday` | HTML sanitizer for the free-form content policy (`Data_Validation_Design.md` §5.2) |
 | `golang.org/x/net` (package `html` only) | tolerant HTML parse/serialize for the same policy |
 
 Everything else is standard library: `net/http` (both surfaces, OpenAPI serving), `database/sql`, `encoding/csv` (streaming export, custom delimiter, REQ-TECH-011/REQ-API-029), `encoding/json`, `crypto/rand` (UUIDs, link tokens), `crypto/subtle` (constant-time service-token comparison, REQ-AUTH-012), `log/slog` (structured logging, REQ-TECH-016), and a hand-written recursive-descent parser for the two expression languages (`Data_Validation_Design.md` §6/§7) — no parser library.

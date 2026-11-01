@@ -13,6 +13,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -881,5 +883,52 @@ func TestImportODMValueSemantics(t *testing.T) {
 	}
 	if !strings.Contains(fields["visited"], "vt=date|") {
 		t.Errorf("the date field holds no date validation: %s", fields["visited"])
+	}
+}
+
+// TestShippedODMAssetsMapEveryInstrument imports every project definition under
+// assets/ and requires each of its instruments to be mapped to an event. An
+// unmapped instrument has no pair to hold a value: the data API refuses every
+// value written to it (REQ-API-033, DEV-API-42), so a FIONA project created from
+// such a file would refuse all of FIONA's writes. The Routing and WhatIsInIDS7
+// files shipped without the FormRef until 2026-11-01.
+func TestShippedODMAssetsMapEveryInstrument(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join("..", "..", "..", "assets", "*_odm*.xml"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no ODM assets found (%v)", err)
+	}
+	e := newEnv(t)
+	admin := e.mustAdmin("odm-assets@example.org")
+	for _, file := range files {
+		body, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+		rec := e.do("POST", "/api/v1/projects/import/odm", string(body), admin)
+		if rec.Code != http.StatusCreated {
+			t.Errorf("%s: import status = %d: %.300s", filepath.Base(file), rec.Code, rec.Body.String())
+			continue
+		}
+		var report odmImportReport
+		e.decode(rec, &report)
+		rows, err := e.Store.DB.QueryContext(context.Background(),
+			`SELECT i.name FROM instruments i WHERE i.project_id = ?
+			 AND NOT EXISTS (SELECT 1 FROM instrument_events ie WHERE ie.instrument_id = i.id)
+			 ORDER BY i.position`, report.ProjectID)
+		if err != nil {
+			t.Fatalf("query: %v", err)
+		}
+		var unmapped []string
+		for rows.Next() {
+			var name string
+			if err := rows.Scan(&name); err != nil {
+				t.Fatalf("scan: %v", err)
+			}
+			unmapped = append(unmapped, name)
+		}
+		rows.Close()
+		if len(unmapped) > 0 {
+			t.Errorf("%s: instruments mapped to no event: %v", filepath.Base(file), unmapped)
+		}
 	}
 }

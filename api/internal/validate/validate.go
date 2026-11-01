@@ -176,8 +176,8 @@ func WithDecimal(v string, sep byte) string {
 // identifier case separately. reg resolves regex validation types (§4.2);
 // a type that is neither built-in nor in reg is rejected (a field must never
 // silently stop validating because its registry row went away). Date/datetime
-// and free-text HTML sanitization are the import slice's responsibility (they
-// need the collection offset and the §5.2 sanitizer) and are not applied here.
+// canonicalization and the content policy are the import slice's responsibility
+// (they need the collection offset and the length cap) and are not applied here.
 func ValidateValue(f Field, value string, reg *Registry) *Violation {
 	if value == "" {
 		return nil

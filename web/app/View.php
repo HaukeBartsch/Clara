@@ -3,12 +3,8 @@
 // interpolate (REQ-UI-004, REQ-TECH-020) and CSP already on the response by way
 // of Response. No template engine — plain PHP templates with one escaping rule,
 // which is what keeps "escaped by default" reviewable: every interpolation in a
-// view calls View::e(), and the single exception below is greppable.
-//
-// htmlAllowed() is that exception and must stay the only place stored allowlist
-// HTML reaches the page (Data_Validation_Design.md §5.2). It renders nothing of
-// its own accord: it takes text the API already sanitized, and this pass has no
-// stored values to show, so no view calls it yet.
+// view calls View::e(). Stored values have no exception — free text included,
+// which the API stores as received (REQ-VAL-031, DEV-VAL-15).
 
 declare(strict_types=1);
 
@@ -51,22 +47,6 @@ final class View
     public static function lines(mixed $value): string
     {
         return nl2br(self::e($value), false);
-    }
-
-    /**
-     * Free-form text as allowlist HTML (REQ-VAL-031) — a pass-through, because the
-     * value arrives already sanitized: the Go API applies the §5.2 HTML allowlist at
-     * storage on every entry path (validate.ApplyContentPolicy, REQ-VAL-030), so the
-     * stored string is inert and re-sanitizing here would only duplicate a decision
-     * the design makes once. Callers must pass a stored record value and nothing
-     * else — never a label, name or request parameter, all of which are escaped
-     * server-side with View::e() instead (REQ-TECH-020). It is the only escape hatch
-     * of its kind in the layer, and a review rule keeps it that way — one call site,
-     * checked at review rather than here (Plan/Web_Implementation.md §9).
-     */
-    public static function htmlAllowed(?string $sanitized): string
-    {
-        return (string) $sanitized;
     }
 
     /**

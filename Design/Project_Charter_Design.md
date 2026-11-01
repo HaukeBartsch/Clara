@@ -74,7 +74,7 @@ The system is exactly these four components and no others. There is no scheduler
 | GD-2 | Permission model — arm default with a per-(instrument, event) override: ordered data-access levels (`no_access` < `read_only` < `view_edit`), ordered export levels, the two rights **delete instrument values** / **edit collected surveys**, `project_admin` | `Authentication_Authorization_Design.md` §4.1; `Data_Export_Anonymization_Design.md` §4 |
 | GD-3 | Record deletion in scope: API `action=delete`, confirmed UI action, audit-logged | `API_Endpoints_Design.md` §3.8; `Audit_Logging_Design.md` §3 (deletion events) |
 | GD-4 | `is_admin` flag; bootstrap admin from configuration; promoted on first login | `Authentication_Authorization_Design.md` §2.3; `API_Endpoints_Design.md` §4.4; `System_Configuration_Design.md` §3.3 |
-| GD-5 | API tokens: UUIDs mapped to (user, project), passed as a body parameter | `Authentication_Authorization_Design.md` §5; `API_Endpoints_Design.md` §3.1 |
+| GD-5 | API tokens: UUIDs mapped to (user, project), passed as a body parameter; an adopted REDCap token value is the exception (DEV-AUTH-20) | `Authentication_Authorization_Design.md` §5; `API_Endpoints_Design.md` §3.1, §4.6 |
 | GD-6 | SQL portability: common feature set; dialect-specific constructs as documented exceptions | `Database_Schema_Design.md` §10 |
 | GD-7 | All system timestamps in UTC | `Audit_Logging_Design.md` (REQ-AUD-005); `Database_Schema_Design.md` §1 |
 | GD-8 | Record identifier = field 1 of the instrument at position 1; its value is the `record_id` | `Database_Schema_Design.md` §5 (enforced by the API); `Data_Export_Anonymization_Design.md` §4.1 |

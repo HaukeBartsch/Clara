@@ -43,6 +43,7 @@ type Params struct {
 	TZ                  string
 	Data                string // import payload as a JSON array (§3.7.1, REQ-API-031)
 	ReturnContent       string // "count" switches the import response (REQ-API-142)
+	OverwriteBehavior   string // "normal" keeps stored values under empty cells (REQ-VAL-024, DEV-API-43)
 	// RepeatInstance narrows a delete to one form instance (REDCap's
 	// repeat_instance, REQ-API-155); "" = every instance.
 	RepeatInstance string
@@ -141,6 +142,7 @@ func ParseParams(r *http.Request) (Params, error) {
 		TZ:                  single("tz"),
 		Data:                single("data"),
 		ReturnContent:       single("returnContent"),
+		OverwriteBehavior:   single("overwriteBehavior"),
 		RepeatInstance:      single("repeat_instance"),
 		HasData:             hasDataKey(body) || hasDataKey(query),
 	}, nil

@@ -113,7 +113,7 @@
                 },
                 "recordExportForms": {
                   "summary": "Forms — whole instruments: forms[]",
-                  "description": "Each instrument's block ends with `<instrument>_complete` (REQ-API-134) in REDCap's codes: `2` finished, `1` unverified, `0` otherwise — with values or without; at an event the instrument is not mapped to that cell is empty. The record identifier is always included, even when its instrument is not among `forms[]` (REQ-API-028); a `forms[]` entry naming no instrument of the project, with no `fields[]` beside it, leaves no value column in scope and returns no rows at all (REQ-API-028). `fields[]` adds to `forms[]` (their union, DEV-API-37); only instruments named in `forms[]` carry `<instrument>_complete`.",
+                  "description": "Each instrument's block ends with `<instrument>_complete` (REQ-API-134) in REDCap's codes: `2` finished, `1` unverified, `0` otherwise — with values or without; at an event the instrument is not mapped to that cell is empty. The record identifier is always included, even when its instrument is not among `forms[]` (REQ-API-028); a `forms[]` entry naming no instrument of the project, with no `fields[]` beside it, leaves no value column in scope and returns no rows at all (REQ-API-028). A `fields[]` entry naming no field of the project answers 400 `The following values in the parameter \"fields\" are not valid: '<name>'` (REQ-API-024, DEV-API-41). `fields[]` adds to `forms[]` (their union, DEV-API-37); only instruments named in `forms[]` carry `<instrument>_complete`.",
                   "value": { "token": "8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", "content": "record", "format": "json", "type": "flat", "forms[0]": "imaging", "returnFormat": "json" }
                 },
                 "recordExportEvents": {
@@ -818,17 +818,18 @@
       "put": {
         "tags": ["Admin: Projects"],
         "operationId": "putMember",
-        "summary": "Add, change role, rotate token or remove a member (REQ-API-054/055)",
-        "description": "Requires `is_admin`. The single mutation point for membership, keyed on the body: `{\"role\": \"data-entry\"}` adds (201, with the new token returned once); `{\"role\": null}` makes the member role-less; `{\"rotate_token\": true}` rotates — the previous token is invalid immediately; `{\"remove\": true}` removes the member and invalidates the token. Audit `membership_changed` plus `token_issued`/`token_rotated`/`token_revoked`. The token value never appears in logs or audit details.",
+        "summary": "Add, change role, rotate or adopt a token, or remove a member (REQ-API-054/055)",
+        "description": "Requires `is_admin`. The single mutation point for membership, keyed on the body: `{\"role\": \"data-entry\"}` adds (201, with the new token returned once); `{\"role\": null}` makes the member role-less; `{\"rotate_token\": true}` rotates — the previous token is invalid immediately; `{\"adopt_token\": \"<32 characters 0-9 A-F>\"}` sets an existing REDCap token value for an existing member (REQ-AUTH-090) — the previous token is invalid immediately, the value is not returned, a malformed value is 400 and one held by another member is 409; `{\"remove\": true}` removes the member and invalidates the token. Audit `membership_changed` plus `token_issued`/`token_rotated`/`token_revoked`. The token value never appears in logs or audit details.",
         "parameters": [ { "$ref": "#/components/parameters/ProjectId" }, { "$ref": "#/components/parameters/UserIdPath" } ],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MemberMutation" }, "examples": {
           "add": { "value": { "role": "data-entry" } },
           "role_less": { "value": { "role": null } },
           "rotate": { "value": { "rotate_token": true } },
+          "adopt": { "value": { "adopt_token": "0123456789ABCDEF0123456789ABCDEF" } },
           "remove": { "value": { "remove": true } }
         } } } },
         "responses": {
-          "200": { "description": "Role change (member object), rotation (member object with the new token) or removal (`{\"ok\": true}`).", "content": { "application/json": { "schema": { "oneOf": [ { "$ref": "#/components/schemas/MemberWithToken" }, { "$ref": "#/components/schemas/OkResponse" } ] } } } },
+          "200": { "description": "Role change or adoption (member object, no token), rotation (member object with the new token) or removal (`{\"ok\": true}`).", "content": { "application/json": { "schema": { "oneOf": [ { "$ref": "#/components/schemas/MemberWithToken" }, { "$ref": "#/components/schemas/OkResponse" } ] } } } },
           "201": { "description": "The member was added — the member object with the new token, returned once for display (REQ-API-055).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MemberWithToken" } } } },
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
@@ -2901,10 +2902,11 @@
       },
       "MemberMutation": {
         "type": "object",
-        "description": "The single mutation point for membership (REQ-API-054): add (`role`), change role (`role`, `null` = role-less), rotate the token (`rotate_token`), remove (`remove`).",
+        "description": "The single mutation point for membership (REQ-API-054): add (`role`), change role (`role`, `null` = role-less), rotate the token (`rotate_token`), adopt a REDCap token value (`adopt_token`, REQ-AUTH-090), remove (`remove`). At most one per call.",
         "properties": {
           "role": { "type": ["string", "null"], "description": "Role name; null or omitted = role-less (full permissions, REQ-AUTH-022)." },
           "rotate_token": { "type": "boolean" },
+          "adopt_token": { "type": "string", "pattern": "^[0-9A-F]{32}$", "description": "An existing REDCap API token to adopt for this member (REQ-AUTH-090, DEV-AUTH-20); never returned." },
           "remove": { "type": "boolean" }
         }
       },

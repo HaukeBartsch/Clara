@@ -576,6 +576,10 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 	}
 	var pendings []pending
 	var problems []string
+	// Any other overwriteBehavior — overwrite, none at all — keeps this API's
+	// empty-means-clear, which the web application's clearing of a field
+	// relies on (GD-14, REQ-UI-031).
+	keepBlanks := strings.EqualFold(p.OverwriteBehavior, "normal")
 	// Deterministic order: dictionary order over the row's keys. A checkbox is
 	// written through its choice columns, which follow it in the expanded
 	// dictionary (REQ-DB-042).
@@ -630,6 +634,14 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 				"' belongs to instrument '"+f.Instrument+"', not '"+own+"'")
 			continue
 		}
+		// overwriteBehavior=normal is REDCap's import of an empty cell: no value,
+		// so the stored one stays (REQ-VAL-024, DEV-API-43). FIONA sends it on
+		// all but one of its imports and resends rows with cells it no longer
+		// holds; read as a clear, a resend erased the transfer's mapped UID.
+		// A box sent as 0 is a value — it unchecks — and is kept below.
+		if raw == "" && keepBlanks {
+			continue
+		}
 		if f.isChoiceColumn() {
 			// One box: 1 checks it, 0 clears it exactly like an empty value —
 			// only checked boxes hold a stored row (REQ-DB-042).
@@ -642,6 +654,21 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 					" — value '"+raw+"' of checkbox choice '"+f.FieldName+"' must be 0 or 1")
 				continue
 			}
+		}
+		// A value lives at a pair (REQ-DB-036): an instrument not mapped to the
+		// row's event has none there, and a value stored anyway would be kept but
+		// shown nowhere — no export, no form, no dashboard (REQ-API-134). REDCap
+		// refuses it, and so does this import (REQ-API-033, DEV-API-42). An empty
+		// cell is no value: REDCap's export writes every column on every row, and
+		// clearing here would destroy what a pair kept from the time it was
+		// mapped, waiting to be mapped back. The identifier is the record's at
+		// every event (GD-8).
+		if d.hasEvents && f.FieldName != d.identifier && !d.mapsPair(f.InstrumentID, event) {
+			if raw != "" {
+				problems = append(problems, f.FieldName+": CONTENT_INVALID — instrument '"+f.Instrument+
+					"' is not mapped to event '"+event+"'")
+			}
+			continue
 		}
 		vf := validate.Field{
 			Name:           f.FieldName,
@@ -668,10 +695,10 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 			continue
 		}
 		// §5.1 content policy after the type validator, before the write: UTF-8,
-		// control characters and the §5.2 HTML allowlist, applied at this one
-		// place so the data API import, the UI's data entry and survey links all
-		// store identical bytes for identical input (REQ-VAL-030/001/004). The
-		// stored result is what REQ-VAL-031 lets the UI render as allowlist HTML.
+		// control characters and the length cap, applied at this one place so the
+		// data API import, the UI's data entry and survey links all store
+		// identical bytes for identical input (REQ-VAL-030/001/004). A value that
+		// passes is stored as received; the UI escapes it (REQ-VAL-031, DEV-VAL-15).
 		policy, cv := validate.ApplyContentPolicy(vf, raw, h.Cfg.MaxValueBytes)
 		if cv != nil {
 			problems = append(problems, f.FieldName+": "+string(cv.Code)+" — "+cv.Message)

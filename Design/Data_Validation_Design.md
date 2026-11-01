@@ -25,7 +25,7 @@ Every value passes the same ordered pipeline, regardless of entry path (data API
 | 3 | field type accepts values — not `description`/`header`/`transfer` (REQ-VAL-006), not `calculated` (REQ-VAL-036) | `NON_VALUE_FIELD` / `CALCULATED_READONLY` |
 | 4 | value non-empty? no → "no value" (clear/no-op, REQ-VAL-024) — **except** the record identifier (REQ-VAL-026) | identifier: `EMPTY_IDENTIFIER` |
 | 5 | type validator per `validation_type` (§4) | `TYPE_INVALID` / `RANGE` / `CHOICE_INVALID` |
-| 6 | content policy for free-form text (§5) | strips markup (rarely errors: `CONTENT_INVALID` for non-UTF-8 / control chars) |
+| 6 | content policy (§5): UTF-8, control characters, length; the value is otherwise stored as received | `CONTENT_INVALID` |
 | 7 | identifier rules: existing record's identifier unchanged (REQ-VAL-027) | `IDENTIFIER_CHANGE` |
 
 One failed value fails the whole record's import (all-or-nothing, REQ-VAL-008/REQ-API-035) with per-field detail (REQ-API-034). Rules come **only** from the data dictionary (REQ-VAL-003) — no per-project or per-caller rule sets.
@@ -101,40 +101,23 @@ A single, centralized policy is applied to every free-form text value (a `text` 
 | 1 | value is valid UTF-8 | `CONTENT_INVALID` |
 | 2 | C0 control characters (U+0000–U+001F) are rejected **except** tab (U+0009) and line feed (U+000A); carriage return (U+000D) is accepted and normalized to line feed | `CONTENT_INVALID` |
 | 3 | length ≤ `MAX_VALUE_BYTES` (default: no application cap; the storage type `TEXT`/`LONGTEXT` is the bound — REQ-VAL-021/ASM-VAL-2; a finite cap MAY be set in configuration, see `System_Configuration_Design.md`) | `CONTENT_INVALID` (only when a cap is configured) |
-| 4 | HTML sanitization per §5.2 (strip disallowed markup, preserve text) | — (never errors; transforms) |
 
-The result of step 4 is the stored value. Steps 1–3 reject with `CONTENT_INVALID` (a step-7-style per-field error, all-or-nothing per record, §2).
+The value after step 3 is the stored value — the input itself, with CR normalized to LF (§5.2). Steps 1–3 reject with `CONTENT_INVALID` (a step-7-style per-field error, all-or-nothing per record, §2).
 
-### 5.2 HTML allowlist and sanitization (normative)
+### 5.2 Stored as received (normative, DEV-VAL-15)
 
-**Allowed elements** (the final list, resolves ASM-VAL-5): `a`, `b`, `br`, `code`, `em`, `i`, `li`, `ol`, `p`, `s`, `strong`, `u`, `ul`, `blockquote`.
+The policy never rewrites a value: no HTML parsing, no element allowlist, no entity encoding, no trimming. A value that passes §5.1 is stored byte for byte as it arrived, apart from step 2's line-feed normalization, and the data-API export returns it unchanged (REQ-API-037) — REDCap's behaviour, on which FIONA relies:
 
-**Attributes:** none are allowed except `href` on `a`. The `href` value MUST be an absolute URI whose scheme is `http`, `https`, or `mailto`; any other scheme (or a relative URL) causes the `href` attribute to be removed (the link text is kept).
-
-
-**Sanitization algorithm** (applied at store):
-1. Parse the value as HTML (tolerant parse).
-2. Walk the resulting tree:
-   - Keep elements whose tag is in the allowlist.
-   - On `a`, keep only `href` (scheme-checked per above); drop all other attributes.
-   - On any other allowed element, drop all attributes.
-   - On a disallowed element that **carries display text** (e.g. `span`, `div`, `font`, `table`, `td`, `h1`–`h6`): replace the element by its flattened text content (the tag is stripped, the words are kept as plain text).
-   - On a disallowed element that **carries executable or external content** — `script`, `style`, `noscript`, `iframe`, `frame`, `object`, `embed`, `applet`, `link`, `meta`, `base`, `form`, `input`, `button`, `select`, `textarea` — remove the element **and** its entire content (nothing is preserved).
-3. Decode HTML entities in the surviving text; re-escape on serialization (`&`, `<`, `>`, and quotes) so the stored string is inert.
-4. Serialize the cleaned tree to the canonical stored string.
-
-**Worked examples:**
-
-| Stored input | Stored output |
+| Imported | Stored and exported |
 |---|------|
-| `hello <b>world</b>` | `hello <b>world</b>` |
-| `<div>note: <a href=\"https://x.no\">link</a></div>` | `note: <a href=\"https://x.no\">link</a>` |
-| `<a href=\"javascript:alert(1)\">x</a>` | `x` |
-| `<script>steal()</script>ok` | `ok` |
-| `<img src=x onerror=alert(1)>` | `` (removed, no text) |
-| `a &amp; b <script>bad()</script>` | `a &amp; b` |
+| `MPR "Thick" 3 & 4` | `MPR "Thick" 3 & 4` |
+| `<MPR Thick Range>` | `<MPR Thick Range>` |
+| `<script>steal()</script>ok` | `<script>steal()</script>ok` — inert, because every output escapes it |
+| `line 1\r\nline 2` | `line 1\nline 2` |
 
-**Rendering (REQ-VAL-031):** the stored value is allowlist HTML and MAY be rendered as HTML in the UI (data entry form, record view, record history, audit views). **All other** user-supplied content (choice values, field labels, record names, user names, audit fields) is escaped server-side and never rendered as HTML (REQ-TECH-020). The `Content-Security-Policy` header is the backstop (REQ-TECH-020).
+Values stored by the earlier allowlist sanitizer keep the form it gave them (`a &amp; b`); they are not migrated.
+
+**Rendering (REQ-VAL-031):** every stored value — free text included — is escaped server-side wherever the web application puts it into HTML (data entry form, record view, record history, audit views), like all other user-supplied content (choice values, field labels, record names, user names, audit fields; REQ-TECH-020). No stored value is rendered as HTML. The `Content-Security-Policy` header is the backstop (REQ-TECH-020). A client of the data API that renders values as HTML escapes them itself, as it did under REDCap.
 
 ### 5.3 CSV formula-injection neutralization (REQ-VAL-032)
 
@@ -343,7 +326,7 @@ Rules:
 | ASM-VAL-2 (free-text length cap) | no application cap beyond the storage type by default (REQ-VAL-021); a finite cap MAY be set in configuration — the key is defined in `System_Configuration_Design.md` (§5.1) |
 | ASM-VAL-3 (partial records) | `required` is advisory at import; completion is tracked, not enforced (§8) |
 | ASM-VAL-4 (calculated-field details) | `*`/`/` before `+`/`-`, all left-associative, parentheses override; acyclic dependency graph; value stored at each active position; expression change → project-wide recomputation (§6) |
-| ASM-VAL-5 (free-form text details) | allowlist final (§5.2); disallowed markup is stripped with its text preserved; only `href` on `a`, schemes `http`/`https`/`mailto` |
+| ASM-VAL-5 (free-form text details) | superseded by DEV-VAL-15: there is no allowlist; free text is stored as received and escaped at output (§5.2) |
 | ASM-VAL-6 (branching-logic details) | numeric / chronological / lexicographic comparison; missing referenced value → `0`; truthiness for bare references; `&&`/`\|\|` as the logical operators; function set final (§7) |
 
 ## 12. Open Items
@@ -356,7 +339,7 @@ Rules:
 
 ## 13. Rationale and Trade-offs
 
-Why validation works this way, and what each choice costs. The decision records DEV-VAL-1…13 (`Requirements/Data_Validation_Requirements.md` §8) carry the requirement-level reasoning.
+Why validation works this way, and what each choice costs. The decision records DEV-VAL-1…15 (`Requirements/Data_Validation_Requirements.md` §8) carry the requirement-level reasoning.
 
 - **One pipeline, one choke point** (§2). Every value — data-API import, UI data entry, survey link — passes the same ordered steps in the API, so no entry path can store what another would refuse. Client-side checks are advisory only (`User_Interface_Design.md` §8.4, REQ-VAL-002); the server is the gate.
 - **Rules come only from the data dictionary** (§2, REQ-VAL-003). There are no per-project or per-caller rule sets, so a design export carries every rule a value is held to, and an import into another project applies the same ones.
@@ -365,7 +348,7 @@ Why validation works this way, and what each choice costs. The decision records 
 - **Calculation problems yield an empty value, not a failed import** (§6.3, REQ-VAL-038). A missing operand or a division by zero must not block the entry of a valid value elsewhere; the problem is application-logged for the designer to fix.
 - **Branching is display-only** (§7, GD-13). It decides what the form shows, never what may be stored, so a branching change cannot invalidate stored data and no stored value depends on how an expression is read (DEV-VAL-13).
 - **REDCap's spellings are accepted as written** (§7.1, DEV-VAL-12). Dictionaries imported from REDCap keep their text choice codes, `or`/`and` keywords and `= ''` blank tests; the cost is a grammar with more than one spelling for the same thing.
-- **Sanitize at store, render as stored** (§5). Free-form text is sanitized to an HTML allowlist once, when stored, so every reader can render it without its own sanitizer; all other content is escaped at render (`User_Interface_Design.md` §3.2).
+- **Store as received, escape at output** (§5, DEV-VAL-15). A REDCap client reads back exactly what it wrote, which an allowlist sanitizer at store broke (`&` → `&amp;`, `<MPR Thick Range>` → nothing). The web application escapes every value at render (`User_Interface_Design.md` §3.2), so the XSS defence is kept for its pages. The cost: formatting markup in free text shows as text, and a data-API client that renders values as HTML must escape them itself.
 
 ## 14. Edge Cases and Failure Modes
 

@@ -378,13 +378,25 @@ final class ProjectController extends ProjectPageController
         return $this->memberWrite($this->fieldId('user_id'), ['rotate_token' => true], 'members.rotated');
     }
 
+    /**
+     * The member's token becomes an existing REDCap token value (REQ-AUTH-090, DEV-AUTH-20).
+     * The value is a credential the administrator already holds: it goes to the API and
+     * nowhere else — not into the flash, the log or the page; the API returns no token, so
+     * memberWrite holds no reveal. Surrounding whitespace from a paste is dropped; the format
+     * itself is the API's to judge.
+     */
+    public function adoptToken(): Response
+    {
+        return $this->memberWrite($this->fieldId('user_id'), ['adopt_token' => trim($this->request->field('token'))], 'members.adopted');
+    }
+
     public function removeMember(): Response
     {
         return $this->memberWrite($this->fieldId('user_id'), ['remove' => true], 'members.removed');
     }
 
     /**
-     * `PUT …/users/{uid}` with exactly one of role / rotate_token / remove (§4.6). A response
+     * `PUT …/users/{uid}` with exactly one of role / rotate_token / adopt_token / remove (§4.6). A response
      * that carries a token (add 201, rotate 200) is held for one render — shown once, masked,
      * with Show and the "will not be shown again" warning (§3.5, REQ-UI-013/062).
      */

@@ -114,6 +114,9 @@ func newIncomingFixture(t *testing.T) *incomingFixture {
 	field(inStudies, "study_date", "", "") // DICOM YYYYMMDD, text in the ODM file
 	field(inStudies, "study_arrival_date", "datetime", "")
 	field(inStudies, "study_patient_id", "", "")
+	// The AutoID run names it in fields[] (populateAutoID.py getIncomingData), and
+	// an unknown fields[] entry is a 400 (DEV-API-41), as the real project has it.
+	field(inStudies, "study_aetitle_addressed", "", "")
 	field(inSeries, "series_instance_uid", "", "")
 	field(inSeries, "series_description", "", "")
 	field(inSeries, "series_num_files", "", "")
@@ -662,5 +665,52 @@ func TestFionaIncomingDateRange(t *testing.T) {
 	}
 	if after := exports(); after != before {
 		t.Errorf("refused windows wrote %d export audit rows", after-before)
+	}
+}
+
+// TestFionaResendKeepsMappedUID: anonymizeAndSend.py writes back with
+// overwriteBehavior=normal, and a failed resend sends the transfer row with the
+// cells it no longer holds left empty. REDCap's normal keeps the stored values
+// under empty cells; reading them as clears erased the transfer's mapped UID in
+// the FIONA test run (REQ-VAL-024, DEV-API-43). A box sent as 0 is a value and
+// still unchecks. overwrite — FIONA's process_tiff_importREDCap.py — and an
+// omitted parameter keep clearing.
+func TestFionaResendKeepsMappedUID(t *testing.T) {
+	f := newIncomingFixture(t)
+	row := func(uid string, box3 any) []map[string]any {
+		return []map[string]any{{"study_instance_uid": incomingStudy, "redcap_repeat_instance": 1,
+			"redcap_repeat_instrument": "transfers", "transfer_project_name": "StudyB",
+			"transfer_mapped_uid": uid, "transfer_error___3": box3, "transfer_error_message": ""}}
+	}
+	if code, body := f.importData(t, row("1.3.6.1.4.1.45037.99", 1), true); countOf(t, code, body) != 1 {
+		t.Fatalf("seed: %d %s", code, body)
+	}
+	// The failed resend: empty UID, the box unchecked explicitly.
+	if code, body := f.importData(t, row("", 0), true); countOf(t, code, body) != 1 {
+		t.Fatalf("resend: %d %s", code, body)
+	}
+	if v := f.value(t, "Transfers", 1, "transfer_mapped_uid"); v != "1.3.6.1.4.1.45037.99" {
+		t.Errorf("transfer_mapped_uid after a normal resend = %q, want it kept", v)
+	}
+	if v := f.value(t, "Transfers", 1, "transfer_error___3"); v != "" {
+		t.Errorf("transfer_error___3 = %q after 0, want the box unchecked", v)
+	}
+
+	// overwrite clears, as asked; so does a call that names no behaviour.
+	for _, behaviour := range []string{"overwrite", ""} {
+		f.importData(t, row("1.3.6.1.4.1.45037.99", ""), true)
+		payload, _ := json.Marshal(row("", ""))
+		form := url.Values{"token": {incomingToken}, "content": {"record"}, "format": {"json"},
+			"returnContent": {"count"}, "data": {string(payload)}}
+		if behaviour != "" {
+			form.Set("overwriteBehavior", behaviour)
+		}
+		code, body := do(t, f.h, form)
+		if n := countOf(t, code, body); n != 1 {
+			t.Fatalf("%q: count = %d", behaviour, n)
+		}
+		if v := f.value(t, "Transfers", 1, "transfer_mapped_uid"); v != "" {
+			t.Errorf("overwriteBehavior %q: transfer_mapped_uid = %q, want cleared", behaviour, v)
+		}
 	}
 }

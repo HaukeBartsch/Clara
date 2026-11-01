@@ -943,8 +943,10 @@ describe('record view (§8, REQ-UI-025…027)', function (): void {
         assert_not_contains('data-clara-save', $body);
         assert_not_contains('name="value[', $body);
         assert_not_contains('action=delete', $body);
-        // Stored free text is allowlist HTML and renders as such (§3.2); a choice shows its label.
-        assert_contains('<b>ok</b>', $body);
+        // Stored free text is shown as stored, escaped like every value — markup is text
+        // (REQ-VAL-031, DEV-VAL-15); a choice shows its label.
+        assert_contains('&lt;b&gt;ok&lt;/b&gt;', $body);
+        assert_not_contains('<b>ok</b>', $body);
         assert_contains('Female', $body);
     });
 
@@ -1530,11 +1532,9 @@ function m5_yesno_notes_history(): array
 }
 
 describe('yes/no and notes fields in data entry (REQ-DB-043/044, REQ-UI-025)', function (): void {
-    it('treats both as enterable, notes as free text, and labels yes/no in the interface language', function (): void {
+    it('treats both as enterable and labels yes/no in the interface language', function (): void {
         $consent = m5_field(7, 'consent', 'yesno', ['choices' => '1$Yes##0$No']);
         assert_true(DataEntry::isEnterable($consent) && DataEntry::isEnterable(m5_field(8, 'remarks', 'notes')));
-        assert_true(DataEntry::isFreeText(m5_field(8, 'remarks', 'notes')));
-        assert_true(!DataEntry::isFreeText($consent));
         $nb = static fn (string $key): string => ['record.yes' => 'Ja', 'record.no' => 'Nei'][$key];
         assert_same([['code' => '1', 'label' => 'Ja'], ['code' => '0', 'label' => 'Nei']], DataEntry::shownChoices($consent, $nb));
         $radio = m5_field(3, 'sex', 'radio', ['choices' => '1$Male##2$Female']);

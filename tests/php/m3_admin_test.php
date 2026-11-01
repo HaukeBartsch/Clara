@@ -551,7 +551,39 @@ describe('project page — Members (§5.3, REQ-UI-013)', function (): void {
         assert_same(['remove' => true], m3_last_put('/api/v1/projects/3/users/9'));
     });
 
-    it('confirms before rotating or removing (§3.5) and never prints a stored token', function (): void {
+    it('adopts an existing REDCap token without echoing it anywhere (REQ-AUTH-090)', function (): void {
+        sign_in(['is_admin' => 1]);
+        m3_queue_project();
+        $value = '0123456789ABCDEF0123456789ABCDEF'; // made up, in REDCap's form
+        // The API answers an adoption with the member object and no token (§4.6).
+        api_route('/api/v1/projects/3/users/9', ['user_id' => 9, 'email' => 'ada@example.org', 'token_present' => true]);
+        m3_queue_members();
+
+        $answer = m3_post('/projects/3/members', ['user_id' => '9', 'email' => 'ada@example.org', 'token' => "  $value\n"], 'adopt_token');
+        assert_same('/projects/3/members', $answer->headers()['Location']);
+        assert_same(['adopt_token' => $value], m3_last_put('/api/v1/projects/3/users/9'), 'sent once, paste whitespace dropped');
+        $flash = implode(' ', array_column(Session::takeFlash(), 'text'));
+        assert_contains('ada@example.org', $flash);
+        assert_not_contains($value, $flash);
+
+        $page = router_for(http_request('GET', '/projects/3/members', browser_headers()))->dispatch()->body();
+        assert_not_contains($value, $page, 'nothing is shown back');
+        assert_not_contains('clara-new-token', $page, 'no reveal: the administrator supplied the value');
+    });
+
+    it('shows a refused adoption as an error and never refills the input', function (): void {
+        sign_in(['is_admin' => 1]);
+        m3_queue_project();
+        api_route('/api/v1/projects/3/users/9', ['error' => 'conflict', 'message' => 'token already in use'], 409);
+        m3_queue_members();
+        m3_post('/projects/3/members', ['user_id' => '9', 'token' => 'FEDCBA9876543210FEDCBA9876543210'], 'adopt_token');
+        $flash = Session::takeFlash();
+        assert_same('danger', $flash[0]['level'] ?? '');
+        assert_contains('token already in use', $flash[0]['text'] ?? '');
+        assert_not_contains('FEDCBA9876543210FEDCBA9876543210', implode(' ', array_column($flash, 'text')));
+    });
+
+    it('confirms before rotating, adopting or removing (§3.5) and never prints a stored token', function (): void {
         sign_in(['is_admin' => 1]);
         m3_queue_project();
         api_route('/api/v1/projects/3/users', [['user_id' => 9, 'email' => 'ada@example.org', 'display_name' => 'Ada',
@@ -564,6 +596,10 @@ describe('project page — Members (§5.3, REQ-UI-013)', function (): void {
 
         assert_same(1, preg_match('/action=rotate_token"[^>]*data-clara-confirm=/', $body));
         assert_same(1, preg_match('/action=remove_member"[^>]*data-clara-confirm=/', $body));
+        // Adoption: confirmed, and the value goes in masked, empty, unremembered (REQ-AUTH-090).
+        assert_same(1, preg_match('/action=adopt_token"[^>]*data-clara-confirm=/', $body));
+        assert_same(1, preg_match('/<input[^>]*type="password"[^>]*name="token"[^>]*pattern="\[0-9A-F\]\{32\}"[^>]*autocomplete="off"/', $body));
+        assert_same(0, preg_match('/name="token"[^>]*value=/', $body), 'the adoption input carries no value');
         assert_contains('No role (full permissions)', $body);
         assert_not_contains('clara-new-token', $body);
     });

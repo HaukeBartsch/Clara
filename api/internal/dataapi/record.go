@@ -157,6 +157,31 @@ func (d *projectDict) completionInstrument(key string) (dictInstrument, bool) {
 	return d.instrumentByName(base)
 }
 
+// unknownFieldNames lists the fields[] entries that name nothing of the
+// dictionary, in request order and once each — what REDCap refuses with its
+// 400 (REQ-API-024, DEV-API-41). A name is known when it is a field of the
+// project, any type, a checkbox's choice column (REQ-DB-042), or an
+// instrument's `<instrument>_complete` column in either spelling (REQ-API-134).
+// An empty entry names nothing and is not reported.
+func (d *projectDict) unknownFieldNames(names []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, n := range names {
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		if _, ok := d.byName[n]; ok {
+			continue
+		}
+		if _, ok := d.completionInstrument(n); ok {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
 // firstEventName is the project's first event in canonical order (GD-15): the
 // event a field reference without one reads in filterLogic, and the event an
 // import row naming none fills (REQ-API-031, DEV-API-35). "" for a project

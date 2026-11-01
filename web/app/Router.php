@@ -300,6 +300,9 @@ final class Router
             'handler' => 'changeRole', 'guard' => 'admin', 'action' => 'change_role'],
         ['method' => 'POST', 'pattern' => '/projects/{id}/members', 'controller' => Controllers\ProjectController::class,
             'handler' => 'rotateToken', 'guard' => 'admin', 'action' => 'rotate_token'],
+        // An existing REDCap token for a client that has it hard-coded (REQ-AUTH-090).
+        ['method' => 'POST', 'pattern' => '/projects/{id}/members', 'controller' => Controllers\ProjectController::class,
+            'handler' => 'adoptToken', 'guard' => 'admin', 'action' => 'adopt_token'],
         ['method' => 'POST', 'pattern' => '/projects/{id}/members', 'controller' => Controllers\ProjectController::class,
             'handler' => 'removeMember', 'guard' => 'admin', 'action' => 'remove_member'],
         // The just-issued token's Show (audited, REQ-AUD-033) and Hide (REQ-UI-062).

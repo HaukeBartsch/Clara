@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"csms/api/internal/db"
 )
 
 // TestRecordImportExistingRowReadsInsideTransaction guards the SQLITE_BUSY
@@ -101,5 +103,77 @@ func TestRecordImportCountBatchReadsInsideTransaction(t *testing.T) {
 	}
 	if got := storedValue(t, f, "8DISC051", "baseline_arm_1", "age"); got != "45" {
 		t.Errorf("stored age of 8DISC051 = %q, want 45", got)
+	}
+}
+
+// TestRecordImportUnmappedPairRefused: a value whose instrument is not mapped to
+// the row's event has no pair to live at, so it would be stored and shown
+// nowhere (REQ-DB-036). The import refuses it as REDCap does (REQ-API-033,
+// DEV-API-42) — a result row of its own, the count mode's 400 — while an empty
+// cell there is no value at all and keeps what the pair stored before.
+func TestRecordImportUnmappedPairRefused(t *testing.T) {
+	f := newRecordFixture(t)
+	ctx := context.Background()
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	late, err := f.s.AddInstrument(ctx, &db.Instrument{ProjectID: f.pid, Name: "late", Position: 5})
+	must(err)
+	_, err = f.s.AddField(ctx, &db.Field{ProjectID: f.pid, InstrumentID: late, FieldName: "late_note", FieldType: "text", Position: 1})
+	must(err)
+	arms, err := f.s.ListArms(ctx, f.pid)
+	must(err)
+	pairs, err := f.s.ListInstrumentEvents(ctx, f.pid)
+	must(err)
+	fol, err := f.s.GetEventByUniqueName(ctx, f.pid, "followup_arm_1")
+	must(err)
+	must(f.s.SetInstrumentEventsForArm(ctx, f.pid, arms[0].ID, append(pairs, db.InstrumentEvent{InstrumentID: late, EventID: fol.ID})))
+	f.s.BumpStructureCache()
+
+	// Mapped at follow-up: stored.
+	res := f.importRows(t, importForm("tok-admin", map[string]string{
+		"record_id": "8DISC001", "redcap_event_name": "followup_arm_1", "late_note": "kept"}))
+	if res[0].ImportRecordID != importUpdated {
+		t.Fatalf("mapped pair: %+v", res[0])
+	}
+	// Not mapped at baseline: refused, flat row and form_name row alike, and
+	// nothing else of the row is stored.
+	for _, row := range []map[string]string{
+		{"record_id": "8DISC001", "redcap_event_name": "baseline_arm_1", "age": "50", "late_note": "x"},
+		{"record_id": "8DISC001", "redcap_event_name": "baseline_arm_1", "form_name": "late", "late_note": "x"},
+	} {
+		res := f.importRows(t, importForm("tok-admin", row))
+		if res[0].ImportRecordID != importInvalid ||
+			!strings.Contains(res[0].ImportFormName, "late_note: CONTENT_INVALID — instrument 'late' is not mapped to event 'baseline_arm_1'") {
+			t.Errorf("row %v = %+v, want the unmapped-pair refusal", row, res[0])
+		}
+	}
+	if got := storedValue(t, f, "8DISC001", "baseline_arm_1", "age"); got != "42" {
+		t.Errorf("age = %q after a refused row, want the old 42", got)
+	}
+	if got := storedValue(t, f, "8DISC001", "baseline_arm_1", "late_note"); got != "" {
+		t.Errorf("late_note stored at baseline = %q", got)
+	}
+	// Count mode: the call's 400, which FIONA reads as the failed write.
+	form := importForm("tok-admin", map[string]string{
+		"record_id": "8DISC001", "redcap_event_name": "baseline_arm_1", "late_note": "x"})
+	form.Set("returnContent", "count")
+	code, body := f.call(t, form)
+	mustStatus(t, code, http.StatusBadRequest, body)
+	if !strings.Contains(body, "is not mapped to event 'baseline_arm_1'") {
+		t.Errorf("count-mode body = %s", body)
+	}
+	// An empty cell at the unmapped pair is no value: the row applies, and the
+	// value the mapped pair holds stays.
+	res = f.importRows(t, importForm("tok-admin", map[string]string{
+		"record_id": "8DISC001", "redcap_event_name": "baseline_arm_1", "age": "51", "late_note": ""}))
+	if res[0].ImportRecordID != importUpdated {
+		t.Fatalf("empty unmapped cell: %+v", res[0])
+	}
+	if got := storedValue(t, f, "8DISC001", "followup_arm_1", "late_note"); got != "kept" {
+		t.Errorf("follow-up late_note = %q, want kept", got)
 	}
 }

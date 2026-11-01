@@ -695,8 +695,6 @@ func TestRecordExportFilterMatchesNothing(t *testing.T) {
 
 	empty("forms[] of no instrument", url.Values{"forms": {"no_such_form"}})
 	empty("forms[] wide", url.Values{"forms": {"no_such_form"}, "type": {"wide"}})
-	empty("fields[] of no field", url.Values{"fields": {"no_such_field"}})
-	empty("fields[] and forms[] both of nothing", url.Values{"forms": {"no_such_form"}, "fields": {"no_such_field"}})
 
 	// CSV keeps its header and carries no data row: the file states its columns,
 	// which is all the filters left, and names no record anywhere.
@@ -716,6 +714,29 @@ func TestRecordExportFilterMatchesNothing(t *testing.T) {
 		"forms": {"no_such_form"}, "filterLogic": {"[age] = = 3"},
 	})
 	mustStatus(t, code, 400, body)
+
+	// A fields[] entry naming no field is not this case: REDCap refuses it with a
+	// 400 naming the values, and so does this API, before any record is read and
+	// with nothing audited (REQ-API-024, DEV-API-41).
+	before := auditCount(t, f.s, audit.Export)
+	code, body = f.call(t, url.Values{
+		"token": {"tok-admin"}, "content": {"record"}, "returnFormat": {"json"},
+		"fields": {"record_id", "no_such_field", "also_missing", "no_such_field"},
+	})
+	mustStatus(t, code, 400, body)
+	if want := `{"error":"The following values in the parameter \"fields\" are not valid: 'no_such_field', 'also_missing'"}`; body != want {
+		t.Errorf("unknown fields[] body = %s, want %s", body, want)
+	}
+	if got := auditCount(t, f.s, audit.Export); got != before {
+		t.Errorf("a refused fields[] audited %d export events, want none", got-before)
+	}
+	// Every name the dictionary knows stays accepted: a field of any type, a
+	// checkbox's own name, and an instrument's _complete column.
+	code, body = f.call(t, url.Values{
+		"token": {"tok-admin"}, "content": {"record"}, "returnFormat": {"json"},
+		"fields": {"record_id", "age", "demo_complete"},
+	})
+	mustStatus(t, code, 200, body)
 
 	// An instrument of the project that is mapped to no event leaves no pair
 	// either: same answer, through the same branch.

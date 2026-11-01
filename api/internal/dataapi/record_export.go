@@ -162,6 +162,17 @@ func (h *Handler) contentRecordExport(w http.ResponseWriter, r *http.Request, en
 		h.storeError(w, enc, err)
 		return
 	}
+	// A fields[] entry naming no field of the project is REDCap's 400, answered
+	// before any record is read and with nothing audited (REQ-API-024,
+	// REQ-AUD-004, DEV-API-41): FIONA asks fields[]=record_id and, on this
+	// error, reads the metadata for the identifier's real name. The names are
+	// the dictionary's, which content=metadata lists to the same token. An
+	// unknown forms[] entry keeps its empty answer (REQ-API-028).
+	if unknown := d.unknownFieldNames(p.Fields); len(unknown) > 0 {
+		writeError(w, enc, http.StatusBadRequest,
+			`The following values in the parameter "fields" are not valid: '`+strings.Join(unknown, "', '")+`'`)
+		return
+	}
 
 	// events[] filter; the candidate arms of the exported data bound the scope.
 	// Sensitivity is no longer computed from them — every column is rendered at

@@ -163,7 +163,7 @@ CREATE TABLE IF NOT EXISTS user_projects (       -- REQ-DB-010
     user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     role_id     INTEGER REFERENCES roles(id) ON DELETE SET NULL,  -- NULL = full permissions
-    token       CHAR(36) NOT NULL UNIQUE,       -- project token, unique across the DB
+    token       CHAR(36) NOT NULL UNIQUE,       -- project token (UUID, or an adopted 32-hex REDCap token), unique across the DB
     created_at  DATETIME NOT NULL,
     UNIQUE (user_id, project_id)
 );

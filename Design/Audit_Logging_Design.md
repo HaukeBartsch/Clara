@@ -19,7 +19,7 @@ The normative event catalog (event codes, `details` payload schemas), the record
 - **Event codes** (`event_type`) are stable, lowercase, `snake_case` strings; the audit UI and any downstream consumer may branch on them. Adding a code is non-breaking; changing or removing one is a breaking change.
 - **Fixed columns** (per `Database_Schema_Design.md` §7) carry the fields common to every entry: `source` (`api` / `ui` / `system`), `user_id`, `email`, `token` (data-API calls and survey-link calls only — REQ-AUD-018), `project_id`, `arm_num`, `role`, `details` (JSON, §3), `created_at` (UTC, REQ-AUD-005), and `target_record` (§6.4, record-scoped events).
 - **`source`** (REQ-AUD-017): `api` = direct data-API call (external callers such as Fiona, or a survey link); `ui` = administration-API call initiated by the PHP layer; `system` = system-driven write (calculated-field recomputation), with the triggering user still recorded in `user_id`.
-- **Values in payloads** are the stored values (sanitized, canonical forms per `Data_Validation_Design.md`), never raw request bytes. The trail is a business record and MAY contain tokens and values as defined here (REQ-AUD-007); application logs MUST NOT (REQ-API-005, REQ-TECH-016).
+- **Values in payloads** are the stored values (validated, canonical forms per `Data_Validation_Design.md`), never raw request bytes. The trail is a business record and MAY contain tokens and values as defined here (REQ-AUD-007); application logs MUST NOT (REQ-API-005, REQ-TECH-016).
 - Rejected calls (400/401/403) and validation-failed imports produce **no** data-change, structure, export, or record-view entries (REQ-AUD-004); security-relevant rejections are logged as `admin_rejected` / `login_failure` (§3.1).
 
 ## 3. Event Catalog (normative)
@@ -111,7 +111,7 @@ Field renames are `field_updated` with `"changes":{"name":{"old":"…","new":"�
 | `user_updated` | REQ-API-048/136 | `{"email":"…","enabled":0,"is_admin":{"old":1,"new":0}}` — one key per changed attribute; a grant/revoke of `is_admin` rides this event, no separate type (a rejected last-admin change writes nothing) |
 | `membership_changed` | REQ-API-054 | `{"member_email":"…","action":"add or role_change or remove","role":"data-entry or null"}`, plus `"region_placeholder":"OUS"` on an add that set the member's placeholder region (REQ-API-179, REQ-AUD-036) |
 | `token_issued` | first issuance via REQ-API-054 (REQ-AUTH-030) | `{"member_email":"…"}` — the token value is never in `details` (REQ-API-005) |
-| `token_rotated` | REQ-API-055 | `{"member_email":"…"}` |
+| `token_rotated` | REQ-API-055, REQ-AUTH-090 | `{"member_email":"…"}`, plus `"adopted": true` when an administrator set an existing REDCap token value rather than having CLARA issue one (DEV-AUTH-20) — never the value |
 | `token_revoked` | member removal or explicit revocation (REQ-AUTH-030) | `{"member_email":"…","reason":"member_removed or explicit"}` |
 | `token_viewed` | the administrator unmasks a just-issued token on the Members page — REQ-API-160 — or a member unmasks their own token on the account page — REQ-API-162 (REQ-AUD-033) | `{"member_email":"…"}` — one entry per Show, separate from the add's/rotation's entries, written before the value is displayed; never the value (REQ-API-005). A member's own view is the entry whose acting user's address equals `member_email` |
 | `role_created` | REQ-API-057 | `{"name":"data-manager","project_admin":1,"arms":{"1":{"data":"view_edit","export":"export_full"},"2":{"data":"view_edit","export":"export_none"}},"grants":[{"event":"v1_arm_1","instrument":"intake","data":"view_edit","export":"export_de_identified","delete_values":true,"edit_surveys":false}]}` — the permission set as supplied: arm defaults plus the named pair grants (REQ-AUTH-069/070) |
@@ -194,7 +194,7 @@ The row records **no values** — only who, when, which records, which instrumen
 - **Attribution** (REQ-AUD-017/018): data-API entries carry the token in the fixed column, `source=api`; administration entries carry the acting user (from `X-Internal-User-Id`, authoritative per REQ-AUTH-013), `source=ui`; system-driven entries (calculated recomputation) carry the triggering user, `source=system`, and no token.
 - **Timestamps** (REQ-AUD-005): server UTC at write time; MariaDB `DATETIME`, SQLite `TEXT` `YYYY-MM-DD HH:MM:SS` (`Database_Schema_Design.md` §2).
 - **Append-only** (REQ-AUD-002): the API exposes no UPDATE/DELETE on either table; on MariaDB the application account holds `INSERT, SELECT` only (REQ-DB-024).
-- **Values** in `details` are the stored (validated, sanitized) values, not request bytes (REQ-AUD-007, §2).
+- **Values** in `details` are the stored (validated, canonical) values, not request bytes (REQ-AUD-007, §2).
 
 ## 6. Partitioning and Rollover (REQ-AUD-006, REQ-DB-022)
 

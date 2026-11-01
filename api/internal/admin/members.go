@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"regexp"
 
 	"csms/api/internal/audit"
 	"csms/api/internal/db"
@@ -177,17 +179,25 @@ func dagGroupsByAssignment(memberships []db.DagMembership) map[int64]memberGroup
 // --- PUT /api/v1/projects/{id}/users/{uid} (REQ-API-054/055) ---
 
 // memberRequest is the §4.6 single mutation point: at most one of role
-// (null or omitted = role-less), rotate_token, remove — a bare body adds or
-// keeps a role-less member.
+// (null or omitted = role-less), rotate_token, adopt_token, remove — a bare
+// body adds or keeps a role-less member.
 type memberRequest struct {
 	Role        *json.RawMessage `json:"role"`
 	RotateToken bool             `json:"rotate_token"`
+	AdoptToken  *string          `json:"adopt_token"`
 	Remove      bool             `json:"remove"`
 }
 
+// memberMutations are the attributes of which a body carries at most one.
+var memberMutations = []string{"role", "rotate_token", "adopt_token", "remove"}
+
+// redcapToken is the one form an adopted token may take (REQ-AUTH-090): REDCap's
+// 32 upper-case hexadecimal characters, 128 bits like the UUIDs CLARA issues.
+var redcapToken = regexp.MustCompile(`^[0-9A-F]{32}$`)
+
 // putMember is the single mutation point for membership (REQ-API-054):
 // add (201 + new token), role change (200), token rotation (200 + new
-// token), removal (200). is_admin only.
+// token), token adoption (200, no token), removal (200). is_admin only.
 func (h *Handler) putMember(w http.ResponseWriter, r *http.Request) {
 	actorUser, ok := requireAdmin(w, r)
 	if !ok {
@@ -210,7 +220,7 @@ func (h *Handler) putMember(w http.ResponseWriter, r *http.Request) {
 		errBadRequest(w, "malformed JSON body")
 		return
 	}
-	if !RejectUnknownAttrs(w, supplied, "role", "rotate_token", "remove") {
+	if !RejectUnknownAttrs(w, supplied, memberMutations...) {
 		return
 	}
 	var body memberRequest
@@ -219,16 +229,16 @@ func (h *Handler) putMember(w http.ResponseWriter, r *http.Request) {
 		errBadRequest(w, "malformed JSON body")
 		return
 	}
-	// The three mutations are mutually exclusive; a bare body is the role
-	// mutation with a null role (omitted = role-less, REQ-AUTH-022).
+	// The mutations are mutually exclusive; a bare body is the role mutation
+	// with a null role (omitted = role-less, REQ-AUTH-022).
 	actions := 0
-	for _, k := range []string{"role", "rotate_token", "remove"} {
+	for _, k := range memberMutations {
 		if _, present := supplied[k]; present {
 			actions++
 		}
 	}
 	if actions > 1 {
-		errBadRequest(w, `"role", "rotate_token" and "remove" are mutually exclusive`)
+		errBadRequest(w, `"role", "rotate_token", "adopt_token" and "remove" are mutually exclusive`)
 		return
 	}
 
@@ -256,6 +266,8 @@ func (h *Handler) putMember(w http.ResponseWriter, r *http.Request) {
 		h.removeMember(w, ctx, actorUser, projectID, target)
 	case body.RotateToken:
 		h.rotateMemberToken(w, ctx, actorUser, projectID, target)
+	case supplied["adopt_token"] != nil:
+		h.adoptMemberToken(w, ctx, actorUser, projectID, target, body.AdoptToken)
 	default:
 		h.addOrChangeRole(w, ctx, actorUser, projectID, target, supplied["role"])
 	}
@@ -337,6 +349,76 @@ func (h *Handler) rotateMemberToken(w http.ResponseWriter, ctx context.Context, 
 	})
 }
 
+// adoptMemberToken sets the member's token to an existing REDCap token value so
+// a client that has it hard-coded keeps working (REQ-AUTH-090, DEV-AUTH-20). The
+// previous token is invalid immediately, as on a rotation. The value is the
+// caller's own, so it is not returned, and it never enters the audit details or a
+// log: the answer is the member object, as for a role change.
+func (h *Handler) adoptMemberToken(w http.ResponseWriter, ctx context.Context, actorUser *db.User, projectID int64, target *db.User, value *string) {
+	if value == nil || !redcapToken.MatchString(*value) {
+		errBadRequest(w, "adopt_token must be a REDCap API token: 32 characters 0-9 and A-F")
+		return
+	}
+	a, err := h.Store.GetAssignment(ctx, target.ID, projectID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	if a == nil {
+		errNotFound(w)
+		return
+	}
+	changed, err := h.Store.AdoptAssignmentToken(ctx, target.ID, projectID, *value)
+	if errors.Is(err, db.ErrTokenInUse) {
+		errConflict(w, "token already in use")
+		return
+	}
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	// Adopting the value the member already holds changes nothing and records
+	// nothing (REQ-API-042).
+	if changed {
+		if err := h.auditMember(ctx, actorUser, projectID, audit.TokenRotated, map[string]any{
+			"member_email": target.Email, "adopted": true,
+		}); err != nil {
+			errInternal(w)
+			return
+		}
+	}
+	roles, err := h.projectRoles(ctx, projectID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	obj, err := h.memberObjectOf(ctx, target, a, roleName(roles, a.RoleID))
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, obj)
+}
+
+// memberObjectOf is one member's list representation (§4.6) with its groups
+// read back, so a client that posts the groups on from this answer keeps them
+// (REQ-API-141).
+func (h *Handler) memberObjectOf(ctx context.Context, target *db.User, a *db.Assignment, role *string) (memberObject, error) {
+	mine, err := h.Store.ListDAGMembershipsByAssignment(ctx, a.ID)
+	if err != nil {
+		return memberObject{}, err
+	}
+	set, held := dagGroupsByAssignment(mine)[a.ID]
+	if !held {
+		set = memberGroupSet{groups: []int64{}}
+	}
+	return memberObject{
+		UserID: target.ID, Email: target.Email, DisplayName: target.DisplayName,
+		Role: role, TokenPresent: a.Token != "", Enabled: target.Enabled,
+		Groups: set.groups, ActiveGroupID: set.activeGroupID,
+	}, nil
+}
+
 // addOrChangeRole applies the role mutation: an existing membership gets a
 // role change (200, no token in the response); a missing one is added with
 // a fresh token (201, REQ-API-055). A null or omitted role means role-less =
@@ -366,20 +448,12 @@ func (h *Handler) addOrChangeRole(w http.ResponseWriter, ctx context.Context, ac
 		// The role mutation leaves the member's groups untouched, and the response says so
 		// with their real values rather than an empty list a client might post back and
 		// thereby clear (REQ-API-141).
-		mine, err := h.Store.ListDAGMembershipsByAssignment(ctx, a.ID)
+		obj, err := h.memberObjectOf(ctx, target, a, roleNameStr)
 		if err != nil {
 			errInternal(w)
 			return
 		}
-		set, held := dagGroupsByAssignment(mine)[a.ID]
-		if !held {
-			set = memberGroupSet{groups: []int64{}}
-		}
-		writeJSON(w, http.StatusOK, memberObject{
-			UserID: target.ID, Email: target.Email, DisplayName: target.DisplayName,
-			Role: roleNameStr, TokenPresent: a.Token != "", Enabled: target.Enabled,
-			Groups: set.groups, ActiveGroupID: set.activeGroupID,
-		})
+		writeJSON(w, http.StatusOK, obj)
 		return
 	}
 

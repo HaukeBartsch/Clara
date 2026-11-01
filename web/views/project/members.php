@@ -3,7 +3,8 @@
  * Project page — Members and tokens (§5.3, is_admin, REQ-UI-013). One row per member (role or
  * "no role — full permissions" per REQ-AUTH-022, whether a token exists, account state), an
  * add form over the enabled accounts that are not members yet, and per-row role change, token
- * rotation and removal. A token value never appears in the table (REQ-API-005): a just-issued
+ * rotation, adoption of an existing REDCap token (REQ-AUTH-090: a masked input, never filled
+ * back) and removal. A token value never appears in the table (REQ-API-005): a just-issued
  * one (add, rotate) is shown exactly once above it, read-only, with warning (§3.5) — masked
  * and without its value until Show, which is audited; Copy comes with the shown value
  * (REQ-UI-062).
@@ -123,6 +124,18 @@ $roleOptions = static function (?string $current) use ($roles, $view): string {
                         <input type="hidden" name="user_id" value="<?= $uid ?>">
                         <input type="hidden" name="email" value="<?= View::e($email) ?>">
                         <button class="btn btn-sm btn-outline-warning" type="submit"><?= View::e($view->t('members.rotate')) ?></button>
+                    </form>
+                    <form method="post" action="<?= $base ?>?action=adopt_token" class="d-inline-flex gap-1 align-middle"
+                          data-clara-confirm="<?= View::e($view->t('members.confirm_adopt', ['email' => $email])) ?>">
+                        <?= $view->csrfField() ?>
+                        <input type="hidden" name="user_id" value="<?= $uid ?>">
+                        <input type="hidden" name="email" value="<?= View::e($email) ?>">
+                        <label class="visually-hidden" for="adopt-<?= $uid ?>"><?= View::e($view->t('members.adopt_label', ['email' => $email])) ?></label>
+                        <input class="form-control form-control-sm font-monospace" type="password" id="adopt-<?= $uid ?>" name="token"
+                               required minlength="32" maxlength="32" pattern="[0-9A-F]{32}" autocomplete="off" spellcheck="false"
+                               size="20" placeholder="<?= View::e($view->t('members.adopt_placeholder')) ?>"
+                               title="<?= View::e($view->t('members.adopt_hint')) ?>">
+                        <button class="btn btn-sm btn-outline-warning" type="submit"><?= View::e($view->t('members.adopt')) ?></button>
                     </form>
                     <form method="post" action="<?= $base ?>?action=remove_member" class="d-inline"
                           data-clara-confirm="<?= View::e($view->t('members.confirm_remove', ['email' => $email])) ?>">

@@ -136,6 +136,126 @@ func TestMembersRotateInvalidatesPrevious(t *testing.T) {
 	}
 }
 
+// TestMembersAdoptREDCapToken: an administrator sets an existing REDCap token
+// value for a member so a client with it hard-coded keeps working (REQ-AUTH-090,
+// DEV-AUTH-20). The previous token dies, the value resolves, is not echoed back
+// and is not audited; malformed and taken values are refused with nothing
+// written, and re-adopting the member's own value is a silent no-op.
+func TestMembersAdoptREDCapToken(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+	u := e.mustUser("member@example.org")
+	other := e.mustUser("other@example.org")
+	e.mustProject("8DISC")
+	ctx := context.Background()
+	const adopted = "0123456789ABCDEF0123456789ABCDEF" // a made-up value in REDCap's form
+
+	rec := e.do("PUT", "/api/v1/projects/1/users/"+itoa(u.ID), map[string]any{}, admin)
+	var added memberWithToken
+	e.decode(rec, &added)
+	e.do("PUT", "/api/v1/projects/1/users/"+itoa(other.ID), map[string]any{}, admin)
+
+	// A non-member cannot be given a token: adoption is not a way to add one.
+	if rec := e.do("PUT", "/api/v1/projects/1/users/"+itoa(e.mustUser("x@example.org").ID),
+		map[string]any{"adopt_token": adopted}, admin); rec.Code != http.StatusNotFound {
+		t.Fatalf("adopt for a non-member: status = %d, want 404", rec.Code)
+	}
+
+	before := len(e.auditTypes())
+	rec = e.do("PUT", "/api/v1/projects/1/users/"+itoa(u.ID), map[string]any{"adopt_token": adopted}, admin)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("adopt status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), adopted) {
+		t.Error("the adopted value was echoed back in the response")
+	}
+	var obj memberObject
+	e.decode(rec, &obj)
+	if obj.UserID != u.ID || !obj.TokenPresent || obj.Groups == nil {
+		t.Errorf("member object = %+v", obj)
+	}
+	if a, err := e.Store.GetAssignmentByToken(ctx, adopted); err != nil || a == nil || a.UserID != u.ID {
+		t.Fatalf("adopted token does not resolve to the member: %+v, %v", a, err)
+	}
+	if old, err := e.Store.GetAssignmentByToken(ctx, added.Token); err != nil || old != nil {
+		t.Error("previous token still resolves after adoption")
+	}
+	types := e.auditTypes()
+	if len(types) != before+1 || types[len(types)-1] != "token_rotated" {
+		t.Errorf("audit types after adoption = %v, want one more token_rotated", types[before:])
+	}
+	var details string
+	if err := e.Store.DB.QueryRow(`SELECT details FROM audit_events ORDER BY id DESC LIMIT 1`).Scan(&details); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(details, `"adopted":true`) || !strings.Contains(details, "member@example.org") {
+		t.Errorf("token_rotated details = %s, want member_email and adopted:true", details)
+	}
+	assertNoTokenInAudit(t, e, adopted)
+
+	// The member's own value again: 200, nothing changes, nothing is recorded.
+	before = len(e.auditTypes())
+	if rec := e.do("PUT", "/api/v1/projects/1/users/"+itoa(u.ID), map[string]any{"adopt_token": adopted}, admin); rec.Code != http.StatusOK {
+		t.Errorf("re-adopt status = %d, want 200", rec.Code)
+	}
+	if n := len(e.auditTypes()); n != before {
+		t.Errorf("re-adopting the held value wrote %d audit entries, want 0", n-before)
+	}
+
+	// Held by another member: 409, and neither token moves.
+	otherBefore, _ := e.Store.GetAssignment(ctx, other.ID, 1)
+	rec = e.do("PUT", "/api/v1/projects/1/users/"+itoa(other.ID), map[string]any{"adopt_token": adopted}, admin)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("adopt a taken value: status = %d, want 409 (body %s)", rec.Code, rec.Body.String())
+	}
+	if otherAfter, _ := e.Store.GetAssignment(ctx, other.ID, 1); otherAfter.Token != otherBefore.Token {
+		t.Error("a refused adoption changed the other member's token")
+	}
+	if a, _ := e.Store.GetAssignmentByToken(ctx, adopted); a == nil || a.UserID != u.ID {
+		t.Error("a refused adoption moved the value away from its holder")
+	}
+
+	// Only REDCap's form: 32 upper-case hex characters, and a string.
+	for _, bad := range []any{
+		"", "0123456789abcdef0123456789abcdef", "0123456789ABCDEF0123456789ABCDE",
+		"0123456789ABCDEF0123456789ABCDEF0", "0123456789ABCDEF0123456789ABCDEG",
+		" 0123456789ABCDEF0123456789ABCDE", "8f2b1c9e-4a7d-4f6a-9c3e-1d0b5a2f6e83", nil, 42, true,
+	} {
+		before = len(e.auditTypes())
+		rec := e.do("PUT", "/api/v1/projects/1/users/"+itoa(other.ID), map[string]any{"adopt_token": bad}, admin)
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("adopt_token %#v: status = %d, want 400", bad, rec.Code)
+		}
+		if n := len(e.auditTypes()); n != before {
+			t.Errorf("adopt_token %#v: a refused value wrote %d audit entries", bad, n-before)
+		}
+	}
+	if otherAfter, _ := e.Store.GetAssignment(ctx, other.ID, 1); otherAfter.Token != otherBefore.Token {
+		t.Error("a malformed adoption changed the member's token")
+	}
+
+	// Mutually exclusive with the other mutations, and administrator-only.
+	if rec := e.do("PUT", "/api/v1/projects/1/users/"+itoa(u.ID),
+		map[string]any{"adopt_token": adopted, "rotate_token": true}, admin); rec.Code != http.StatusBadRequest {
+		t.Errorf("adopt + rotate: status = %d, want 400", rec.Code)
+	}
+	if rec := e.do("PUT", "/api/v1/projects/1/users/"+itoa(other.ID),
+		map[string]any{"adopt_token": "FEDCBA9876543210FEDCBA9876543210"}, u); rec.Code != http.StatusForbidden {
+		t.Errorf("adopt by a non-administrator: status = %d, want 403", rec.Code)
+	}
+
+	// A later rotation replaces the adopted value with a CLARA-issued UUID.
+	rec = e.do("PUT", "/api/v1/projects/1/users/"+itoa(u.ID), map[string]any{"rotate_token": true}, admin)
+	var rotated memberWithToken
+	e.decode(rec, &rotated)
+	if len(rotated.Token) != 36 {
+		t.Errorf("rotated token = %d characters, want a UUID", len(rotated.Token))
+	}
+	if a, _ := e.Store.GetAssignmentByToken(ctx, adopted); a != nil {
+		t.Error("the adopted value still resolves after a rotation")
+	}
+}
+
 // TestMembersRemoveRevokesToken: removal is 200, the token dies immediately,
 // membership_changed (remove) + token_revoked are audited, and a second
 // removal is an idempotent no-op (REQ-API-042).

@@ -751,6 +751,12 @@ return [
     'members.added' => '{email} added.',
     'members.role_changed' => 'Role of {email} changed.',
     'members.rotated' => 'New token issued for {email}.',
+    'members.adopt' => 'Set token',
+    'members.adopt_label' => 'Existing REDCap token for {email}',
+    'members.adopt_placeholder' => 'REDCap token',
+    'members.adopt_hint' => 'An existing REDCap API token: 32 characters 0–9 and A–F',
+    'members.confirm_adopt' => 'Make this REDCap token the token of {email}? The current token stops working immediately.',
+    'members.adopted' => 'The REDCap token is now the token of {email}.',
     'members.removed' => '{email} removed from the project.',
 
     // Project page — Role editor (§5.4, REQ-UI-014).

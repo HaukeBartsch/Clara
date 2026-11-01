@@ -34,8 +34,10 @@ $isChecked = static fn (string $box): bool => $draft !== null
     ? (string) ($draft[$box] ?? '') !== '' : (string) ($prefill[$box] ?? '') !== '';
 
 /**
- * The display text of a stored value: a choice's label (with its code), a free-text value as
- * its stored allowlist HTML (§3.2 — the only escape hatch), anything else escaped.
+ * The display text of a stored value: a choice's label (with its code), anything else the
+ * value itself, escaped. Free text is stored as received (DEV-VAL-15), markup included, so it
+ * is escaped like every other value (REQ-VAL-031); a notes field keeps its line breaks through
+ * `.clara-notes` (white-space: pre-wrap).
  */
 $display = static function (array $field, string $value) use ($t): string {
     if ($value === '') {
@@ -47,7 +49,7 @@ $display = static function (array $field, string $value) use ($t): string {
         }
     }
 
-    return DataEntry::isFreeText($field) ? View::htmlAllowed($value) : View::e($value);
+    return View::e($value);
 };
 
 /**
