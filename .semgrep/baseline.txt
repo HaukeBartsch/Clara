@@ -1,0 +1,14 @@
+# Accepted semgrep findings: the machine-readable mirror of the "Accepted as false positives"
+# rows of docs/Static_Analysis_Triage.md, one <rule id><TAB><file> pair per accepted finding.
+# A pair enters only together with its row there; ci/semgrep_baseline.php fails on anything else.
+go.lang.security.audit.database.string-formatted-query.string-formatted-query	api/internal/audit/audit.go
+go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter	api/internal/admin/export_dictionary.go
+go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter	api/internal/dataapi/handler.go
+go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter	api/internal/dataapi/record_export.go
+go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter	api/internal/httpapi/docs.go
+go.lang.security.audit.xss.no-fprintf-to-responsewriter.no-fprintf-to-responsewriter	api/internal/dataapi/handler.go
+go.lang.security.injection.tainted-sql-string.tainted-sql-string	api/internal/admin/queries.go
+php.lang.security.exec-use.exec-use	web/app/MonitoringStressTest.php
+php.lang.security.exec-use.exec-use	web/app/PhpCli.php
+php.lang.security.exec-use.exec-use	web/app/SubprocessLdapAttempts.php
+php.lang.security.ldap-bind-without-password.ldap-bind-without-password	web/app/ldap_attempt.php
