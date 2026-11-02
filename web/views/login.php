@@ -80,6 +80,7 @@ use Clara\View;
         <?php foreach ($providers as $provider): ?>
             <form method="post" action="/login?action=oauth">
                 <?= $view->csrfField() ?>
+                <input type="hidden" name="next" value="<?= View::e($next ?? '/') ?>">
                 <input type="hidden" name="provider" value="<?= View::e((string) $provider['index']) ?>">
                 <button class="btn btn-outline-primary" type="submit">
                     <?= View::e($view->t('login.provider.submit', ['provider' => (string) $provider['label']])) ?>

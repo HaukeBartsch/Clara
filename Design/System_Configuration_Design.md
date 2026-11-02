@@ -160,6 +160,18 @@ The rate-limit **thresholds are not environment variables**: `rate_limit_enabled
 |---|---|---|---|---|---|
 | `MONITORING_PERIOD_MINUTES` | web | integer minutes, 1…1440 | `10` | — | how far back the Control Panel's Monitoring charts reach (REQ-CFG-034, REQ-UI-064): the page samples once a second while it is visible and drops every timepoint older than this period, so an open tab carries one bounded buffer instead of everything since it was opened. The web layer validates it at boot and passes it to `monitoring.js` as the charts row's `data-clara-mon-period-minutes` — the browser never reads the environment (REQ-UI-002); a value outside the range refuses startup (§4.1) |
 
+### 3.14 Sign-in for registered applications (api, web — Sequence K)
+
+Per client `N` (1…3); a client exists when its `ID` is set.
+
+| Variable | Component | Type | Default | Required | Description |
+|---|---|---|---|---|---|
+| `SSO_CLIENT_N_ID` | api, web | `[a-z0-9][a-z0-9_-]{0,63}` | — | for client N | the `client_id` the client sends (REQ-CFG-038, REQ-AUTH-092); unique across clients; written into audit details as it is |
+| `SSO_CLIENT_N_NAME` | api, web | string | the id | — | the name CLARA's sign-out page shows (REQ-UI-083) |
+| `SSO_CLIENT_N_SECRET` | api only | string (secret) | — | for client N | the client's secret, compared in constant time on `/sso/token` and `/sso/check`; production requires at least 32 bytes; masked in the dump. The web layer does not read it (REQ-AUTH-092) |
+| `SSO_CLIENT_N_REDIRECT_URI` | api, web | absolute URL | — | for client N | the client page codes are sent to, compared byte for byte with the request's `redirect_uri` (REQ-AUTH-093); no user info, no fragment; `https` in production |
+| `SSO_CLIENT_N_LOGOUT_URI` | api, web | absolute URL | empty → `/login` | — | where `POST /sso/logout` returns the browser (REQ-AUTH-094); same rules as the redirect URI |
+
 ## 4. Validation Rules and Startup Behavior
 
 ### 4.1 Required-at-startup matrix
@@ -187,6 +199,7 @@ The rate-limit **thresholds are not environment variables**: `rate_limit_enabled
 | `UI_THEME` ∈ {`bootstrap`, `darkly`, `yeti`} (default `bootstrap`) | required | required (GD-26, REQ-CFG-031) |
 | `MONITORING_PERIOD_MINUTES` is an integer ≥ 1 and ≤ 1440 (default `10`) | required | required (REQ-CFG-034) |
 | `OAUTH2_N_ROLES_ATTR`, when set, is one claim name — no whitespace, no comma | required | required (REQ-CFG-037) |
+| every client with `SSO_CLIENT_N_ID` set: the id matches its pattern and is not repeated; `SECRET` set; `REDIRECT_URI` an absolute URL without user info or fragment; `LOGOUT_URI` unset or the same | required | required, plus `https` addresses and a secret of at least 32 bytes (REQ-CFG-038) |
 
 The API refuses to start with a non-zero exit and a message naming each missing/invalid variable (REQ-CFG-004); the PHP app fails at entry-point boot with an operator-readable page and no stack trace in production (REQ-CFG-005).
 
@@ -286,6 +299,13 @@ UI_THEME=bootstrap
 # monitoring charts (web) — how far back the Monitoring page's charts reach, in minutes;
 # timepoints older than this period are dropped (REQ-CFG-034). 1…1440, default 10
 MONITORING_PERIOD_MINUTES=10
+
+# sign-in for registered applications (api, web; REQ-CFG-038) — up to three clients
+#SSO_CLIENT_1_ID=fiona
+#SSO_CLIENT_1_NAME=FIONA
+#SSO_CLIENT_1_SECRET=
+#SSO_CLIENT_1_REDIRECT_URI=https://fiona.example.org/applications/User/login.php
+#SSO_CLIENT_1_LOGOUT_URI=https://fiona.example.org/index.php
 
 # two-factor authentication (api, GD-21) — email method unavailable without SMTP_HOST
 AUTH_REQUIRE_2FA=0

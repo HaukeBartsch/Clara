@@ -174,6 +174,8 @@ final class Auth
                 'first_factor' => '',
             ], $this->loginBody($winner['email'], 'ldap', $sourceName, [
                 'provider' => $winner['provider'],
+                // The name a first sign-in gives the account it creates (REQ-AUTH-091).
+                'display_name' => $winner['display_name'] ?? '',
             ]));
         }
 
@@ -456,6 +458,18 @@ final class Auth
      */
     public function logout(): void
     {
+        // The applications this session signed the user in to are signed out with it
+        // (Sequence K, REQ-AUTH-094): their grants end now, and each client finds out at its
+        // next check. Only a session that ever gave a client a code has anything to end.
+        $sid = Session::existingSsoSid();
+        if ($sid !== null) {
+            try {
+                $this->api->post('/api/v1/sso/end', ['sid' => $sid]);
+            } catch (ApiException $e) {
+                $this->logger->warn('ending client sign-ins failed', ['code' => $e->code()]);
+            }
+        }
+
         try {
             $this->api->post('/api/v1/auth/logout');
         } catch (ApiException $e) {

@@ -915,6 +915,16 @@ return [
     // The one sentence every outcome gets — nothing here may confirm or deny an account.
     'password_reset.sent' => 'If that address has an account with a local password, a reset link has been sent.',
     'password_reset.cancel' => 'Back to sign in',
+    // Sign-in for registered applications (Sequence K, REQ-AUTH-093/094): the page for a
+    // request CLARA cannot trust, and the sign-out a client's link asks for.
+    'sso.refused.title' => 'Sign-in request refused',
+    'sso.refused.body' => 'The application that sent you here is not registered with CLARA, or it asked CLARA to send you to an address it does not know. Nothing was shared with it. Please tell the administrator of that application.',
+    'sso.refused.back' => 'Go to CLARA',
+    'sso.logout.title' => 'Sign out of CLARA?',
+    'sso.logout.body' => 'Signing out of CLARA also signs you out of every application you signed in to through CLARA.',
+    'sso.logout.body_client' => '{client} asked to sign you out. Signing out of CLARA also signs you out of every application you signed in to through CLARA.',
+    'sso.logout.submit' => 'Sign out',
+    'sso.logout.stay' => 'Stay signed in to CLARA',
     'password_reset.back_to_login' => 'Return to sign in',
     'password_reset.failure.missing' => 'Enter the e-mail address you sign in with.',
 

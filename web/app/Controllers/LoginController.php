@@ -29,12 +29,20 @@ use Clara\Session;
 
 final class LoginController extends Controller
 {
+    /**
+     * The landing path an OAuth2 round trip carried in the session (REQ-AUTH-096): the
+     * provider returns to the fixed /auth/callback, so callback() takes it from there before
+     * the sign-in empties the session, and every page this request renders keeps it.
+     */
+    private string $rememberedNext = '';
+
     /** GET /login — whichever panel this session's state calls for (§2.2). */
     public function index(): Response
     {
-        // Already signed in: the page has nothing to offer.
+        // Already signed in: the page has nothing to offer — but where the user was going
+        // still stands (a client's sign-in request, REQ-AUTH-096).
         if (Session::isAuthenticated()) {
-            return Response::redirect('/');
+            return Response::redirect($this->safeNext());
         }
 
         // A name whose only source is a single OAuth2 provider continues directly into
@@ -102,6 +110,10 @@ final class LoginController extends Controller
      */
     private function startOauth(array $provider, string $name): Response
     {
+        // The provider returns to /auth/callback, which carries no `next`: the session keeps
+        // it for the callback (REQ-AUTH-096).
+        Session::rememberLoginNext($this->safeNext());
+
         try {
             return Response::redirect($this->auth->beginOauthRedirect($provider, $name));
         } catch (ApiException $e) {
@@ -189,6 +201,9 @@ final class LoginController extends Controller
 
             return $this->renderCredentials('', $this->i18n->t('login.failure.state_mismatch'));
         }
+
+        // Taken before the sign-in, which starts from an empty session (REQ-AUTH-096).
+        $this->rememberedNext = Session::takeLoginNext();
 
         try {
             $signedIn = $this->auth->completeOauthLogin(
@@ -534,11 +549,19 @@ final class LoginController extends Controller
         return $this->renderCredentials($email, Messages::loginFailure($this->i18n, $e, $this->request->ref(), $this->config->isDevelopment));
     }
 
-    /** The page to land on after login: only a same-site path is honoured. */
+    /**
+     * The page to land on after login: only a same-site path is honoured. A GET carries it
+     * in the query; every form of the login page posts it back as a field, and an OAuth2
+     * round trip brings it back from the session (REQ-AUTH-096).
+     */
     private function safeNext(): string
     {
-        $next = $this->request->query('next');
+        foreach ([$this->request->query('next'), $this->request->field('next'), $this->rememberedNext] as $next) {
+            if ($next !== '' && Response::isSameSitePath($next)) {
+                return $next;
+            }
+        }
 
-        return Response::isSameSitePath($next) ? $next : '/';
+        return '/';
     }
 }

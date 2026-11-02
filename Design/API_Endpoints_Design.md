@@ -1479,6 +1479,46 @@ The list is not paginated: it holds distinct role values, not sign-ins, and the 
 
 None of these endpoints touches an account. A changed mapping reaches each holder of the value at their next sign-in, and never a user who chose their own region (REQ-AUTH-088).
 
+### 4.31 Sign-in for registered applications (REQ-API-182…185, Sequence K)
+
+The four endpoints behind `Authentication_Authorization_Design.md` §2.13. Clients are the `SSO_CLIENT_N_*` registrations (REQ-CFG-038). Codes, grants and sign-in ids are stored only as SHA-256 hashes in `sso_grants` (`Database_Schema_Design.md`). The token and check calls reach the API through the web layer's `POST /sso/token` and `POST /sso/check`, which relay form fields as these JSON bodies and pass the answer through. A refusal is relayed as `{"error": "<code>"}` with the API's status, and an API that cannot answer as 503 `{"error": "temporarily_unavailable"}`.
+
+**`POST /api/v1/sso/codes`** — acting user with session epoch (an ordinary session call). Body:
+
+```json
+{ "client_id": "fiona", "redirect_uri": "https://fiona.example.org/applications/User/login.php",
+  "code_challenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", "code_challenge_method": "S256",
+  "sid": "<64 hex characters>", "session_issued_at": 1793606400 }
+```
+
+400 `invalid_client` (not registered), `invalid_redirect_uri` (not exactly the registered address), `invalid_request` (challenge not 43 base64url characters, method not `S256`, `sid` not 32–256 characters, `session_issued_at` missing, in the future or older than `SESSION_LIFETIME`). 200:
+
+```json
+{ "code": "<64 hex characters>", "expires_in": 60, "redirect_uri": "https://fiona.example.org/applications/User/login.php" }
+```
+
+No audit entry: issuing a code changes nothing until it is redeemed. The same transaction removes rows whose code expired unredeemed, or whose grant expired, more than a day ago.
+
+**`POST /api/v1/sso/token`** — pre-authentication (DEV-API-44). Body `{ client_id, client_secret, code, code_verifier, redirect_uri }`. 401 `invalid_client` for wrong client credentials; 400 `invalid_request` without `code` or `code_verifier`. A disabled or expired account is 403 `account_disabled` / `account_expired`; every other refusal is 400 `invalid_grant`. Each refusal is audited as `sso_rejected` with its reason — `invalid_client`, `unknown_code`, `wrong_client`, `code_reused`, `ended`, `code_expired`, `redirect_uri_mismatch`, `pkce_mismatch`, `account_not_found`, `account_disabled`, `account_expired`, `session_revoked` — and a code that exists is ended with it. 200:
+
+```json
+{ "grant": "<64 hex characters>", "expires_in": 27310,
+  "user": { "id": 21, "email": "kari.nordmann@hospital.example.org", "display_name": "Kari Nordmann" } }
+```
+
+`expires_in` counts to `session_issued_at + SESSION_LIFETIME`. Audit `sso_login` `{client_id}`, with the account as acting user.
+
+**`POST /api/v1/sso/check`** — pre-authentication (DEV-API-44). Body `{ client_id, client_secret, grant }`. 401 `invalid_client` for wrong client credentials; otherwise always 200:
+
+```json
+{ "active": true, "reason": "", "expires_in": 27010,
+  "user": { "id": 21, "email": "kari.nordmann@hospital.example.org", "display_name": "Kari Nordmann" } }
+```
+
+With `active: false`, `reason` is `unknown` (no such grant, or another client's), `ended`, `expired`, `account_disabled`, `account_expired` or `session_revoked`, and `user` is omitted. A check writes no audit entry.
+
+**`POST /api/v1/sso/end`** — acting user. Body `{ "sid": "…" }`. Ends every grant and unredeemed code of the acting user under that sign-in id. 200 `{ "status": "ok", "clients": ["fiona"] }`. Audit `sso_logout` `{clients}` when at least one row ended.
+
 ## 5. Permission summary
 
 The normative endpoint → permission mapping is in `API_Endpoints_Requirements.md` §4.22; it is reproduced here as an overview:
@@ -1493,6 +1533,8 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirements.
 | `POST /api/v1/auth/verify-password` (§4.3, REQ-API-123) | pre-authentication — service token only, no user id (DEV-API-17) |
 | `POST /api/v1/auth/oauth/start` (§4.3, REQ-API-173) | pre-authentication — service token only, no user id (DEV-API-32) |
 | `POST /api/v1/auth/oauth/test` (§4.3, REQ-API-174) | `is_admin` |
+| `POST /api/v1/sso/token`, `POST /api/v1/sso/check` (§4.31, REQ-API-183/184) | pre-authentication — service token and the client's secret, no user id (DEV-API-44) |
+| `POST /api/v1/sso/codes`, `POST /api/v1/sso/end` (§4.31, REQ-API-182/185) | any active user (self, with the session epoch) |
 | `POST /api/v1/auth/session-replay` (§4.3, REQ-API-148) | any active user (self — the account whose session id was replayed; no session epoch) |
 | `POST /api/v1/projects` | `is_admin` |
 | `GET /api/v1/projects/{id}/export/odm`, `POST /api/v1/projects/import/odm` (§4.29) | `is_admin` only (REQ-ODM-002) |

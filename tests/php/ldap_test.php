@@ -496,6 +496,7 @@ describe('login with a directory source (Sequence I, §2.9)', function (): void 
         assert_same('ldap', $body['source']);
         assert_same('ldap-2', $body['provider'], 'Sequence C names the concrete winning source (§2.3)');
         assert_same('Hospital 2', $body['source_name'], 'and records the name the user selected (REQ-AUTH-067)');
+        assert_same('Rae Researcher', $body['display_name'], 'the name a first sign-in gives the account (REQ-AUTH-091)');
         assert_true(!array_key_exists('password', $body), 'the directory password is never forwarded to the API');
         assert_same(1, api_calls_to('/api/v1/auth/login'), 'one finalization for one login (REQ-AUTH-065)');
     });

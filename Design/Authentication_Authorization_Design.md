@@ -17,6 +17,7 @@
 | OAuth2 / OIDC provider | outbound from the Go API (discovery, code exchange, userinfo, keys — REQ-AUTH-086) | OAuth2 client secret | signed ID token, verified by the API (Sequence J, §2.10) |
 | LDAP server | outbound from PHP | LDAP bind DN / the user's password | identity (email) after a successful bind |
 | local (table-based) account | PHP login form → API | email + password (verified against `users.password_hash`), plus the configured second factor when enrolled (GD-21, §2.7) | the account's normal permissions (GD-18, REQ-AUTH-050) |
+| registered sign-in client (FIONA's server, REQ-AUTH-092) | PHP routes `POST /sso/token` and `POST /sso/check` (public, no session — DEV-TECH-3); its user's browser visits `/sso/authorize` and `/sso/logout` | client secret, plus a single-use code and its PKCE verifier; afterwards an opaque grant | who the user is (`id`, `email`, `display_name`) and whether the CLARA sign-in behind the grant still stands — no permission in CLARA (Sequence K, §2.13) |
 | invited / resetting person (pre-authentication) | PHP set-password page via the emailed link (public route, no session — GD-22/GD-23) | single-use hashed token (`password_tokens`, REQ-DB-039) | exactly one thing: set the password of the one addressed account (§2.8) — nothing else is reachable |
 
 The second factor (GD-21) guards the two CLARA-verified rows above — local and LDAP form logins — after first-factor success; the OAuth2 row is exempt (MFA there is the provider's responsibility, DEV-AUTH-10), as are survey links and data-API tokens (§4.3).
@@ -75,7 +76,7 @@ The PHP login form carries email + password for the **local and LDAP** paths; on
 
 ### 2.3 Sequence C — API login call (REQ-AUTH-016, REQ-API-044)
 
-`POST /api/v1/auth/login` — one of the six administration endpoints exempt from `X-Internal-User-Id` (it establishes the user context; the other five are the three pre-authentication password endpoints of Sequence H, §2.8, the pre-authentication `POST /api/v1/auth/verify-password` of Sequence I, §2.9, and `POST /api/v1/auth/oauth/start` of Sequence A, §2.1 — DEV-API-16/17/32; the code's list is `httpapi.preAuthPaths`); it still requires a valid `X-Internal-Service-Token` and is internal-only per §1.2. `provider` names the concrete winning source (`"ldap-N"`, the provider issuer URL, or the local source id) and PHP passes the user-selected name through in the audit details (REQ-AUTH-067). Request body:
+`POST /api/v1/auth/login` — one of the eight administration endpoints exempt from `X-Internal-User-Id` (it establishes the user context; the other seven are the three pre-authentication password endpoints of Sequence H, §2.8, the pre-authentication `POST /api/v1/auth/verify-password` of Sequence I, §2.9, `POST /api/v1/auth/oauth/start` of Sequence A, §2.1, and `POST /api/v1/sso/token` and `POST /api/v1/sso/check` of Sequence K, §2.13 — DEV-API-16/17/32/44; the code's list is `httpapi.preAuthPaths`); it still requires a valid `X-Internal-Service-Token` and is internal-only per §1.2. `provider` names the concrete winning source (`"ldap-N"`, the provider issuer URL, or the local source id) and PHP passes the user-selected name through in the audit details (REQ-AUTH-067). Request body:
 
 ```json
 { "source": "oauth2", "provider": "https://idp.example.org", "source_name": "Hospital 1",
@@ -91,11 +92,18 @@ For `source = "oauth2"` the call carries no identity and no credential the API c
 ```
 
 ```json
+{ "email": "user@example.org", "source": "ldap", "provider": "ldap-1", "source_name": "Hospital 1", "display_name": "Kari Nordmann" }
+```
+
+`display_name` (optional, LDAP only) is the name the winning directory entry carries (`LDAP_SERVER_n_NAME_ATTR`). It is used only when step 0.5 creates the account.
+
+```json
 { "email": "user@example.org", "source": "local", "password": "***", "mfa_code": "492817" }
 ```
 
 API processing (in order):
 0. **Local verification** (only when `source = "local"`, GD-18, REQ-AUTH-050/051): the user row exists — otherwise 401 `account_not_found` + audit `login_failure`; its `password_hash` is present and the password matches it — constant-time comparison (argon2id) — otherwise 401 `bad_password` + audit `login_failure` (the two cases are not distinguished to the caller, and the password value is never logged, REQ-AUTH-036).
+0.5. **Directory account creation** (only `source = "ldap"` with no `attempts`, REQ-AUTH-091, DEV-AUTH-21): when no row has the address exactly and it is not `ADMIN_BOOTSTRAP_EMAIL` (step 2 handles that one), the API first refuses a value that is not an address — not exactly one `@` with text on both sides, or containing whitespace — with 401 `account_not_found` + audit `login_failure`. It then looks the address up ignoring case. One match is the account. Two matches → 401 `account_not_found` + audit `login_failure` with reason `account_ambiguous`, and nothing is created. No match → one transaction inserts the row — enabled, `auth_source = ldap`, no `password_hash`, `is_admin = 0`, no `valid_until`, `display_name` from the body or else the address's local part (at most 255 bytes, cut on a character boundary) — and audits `user_created` with `{email, display_name, re_enabled: false, valid_until: null, automatic: true, source: "ldap", provider}`. An insert that loses a race to a concurrent sign-in of the same address reads the winner's row. The steps below then run on the account as on any other: a disabled or expired account found here is refused at step 1, never replaced.
 1. User row is **active** (REQ-AUTH-006, §4.4): `enabled = 1`, not expired (`valid_until`), not inactive — otherwise reject (403 `account_disabled` / 403 `account_expired`) and audit `login_failure` (the inactivity case first performs the auto-disable of §4.4, REQ-AUTH-053).
 1.5. **Two-factor gate** (GD-21, REQ-AUTH-055/058, only for `source = "local"` or `"ldap"`): if the account's method is not `off`, a call without `mfa_code` → 401 `mfa_required` (body names the method); with an invalid, expired, or already-used code → audit `login_failure` (`bad_mfa_code`) + 401 `bad_mfa_code`; valid codes (§2.7) proceed and are recorded against replay. If `AUTH_REQUIRE_2FA` is on and the method is `off` → 401 `tfa_enrollment_required` (no audit failure — the first factor succeeded; enrollment follows, §2.7). Until this gate passes, no user object is returned and steps 3–5 do not run.
 2. **Bootstrap promotion** (REQ-AUTH-007, GD-4, DEV-AUTH-15): if the email equals `ADMIN_BOOTSTRAP_EMAIL` and no row exists, create it as an enabled administrator — the first-installation setup case; on a first installation without an IdP, the row's `password_hash` is provisioned from `ADMIN_BOOTSTRAP_PASSWORD` at startup (REQ-AUTH-051). Login never re-enables a disabled account and sets `is_admin = 1` on an existing enabled row only when the source is `local` or no other enabled administrator exists — after setup, administration is assigned through `PUT /api/v1/users/{id}` (REQ-API-136), not by the bootstrap path; the invariant that at least one enabled administrator remains is REQ-AUTH-068.
@@ -117,6 +125,7 @@ The API is stateless with respect to sessions: it MUST NOT create or store a ses
 
 1. Browser `POST /logout` (CSRF token, REQ-AUTH-037).
 2. PHP reads the acting user id from the session.
+2.5. If this session ever gave a client a code (it holds `sso_sid`, §2.13), PHP → API `POST /api/v1/sso/end` `{sid}`: every client grant issued under this sign-in ends now (REQ-AUTH-094). A failure is logged and does not stop the sign-out. `POST /sso/logout` (a client's sign-out link, §2.13) runs this same sequence and returns to the client instead of step 5.
 3. PHP → API `POST /api/v1/auth/logout` (service token + `X-Internal-User-Id`) → the API records `logout` (audit) and returns 200.
 4. PHP destroys the session (cookie invalidated).
 5. `302` to `/login`.
@@ -236,6 +245,40 @@ Sequence C runs this as step 3.5 on the `source = "oauth2"` leg, for a provider 
 
 **Other sources.** LDAP and local accounts take no region from a directory. They receive the assignment placeholder (REQ-API-179) or choose their own region (REQ-UI-075).
 
+### 2.13 Sequence K — sign-in for registered applications (REQ-AUTH-092…096, DEV-AUTH-22)
+
+CLARA is the sign-in provider for clients registered as `SSO_CLIENT_N_*` (REQ-CFG-038). The client is another web application with a server of its own; FIONA is the first. The protocol is OAuth2's authorization code with PKCE S256 and a confidential client. What the client receives is not an access token for CLARA's API but a **grant**: an opaque value that says who the user is and that the client can ask about.
+
+```text
+browser          client server            CLARA web (PHP)                    CLARA API
+   |  open client page  |                        |                                 |
+   |------------------->|  verifier, state       |                                 |
+   |<-- 302 /sso/authorize?client_id&redirect_uri&code_challenge&state            |
+   |------------------------------------------->| registered? exact redirect_uri?  |
+   |              (not signed in: /login?next=… — every source, two-factor rules)  |
+   |                                            |-- POST /api/v1/sso/codes ------->|
+   |<-- 302 redirect_uri?code&state ------------|<-------- {code, 60 s} ----------|
+   |------------------->|-- POST /sso/token (secret, code, verifier) ----------->|
+   |                    |<----------- {grant, expires_in, user} -----------------|
+   |   client session   |   every few minutes: POST /sso/check (secret, grant)    |
+```
+
+**1. Authorization request** (`GET /sso/authorize`, guard `public`). PHP looks the client up and compares `redirect_uri` with the registered address byte for byte. On a mismatch, or for an unknown client, it shows the refusal page (400, `User_Interface_Design.md` §2.1) and never redirects: the address in the request is not trusted until it is the registered one. After that every answer goes to the registered address. `state` must be 1–512 printable ASCII characters (otherwise `error=invalid_request` without a state). `response_type` must be `code` (`unsupported_response_type`). The challenge must be 43 base64url characters with method `S256` (`invalid_request`).
+
+**2. Sign-in.** A visitor who is not signed in, or whose second factor is pending, goes to `/login?next=` with the request rebuilt from the checked values only. The ordinary login runs, whatever the source, and lands back on `next` (REQ-AUTH-096): the login forms post `next` as a field, and an OAuth2 round trip keeps it in the session (`_login_next`, single use). With `prompt=none` the visitor goes back to the client with `error=login_required` instead (REQ-AUTH-095), so a client can try CLARA silently first and fall back to its own sign-in.
+
+**3. Code.** For a signed-in user PHP calls `POST /api/v1/sso/codes` as that user, with the session's epoch. It sends the client, the address, the challenge, the session's **sign-in id** `sid` (`sso_sid`: 32 random bytes in hex, made the first time this session asks, kept across id rotation, gone with the session) and the session's `issued_at`. The API stores a row in `sso_grants` (REQ-DB-054): the SHA-256 hashes of the code and of `sid`, the challenge, the address, the account's `session_epoch`, and two expiries. The code expires after 60 seconds. The grant will expire at `issued_at + SESSION_LIFETIME`, the end of the CLARA session's absolute bound. PHP redirects to `redirect_uri?code=…&state=…`. A `sid` value never leaves PHP and the API; the client never sees it.
+
+**4. Redemption** (`POST /sso/token`, `'session' => false`, form-encoded, client credentials as fields or HTTP Basic). PHP relays to `POST /api/v1/sso/token`. The API checks, in this order: client credentials (constant time, 401 `invalid_client`); the code's row exists (400 `invalid_grant`); it belongs to this client, is not redeemed, not ended and not expired; the address equals the stored one; `BASE64URL(SHA-256(code_verifier))` equals the challenge; the account exists; it is active (§4.4 — 403 `account_disabled` / `account_expired`); its `session_epoch` still equals the stored one. Every refusal is audited as `sso_rejected` with the reason, and once the row is found it is ended too. A conditional update then marks the row redeemed and stores the hash of a new 256-bit grant, so two concurrent redemptions cannot both succeed. The answer is `{grant, expires_in, user: {id, email, display_name}}`, and `sso_login` is audited.
+
+**5. Check** (`POST /sso/check`). The client asks with its secret and the grant; the answer is always 200 `{active, reason, expires_in, user}`. The grant stands while the row is not ended and not past `expires_at`, the account is active, and its `session_epoch` equals the stored one. So a password change, a disable or a two-factor reset (REQ-AUTH-074) ends client sign-ins with the CLARA session. A 503 `temporarily_unavailable` means CLARA could not answer, and the client keeps its user signed in until it can.
+
+**6. Sign-out.** CLARA's own sign-out ends the grants issued under the session's `sid` (Sequence D step 2.5). A client's sign-out link goes to `GET /sso/logout?client_id=…`. That page only asks, because a GET that signed out could be fired by any page embedding it. Its POST, with the CSRF token, runs Sequence D and then redirects to the client's registered `SSO_CLIENT_N_LOGOUT_URI`, or to `/login`. A visitor who is not signed in is sent on at once. A client that only ends its own session leaves CLARA signed in, and the next authorization request gets a code without a prompt.
+
+**What the client does** (FIONA's side, not part of CLARA). It keeps its own sign-in for installations without CLARA. With CLARA, its sign-in page sends the browser to `/sso/authorize`, keeping `state` and the verifier in its own session, and checks `state` on return. Its server redeems the code, maps `user.email` to its own account and roles, and stores the grant in its session. It checks the grant every few minutes and ends its session when `active` is false. Its sign-out link goes to `/sso/logout?client_id=…`.
+
+**Not covered.** The idle timeout of the CLARA session does not end a grant: an idle CLARA tab must not sign the user out of a client being used, so each side applies its own idle rule. The grant gives no access to CLARA's API, so a client cannot read projects or data with it. OAuth2 sign-ins of unknown accounts are still refused (REQ-AUTH-006); only LDAP creates accounts (DEV-AUTH-21).
+
 ## 3. Session Schema (GD-1)
 
 The session is owned by the PHP web application: PHP-native session, file storage in `SESSION_DIR` (MUST NOT be the application database, REQ-CFG-017). The API never sees the session (GD-1, REQ-API-044).
@@ -257,6 +300,8 @@ The session is owned by the PHP web application: PHP-native session, file storag
 | `csrf_token` | session start | 32-byte random hex | session regeneration |
 | `oauth2_state` | `/login` | 16-byte random hex | callback (single use) |
 | `oauth2_pkce_verifier` | `/login` | random (S256) | callback (single use) |
+| `sso_sid` | the first client code of this sign-in (§2.13) | 32-byte random hex — the sign-in id whose hash binds client grants to this session; kept across id rotation, never sent to a client | logout (after `POST /api/v1/sso/end`), or any new sign-in |
+| `_login_next` | `/login` before an OAuth2 redirect (REQ-AUTH-096) | the same-site landing path the provider's callback cannot carry | the callback (single use) |
 | `tombstone` | id rotation, on the **replaced** id only | `{successor, at, user_id}` — the only key a replaced id holds; never signed in, never rendered (§3.1) | replay detection, or session GC |
 | `tfa_pending` | login 401 `mfa_required` / `tfa_enrollment_required` (§2.7) | `{email, source, verified_at}` plus `user_id` on `tfa_enrollment_required` (drives the wizard, §2.7), plus `first_factor` on the local path — the handle of REQ-API-131 that stands in for the password when the code is submitted, so the credential is never persisted here — **pre-authentication**: not a session; every page guard rejects it | second factor verified or enrollment completed (promoted via `session_regenerate_id(true)`), or TTL 5 min / abort |
 
@@ -402,7 +447,7 @@ Rules:
 - `X-Internal-User-Id` is authoritative for authorization on `/api/v1/*` (REQ-AUTH-013); an unknown or disabled user → 403 + audit `admin_rejected`.
 - `X-Internal-Session-Epoch`, when present, MUST equal the acting account's `session_epoch`; otherwise 401 `session_revoked` + audit `admin_rejected` (REQ-API-147, §3.1). It is checked after the account-active rule, so a disabled account keeps its 403.
 - The proxy strips all three headers from every externally-originated request (REQ-AUTH-014; configuration in `Technology_Stack_Design.md` §5).
-- `POST /api/v1/auth/login` (service token only, no user id — §2.3), the three pre-authentication password endpoints of Sequence H (§2.8), and `POST /api/v1/auth/verify-password` (§2.9) are the exceptions. On the `source = "oauth2"` leg the service token is necessary but not sufficient: the call's `assertion` must verify first (§2.10, REQ-AUTH-076), which is what narrows finding F8 on that path without changing anything else here.
+- `POST /api/v1/auth/login` (service token only, no user id — §2.3), the three pre-authentication password endpoints of Sequence H (§2.8), `POST /api/v1/auth/verify-password` (§2.9), `POST /api/v1/auth/oauth/start` (§2.1), and `POST /api/v1/sso/token` and `POST /api/v1/sso/check` (§2.13, where the client secret takes the user header's place — DEV-API-44) are the exceptions. On the `source = "oauth2"` leg the service token is necessary but not sufficient: the call's `assertion` must verify first (§2.10, REQ-AUTH-076), which is what narrows finding F8 on that path without changing anything else here.
 
 ## 7. Non-Functional Security
 
@@ -430,6 +475,8 @@ Rules:
 | session lifecycle hardening (DEV-AUTH-17; security finding F17) | §3.1: idle bound `SESSION_IDLE_TIMEOUT` (30 min) beside the absolute `SESSION_LIFETIME` (8 h); id rotation every `SESSION_ROTATE_INTERVAL` (15 min) with a 60 s grace window and a tombstone on the replaced id; replay → all sessions of the account end + `session_replay_detected`; `users.session_epoch` raised by password writes, disables, two-factor resets and replays, checked as `X-Internal-Session-Epoch`; `__Host-` cookie, production refuses a non-`Secure` one. Signed stateless tokens were considered and not adopted (§3.1, "Why not signed tokens") |
 
 ## 9. Open Items
+
+- **Accounts from a first OAuth2 sign-in.** Only an LDAP sign-in creates a missing account (REQ-AUTH-091). Whether a provider's verified identity should do the same is for the owner to decide (DEV-AUTH-21). The step would sit after §2.10's verification, where Sequence C step 0.5 sits for LDAP.
 
 - **Whether the provider echoes `nonce`** is an observed fact, not a documented one — PingFederate's OIDC policy settings expose no nonce option and its discovery sample shows none. `OAUTH2_N_NONCE_REQUIRED` stays at `0` until one live exchange has been inspected per provider (REQ-AUTH-079).
 - **The JSON type of `email_verified`** under the mapping a given installation chooses, and whether that directory can attest verification at all. If it cannot, the honest configuration is to say so in the installation notes rather than map a constant true (REQ-AUTH-078).

@@ -32,11 +32,15 @@ final class Router
      * A row marked `'session' => false` runs without the PHP session — no cookie, no CSRF
      * token (the public survey page, §8.8).
      *
+     * A row marked `'json' => true` always answers JSON from its own handler, whatever the
+     * request's Accept header says: an endpoint another application's server calls rather
+     * than a page (the client endpoints of Sequence K, REQ-AUTH-093). It has no data region.
+     *
      * A row marked `'streams' => true` also serves its region as newline-delimited JSON,
      * written as it is produced, to a request preferring it — its controller's `stream()`
      * beside `data()` (REQ-UI-074, the Record Status Dashboard's rows).
      *
-     * @var list<array{method: string, pattern: string, controller: class-string, handler: string, guard: string, action?: string, region?: string, streams?: bool, session?: bool}>
+     * @var list<array{method: string, pattern: string, controller: class-string, handler: string, guard: string, action?: string, region?: string, streams?: bool, session?: bool, json?: bool}>
      */
     private const ROUTES = [
         ['method' => 'GET', 'pattern' => '/login', 'controller' => Controllers\LoginController::class,
@@ -369,6 +373,25 @@ final class Router
 
         ['method' => 'POST', 'pattern' => '/logout', 'controller' => Controllers\AccountController::class,
             'handler' => 'logout', 'guard' => 'login'],
+
+        // Sign-in for registered applications (Sequence K, REQ-AUTH-092..096,
+        // User_Interface_Design.md §2.1). /sso/authorize is public because it decides itself
+        // what a visitor who is not signed in sees: a refusal page for a request it cannot
+        // trust, the sign-in page with the whole request as `next` otherwise.
+        ['method' => 'GET', 'pattern' => '/sso/authorize', 'controller' => Controllers\SsoController::class,
+            'handler' => 'authorize', 'guard' => 'public'],
+        // The two calls a client's server makes: no browser, no cookie, no CSRF token — the
+        // client secret in the body is the credential (DEV-TECH-3), and the answer is JSON.
+        ['method' => 'POST', 'pattern' => '/sso/token', 'controller' => Controllers\SsoController::class,
+            'handler' => 'token', 'guard' => 'public', 'session' => false, 'json' => true],
+        ['method' => 'POST', 'pattern' => '/sso/check', 'controller' => Controllers\SsoController::class,
+            'handler' => 'check', 'guard' => 'public', 'session' => false, 'json' => true],
+        // A client's "sign out" link: a GET only asks, the POST (with its CSRF token) signs
+        // out — so no other page can sign a user out by embedding the link (REQ-AUTH-094).
+        ['method' => 'GET', 'pattern' => '/sso/logout', 'controller' => Controllers\SsoController::class,
+            'handler' => 'logoutForm', 'guard' => 'public'],
+        ['method' => 'POST', 'pattern' => '/sso/logout', 'controller' => Controllers\SsoController::class,
+            'handler' => 'logout', 'guard' => 'public'],
         // Dedicated POST routes (§2.1: `POST /lang`, `POST /theme`) — the account page's forms
         // post to the bare path, so no ?action= is required (it was, and every switch answered 404).
         ['method' => 'POST', 'pattern' => '/lang', 'controller' => Controllers\AccountController::class,
@@ -458,6 +481,11 @@ final class Router
             // Back to the page the mutation was aimed at, which is also the route
             // whose guard we just passed.
             return Response::redirect($this->request->path());
+        }
+
+        // --- an endpoint for another application's server: JSON whatever Accept says ---
+        if (($route['json'] ?? false) === true) {
+            return $this->invoke($route, $route['handler'], $pathParams);
         }
 
         // --- the one Accept split (REQ-UI-044) ---

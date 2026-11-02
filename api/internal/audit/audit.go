@@ -37,6 +37,12 @@ const (
 	TFAReset            = "tfa_reset"    // REQ-AUD-028
 	// SessionReplayDetected: a rotated-away session id came back (REQ-AUD-030).
 	SessionReplayDetected = "session_replay_detected"
+	// Sign-in for registered clients, Sequence K (REQ-AUD-037): a client redeemed a
+	// code, a CLARA sign-out ended client grants, or a redemption was refused. Code,
+	// grant and secret values never enter details.
+	SSOLogin    = "sso_login"
+	SSOLogout   = "sso_logout"
+	SSORejected = "sso_rejected"
 
 	// §3.2 data change events
 	RecordCreated         = "record_created"

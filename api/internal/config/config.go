@@ -14,8 +14,10 @@ package config
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -162,6 +164,49 @@ type Config struct {
 
 	// §3.12 appearance (web; validated here for the shared matrix)
 	UITheme string // UI_THEME — installation default theme (GD-26, REQ-CFG-031)
+
+	// §3.14 sign-in for registered clients (REQ-CFG-038, Sequence K): the other
+	// applications of this installation — FIONA — that CLARA signs users in to.
+	SSOClients []SSOClient
+}
+
+// SSOClient is one registered client of Sequence K (REQ-AUTH-092,
+// Authentication_Authorization_Design.md §2.13). CLARA is its sign-in page: the
+// client sends the browser to /sso/authorize and redeems the code it gets back.
+type SSOClient struct {
+	N           int
+	ID          string // SSO_CLIENT_N_ID — the client_id the client presents
+	Name        string // SSO_CLIENT_N_NAME, default ID — shown to the user
+	Secret      string // SSO_CLIENT_N_SECRET — masked in dump and logs (REQ-CFG-021)
+	RedirectURI string // SSO_CLIENT_N_REDIRECT_URI — compared exactly, never as a prefix
+	LogoutURI   string // SSO_CLIENT_N_LOGOUT_URI — where sign-out returns; optional
+}
+
+// SSOClientByID returns the registered client with this client_id, or nil.
+func (c *Config) SSOClientByID(id string) *SSOClient {
+	if id == "" {
+		return nil
+	}
+	for i := range c.SSOClients {
+		if c.SSOClients[i].ID == id {
+			return &c.SSOClients[i]
+		}
+	}
+	return nil
+}
+
+// ssoClientIDPattern is the shape of SSO_CLIENT_N_ID: short, lower case, safe in a
+// URL and an audit detail without escaping.
+var ssoClientIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
+
+// validClientURI reports whether raw is an absolute http(s) URL without a fragment.
+// Plain http is accepted only outside production: the code and the user travel on it.
+func validClientURI(raw string, production bool) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.Fragment != "" || u.User != nil {
+		return false
+	}
+	return u.Scheme == "https" || (u.Scheme == "http" && !production)
 }
 
 // UIThemes is the set of installed theme identifiers (REQ-TECH-027): the
@@ -544,6 +589,47 @@ func Load() (*Config, error) {
 		fail("UI_THEME: %q (want bootstrap, darkly or yeti)", cfg.UITheme)
 	}
 
+	// §3.14 registered sign-in clients 1–3 (REQ-CFG-038, Sequence K). A client is
+	// registered by its ID; the rest is then required, because a client CLARA cannot
+	// authenticate or whose return address it cannot pin is not a client but an open
+	// redirect with a name.
+	for n := 1; n <= 3; n++ {
+		id := strings.TrimSpace(get(fmt.Sprintf("SSO_CLIENT_%d_ID", n)))
+		if id == "" {
+			continue
+		}
+		c := SSOClient{
+			N:           n,
+			ID:          id,
+			Name:        strings.TrimSpace(getOr(get, fmt.Sprintf("SSO_CLIENT_%d_NAME", n), id)),
+			Secret:      get(fmt.Sprintf("SSO_CLIENT_%d_SECRET", n)),
+			RedirectURI: strings.TrimSpace(get(fmt.Sprintf("SSO_CLIENT_%d_REDIRECT_URI", n))),
+			LogoutURI:   strings.TrimSpace(get(fmt.Sprintf("SSO_CLIENT_%d_LOGOUT_URI", n))),
+		}
+		if !ssoClientIDPattern.MatchString(c.ID) {
+			fail("SSO_CLIENT_%d_ID: %q (want 1–64 characters of a-z, 0-9, _ and -, starting with a letter or digit)", n, c.ID)
+		}
+		if other := cfg.SSOClientByID(c.ID); other != nil {
+			fail("SSO_CLIENT_%d_ID: %q is already SSO_CLIENT_%d_ID (each client id names one client)", n, c.ID, other.N)
+		}
+		switch {
+		case c.Secret == "":
+			fail("SSO_CLIENT_%d_SECRET: missing (required for a client with SSO_CLIENT_%d_ID)", n, n)
+		case production && len(c.Secret) < minInternalServiceTokenBytes:
+			fail("SSO_CLIENT_%d_SECRET: %d bytes is under the %d-byte minimum — openssl rand -hex 32 issues one",
+				n, len(c.Secret), minInternalServiceTokenBytes)
+		}
+		if !validClientURI(c.RedirectURI, production) {
+			fail("SSO_CLIENT_%d_REDIRECT_URI: %q (required — an absolute https URL without a fragment; http only when APP_ENV=development)",
+				n, c.RedirectURI)
+		}
+		if c.LogoutURI != "" && !validClientURI(c.LogoutURI, production) {
+			fail("SSO_CLIENT_%d_LOGOUT_URI: %q (want an absolute https URL without a fragment, or unset; http only when APP_ENV=development)",
+				n, c.LogoutURI)
+		}
+		cfg.SSOClients = append(cfg.SSOClients, c)
+	}
+
 	if len(errs) > 0 {
 		return nil, fmt.Errorf("configuration invalid:\n  %s", strings.Join(errs, "\n  "))
 	}
@@ -597,6 +683,13 @@ func (c *Config) Masked() *Config {
 	}
 	for i := range m.LDAP {
 		m.LDAP[i].BindPassword = mask
+	}
+	if len(c.SSOClients) > 0 {
+		m.SSOClients = make([]SSOClient, len(c.SSOClients))
+		copy(m.SSOClients, c.SSOClients)
+	}
+	for i := range m.SSOClients {
+		m.SSOClients[i].Secret = mask
 	}
 	return &m
 }
@@ -682,6 +775,15 @@ func (c *Config) Dump() []string {
 			fmt.Sprintf("LDAP_SERVER_%d_BIND_DN=%s", s.N, none(s.BindDN)),
 			fmt.Sprintf("LDAP_SERVER_%d_BIND_PASSWORD=%s", s.N, m),
 			fmt.Sprintf("LDAP_SERVER_%d_NAMES=%s", s.N, namesStr(s.Names)),
+		)
+	}
+	for _, c := range c.SSOClients {
+		out = append(out,
+			fmt.Sprintf("SSO_CLIENT_%d_ID=%s", c.N, c.ID),
+			fmt.Sprintf("SSO_CLIENT_%d_NAME=%s", c.N, c.Name),
+			fmt.Sprintf("SSO_CLIENT_%d_SECRET=%s", c.N, m),
+			fmt.Sprintf("SSO_CLIENT_%d_REDIRECT_URI=%s", c.N, c.RedirectURI),
+			fmt.Sprintf("SSO_CLIENT_%d_LOGOUT_URI=%s", c.N, none(c.LogoutURI)),
 		)
 	}
 	return out

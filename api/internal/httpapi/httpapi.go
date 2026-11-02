@@ -204,6 +204,11 @@ var preAuthPaths = map[string]bool{
 	"/api/v1/auth/password-reset/request":  true,
 	"/api/v1/auth/password-reset/complete": true,
 	"/api/v1/auth/invite/complete":         true,
+	// Sequence K (Authentication_Authorization_Design.md §2.13, DEV-API-44): a
+	// registered client's server redeems a code and checks its grant. No CLARA user
+	// acts — the client authenticates itself with its id and secret in the body.
+	"/api/v1/sso/token": true,
+	"/api/v1/sso/check": true,
 }
 
 // AdminBoundary enforces the internal trust boundary on /api/v1/*

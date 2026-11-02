@@ -77,6 +77,7 @@ func New(store *db.Store, cfg *config.Config, aw *audit.Writer, reg *metrics.Reg
 		assertions: newProviderVerifiers()}
 	mux := http.NewServeMux()
 	h.registerAuth(mux)
+	h.registerSSO(mux) // sign-in for registered clients, Sequence K (§2.13)
 	h.registerTfa(mux)
 	h.registerUsers(mux)
 	h.registerRegions(mux) // preferred region and the provider role mapping (§4.30)

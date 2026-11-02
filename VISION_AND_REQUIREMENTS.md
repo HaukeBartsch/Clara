@@ -1290,3 +1290,11 @@ If an administrator assigns a user to a project that administrators preferred re
 
 If a record instrument is displayed the top shows a dropdown for selecting another event and a list of instrument buttons (for the current event). Rearrange both the dropdown and the list of buttons into a table where the rows are the instruments and the columns are the events (in order). Each cell in the table should display the completeness marker from the record status dashboard with the same color scheme. Selecting one of the completness markers should load that instrument (for the current record).
 
+
+## Sign in to FIONA with CLARA
+
+The AC.php in FIONA is the current way to log in to FIONA. Another way to authenticate is in CLARA (using the golang server). To simplify the setup I would like to have a backward compatible way of using CLARA login and authentication from FIONA — if CLARA exists. If there is no CLARA the current AC.php should continue to work. The roles stay in FIONA.
+
+An LDAP login to CLARA should succeed even when no account exists yet. As no project is linked to the new account, the project list for that user is empty. The user waits for an administrator to add the account to a project before the user can work.
+
+**Status:** CLARA side done 2026-11-02. CLARA signs registered applications in with an authorization code and PKCE (Sequence K, REQ-AUTH-092…096, `Design/Authentication_Authorization_Design.md` §2.13). The application gets the user's id, address and name, and a grant it checks every few minutes; signing out of CLARA, disabling the account or ending its sessions ends the grant. Applications are registered as `SSO_CLIENT_n_*` (REQ-CFG-038, INSTALL.md §14.2). A first LDAP sign-in now creates the account — not an administrator, in no project — instead of refusing it (REQ-AUTH-091, DEV-AUTH-21); OAuth2 sign-ins of unknown accounts are still refused. FIONA's side (AC.php and its login page) is not changed yet.

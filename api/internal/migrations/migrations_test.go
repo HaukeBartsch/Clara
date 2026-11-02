@@ -35,6 +35,7 @@ var wantFiles = []string{
 	"0019_data_record_index.sql",
 	"0020_preferred_region.sql",
 	"0021_unverified_completion.sql",
+	"0022_sso_grants.sql",
 }
 
 var dialects = []string{"sqlite", "mariadb"}

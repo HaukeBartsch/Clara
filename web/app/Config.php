@@ -153,6 +153,16 @@ final class Config
     public array $localNames = [];
 
     /**
+     * The applications this installation signs users in to (Sequence K, REQ-CFG-038): id, the
+     * name shown to the user, and the two addresses a browser may be sent back to. The client
+     * secret is not here — only the API checks it (REQ-API-183) — and the API refuses to start
+     * with a client it could not validate, so these entries are display and routing data.
+     *
+     * @var list<array{index: int, id: string, name: string, redirect_uri: string, logout_uri: string}>
+     */
+    public array $ssoClients = [];
+
+    /**
      * The peers whose forwarded `X-Real-IP` may name the caller (TRUSTED_PROXY_CIDRS) — the same
      * ranges the API trusts its own direct peer by, so one variable decides the question for both
      * components (REQ-API-125, System_Configuration_Design.md §3.9). The web layer needs it because
@@ -519,6 +529,31 @@ final class Config
             }
         }
 
+        // Registered sign-in clients (Sequence K, REQ-CFG-038). The API validates them in full
+        // and refuses to start otherwise; the web layer only needs where a browser may be sent.
+        for ($n = 1; $n <= self::SOURCE_INDEX_MAX; $n++) {
+            $id = trim($get("SSO_CLIENT_{$n}_ID"));
+            if ($id === '') {
+                continue;
+            }
+            $redirect = trim($get("SSO_CLIENT_{$n}_REDIRECT_URI"));
+            $logout = trim($get("SSO_CLIENT_{$n}_LOGOUT_URI"));
+            if (!self::isAbsoluteHttpUrl($redirect)) {
+                $errors[] = "SSO_CLIENT_{$n}_REDIRECT_URI must be an absolute http(s) URL (REQ-CFG-038)";
+            }
+            if ($logout !== '' && !self::isAbsoluteHttpUrl($logout)) {
+                $errors[] = "SSO_CLIENT_{$n}_LOGOUT_URI must be an absolute http(s) URL or unset (REQ-CFG-038)";
+            }
+            $name = trim($get("SSO_CLIENT_{$n}_NAME"));
+            $c->ssoClients[] = [
+                'index' => $n,
+                'id' => $id,
+                'name' => $name !== '' ? $name : $id,
+                'redirect_uri' => $redirect,
+                'logout_uri' => $logout,
+            ];
+        }
+
         // The local source exists exactly once (one users table, GD-18) but may
         // carry several names; unset means it joins the implicit default set.
         $c->localNames = self::nameList('LOCAL_LOGIN_NAMES', $get('LOCAL_LOGIN_NAMES'), $errors);
@@ -542,6 +577,37 @@ final class Config
         }
 
         return $sources;
+    }
+
+    /** An absolute http(s) URL with a host, and neither a fragment nor credentials in it. */
+    private static function isAbsoluteHttpUrl(string $url): bool
+    {
+        $parts = parse_url($url);
+
+        return is_array($parts)
+            && in_array(strtolower((string) ($parts['scheme'] ?? '')), ['http', 'https'], true)
+            && (string) ($parts['host'] ?? '') !== ''
+            && !isset($parts['fragment'])
+            && !isset($parts['user']);
+    }
+
+    /**
+     * The registered sign-in client with this id (Sequence K), or null.
+     *
+     * @return array{index: int, id: string, name: string, redirect_uri: string, logout_uri: string}|null
+     */
+    public function ssoClient(string $id): ?array
+    {
+        if ($id === '') {
+            return null;
+        }
+        foreach ($this->ssoClients as $client) {
+            if (hash_equals($client['id'], $id)) {
+                return $client;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -603,6 +669,10 @@ final class Config
             $keys[] = "LDAP_SERVER_{$n}_EMAIL_ATTR";
             $keys[] = "LDAP_SERVER_{$n}_NAME_ATTR";
             $keys[] = "LDAP_SERVER_{$n}_NAMES";
+            $keys[] = "SSO_CLIENT_{$n}_ID";
+            $keys[] = "SSO_CLIENT_{$n}_NAME";
+            $keys[] = "SSO_CLIENT_{$n}_REDIRECT_URI";
+            $keys[] = "SSO_CLIENT_{$n}_LOGOUT_URI";
         }
 
         return $keys;

@@ -17,6 +17,7 @@
     { "name": "Documentation", "description": "This document and the Swagger UI (REQ-API-002, REQ-TECH-004)." },
     { "name": "Data API", "description": "REDCap-compatible surface at /api/ — one endpoint dispatched by the `content` parameter (REQ-API-009…039)." },
     { "name": "Admin: Session", "description": "Login, logout and the pre-authentication password endpoints of Sequence H (§4.3)." },
+    { "name": "Admin: Sign-in for clients", "description": "Sequence K — CLARA signs users in to registered clients such as FIONA (§4.31, REQ-AUTH-092…095)." },
     { "name": "Admin: Users", "description": "User administration, invitations, password lifecycle and two-factor enrollment (§4.4)." },
     { "name": "Admin: Projects", "description": "Project metadata, members, tokens and roles (§4.5–§4.7)." },
     { "name": "Admin: Structure", "description": "Arms, events, instruments, fields and the instrument-event mapping (§4.8–§4.12)." },
@@ -529,6 +530,75 @@
         "description": "Called by the web layer when a session id it rotated away (REQ-AUTH-072) is presented again after the grace window — two parties held the same session (REQ-AUTH-073). The acting user is the account the old id belonged to, named by `X-Internal-User-Id` without `X-Internal-Session-Epoch`. The API raises the account's session epoch, which ends every session of the account at its next call (REQ-AUTH-074), and records `session_replay_detected` with the presenting address (never a session id). No body. The API keeps no session state (GD-1).",
         "responses": {
           "200": { "description": "Every session of the account is ended.", "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string", "const": "ok" } } }, "example": { "status": "ok" } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
+        }
+      }
+    },
+    "/api/v1/sso/codes": {
+      "post": {
+        "tags": ["Admin: Sign-in for clients"],
+        "operationId": "ssoIssueCode",
+        "summary": "Issue an authorization code for a registered client (REQ-API-182)",
+        "description": "Called by the web layer's `/sso/authorize` for the signed-in user of a CLARA session (acting user + session epoch). `redirect_uri` must equal the client's registered `SSO_CLIENT_N_REDIRECT_URI` exactly. The code is single-use, valid 60 s, stored only as its SHA-256 hash, and bound to the PKCE S256 challenge, the session's sign-in id (`sid`, hashed) and the account's session epoch. The grant it becomes ends at `session_issued_at` + `SESSION_LIFETIME` at the latest. Expired rows are purged on insert.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["client_id", "redirect_uri", "code_challenge", "code_challenge_method", "sid", "session_issued_at"], "properties": {
+          "client_id": { "type": "string" }, "redirect_uri": { "type": "string", "format": "uri" },
+          "code_challenge": { "type": "string", "pattern": "^[A-Za-z0-9_-]{43}$" }, "code_challenge_method": { "type": "string", "const": "S256" },
+          "sid": { "type": "string", "minLength": 32, "maxLength": 256, "writeOnly": true, "description": "The CLARA session's sign-in id; stored hashed." },
+          "session_issued_at": { "type": "integer", "description": "When the CLARA session signed in, Unix seconds." } } } } } },
+        "responses": {
+          "200": { "description": "The code to send to the client.", "content": { "application/json": { "schema": { "type": "object", "properties": { "code": { "type": "string" }, "expires_in": { "type": "integer", "const": 60 }, "redirect_uri": { "type": "string" } } } } } },
+          "400": { "description": "`invalid_client` — no registered client has this id; `invalid_redirect_uri` — not the registered address; `invalid_request` — challenge, sid or sign-in time unusable, or the session's lifetime has ended.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
+        }
+      }
+    },
+    "/api/v1/sso/token": {
+      "post": {
+        "tags": ["Admin: Sign-in for clients"],
+        "operationId": "ssoToken",
+        "summary": "Redeem a code for the identity and a grant (REQ-API-183, DEV-API-44)",
+        "description": "Pre-authentication: service token only; the client authenticates with `client_id` + `client_secret` in the body (relayed by the web layer's public `POST /sso/token`). Every check runs before the redemption — client, code, client binding, single use, expiry, exact `redirect_uri`, PKCE S256, account active, session epoch unchanged — and a refused code is ended, so it cannot be retried. Redeeming a code twice ends the grant the first redemption produced. Audit `sso_login` on success, `sso_rejected` with a reason on refusal; no code, verifier, grant or secret enters details.",
+        "security": [ { "InternalServiceToken": [] } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["client_id", "client_secret", "code", "code_verifier", "redirect_uri"], "properties": {
+          "client_id": { "type": "string" }, "client_secret": { "type": "string", "writeOnly": true },
+          "code": { "type": "string", "writeOnly": true }, "code_verifier": { "type": "string", "writeOnly": true }, "redirect_uri": { "type": "string" } } } } } },
+        "responses": {
+          "200": { "description": "The grant handle the client keeps for `check`, its remaining lifetime in seconds, and the identity.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SSOGrantResponse" }, "example": { "grant": "9f2c…", "expires_in": 28740, "user": { "id": 12, "email": "ola.nordmann@helse-bergen.no", "display_name": "Ola Nordmann" } } } } },
+          "400": { "description": "`invalid_grant` — the code is unknown, used, ended, expired, issued to another client, sent to another address, or the verifier does not match; `invalid_request` — code or verifier missing.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } } },
+          "401": { "description": "`invalid_client` — unknown client or wrong secret (or `service_token_invalid`).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } } },
+          "403": { "description": "`account_disabled` / `account_expired`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } } }
+        }
+      }
+    },
+    "/api/v1/sso/check": {
+      "post": {
+        "tags": ["Admin: Sign-in for clients"],
+        "operationId": "ssoCheck",
+        "summary": "Does a client's grant still stand? (REQ-API-184)",
+        "description": "Pre-authentication: service token only; client credentials in the body. Answers 200 either way. A grant stands while no CLARA sign-out ended it, its CLARA session's lifetime has not run out, the account is active, and the account's session epoch is the one the grant was issued under. `reason` ∈ `ended | expired | account_disabled | account_expired | session_revoked | unknown`. Not audited.",
+        "security": [ { "InternalServiceToken": [] } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["client_id", "client_secret", "grant"], "properties": {
+          "client_id": { "type": "string" }, "client_secret": { "type": "string", "writeOnly": true }, "grant": { "type": "string", "writeOnly": true } } } } } },
+        "responses": {
+          "200": { "description": "`active` with the identity and remaining seconds, or `active: false` with the reason.", "content": { "application/json": { "schema": { "type": "object", "required": ["active"], "properties": { "active": { "type": "boolean" }, "reason": { "type": "string" }, "expires_in": { "type": "integer" }, "user": { "$ref": "#/components/schemas/SSOUser" } } }, "examples": {
+            "active": { "value": { "active": true, "expires_in": 27100, "user": { "id": 12, "email": "ola.nordmann@helse-bergen.no", "display_name": "Ola Nordmann" } } },
+            "ended": { "value": { "active": false, "reason": "ended" } } } } } },
+          "401": { "description": "`invalid_client` — unknown client or wrong secret (or `service_token_invalid`).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } } }
+        }
+      }
+    },
+    "/api/v1/sso/end": {
+      "post": {
+        "tags": ["Admin: Sign-in for clients"],
+        "operationId": "ssoEnd",
+        "summary": "End the client grants of a CLARA session (REQ-API-185)",
+        "description": "Called by the web layer when a CLARA session signs out (acting user). Ends every live code and grant issued for that session's sign-in id; the clients learn it at their next `check`. Idempotent; `sso_logout` (with the client ids) is audited only when something ended.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["sid"], "properties": { "sid": { "type": "string", "writeOnly": true } } } } } },
+        "responses": {
+          "200": { "description": "The client ids whose grants ended.", "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string", "const": "ok" }, "clients": { "type": "array", "items": { "type": "string" } } } }, "example": { "status": "ok", "clients": ["fiona"] } } } },
+          "400": { "description": "`invalid_request` — sid missing.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AdminError" } } } },
           "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
           "403": { "$ref": "#/components/responses/AdminForbidden" }
         }
@@ -2795,6 +2865,21 @@
         },
         "example": { "id": 4, "issuer": "https://idp.example.org/idp", "role_value": "HSO-Ahus-Ansatt", "region": "Ahus", "reviewed": true, "first_seen_at": "2026-10-02 09:30:00", "last_seen_at": "2026-10-31 07:55:12", "seen_count": 412 }
       },
+      "SSOUser": {
+        "type": "object",
+        "required": ["id", "email", "display_name"],
+        "description": "The identity a registered client receives (REQ-AUTH-004: the address is the identity).",
+        "properties": { "id": { "type": "integer" }, "email": { "type": "string", "format": "email" }, "display_name": { "type": "string" } }
+      },
+      "SSOGrantResponse": {
+        "type": "object",
+        "required": ["grant", "expires_in", "user"],
+        "properties": {
+          "grant": { "type": "string", "description": "The grant handle the client presents to `check`; stored only hashed." },
+          "expires_in": { "type": "integer", "description": "Seconds until the grant's absolute end (the CLARA session's sign-in + SESSION_LIFETIME)." },
+          "user": { "$ref": "#/components/schemas/SSOUser" }
+        }
+      },
       "LoginRequest": {
         "type": "object",
         "required": ["source"],
@@ -2810,6 +2895,7 @@
           "mfa_code": { "type": "string", "description": "The second factor for the two-factor gate (GD-21)." },
           "first_factor": { "type": "string", "description": "The handle from verify-password standing in for `password` on the second call of a two-factor challenge (REQ-API-131, DEV-API-19)." },
           "source_name": { "type": "string", "description": "The authentication-source name the user selected; recorded in login audit details, never affects identity resolution or authorization (REQ-AUTH-067)." },
+          "display_name": { "type": "string", "description": "`ldap` only: the name the directory entry carries (`LDAP_SERVER_N_NAME_ATTR`). Used once, as the display name of the account a first directory sign-in creates (REQ-AUTH-091); ignored for an existing account." },
           "attempts": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Per-source outcomes of a failed named-source credential race (source-id → outcome, e.g. bad_password, unreachable); MUST never contain credentials (REQ-AUTH-036). Such a call reports a failure and authenticates nothing (REQ-API-135)." }
         }
       },

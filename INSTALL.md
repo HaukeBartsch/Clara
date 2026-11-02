@@ -851,7 +851,7 @@ All of these are `.env` settings. Restart afterwards (`systemctl restart clara-a
 | Feature | Variables | Notes |
 |---|---|---|
 | OAuth2 / OpenID Connect (up to 3) | `OAUTH2_n_ISSUER`, `OAUTH2_n_CLIENT_ID`, `OAUTH2_n_CLIENT_SECRET`, `OAUTH2_n_EMAIL_ATTR`, `OAUTH2_n_NAMES`, `OAUTH2_n_ROLES_ATTR` | Register the redirect URI `https://clara.example.org/auth/callback` with the provider. It defaults to `WEB_PUBLIC_URL` + `/auth/callback`. |
-| LDAP (up to 3) | `LDAP_SERVER_n_URL`, `LDAP_SERVER_n_SEARCH_BASE`, `LDAP_SERVER_n_BIND_DN`, `LDAP_SERVER_n_BIND_PASSWORD`, `…_UID_ATTR`, `…_EMAIL_ATTR`, `…_NAME_ATTR`, `…_NAMES` | Prefer `ldaps://`. Trust the directory's CA by copying it to `/etc/pki/ca-trust/source/anchors/` and running `update-ca-trust`. All directories under one login name are tried in parallel. |
+| LDAP (up to 3) | `LDAP_SERVER_n_URL`, `LDAP_SERVER_n_SEARCH_BASE`, `LDAP_SERVER_n_BIND_DN`, `LDAP_SERVER_n_BIND_PASSWORD`, `…_UID_ATTR`, `…_EMAIL_ATTR`, `…_NAME_ATTR`, `…_NAMES` | Prefer `ldaps://`. Trust the directory's CA by copying it to `/etc/pki/ca-trust/source/anchors/` and running `update-ca-trust`. All directories under one login name are tried in parallel. A person's first directory sign-in creates their CLARA account (not an administrator, in no project); they see the "No projects yet" page until an administrator adds them to a project. |
 | Login-page names | `LOCAL_LOGIN_NAMES`, `OAUTH2_n_NAMES`, `LDAP_SERVER_n_NAMES` | Comma-separated names users pick on the login page (REQ-CFG-032). Leave them all unset for one implicit default. |
 | Email (login codes, invitations, password resets) | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY` (`starttls`/`tls`/`none`), `SMTP_USERNAME`, `SMTP_PASSWORD`, `OTP_MAIL_FROM` | Without `SMTP_HOST` the email methods are unavailable. `OTP_MAIL_FROM` is required once `SMTP_HOST` is set. |
 | Mandatory two-factor | `AUTH_REQUIRE_2FA=1` | Local and LDAP accounts must enroll (TOTP or email code) after their password step. |
@@ -897,6 +897,36 @@ is produced once, reviewed like any other pinned dependency (REQ-TECH-021), and 
 The same hashes are written into `app-config.json` as the engine's own `integrity` record, so the check
 repeats in the browser on every load: a model directory modified after install fails with an
 `IntegrityError` instead of executing.
+
+### 14.2 Signing in to other applications with CLARA (optional)
+
+Another application on the same site (FIONA is the first) can use CLARA's sign-in instead of its own password list. CLARA then shows its own login page, with the user's usual sources and second factor, and sends the user back signed in. The application keeps its own roles. It also keeps its own sign-in, so it works the same way where there is no CLARA (`Design/Authentication_Authorization_Design.md` §2.13).
+
+1. Make a secret for the application: `openssl rand -hex 32`. In production it must be at least 32 bytes.
+2. Register the application in `/opt/clara/.env`:
+
+   ```dotenv
+   SSO_CLIENT_1_ID=fiona
+   SSO_CLIENT_1_NAME=FIONA
+   SSO_CLIENT_1_SECRET=<the secret>
+   SSO_CLIENT_1_REDIRECT_URI=https://fiona.example.org/applications/User/login.php
+   SSO_CLIENT_1_LOGOUT_URI=https://fiona.example.org/index.php
+   ```
+
+   `REDIRECT_URI` is the application page CLARA sends the browser back to. It must match the application's request exactly, character for character. `LOGOUT_URI` is optional: where the browser goes after signing out of CLARA from the application. Production requires `https` for both. Up to three applications (`SSO_CLIENT_1_*` … `SSO_CLIENT_3_*`).
+3. Restart both: `systemctl restart clara-api && systemctl reload php-fpm`. The API refuses to start with a missing secret or an address it cannot use, and names the setting.
+4. Give the application the same id and secret, and CLARA's address, `WEB_PUBLIC_URL`. The application uses:
+
+   | Step | Request |
+   |---|---|
+   | sign in | browser → `GET https://clara.example.org/sso/authorize?response_type=code&client_id=fiona&redirect_uri=…&code_challenge=…&code_challenge_method=S256&state=…` (add `prompt=none` to check without showing CLARA's login) |
+   | redeem the code | server → `POST https://clara.example.org/sso/token` (form fields `grant_type=authorization_code`, `client_id`, `client_secret`, `code`, `code_verifier`, `redirect_uri`) → `{grant, expires_in, user: {id, email, display_name}}` |
+   | still signed in? | server → `POST https://clara.example.org/sso/check` (`client_id`, `client_secret`, `grant`) every few minutes → `{active, reason}`; a 503 means "ask again later", not "signed out" |
+   | sign out | browser → `GET https://clara.example.org/sso/logout?client_id=fiona` (CLARA asks before signing out) |
+
+Signing out of CLARA signs the user out of every application they entered through it, at that application's next check. So do disabling the account, setting its password and resetting its two-factor authentication. The application's own sign-in stays valid at most as long as the CLARA sign-in it came from (`SESSION_LIFETIME`).
+
+The server-to-server calls go to CLARA's public address like a browser's. If the application runs on the CLARA host, `https://clara.example.org` must resolve and its certificate must be trusted there.
 
 ---
 

@@ -465,6 +465,64 @@ final class Session
         return (string) ($txn['purpose'] ?? 'login');
     }
 
+    /**
+     * Where the login should land once it succeeds, kept across an OAuth2 round trip — the
+     * provider returns to the fixed /auth/callback, which cannot carry `next` (REQ-AUTH-096).
+     * The value is a same-site path the caller already checked; it is taken, not read, so
+     * it serves one login only.
+     */
+    public static function rememberLoginNext(string $path): void
+    {
+        if ($path === '' || $path === '/') {
+            unset($_SESSION['_login_next']);
+
+            return;
+        }
+        $_SESSION['_login_next'] = $path;
+    }
+
+    /** The remembered landing path, or '' — and forgets it. */
+    public static function takeLoginNext(): string
+    {
+        $next = $_SESSION['_login_next'] ?? '';
+        unset($_SESSION['_login_next']);
+
+        return is_string($next) ? $next : '';
+    }
+
+    /**
+     * The sign-in id of this session for Sequence K (Authentication_Authorization_Design.md
+     * §2.13): made the first time a registered client asks for a code, kept across id
+     * rotation — it is session data, not the session id, which rotates — and gone with the
+     * session, since establish() starts every sign-in from an empty session. The API stores
+     * only its hash, and ends the client grants issued under it when this session signs out
+     * (REQ-AUTH-094). It is never sent to a client.
+     */
+    public static function ssoSid(): string
+    {
+        $sid = $_SESSION['sso_sid'] ?? null;
+        if (!is_string($sid) || strlen($sid) < 32) {
+            $sid = bin2hex(random_bytes(32));
+            $_SESSION['sso_sid'] = $sid;
+        }
+
+        return $sid;
+    }
+
+    /** The sign-in id when a client was ever given a code from this session, else null. */
+    public static function existingSsoSid(): ?string
+    {
+        $sid = $_SESSION['sso_sid'] ?? null;
+
+        return is_string($sid) && $sid !== '' ? $sid : null;
+    }
+
+    /** When this session signed in (Unix seconds); 0 outside a signed-in session. */
+    public static function issuedAt(): int
+    {
+        return (int) ($_SESSION['issued_at'] ?? 0);
+    }
+
     /** Stores a bounded, non-secret diagnostic report for the next admin page render. */
     public static function setAuthTestReport(array $report): void
     {

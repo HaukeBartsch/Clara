@@ -29,7 +29,7 @@ The normative event catalog (event codes, `details` payload schemas), the record
 | Code | When | `details` payload |
 |---|---|---|
 | `login_success` | every successful login | `{"source":"oauth2 or ldap or local","provider":"<issuer> or <LDAP server n>","source_name":"<name selected on the login page>","display_name":"…","mfa":"totp or email or recovery"}` — `mfa` only when the account had a second factor (GD-21, REQ-AUD-028); `source_name` when one was selected (REQ-AUTH-067) |
-| `login_failure` | every failed login attempt | `{"source":"oauth2 or ldap or local","source_name":"<selected name>","email":"…","reason":"provider_unavailable or state_mismatch or bad_credentials or account_not_found or account_disabled or account_expired or rate_limited or bad_mfa_code"}` — code values themselves are never in the payload (REQ-AUTH-036 extended, GD-21). For a named-source credential race there is exactly **one** entry per submission: `source`/`provider` describe nothing winning, `reason` is `bad_credentials` (or `provider_unavailable` when no source was reachable), and `attempts` lists the per-source outcomes (`{"local":"bad_password","ldap-2":"unreachable"}`) — losing attempts produce no separate events (`Authentication_Authorization_Design.md` §2.9, REQ-AUD-008) |
+| `login_failure` | every failed login attempt | `{"source":"oauth2 or ldap or local","source_name":"<selected name>","email":"…","reason":"provider_unavailable or state_mismatch or bad_credentials or account_not_found or account_ambiguous or account_disabled or account_expired or rate_limited or bad_mfa_code"}` — code values themselves are never in the payload (REQ-AUTH-036 extended, GD-21). For a named-source credential race there is exactly **one** entry per submission: `source`/`provider` describe nothing winning, `reason` is `bad_credentials` (or `provider_unavailable` when no source was reachable), and `attempts` lists the per-source outcomes (`{"local":"bad_password","ldap-2":"unreachable"}`) — losing attempts produce no separate events (`Authentication_Authorization_Design.md` §2.9, REQ-AUD-008) |
 | `logout` | explicit logout (REQ-AUTH-015) | `{}` |
 | `admin_rejected` | rejected administration-API call (missing/invalid service token, unknown or disabled user — REQ-AUTH-011…013; a session epoch that no longer matches — REQ-API-147) | `{"path":"POST /api/v1/…","reason":"service_token_invalid or user_unknown or user_disabled or session_revoked"}` |
 | `account_auto_disabled` | inactivity auto-disable of the account active rule (GD-19, REQ-AUTH-053, REQ-AUD-024) — `enabled` set to `0` and the inactivity clock reset, same transaction as this entry; `source=system` | `{"email":"…","last_login_at":"…","inactivity_limit_days":180}` |
@@ -42,6 +42,9 @@ The normative event catalog (event codes, `details` payload schemas), the record
 | `password_changed` | a user changed their own local password (self-service, REQ-AUTH-061) — GD-23 | `{}` |
 | `password_reset_requested` | a forgot-password request (Sequence H; anonymous caller — recorded with the submitted address and source IP, REQ-AUTH-062) | `{"email":"…","ip":"…"}` — never a token |
 | `password_reset_completed` | a reset token was redeemed and the new password stored (acting user = the account) — GD-23 | `{"email":"…"}` |
+| `sso_login` | a registered client redeemed a sign-in code (Sequence K, REQ-API-183, REQ-AUD-037); acting user = the account the grant names | `{"client_id":"fiona"}` |
+| `sso_logout` | a CLARA sign-out ended client grants issued under that session (REQ-API-185); acting user = the account signing out | `{"clients":["fiona"]}` |
+| `sso_rejected` | a code redemption was refused (REQ-API-183), or a check presented wrong client credentials (REQ-API-184); acting user = the code's account, none when no code was found | `{"client_id":"fiona","reason":"invalid_client or unknown_code or wrong_client or code_reused or ended or code_expired or redirect_uri_mismatch or pkce_mismatch or account_not_found or account_disabled or account_expired or session_revoked"}` |
 
 No IdP tokens, LDAP passwords, or service-token values ever appear in payloads (REQ-AUD-007, REQ-API-005).
 
@@ -107,7 +110,7 @@ Field renames are `field_updated` with `"changes":{"name":{"old":"…","new":"�
 
 | Code | When | `details` payload |
 |---|---|---|
-| `user_created` | REQ-API-047 | `{"email":"…","display_name":"…","re_enabled":false}` — `re_enabled:true` when a disabled account is re-enabled |
+| `user_created` | REQ-API-047; a first LDAP sign-in (REQ-AUTH-091) | `{"email":"…","display_name":"…","re_enabled":false}` — `re_enabled:true` when a disabled account is re-enabled. The account a first LDAP sign-in creates adds `"valid_until":null,"automatic":true,"source":"ldap","provider":"ldap-N"`, with the new account as acting user |
 | `user_updated` | REQ-API-048/136 | `{"email":"…","enabled":0,"is_admin":{"old":1,"new":0}}` — one key per changed attribute; a grant/revoke of `is_admin` rides this event, no separate type (a rejected last-admin change writes nothing) |
 | `membership_changed` | REQ-API-054 | `{"member_email":"…","action":"add or role_change or remove","role":"data-entry or null"}`, plus `"region_placeholder":"OUS"` on an add that set the member's placeholder region (REQ-API-179, REQ-AUD-036) |
 | `token_issued` | first issuance via REQ-API-054 (REQ-AUTH-030) | `{"member_email":"…"}` — the token value is never in `details` (REQ-API-005) |
