@@ -482,6 +482,7 @@ return [
     'admin.assistant.status.model_loading' => 'Loading the model into this browser… {percent}%',
     'admin.assistant.status.model_ready' => 'Model ready: {model}',
     'admin.assistant.status.thinking' => 'Thinking…',
+    'admin.assistant.status.ready' => 'Ready for the next question.',
     'admin.assistant.status.empty_answer' => 'The model stopped without answering (finish reason: {reason}).',
     'admin.assistant.status.tool_running' => 'running…',
     'admin.assistant.status.tool_done' => 'done',

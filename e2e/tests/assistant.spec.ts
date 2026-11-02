@@ -37,6 +37,14 @@ async function mcp(page: Page, method: string, params: Record<string, unknown>):
   }, { method, params })
 }
 
+/** The project names this session's own `list_projects` tool sees — what the model would be told. */
+async function projectNames(page: Page): Promise<Array<string>> {
+  const listed = await mcp(page, "tools/call", { name: "list_projects", arguments: {} })
+  const rows = (listed.result as unknown as { structuredContent?: { rows?: Array<{ name: string }> } }).structuredContent?.rows ?? []
+
+  return rows.map((row) => row.name)
+}
+
 /**
  * Replaces the vendored engine with one that answers the way web-llm's Hermes path does, and
  * records every request it receives in `window.__engineCalls`. Two scenarios share it: an ordinary
@@ -89,6 +97,16 @@ async function stubHermesEngine(page: Page): Promise<void> {
   await page.addInitScript(() => {
     Object.defineProperty(window.navigator, "gpu", { value: {}, configurable: true })
   })
+  // The same reasoning covers the install check one step earlier: with no `app-config.json` on disk
+  // — every checkout that has not run tools/fetch_assistant_model.sh, CI included — startup reports
+  // "model missing" and stops before this stub is called, so the loop under test never runs. Naming
+  // a model here is part of stubbing the engine, not a claim about what is installed.
+  await page.route("**/assets/models/app-config.json", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ model_id: "Hermes-3-Llama-3.2-3B-q4f16_1-MLC", model_list: [] }),
+    }),
+  )
 }
 
 /** The requests the stubbed engine received, newest last. */
@@ -216,6 +234,14 @@ test.describe("clara assistant (AI_Assistant)", () => {
     // told what went away and what to do (reload), in words, not about a matcher they have never
     // heard of — and the page stops accepting messages for a model that cannot generate again.
     await signInAsAdmin(page)
+    // As in stubHermesEngine: with no config on disk startup stops at "model missing", and this
+    // scenario needs a model that reported ready once before its device went away.
+    await page.route("**/assets/models/app-config.json", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ model_id: "Hermes-3-Llama-3.2-3B-q4f16_1-MLC", model_list: [] }),
+      }),
+    )
     await page.route("**/vendor/webllm/web-llm.mjs", (route) =>
       route.fulfill({
         contentType: "text/javascript",
@@ -279,6 +305,9 @@ test.describe("clara assistant (AI_Assistant)", () => {
     await expect(page.locator(".clara-as-tool").first()).toContainText("list_projects")
     await expect(page.locator(".clara-as-tool").first()).toContainText("done")
     await expect(page.locator(".clara-as-msg-assistant p").last()).toHaveText("One project, 42 records.")
+    // The turn is over and the status line says so. It last read "Thinking…" on the way into the
+    // stream, and an answered page used to go on claiming it was still working.
+    await expect(page.locator("[data-clara-as-status]")).toContainText("Ready for the next question.")
 
     const calls = (await page.evaluate(() => (window as unknown as Record<string, unknown>).__engineCalls)) as Array<{
       messages: Array<{ role: string; content: string | null }>
@@ -342,7 +371,7 @@ test.describe("clara assistant (AI_Assistant)", () => {
 
     const tools = await mcp(page, "tools/list", {})
     const names = ((tools.result as Record<string, Array<Record<string, string>>>).tools).map((tool) => tool.name)
-    for (const expected of ["list_projects", "marginal_stats", "ttest", "create_records", "add_event"]) {
+    for (const expected of ["list_projects", "marginal_stats", "ttest", "create_records", "add_event", "create_project"]) {
       expect(names).toContain(expected)
     }
     // The mode gate is not visible in the protocol shape — it lives on the server.
@@ -374,6 +403,111 @@ test.describe("clara assistant (AI_Assistant)", () => {
 
     await page.locator('form[action="/admin?action=assistant_mode"] button[type="submit"]').click()
     await expect(page.getByText("Read-only", { exact: true })).toBeVisible()
+  })
+
+  test("create_project makes one project per call, under the endpoint's own rules", async ({ page }) => {
+    // REQ-AI-015: this tool is a mapping onto POST /api/v1/projects and nothing more. Read-only
+    // refuses it before anything is sent; a taken name answers with the API's conflict; an attribute
+    // §4.5 does not list is refused by name rather than dropped on the way through — the project
+    // that gets created has to answer to the payload the administrator confirmed (REQ-AI-007).
+    await signInAsAdmin(page)
+    await page.goto("/admin?section=assistant")
+
+    const name = `Spec ${Date.now()}`
+    const call = (args: Record<string, unknown>) => mcp(page, "tools/call", { name: "create_project", arguments: args })
+
+    const refused = await call({ project_name: name })
+    expect((refused.result as { content: Array<{ text: string }> }).content[0].text).toContain("read_only")
+
+    await page.locator('form[action="/admin?action=assistant_mode"] button[type="submit"]').click()
+    await expect(page.getByText("Read & write", { exact: true })).toBeVisible()
+
+    const created = await call({ project_name: name, organization: "Specification Ward" })
+    const result = created.result as { isError?: boolean; content: Array<{ text: string }>; structuredContent?: Record<string, unknown> }
+    expect(result.isError).toBeUndefined()
+    const projectId = Number(result.structuredContent?.project_id)
+    expect(projectId).toBeGreaterThan(0)
+    // What the model reads has to carry what it cannot guess: the id every later write needs, and the
+    // arm, event and instrument the endpoint created together with the project (REQ-API-050).
+    expect(result.content[0].text).toContain(String(projectId))
+    expect(result.content[0].text).toContain("baseline_arm_1")
+
+    expect(await projectNames(page)).toContain(name)
+
+    const dupe = await call({ project_name: name })
+    const dupeResult = dupe.result as { isError?: boolean; content: Array<{ text: string }> }
+    expect(dupeResult.isError).toBe(true)
+    expect(dupeResult.content[0].text).toContain("already exists")
+
+    const invented = await call({ project_name: `${name} second`, colour: "blue" })
+    const inventedResult = invented.result as { isError?: boolean; content: Array<{ text: string }> }
+    expect(inventedResult.isError).toBe(true)
+    expect(inventedResult.content[0].text).toContain("colour")
+  })
+
+  test("a project the model asks for waits for the click that confirms it", async ({ page }) => {
+    // REQ-AI-007 on the tool that opens a project: the arguments are on screen first, and until the
+    // confirmation there is no project to find. The engine is stubbed to ask for exactly one — ten
+    // projects are this round ten times over, which is what REQ-AI-015 asks for.
+    const name = `Confirmed ${Date.now()}`
+    await page.route("**/assets/models/app-config.json", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({ model_id: "Hermes-3-Llama-3.2-3B-q4f16_1-MLC", model_list: [] }),
+      }),
+    )
+    await page.route("**/vendor/webllm/web-llm.mjs", (route) =>
+      route.fulfill({
+        contentType: "text/javascript",
+        body: `
+          const projectName = ${JSON.stringify(name)}
+          let round = 0
+          const delta = (part, reason) => ({ choices: [{ delta: part, finish_reason: reason || null, index: 0 }] })
+          export async function CreateMLCEngine() {
+            return {
+              chat: { completions: { create(request) {
+                let chunks
+                if (request.tools === undefined) {
+                  chunks = [delta({ content: "Created " + projectName + "." }), delta({}, "stop")]
+                } else if (round === 0) {
+                  round = 1
+                  chunks = [
+                    delta({ role: "assistant", tool_calls: [{ index: 0, function: { name: "create_project", arguments: JSON.stringify({ project_name: projectName }) } }] }),
+                    delta({}, "tool_calls"),
+                  ]
+                } else {
+                  chunks = [delta({ content: "[]" }), delta({}, "tool_calls")]
+                }
+                return (async function* () { for (const c of chunks) { yield c } })()
+              } } },
+            }
+          }
+        `,
+      }),
+    )
+    await page.addInitScript(() => {
+      Object.defineProperty(window.navigator, "gpu", { value: {}, configurable: true })
+    })
+
+    await signInAsAdmin(page)
+    await page.goto("/admin?section=assistant")
+    await page.locator('form[action="/admin?action=assistant_mode"] button[type="submit"]').click()
+    await expect(page.getByText("Read & write", { exact: true })).toBeVisible()
+
+    const input = page.locator("[data-clara-as-input]")
+    await expect(input).toBeEnabled({ timeout: 15000 })
+    await input.fill(`Create a project named ${name}`)
+    await input.press("Enter")
+
+    // The payload is readable before anything is written, and nothing has been written yet.
+    const dialog = page.locator("#clara-as-confirm")
+    await expect(dialog).toBeVisible()
+    await expect(dialog.locator("[data-clara-as-confirm-payload]")).toContainText(name)
+    expect(await projectNames(page)).not.toContain(name)
+
+    await dialog.locator("[data-clara-as-confirm-ok]").click()
+    await expect(page.locator(".clara-as-tool").first()).toContainText("done")
+    expect(await projectNames(page)).toContain(name)
   })
 
   test("the assistant page permits compiling WebAssembly", async ({ page }) => {

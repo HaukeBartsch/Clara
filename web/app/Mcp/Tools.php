@@ -27,6 +27,18 @@ final class Tools
     /** Rows one `create_records` call may import (the data API's own limit is respected too). */
     private const IMPORT_CAP = 500;
 
+    /**
+     * The attributes `create_project` knows, in the order §4.5 lists them and with
+     * `project_name` first: this is `POST /api/v1/projects`' own whitelist
+     * (`RejectUnknownAttrs`), restated here so an invented argument is refused by name before
+     * anything is written (REQ-AI-015).
+     */
+    private const PROJECT_ATTRS = [
+        'project_name', 'organization', 'pi_name', 'pi_email', 'dm_name', 'dm_email',
+        'rek_number', 'rek_start_date', 'rek_end_date', 'start_date', 'end_date',
+        'participant_names', 'record_naming',
+    ];
+
     public function __construct(
         private readonly ApiClient $api,
         private readonly Logger $logger
@@ -64,6 +76,23 @@ final class Tools
                 'group_field' => ['type' => 'string'],
                 'event' => ['type' => 'string', 'description' => 'Optional unique_event_name filter'],
             ], 'read', ['project_id', 'value_field', 'group_field']),
+            // First of the write tools because it produces the project_id every other write needs
+            // (REQ-AI-015). One call, one project: a request for five projects is five confirmations.
+            $this->def('create_project', 'Create a project. Only project_name is required; the answer carries the new project id, which all the other write tools need. A new project opens with arm_num 1, one event "baseline_arm_1" and one instrument named "instrument".', [
+                'project_name' => ['type' => 'string', 'description' => 'Project name; must not exist yet'],
+                'organization' => ['type' => 'string'],
+                'pi_name' => ['type' => 'string', 'description' => 'Principal investigator, full name'],
+                'pi_email' => ['type' => 'string'],
+                'dm_name' => ['type' => 'string', 'description' => 'Data manager, full name'],
+                'dm_email' => ['type' => 'string'],
+                'rek_number' => ['type' => 'string', 'description' => 'Ethics committee reference'],
+                'rek_start_date' => ['type' => 'string', 'description' => 'YYYY-MM-DD'],
+                'rek_end_date' => ['type' => 'string', 'description' => 'YYYY-MM-DD'],
+                'start_date' => ['type' => 'string', 'description' => 'YYYY-MM-DD'],
+                'end_date' => ['type' => 'string', 'description' => 'YYYY-MM-DD'],
+                'participant_names' => ['type' => 'string', 'description' => 'Record identifier pattern, e.g. "MOBA[0-9][0-9][0-9]"'],
+                'record_naming' => ['type' => 'string', 'enum' => ['auto', 'manual'], 'description' => 'How record ids are assigned; manual when omitted'],
+            ], 'write', ['project_name']),
             $this->def('create_records', 'Create or update records in bulk (REDCap import semantics): each object holds the record id field plus any field values. Up to 500 rows per call.', [
                 'project_id' => ['type' => 'integer'],
                 'records' => ['type' => 'array', 'items' => ['type' => 'object', 'additionalProperties' => true]],
@@ -129,6 +158,7 @@ final class Tools
                 'export_records' => $this->exportRecords($args),
                 'marginal_stats' => $this->marginalStats($args),
                 'ttest' => $this->ttest($args),
+                'create_project' => $this->createProject($args),
                 'create_records' => $this->createRecords($args),
                 'add_event' => $this->addEvent($args),
                 'add_instrument' => $this->addInstrument($args),
@@ -325,6 +355,54 @@ final class Tools
     }
 
     // --- write tools (REQ-AI-009) ------------------------------------------------------------
+
+    /**
+     * One project, one call (REQ-AI-015) — the 1:1 mapping onto `POST /api/v1/projects` of
+     * REQ-API-050, so the endpoint's own checks apply: a name already taken comes back as its
+     * conflict, a bad date as its format error. An attribute this tool does not list is refused by
+     * name rather than dropped on the way through, because a silently discarded argument would make
+     * the project that gets created answer to neither the request nor the confirmation the
+     * administrator just read (REQ-AI-007).
+     *
+     * @return array<string, mixed>
+     */
+    private function createProject(array $args): array
+    {
+        $unknown = array_values(array_diff(array_keys($args), self::PROJECT_ATTRS));
+        if ($unknown !== []) {
+            throw new \InvalidArgumentException(
+                'unsupported attribute(s) ' . implode(', ', $unknown)
+                . '; create_project accepts ' . implode(', ', self::PROJECT_ATTRS)
+            );
+        }
+
+        $body = ['project_name' => self::requiredString($args, 'project_name')];
+        foreach (self::PROJECT_ATTRS as $key) {
+            if ($key === 'project_name' || !isset($args[$key])) {
+                continue; // an omitted optional attribute stays whatever the API defaults it to
+            }
+            if (!is_scalar($args[$key])) {
+                throw new \InvalidArgumentException($key . ' must be a string');
+            }
+
+            $value = trim((string) $args[$key]);
+            if ($value !== '') {
+                $body[$key] = $value; // blank is treated as not said, the same way the name is read
+            }
+        }
+
+        $answer = $this->api->post('/api/v1/projects', $body);
+        $projectId = (int) ($answer['id'] ?? 0);
+
+        // The id and the structure the endpoint created alongside it go into the text, because they
+        // are what the model needs for every call that follows — and neither is guessable.
+        return self::success(
+            'Project "' . $body['project_name'] . '" created with id ' . $projectId
+            . '. It opens with arm_num 1, one event "baseline_arm_1" and one instrument "instrument";'
+            . ' pass project_id ' . $projectId . ' to the other write tools.',
+            ['display' => 'json', 'project_id' => $projectId]
+        );
+    }
 
     /** @return array<string, mixed> */
     private function createRecords(array $args): array

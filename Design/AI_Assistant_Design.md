@@ -55,6 +55,7 @@ the UI hides nothing to achieve this; the check is the rule.
 | `export_records` | read | data-API `content=record` via `DataApi::forMember`, `fields[]`/`events[]`, rows capped at 200 with a `truncated` flag |
 | `marginal_stats` | read | export one field (≤ 50 000 rows) → §4 stats |
 | `ttest` | read | export two fields → §4 Welch |
+| `create_project` | write | `POST /api/v1/projects` (§4.5 attributes, whitelisted here as the endpoint whitelists them; the result text names the new id and the arm/event/instrument the project opens with — REQ-AI-015) |
 | `create_records` | write | data-API `content=record&action=import&data[…]` (§8.6 semantics; rows ≤ 500) |
 | `add_event` | write | `POST …/events` `{arm_num, event_name}` |
 | `add_instrument` | write | `POST …/instruments` `{name}` |
@@ -97,6 +98,12 @@ Results are plain JSON numbers/strings; tool text summaries round to four signif
   * Loop: user message → streamed tokens appended to the chat (REQ-AI-012) → tool calls executed →
     results fed back → final text. A `write` tool pauses for the confirmation dialog showing the
     formatted arguments before `callTool` (REQ-AI-007); cancel feeds a "declined" result back to the model.
+  * **A turn ends with the status line saying so.** The loop's last write before generating was
+    "Thinking…", and returning from a successful turn set nothing, so an answered page kept claiming
+    it was still working — and the round-limit exit left the same stale word under an explanation of
+    why it had stopped. An answer now leaves `admin.assistant.status.ready`, and the round limit
+    leaves its own sentence; the paths that fail already name their failure (`status.empty_answer`,
+    `error.repeat_stopped`, or the report below).
   * **A tool result is wrapped for the model, not just for the protocol.** MLC's compiled template for
     this model (`conv_template.name` `hermes3_llama-3_1`) renders a `tool` turn as its role and its
     content — `roles.tool` plus `role_templates.tool` of `{tool_message}` — and the bundle adds nothing
@@ -189,8 +196,8 @@ Results are plain JSON numbers/strings; tool text summaries round to four signif
   the model was **trained** at — `model_config.rope_scaling.original_max_position_embeddings`, 8192 for
   every Llama-3.1-based id here, falling back to the bundle's conservative 4096 where a config has no
   rope scaling. Trained-at is the ceiling worth having: past it the model runs on extrapolated
-  positions, an unasked-for quality gamble, while below it a tool round can stop fitting — twelve tool
-  schemas are ~4.6 kB of JSON folded into every prompt, plus whatever the last call returned, and a
+  positions, an unasked-for quality gamble, while below it a tool round can stop fitting — thirteen tool
+  schemas are ~5.3 kB of JSON folded into every prompt, plus whatever the last call returned, and a
   round that no longer fits is `ContextWindowSizeExceededError`, not a truncation.
   The price is arithmetic: `2 × layers × kv_heads × head_dim` bytes per token (K and V, float16) for
   the whole window — 128 KiB/token for Hermes-3-Llama-3.1-8B, so 512 MB at 4096, 1 GB at this default,
@@ -249,6 +256,7 @@ Why the assistant takes the shape of §1, and what each choice costs. The decisi
 | The configured model is not one the bundle allows tools for | It loads and reports "Model ready", then every question fails with `UnsupportedModelIdError`; the fetch script offers only supported ids to prevent this | §7 |
 | The model or its context window does not fit the GPU | web-llm does not refuse the install; the load dies as `DeviceLostError`. `vram_required_MB` states the need so an administrator can tell this from a broken artifact | §7 |
 | The browser releases the GPU after the model loaded (idle or backgrounded tab) | The engine unloads itself and the next token fails over a freed grammar matcher (`BindingError`); the client recognises that as device loss, reports it as such and retires the engine, so no further turn is offered against it | §5, REQ-AI-014 |
+| A model asks for several projects at once | Each `create_project` call is executed and confirmed on its own — ten projects asked for in one message are ten dialogs, run in one round when the model batches the calls (REQ-AI-015) | §3, §5 |
 | A conversation outgrows the context window | `ContextWindowSizeExceededError` mid-turn, not a truncation; the failure details show the configured window and the size of the last request | §5, §7 |
 | Model files are absent or incomplete | A supported state: the section reports it, and re-running the fetch script completes an interrupted download | §5, §7 |
 | A model file is changed after install | The browser's integrity check fails with `IntegrityError`, and nothing executes | §7 |

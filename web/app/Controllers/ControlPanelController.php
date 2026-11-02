@@ -1200,6 +1200,9 @@ final class ControlPanelController extends Controller
             'jsKeys' => [
                 'admin.assistant.status.model_loading', 'admin.assistant.status.model_ready',
                 'admin.assistant.status.thinking', 'admin.assistant.status.empty_answer',
+                // The state a completed turn hands the status line back to; without it a page that
+                // had answered went on saying "Thinking…".
+                'admin.assistant.status.ready',
                 'admin.assistant.status.tool_running',
                 'admin.assistant.status.tool_done', 'admin.assistant.status.tool_failed',
                 'admin.assistant.status.declined', 'admin.assistant.status.tool_repeated',

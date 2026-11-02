@@ -529,6 +529,10 @@ async function runTurn() {
       // The answer belongs to the history: without it the model never saw what it had just said,
       // and every follow-up question started from a conversation missing all of its own replies.
       messages.push({ role: "assistant", content: closing.text })
+      // A finished turn leaves the status line finished too: it last said "Thinking…" on the way in,
+      // and nothing set it again, so an answered page kept claiming it was still working (the field
+      // takes the next question regardless).
+      setStatus("admin.assistant.status.ready")
       return
     }
 
@@ -606,6 +610,9 @@ async function runTurn() {
   stage = "round_limit"
   console.warn("[clara-as] stopped after " + MAX_TOOL_ROUNDS + " tool rounds without an answer")
   body.textContent = t("admin.assistant.error.too_many_rounds")
+  // The bubble carries the explanation; the status line says it too rather than staying on
+  // "Thinking…" for a turn that has ended (REQ-AI-012's execution trail ends with a state).
+  setStatus("admin.assistant.error.too_many_rounds")
 }
 
 // --- startup ------------------------------------------------------------------------------------
