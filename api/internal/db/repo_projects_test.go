@@ -369,3 +369,78 @@ func TestProjectGettersInsideTransaction(t *testing.T) {
 		t.Errorf("GetProjectByName after commit = %v (%v), want the row", p, err)
 	}
 }
+
+// TestCreateProjectNeverReusesDeletedID pins REQ-DB-055: the audit trail keeps a
+// deleted project's entries under its id, so no later project may take that id.
+// On SQLite the rowid alias alone would hand the newest project's id out again
+// once it is deleted — the project_deleted entry is what remembers it; on
+// MariaDB the AUTO_INCREMENT counter never goes back. Either way the next
+// project's id lies above every id used before.
+func TestCreateProjectNeverReusesDeletedID(t *testing.T) {
+	s := migrateTestStore(t)
+	ctx := context.Background()
+	create := func(name string) int64 {
+		t.Helper()
+		id, err := s.CreateProject(ctx, &Project{ProjectName: name, Organization: "OTHER",
+			PIName: "PI", PIEmail: "pi@example.org", ParticipantNames: "REC"})
+		if err != nil {
+			t.Fatalf("CreateProject %s: %v", name, err)
+		}
+		return id
+	}
+
+	first := create("first")
+	newest := create("newest")
+	// Delete the way the API does (DELETE /api/v1/projects/{id}): the deletion
+	// and its project_deleted entry, which keeps the id, in one transaction.
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx: %v", err)
+	}
+	if _, _, err := s.DeleteProjectTx(ctx, tx, newest); err != nil {
+		t.Fatalf("DeleteProjectTx: %v", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO audit_events (event_type, source, project_id, created_at)
+		 VALUES ('project_deleted', 'ui', ?, ?)`, newest, nowUTC()); err != nil {
+		t.Fatalf("audit row: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if next := create("next"); next <= newest {
+		t.Errorf("project created after deleting id %d got id %d, want a new id above it", newest, next)
+	}
+	if first >= newest {
+		t.Fatalf("ids not increasing: first %d, newest %d", first, newest)
+	}
+}
+
+// TestCreateProjectSkipsIDsInTheAuditTrail covers the SQLite allocation directly:
+// an id the audit tables already name — a project deleted before this process
+// counted anything, say — is above the next rowid and must still be skipped.
+func TestCreateProjectSkipsIDsInTheAuditTrail(t *testing.T) {
+	s := migrateTestStore(t)
+	if s.Dialect != DialectSQLite {
+		t.Skip("SQLite allocation rule; MariaDB relies on its persisted AUTO_INCREMENT counter")
+	}
+	ctx := context.Background()
+	if _, err := s.DB.ExecContext(ctx,
+		`INSERT INTO audit_events (event_type, source, project_id, created_at)
+		 VALUES ('project_deleted', 'ui', 40, ?)`, nowUTC()); err != nil {
+		t.Fatalf("seed audit_events: %v", err)
+	}
+	if _, err := s.DB.ExecContext(ctx,
+		`INSERT INTO audit_record_views (token, project_id, record_ids, created_at)
+		 VALUES ('tok', 41, '[]', ?)`, nowUTC()); err != nil {
+		t.Fatalf("seed audit_record_views: %v", err)
+	}
+	id, err := s.CreateProject(ctx, &Project{ProjectName: "after the trail", Organization: "OTHER",
+		PIName: "PI", PIEmail: "pi@example.org", ParticipantNames: "REC"})
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	if id != 42 {
+		t.Errorf("id = %d, want 42 — one above the largest id either audit table names", id)
+	}
+}

@@ -756,6 +756,122 @@ describe('mode card (§6.6, REQ-UI-033)', function (): void {
     });
 });
 
+describe('End of project card (§6.5, REQ-UI-084)', function (): void {
+    $overview = static function (): string {
+        queue_shell();
+        api_route('/api/v1/projects/3/mode', ['mode' => 'production', 'staging_open' => false]);
+        api_route('/api/v1/projects/3', m4_detail());
+
+        return m4_get('/projects/3/overview')->body();
+    };
+
+    it('is absent for a project_admin who is not an installation administrator', function () use ($overview): void {
+        sign_in();
+
+        $body = $overview();
+
+        assert_not_contains('clara-end-card', $body);
+        assert_not_contains('action=end_provision', $body);
+        assert_not_contains('action=delete_project', $body);
+    });
+
+    it('offers is_admin the provision choice and the typed deletion with the export advice', function () use ($overview): void {
+        sign_in(['is_admin' => 1]);
+
+        $body = $overview();
+
+        assert_contains('clara-end-card', $body);
+        // The provision: a modal form with the two choices, neither pre-selected.
+        assert_contains('action="/projects/3/overview?action=end_provision"', $body);
+        assert_same(2, preg_match_all('/<input[^>]*type="radio" name="provision" required/', $body));
+        assert_same(0, preg_match('/type="radio" name="provision"[^>]*checked/', $body), 'no provision pre-selected');
+        // The deletion: export first, linked to the Export page's ODM card …
+        assert_contains('Export the project first', $body);
+        assert_contains('href="/projects/3/export"', $body);
+        // … no way back, the typed word required by the browser, and the §3.5 confirmation.
+        assert_contains('There is no way to get the project back', $body);
+        assert_contains('action="/projects/3/overview?action=delete_project"', $body);
+        assert_same(1, preg_match('/name="confirm_text"\s+required pattern="DELETE"/', $body));
+        assert_contains('data-clara-typed-confirm="DELETE"', $body);
+        assert_contains('Type DELETE to confirm', $body);
+        assert_contains('data-clara-confirm="Delete the project “8DISC” with all its data? This cannot be undone."', $body);
+    });
+
+    it('sends only a known provision and reports what it changed', function (): void {
+        sign_in(['is_admin' => 1]);
+
+        $response = m4_post('/projects/3/overview', ['provision' => 'purge'], 'end_provision');
+        assert_same(0, m4_count('POST', '/end-provision'));
+        assert_same('/projects/3/overview', $response->headers()['Location']);
+        assert_contains('Choose whether to delete or to anonymize', $_SESSION['_flash'][0]['text']);
+
+        unset($_SESSION['_flash']);
+        resetApi();
+        api_route('/api/v1/projects/3/end-provision', ['provision' => 'anonymize', 'records_affected' => 2, 'values_affected' => 12]);
+        $response = m4_post('/projects/3/overview', ['provision' => 'anonymize'], 'end_provision');
+
+        assert_same(['provision' => 'anonymize'], m4_body('POST', '/end-provision'));
+        assert_same('/projects/3/overview', $response->headers()['Location']);
+        assert_same('End provision executed: the record data was anonymized (2 records, 12 values rewritten).', $_SESSION['_flash'][0]['text']);
+    });
+
+    it('shows the conflict of a second execution', function (): void {
+        sign_in(['is_admin' => 1]);
+        api_route('/api/v1/projects/3/end-provision', ['error' => 'conflict',
+            'message' => 'the end-of-project provision has already been executed for this project', 'status' => 409], 409);
+
+        m4_post('/projects/3/overview', ['provision' => 'delete'], 'end_provision');
+
+        assert_same('danger', $_SESSION['_flash'][0]['level']);
+    });
+
+    it('deletes nothing unless DELETE was typed exactly', function (): void {
+        sign_in(['is_admin' => 1]);
+
+        foreach (['', 'delete', 'Delete', ' DELETE', 'DELETE ', 'DELETED'] as $typed) {
+            unset($_SESSION['_flash']);
+            $response = m4_post('/projects/3/overview', ['confirm_text' => $typed], 'delete_project');
+            assert_same('/projects/3/overview', $response->headers()['Location'], "typed '{$typed}'");
+            assert_same('Type DELETE to confirm the deletion — nothing was deleted.', $_SESSION['_flash'][0]['text']);
+        }
+        assert_same(0, m4_count('DELETE', '/api/v1/projects/3'));
+    });
+
+    it('deletes the project and leaves it for the project overview', function (): void {
+        sign_in(['is_admin' => 1]);
+        api_route('/api/v1/projects/3', ['project_id' => 3, 'project_name' => '8DISC', 'records_deleted' => 42, 'values_deleted' => 1287]);
+
+        $response = m4_post('/projects/3/overview', ['confirm_text' => 'DELETE'], 'delete_project');
+
+        assert_same(1, m4_count('DELETE', '/api/v1/projects/3'));
+        assert_same(null, m4_body('DELETE', '/api/v1/projects/3'), 'the call carries no body');
+        assert_same('/', $response->headers()['Location']);
+        assert_same('success', $_SESSION['_flash'][0]['level']);
+        assert_same('The project “8DISC” was deleted (42 records).', $_SESSION['_flash'][0]['text']);
+    });
+
+    it('stays on Overview with the refusal when the API refuses', function (): void {
+        sign_in(['is_admin' => 1]);
+        api_route('/api/v1/projects/3', ['error' => 'forbidden', 'message' => 'forbidden', 'status' => 403], 403);
+
+        $response = m4_post('/projects/3/overview', ['confirm_text' => 'DELETE'], 'delete_project');
+
+        assert_same('/projects/3/overview', $response->headers()['Location']);
+        assert_same('danger', $_SESSION['_flash'][0]['level']);
+    });
+
+    it('is refused to a non-admin by the route guard, before any API call', function (): void {
+        sign_in();
+
+        $deleting = m4_post('/projects/3/overview', ['confirm_text' => 'DELETE'], 'delete_project');
+        $ending = m4_post('/projects/3/overview', ['provision' => 'delete'], 'end_provision');
+
+        assert_true($deleting->status() >= 300 && $ending->status() >= 300, 'not handled');
+        assert_same(0, m4_count('DELETE', '/api/v1/projects/3'));
+        assert_same(0, m4_count('POST', '/end-provision'));
+    });
+});
+
 /**
  * Posts files to the Design page the way a browser's multiple file input does: PHP's $_FILES
  * shape, each file written to a temporary path first.

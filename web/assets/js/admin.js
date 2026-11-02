@@ -21,6 +21,10 @@
 //    stops, and offers them in its <datalist> to pick from — the Members add form's enabled
 //    non-members, the Audits user filter's accounts. The suggestions only help: the form sends
 //    the address in the field, and the server resolves it.
+// 6. Typed confirmation (§6.5, REQ-UI-084): a field carrying data-clara-typed-confirm="<word>"
+//    keeps its form's submit button disabled until it holds exactly that word — deleting a
+//    project. The field's own required/pattern hold the submit without JavaScript, and the
+//    server checks the word again; this only shows the state while typing.
 
 import { el, fetchJson, ready, t } from "../app.js"
 
@@ -124,6 +128,13 @@ ready(() => {
         // A refused clipboard needs no message: the value is on the page, selected.
       }
     })
+  }
+
+  for (const field of document.querySelectorAll("[data-clara-typed-confirm]")) {
+    const buttons = field.form ? [...field.form.querySelectorAll("button[type=submit]")] : []
+    const sync = () => buttons.forEach((button) => { button.disabled = field.value !== field.dataset.claraTypedConfirm })
+    field.addEventListener("input", sync)
+    sync()
   }
 
   for (const field of document.querySelectorAll("[data-clara-account-search]")) {

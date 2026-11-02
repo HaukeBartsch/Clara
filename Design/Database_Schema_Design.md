@@ -195,6 +195,10 @@ Notes: `organization` and the level enums are enforced by the API's allowlists (
 
 **Region columns** (REQ-DB-052/053, master spec "Organization by hospital regions"). `preferred_region`, `automatic_region` and `provider_role_regions.region` hold codes of the `projects.organization` enumeration and are checked against the same API allowlist. That list lives once in Go (`admin.Organizations`, in REQ-DB-006 order — the order also breaks ties when sign-in roles map to several regions, `Authentication_Authorization_Design.md` §2.12). PHP keeps only the display text. The effective region is `COALESCE(preferred_region, automatic_region)`. It is computed where it is read and never stored, so choosing "Automatic" takes effect without a write to `automatic_region`. A sign-in records its role values with one dialect upsert per value (§10): an insert enters a new value as unreviewed with `seen_count = 1`; an update raises `seen_count`, sets `last_seen_at`, and sets `first_seen_at` only while it is still `NULL`. The unique key (`VARCHAR(500)` + `VARCHAR(255)`) has the same 3,020-byte utf8mb4 size as `provider_subject_links`' primary key, so the same row-format rule applies (§10).
 
+**Deleting a project** (REQ-EXP-044, `Data_Export_Anonymization_Design.md` §7.5) removes the data plane first — `data`, `record_entities`, `survey_links`, `anon_offsets`, `instrument_completion`, the §7.3 statement — and then the `projects` row; every other table holding a `project_id` reaches `projects` through `ON DELETE CASCADE` (directly or through `roles`, `arms`, `events`, `instruments`, `fields`, `user_projects`, `dag_groups`), so the row's removal takes them along. The audit tables hold `project_id` without a foreign key (§7) and keep the deleted project's entries.
+
+**Project ids are never reused** (REQ-DB-055). Those audit entries name the project only by id, so a later project given the same id would inherit them — its trail would show another project's history, and the one-shot provision (`Data_Export_Anonymization_Design.md` §7.2), whose state is a `project_ended` entry, would refuse it. MariaDB's `AUTO_INCREMENT` never hands out an id again (InnoDB persists the counter across restarts), but SQLite's rowid alias takes the largest id plus one, which reuses the id of the newest project once it is deleted. The SQLite insert therefore names the id itself: one above the largest of `projects.id` and of `project_id` in both audit tables (§10). That covers every deleted project because a deletion always commits with its `project_deleted` entry under the deleted id (REQ-AUD-038) — a row removed by hand, bypassing the API, is not covered, like every other invariant such an edit bypasses. The insert runs inside the write transaction, which SQLite begins `IMMEDIATE`, so two creations cannot take the same number.
+
 ## 5. Project Structure
 
 ```sql
@@ -490,6 +494,7 @@ Reference scale (REQ-DB-025): 100 projects × 10,000 records × 200 fields × 10
 | Concern | SQLite | MariaDB |
 |---|---|---|
 | auto-generated PKs | `INTEGER PRIMARY KEY` (rowid) | append `AUTO_INCREMENT` |
+| `projects.id` of a new project (REQ-DB-055, §4) | named by the insert: one above the largest of `projects.id`, `audit_events.project_id` and `audit_record_views.project_id` — the rowid alias alone would reuse a deleted newest project's id | `AUTO_INCREMENT` — the persisted counter never goes back |
 | `LONGTEXT` | `TEXT` (64-bit limit) | `LONGTEXT` |
 | `DATE` | `TEXT` (`YYYY-MM-DD`) | `DATE` |
 | `DATETIME` | `TEXT` (UTC) | `DATETIME` |
@@ -563,6 +568,7 @@ Why the schema takes its shape, and what each choice costs. The decision records
 | A region code is withdrawn from the REQ-DB-006 enumeration | Stored `preferred_region`, `automatic_region` and mapping values keep it; it still matches projects stored under the same code, and the selectors show it as an extra option, as the project form does | §4 |
 | A sign-in carries a role value longer than 255 characters | Not recorded and never mapped; the login proceeds | §4, `Authentication_Authorization_Design.md` §2.12 |
 | A lookup by a prefix of the `data` unique key on MariaDB | The hash "long unique" index answers none; `idx_data_project_record` serves it | §9, §10 |
+| The newest project is deleted and another one created | The new project takes a new id; the deleted project's audit entries stay its own (SQLite names the id, MariaDB's counter does not go back) | §4, §10, REQ-DB-055 |
 | A further instance stored at a pair that no longer repeats | Stays in `data`, hidden from every reader until the pair repeats again | §6 |
 | Removing an instrument that is a survey, the first instrument, or holds the record identifier | Refused | §6, REQ-API-154 |
 | A survey link whose instrument maps to no event | Cannot exist: `survey_links.event_id` is `NOT NULL` | §8, DEV-DB-14 |

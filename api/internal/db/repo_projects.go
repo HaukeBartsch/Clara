@@ -106,16 +106,39 @@ func (s *Store) CreateProjectTx(ctx context.Context, tx *sql.Tx, p *Project) (in
 	if p.RecordNaming == "" {
 		p.RecordNaming = RecordNamingManual
 	}
-	res, err := tx.ExecContext(ctx,
-		`INSERT INTO projects (project_name, organization, pi_name, pi_email,
-			dm_name, dm_email, rek_number, rek_start_date, rek_end_date,
-			start_date, end_date, participant_names, creation_time, mode, record_naming)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.ProjectName, p.Organization, p.PIName, p.PIEmail,
+	args := []any{p.ProjectName, p.Organization, p.PIName, p.PIEmail,
 		nullStr(p.DMName), nullStr(p.DMEmail), nullStr(p.RekNumber),
 		nullStr(p.RekStartDate), nullStr(p.RekEndDate),
 		nullStr(p.StartDate), nullStr(p.EndDate), p.ParticipantNames, p.CreationTime,
-		p.Mode, p.RecordNaming)
+		p.Mode, p.RecordNaming}
+	const columns = `project_name, organization, pi_name, pi_email,
+			dm_name, dm_email, rek_number, rek_start_date, rek_end_date,
+			start_date, end_date, participant_names, creation_time, mode, record_naming`
+	const values = `?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?`
+
+	// Project ids are never reused (REQ-DB-055, Database_Schema_Design.md §4):
+	// the audit trail keeps a deleted project's entries under its id. MariaDB's
+	// AUTO_INCREMENT counter never goes back, but SQLite's rowid alias takes the
+	// largest live id plus one — the id of the newest project once it has been
+	// deleted. On SQLite the insert therefore names the id: one above every id
+	// a project row or an audit entry has carried. The write transaction began
+	// IMMEDIATE, so no other writer can take the same number in between.
+	if s.Dialect == DialectSQLite {
+		var id int64
+		if err := tx.QueryRowContext(ctx, `SELECT 1 + MAX(
+				COALESCE((SELECT MAX(id) FROM projects), 0),
+				COALESCE((SELECT MAX(project_id) FROM audit_events), 0),
+				COALESCE((SELECT MAX(project_id) FROM audit_record_views), 0))`).Scan(&id); err != nil {
+			return 0, err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO projects (id, `+columns+`) VALUES (?, `+values+`)`,
+			append([]any{id}, args...)...); err != nil {
+			return 0, err
+		}
+		return id, nil
+	}
+	res, err := tx.ExecContext(ctx, `INSERT INTO projects (`+columns+`) VALUES (`+values+`)`, args...)
 	if err != nil {
 		return 0, err
 	}
@@ -244,10 +267,61 @@ func (s *Store) UpdateProject(ctx context.Context, p *Project) error {
 	return tx.Commit()
 }
 
-// DeleteProject removes the project; the schema cascades its structure and
-// data (arms, events, instruments, fields, EAV values, links) per the
-// ON DELETE CASCADE rules in the migration.
+// DeleteProjectTx removes the project with everything that belongs to it
+// (REQ-EXP-044, Data_Export_Anonymization_Design.md §7.5) inside the caller's
+// transaction, so the project_deleted audit entry commits with it (REQ-AUD-003).
+// The data plane goes first, with the end-provision delete statement
+// (PurgeProjectDataTx) — record_entities would otherwise be both deleted from
+// projects and nulled from dag_groups in one cascade. The project row follows,
+// and its ON DELETE CASCADE foreign keys take structure, roles, memberships,
+// data access groups and the staging set (Database_Schema_Design.md §4). The
+// audit tables carry no foreign key and keep the project's entries.
+//
+// It returns the records (record_entities rows) and stored values (data rows)
+// the project held. A project that does not exist deletes nothing and reports
+// sql.ErrNoRows. The structure generation is the caller's to advance after the
+// commit — before it, a concurrent reader could cache the old structure under
+// the new generation (the API's structureInvalidation middleware does it for
+// DELETE /api/v1/projects/{id}).
+func (s *Store) DeleteProjectTx(ctx context.Context, tx *sql.Tx, id int64) (records, values int64, err error) {
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM data WHERE project_id = ?`, id).Scan(&values); err != nil {
+		return 0, 0, err
+	}
+	if records, err = s.PurgeProjectDataTx(ctx, tx, id); err != nil {
+		return 0, 0, err
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM projects WHERE id = ?`, id)
+	if err != nil {
+		return 0, 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, 0, err
+	}
+	if n == 0 {
+		return 0, 0, sql.ErrNoRows
+	}
+	return records, values, nil
+}
+
+// DeleteProject removes the project in a transaction of its own; see
+// DeleteProjectTx. It writes no audit entry, so it is for tests: the API's
+// DELETE endpoint uses DeleteProjectTx so that the deletion and its
+// project_deleted entry commit together (REQ-AUD-003) — and that entry is what
+// keeps the id from being handed out again on SQLite (REQ-DB-055, CreateProjectTx).
 func (s *Store) DeleteProject(ctx context.Context, id int64) error {
-	_, err := s.DB.ExecContext(ctx, `DELETE FROM projects WHERE id = ?`, id)
-	return err
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, _, err := s.DeleteProjectTx(ctx, tx, id); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.BumpStructureCache()
+	return nil
 }

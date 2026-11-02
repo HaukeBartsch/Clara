@@ -71,6 +71,14 @@ final class ProjectController extends ProjectPageController
                 'transitions' => $state['staging_open'] ? [] : self::TRANSITIONS[$mode],
                 'setupUrl' => '/projects/' . $projectId . '/setup',
             ] : null,
+            // The End of project card (§6.5, REQ-UI-084): is_admin only, like the mode card —
+            // for everyone else null, and the card is not emitted (REQ-UI-003). Its delete part
+            // points at the Export page, whose ODM card is the administrator's way back (§6.4).
+            'endCard' => Session::isAdmin() ? [
+                'projectName' => $this->projectName($detail),
+                'exportUrl' => '/projects/' . $projectId . '/export',
+                'confirmWord' => self::DELETE_CONFIRM_WORD,
+            ] : null,
             // The header names the project while the user is inside it, and the name goes
             // back to this page (§2.4); the breadcrumb carries the same badge (§6.6).
             'brandProject' => $this->projectName($detail),
@@ -145,6 +153,83 @@ final class ProjectController extends ProjectPageController
             : $this->i18n->t('mode.changed', ['mode' => $label]));
 
         return $back;
+    }
+
+    /** The provisions the End of project card offers (§6.5, `Data_Export_Anonymization_Design.md` §7). */
+    public const PROVISIONS = ['delete', 'anonymize'];
+
+    /**
+     * The word an administrator types to delete a project (§6.5, REQ-UI-084). It is what the
+     * user types, not a label, so it is the same in every UI language; only the text around it
+     * is translated.
+     */
+    public const DELETE_CONFIRM_WORD = 'DELETE';
+
+    /**
+     * POST /projects/{id}/overview?action=end_provision — `POST …/end-provision` (is_admin,
+     * BR-009). Only the two provisions reach the API; anything else is refused here (§6.5).
+     * The API's 409 for a second execution is shown per §3.4 like every other refusal.
+     */
+    public function endProvision(): Response
+    {
+        $projectId = $this->projectIdFromPath();
+        $back = Response::redirect('/projects/' . $projectId . '/overview');
+        $provision = $this->request->field('provision');
+        if (!in_array($provision, self::PROVISIONS, true)) {
+            $this->flashDanger($this->i18n->t('endproject.provision_invalid'));
+
+            return $back;
+        }
+
+        try {
+            $answer = $this->api->post('/api/v1/projects/' . $projectId . '/end-provision', ['provision' => $provision]);
+        } catch (ApiException $e) {
+            $this->logger->info('end provision rejected', ['code' => $e->code(), 'status' => $e->status()]);
+            $this->flashDanger($this->apiFailureMessage($e));
+
+            return $back;
+        }
+
+        $this->flashSuccess($this->i18n->t('endproject.provision_done.' . $provision, [
+            'records' => (string) (int) ($answer['records_affected'] ?? 0),
+            'values' => (string) (int) ($answer['values_affected'] ?? 0),
+        ]));
+
+        return $back;
+    }
+
+    /**
+     * POST /projects/{id}/overview?action=delete_project — `DELETE /api/v1/projects/{id}`
+     * (is_admin, REQ-EXP-044). Nothing reaches the API unless the administrator typed the
+     * confirmation word exactly — the browser checks it too, but this is the check that holds
+     * (§6.5, REQ-UI-084). After the deletion the project is gone, so the redirect leaves it for
+     * the project overview; a refusal stays on Overview with the §3.4 line.
+     */
+    public function deleteProject(): Response
+    {
+        $projectId = $this->projectIdFromPath();
+        $back = Response::redirect('/projects/' . $projectId . '/overview');
+        if ($this->request->field('confirm_text') !== self::DELETE_CONFIRM_WORD) {
+            $this->flashDanger($this->i18n->t('endproject.delete_unconfirmed', ['word' => self::DELETE_CONFIRM_WORD]));
+
+            return $back;
+        }
+
+        try {
+            $answer = $this->api->delete('/api/v1/projects/' . $projectId);
+        } catch (ApiException $e) {
+            $this->logger->info('project deletion rejected', ['code' => $e->code(), 'status' => $e->status()]);
+            $this->flashDanger($this->apiFailureMessage($e));
+
+            return $back;
+        }
+
+        $this->flashSuccess($this->i18n->t('endproject.deleted', [
+            'name' => (string) ($answer['project_name'] ?? ''),
+            'records' => (string) (int) ($answer['records_deleted'] ?? 0),
+        ]));
+
+        return Response::redirect('/');
     }
 
     /**

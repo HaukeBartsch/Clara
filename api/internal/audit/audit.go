@@ -76,6 +76,7 @@ const (
 	FieldMoved          = "field_moved" // REQ-API-157: to another instrument, or within its own
 	MappingUpdated      = "mapping_updated"
 	ProjectEnded        = "project_ended"
+	ProjectDeleted      = "project_deleted" // REQ-AUD-038: the whole project removed (REQ-EXP-044); its trail stays
 
 	// §3.4 administration events
 	UserCreated       = "user_created"

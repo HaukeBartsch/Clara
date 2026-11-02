@@ -159,7 +159,7 @@ Fixed by `Database_Schema_Design.md` §8 (normative) and `System_Configuration_D
 - **A `filterLogic` expression reads only what the response delivers verbatim** (REQ-EXP-054, master spec finding F6). The expression is compiled once per request (`API_Endpoints_Design.md` §3.6.3) and every reference it holds is then resolved to a pair — its own event, or the project's first event for `[field]` (GD-15) — and checked against that pair's level **before any record is read**: the value must reach the file untransformed. So a reference fails when the pair is `export_none` or unmapped at that event (the per-pair form first written here), when §4.2 removes the column (a direct identifier below `export_full`, unapproved free text at `export_de_identified`), and when §4.2 transforms it — a hashed personal field (step 2) or a date shifted for the record (step 4). The reason is that the filter runs over stored values while the columns do not: which records survive answers one bit per guess about a withheld value, and does so quietly, since the call audits as an ordinary export. A reference to something carrying no values at all (`description`, `header`, `transfer`, a checkbox's own row) stays acceptable — it discloses nothing — and the record identifier, belonging to no pair, reads only where its column appears (GD-8, §4.3). The bound comes from the level, never from `fields[]`/`forms[]`: filtering on a value the caller may export but did not request stays available, as in REDCap. A refusal answers 400 with the body an unparseable expression answers — one answer for every reason, so no unreadable field becomes enumerable (REQ-API-039) — and writes nothing to either audit table (REQ-AUD-004).
 - The data-access-group rule scopes the records (REQ-API-092, REQ-AUTH-045): a holder with an active group receives only that group's records; a holder without a group receives all records of the project.
 
-## 7. End-of-Project Provision (BR-009)
+## 7. End-of-Project Provision and Project Deletion (BR-009, REQ-EXP-044)
 
 ### 7.1 Semantics and trigger (D-7)
 
@@ -179,7 +179,7 @@ The provision (delete or anonymize) is **not** system state (GD-17, REQ-DB-006/0
 
 ### 7.3 `provision=delete`
 
-Removes the project's stored record data: all EAV rows of the `data` table, `record_entities`, `survey_links`, and `anon_offsets` — every data-plane table keyed by `project_id` (`Database_Schema_Design.md` §6–§8). Kept: project metadata, structure (arms, events, instruments, fields, mapping), roles/memberships/tokens, and the audit trail — the project remains administrable and the action itself is auditable. The action reports `records_affected` (the project's `record_entities` rows) and `values_affected` (the `data` rows removed).
+Removes the project's stored record data: all EAV rows of the `data` table, `record_entities`, `survey_links`, `anon_offsets`, and the completion assignments in `instrument_completion` — every data-plane table keyed by `project_id` (`Database_Schema_Design.md` §6–§8). A completion row outliving its record would reappear on a later record given the same id. Kept: project metadata, structure (arms, events, instruments, fields, mapping), roles/memberships/tokens, and the audit trail — the project remains administrable and the action itself is auditable. The action reports `records_affected` (the project's `record_entities` rows) and `values_affected` (the `data` rows removed).
 
 ### 7.4 `provision=anonymize` (in-place)
 
@@ -192,6 +192,22 @@ Applies the §4.2 `export_de_identified` pipeline **in place** to the stored val
 
 A value already in its target form is left alone and counts as unchanged. The action reports `records_affected` — records with at least one rewritten value — and `values_affected` — the values rewritten (`API_Endpoints_Design.md` §4.20). Afterwards, every read and export of that project — including `export_full` — returns the anonymized form. Irreversible; both provision branches close the action (one-shot, §7.2).
 
+### 7.5 Project deletion (REQ-EXP-044, normative)
+
+`DELETE /api/v1/projects/{id}` (contract `API_Endpoints_Design.md` §4.20, REQ-API-187) removes the whole project. It is a separate action from the provision: the provision closes a project that stays administrable, while deletion leaves nothing of it in the system except its audit trail.
+
+| Aspect | Rule |
+|---|------|
+| gating | `is_admin` — removing a project with its structure and memberships exceeds `project_admin` as the provision does (§7.2); 403 otherwise |
+| mode | any of GD-20's three; an open staging set is discarded with the project rather than blocking it |
+| scope | the `projects` row and every row belonging to the project: first the data plane, removed explicitly with the §7.3 statement, then the project row, whose `ON DELETE CASCADE` foreign keys remove structure (arms, events, instruments, fields, `instrument_events`, `calculated_dependencies`), roles with their arm defaults and pair grants, memberships (`user_projects` — every project token stops working), data access groups and their memberships, and the staging set (`Database_Schema_Design.md` §4). User accounts, other projects and both audit tables are untouched. |
+| one-shot | not applicable — after the deletion the project no longer exists, so a repeated call answers 404 |
+| atomicity | one transaction holding the deletion and its `project_deleted` audit row (§8); no partial state on failure |
+| result | 200 with `{ "project_id", "project_name", "records_deleted", "values_deleted" }` — the project's `record_entities` rows and `data` rows at the moment of deletion |
+| ids | the deleted project's id is never given to a later project (REQ-DB-055, `Database_Schema_Design.md` §4), so its audit entries cannot be read as another project's history |
+
+**No undo.** No copy is kept (DEV-EXP-7). The way back is a CDISC ODM export with `odm_content=project_and_data` taken before the deletion (`ODM_Interchange_Design.md`), imported through the Control Panel as a new project: it gets a new id and a trail that starts at the import, while the deleted project's entries stay under the old id. The web interface states this and asks for the typed word `DELETE` before it sends the call (`User_Interface_Design.md` §6.5).
+
 ## 8. Audit Integration (REQ-AUD-011/013…015, BR-008)
 
 - Every export on either surface → an `export` event in `audit_events`: acting user/token, project, the **applied** sensitivity level (§4.3), and the filters supplied — the shape of `Audit_Logging_Design.md` §3.5.
@@ -199,6 +215,7 @@ A value already in its target form is left alone and counts as unchanged. The ac
 - Rejected invocations (invalid token, `export_none`, no visibility) write no `export` event and no record-view row (REQ-AUD-004); security-relevant rejections are logged per `Audit_Logging_Design.md` §3.1.
 - Reads that return no record values write no record-view row (REQ-AUD-015).
 - The `end-provision` action (§7.2) → a `project_ended` event (details: `{\"provision\":\"delete\"|\"anonymize\",\"records_affected\":…,\"values_affected\":…}`) — registered in the `Audit_Logging_Design.md` §3.3 catalog.
+- Project deletion (§7.5) → a `project_deleted` event in the same transaction, keyed by the deleted project's id (details: `{"project_name":…,"mode":…,"records_deleted":…,"values_deleted":…}`) — registered in the `Audit_Logging_Design.md` §3.3 catalog.
 
 ## 9. Configuration
 

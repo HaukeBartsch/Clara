@@ -610,6 +610,8 @@ The removed attributes — `end_provision`, the `option_*` flags, `agreed_to_end
 
 **`PUT /api/v1/projects/{id}`** — `project_admin` (an `is_admin` user is covered by REQ-AUTH-023). Body: any subset of the `POST` metadata fields — omitted fields are unchanged (idempotent, REQ-API-042) — plus `record_naming`, the project's record naming mode (`auto` | `manual`, REQ-DB-045; any other value → 400 `invalid_request`, REQ-API-151). A duplicate `project_name` → 409 `conflict`. 200 — the updated project object (same shape as `GET`, `permissions` included — REQ-API-126). Metadata changes are audit-logged with old and new values (`project_updated`, `Audit_Logging_Design.md` §3.3; REQ-API-052, REQ-API-043).
 
+**`DELETE /api/v1/projects/{id}`** — `is_admin`; deletes the whole project (REQ-API-187). Specified with the end-of-project actions in §4.20.
+
 ### 4.6 Members and Tokens (REQ-API-053…055, 102)
 
 Both endpoints require `is_admin` (master spec: administrator users assign users to projects given a role).
@@ -1191,7 +1193,7 @@ Record scope and transformation are orthogonal (REQ-API-092, REQ-AUTH-045): the 
 
 200. Audit `i18n_updated` per changed key.
 
-### 4.20 End-of-Project Provision (BR-009, `Data_Export_Anonymization_Design.md` §7)
+### 4.20 End-of-Project Provision and Project Deletion (BR-009, REQ-EXP-044, `Data_Export_Anonymization_Design.md` §7)
 
 **`POST /api/v1/projects/{id}/end-provision`** — `is_admin` (otherwise 403 `forbidden`). The semantics are normative in `Data_Export_Anonymization_Design.md` §7; the endpoint is registered here for the completeness of this surface:
 
@@ -1210,6 +1212,21 @@ Record scope and transformation are orthogonal (REQ-API-092, REQ-AUTH-045): the 
 The counts report what the execution changed: `delete` counts the project's records (`record_entities` rows) and stored values removed; `anonymize` counts records with at least one rewritten value and the number of values rewritten — a value already in its target form stays untouched and counts neither (§7.4).
 
 Audit: `project_ended` with the provision and the affected counts (`Audit_Logging_Design.md` §3.3; `Data_Export_Anonymization_Design.md` §8).
+
+**`DELETE /api/v1/projects/{id}`** (REQ-API-187) — `is_admin` (otherwise 403 `forbidden`; a project's own `project_admin` is refused like every other non-administrator); unknown project → 404 `not_found`. No body. The rules are normative in `Data_Export_Anonymization_Design.md` §7.5:
+
+- Deletes the project with everything that belongs to it — structure, roles, memberships and their tokens, data access groups, an open staging set, and the record data — in any mode. The audit trail stays, keyed by the deleted id, which no later project receives (REQ-DB-055).
+- Atomicity: the deletion and its `project_deleted` audit row commit in one transaction.
+- No undo: the way back is an ODM export (`project_and_data`, §4.29) taken first and imported as a new project.
+- Afterwards the project answers 404 everywhere, and its project tokens are refused on the data API like any unknown token. The structure-invalidation middleware (`/api/v1/projects` prefix, non-GET) drops the cached dictionary of the deleted project.
+
+200:
+
+```json
+{ "project_id": 7, "project_name": "8DISC", "records_deleted": 42, "values_deleted": 1287 }
+```
+
+`records_deleted` counts the project's `record_entities` rows and `values_deleted` its `data` rows at the moment of deletion. Audit: `project_deleted` with the project's name and mode and the two counts (`Audit_Logging_Design.md` §3.3).
 
 ### 4.21 Project modes and staging (GD-20, REQ-API-105…111)
 
@@ -1571,6 +1588,7 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirements.
 | `GET/POST /api/v1/provider-roles`, `PUT/DELETE /api/v1/provider-roles/{id}` (§4.30, REQ-API-177/178) | `is_admin` |
 | `GET/PUT /i18n/strings` | `is_admin` |
 | `POST …/end-provision` (§4.20) | `is_admin` (BR-009) |
+| `DELETE /api/v1/projects/{id}` (§4.20, REQ-API-187) | `is_admin` (REQ-EXP-044) |
 | `GET …/mode` (§4.21) | data access ≥ `read_only` + visibility |
 | `PUT …/mode` (§4.21) | `is_admin` — `project_admin` is rejected (403) |
 | staging start/commit/discard (§4.21) | `project_admin` |

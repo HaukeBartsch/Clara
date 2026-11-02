@@ -67,7 +67,7 @@ This document consolidates the business and product requirements for a research 
 - Calculated fields: expressions over other fields with automatic recomputation (GD-11).
 - Multilingual UI — English default; Bokmål and Nynorsk first targets (GD-12).
 - Branching logic on fields and instruments (expression-based, designer-editable, display-only) (GD-13).
-- CSV/JSON export with three sensitivity levels; end-provision execution.
+- CSV/JSON export with three sensitivity levels; end-provision execution; deletion of a whole project (REQ-EXP-044).
 - Audit logging (events + record views), immutable, yearly rollover.
 - SQLite (development) and MariaDB (production) backends.
 
@@ -200,6 +200,7 @@ The terms and reference codes used across `Requirements/` and `Design/`. Each en
 | ODM | CDISC Operational Data Model XML (versions 1.3.2 and 2.0), used to export and import a project's structure and data. | `ODM_Interchange_Requirements.md` |
 | personal field | A field flagged `personal_information` that is not a direct identifier. Hashed at `export_de_identified`, kept at the levels above. | REQ-EXP-022 |
 | preferred region | The organization code (REQ-DB-006 enumeration) whose projects a user sees first on the project overview: the user's own choice, else a region set automatically from provider roles at sign-in or, failing that, from the administrator who assigned them to a project. Orders presentation only, never access. | REQ-DB-052, REQ-AUTH-088/089, REQ-UI-076 |
+| project deletion | The irreversible administrator action that removes a whole project — structure, memberships, tokens and record data — in any mode. The audit trail stays, and the id is never reused; a CDISC ODM export taken first is the only way to recreate the project. | REQ-EXP-044, REQ-DB-055 |
 | project mode | `development` (everything allowed), `production` (setup changes go through a staging set; breaking changes warned before commit), or `analysis` (data entry disabled). Only `is_admin` changes it. | GD-20, BR-013 |
 | project token | The UUID of one (user, project) assignment, or an adopted REDCap token (32 hex characters). A data-API caller sends it as the `token` parameter in the request body. | GD-5, REQ-API-010, REQ-AUTH-090 |
 | `project_admin` | A role flag: manage the structure and metadata of that one project. | GD-2 |

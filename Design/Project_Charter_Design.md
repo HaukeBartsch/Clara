@@ -45,6 +45,7 @@ The system is exactly these four components and no others. There is no scheduler
 | Data entry | UI form → PHP → Go API import → validation → EAV upsert + same-transaction audit row | `API_Endpoints_Design.md` §3.7, `Data_Validation_Design.md` §2, `Audit_Logging_Design.md` §3 |
 | External pull (Fiona) | `POST /api/` → token/level check → export pipeline (level + anonymization) → streamed CSV/JSON + audit + record-view row | `Data_Export_Anonymization_Design.md` §2–§6, `API_Endpoints_Design.md` §3.6 |
 | Project end | operator → `POST /api/v1/projects/{id}/end-provision` (`is_admin`) → delete / in-place anonymize + `project_ended` audit | `Data_Export_Anonymization_Design.md` §7 |
+| Project deletion | operator (Overview card, typed `DELETE`; ODM export first as the only way back) → `DELETE /api/v1/projects/{id}` (`is_admin`) → project row and everything cascading from it removed + `project_deleted` audit; the audit trail stays | `Data_Export_Anonymization_Design.md` §7.5 |
 | Mode transition / staged setup (GD-20) | `is_admin` (mode card) or `project_admin` (staging banner) → PHP → Go API (`PUT …/mode`; staging open/edit/commit, `API_Endpoints_Design.md` §4.21) → live design changed in one transaction + audit row; analysis mode additionally gates the import and survey-submission paths | `User_Interface_Design.md` §6.6/§6.7; `Audit_Logging_Design.md` §3.8 |
 
 ## 3. Realization of Business Requirements

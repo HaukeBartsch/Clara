@@ -101,6 +101,12 @@ final class Router
         // project_admin is refused by the API too (§4.21).
         ['method' => 'POST', 'pattern' => '/projects/{id}/overview', 'controller' => Controllers\ProjectController::class,
             'handler' => 'setMode', 'guard' => 'admin', 'action' => 'set_mode'],
+        // The End of project card on Overview (§6.5, REQ-UI-084): the end provision and the
+        // deletion of the whole project, both is_admin only, as at the API (§4.20).
+        ['method' => 'POST', 'pattern' => '/projects/{id}/overview', 'controller' => Controllers\ProjectController::class,
+            'handler' => 'endProvision', 'guard' => 'admin', 'action' => 'end_provision'],
+        ['method' => 'POST', 'pattern' => '/projects/{id}/overview', 'controller' => Controllers\ProjectController::class,
+            'handler' => 'deleteProject', 'guard' => 'admin', 'action' => 'delete_project'],
 
         // M4 — Setup (§6.2) and the Instrument Designer (§7), both project_admin pages. The guard
         // here only needs a session, because project_admin is a per-project permission the API

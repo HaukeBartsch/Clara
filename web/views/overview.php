@@ -11,6 +11,10 @@
  * The mode badge of §6.6 sits beside the project name (REQ-UI-033), from `GET …/mode`; when
  * that read is refused or fails, nothing is emitted for it rather than a placeholder.
  *
+ * Below the information an installation administrator — and nobody else (REQ-UI-003) — gets
+ * two cards: the mode card (§6.6) and the End of project card (§6.5, REQ-UI-084), whose end
+ * provision and project deletion are the destructive actions of this page.
+ *
  * Timestamps and dates are printed as the API returned them: system values are UTC and
  * clinical dates are stored as entered, offsets included (User_Interface_Design.md §12
  * rule 9). No locale reformatting happens anywhere in the web layer.
@@ -124,4 +128,74 @@ $labels = [
             </div>
         </div>
     </section>
+<?php endif; ?>
+
+<?php if (($endCard ?? null) !== null): ?>
+    <!-- End of project card (§6.5, REQ-UI-084): is_admin only. The end provision opens its own
+         confirmation modal holding the choice; deleting the whole project needs the typed word
+         — `required` + `pattern`, so the browser holds the submit until it is there, and the
+         controller checks it again — and then the §3.5 confirmation. -->
+    <?php $endBase = '/projects/' . (int) ($projectId ?? 0) . '/overview?action='; ?>
+    <section class="card mt-4 border-danger-subtle clara-end-card" aria-labelledby="end-card-title">
+        <div class="card-body">
+            <h2 class="h6" id="end-card-title"><?= View::e($view->t('endproject.card_title')) ?></h2>
+            <p class="small text-body-secondary"><?= View::e($view->t('endproject.intro')) ?></p>
+
+            <h3 class="h6 mt-3"><?= View::e($view->t('endproject.provision_title')) ?></h3>
+            <p class="small mb-2"><?= View::e($view->t('endproject.provision_intro')) ?></p>
+            <button class="btn btn-sm btn-outline-danger" type="button" data-bs-toggle="modal" data-bs-target="#clara-end-provision">
+                <?= View::e($view->t('endproject.provision_open')) ?></button>
+
+            <hr>
+
+            <h3 class="h6"><?= View::e($view->t('endproject.delete_title')) ?></h3>
+            <p class="small mb-2"><?= View::e($view->t('endproject.delete_warning')) ?></p>
+            <div class="alert alert-warning small py-2 clara-delete-export" role="note">
+                <?= View::e($view->t('endproject.delete_export')) ?>
+                <a class="alert-link" href="<?= View::e($endCard['exportUrl']) ?>"><?= View::e($view->t('endproject.delete_export_link')) ?></a>
+            </div>
+            <?php $typeLabel = $view->t('endproject.delete_type', ['word' => $endCard['confirmWord']]); ?>
+            <form method="post" action="<?= View::e($endBase . 'delete_project') ?>" class="clara-delete-project"
+                  data-clara-confirm="<?= View::e($view->t('endproject.delete_confirm', ['name' => $endCard['projectName']])) ?>">
+                <?= $view->csrfField() ?>
+                <label class="form-label small" for="delete-confirm-text"><?= View::e($typeLabel) ?></label>
+                <div class="d-flex flex-wrap gap-2 align-items-start">
+                    <input class="form-control form-control-sm w-auto" type="text" id="delete-confirm-text" name="confirm_text"
+                           required pattern="<?= View::e($endCard['confirmWord']) ?>" title="<?= View::e($typeLabel) ?>"
+                           autocomplete="off" autocapitalize="off" spellcheck="false"
+                           data-clara-typed-confirm="<?= View::e($endCard['confirmWord']) ?>">
+                    <button class="btn btn-sm btn-danger" type="submit"><?= View::e($view->t('endproject.delete_submit')) ?></button>
+                </div>
+            </form>
+        </div>
+    </section>
+
+    <div class="modal fade" id="clara-end-provision" tabindex="-1" aria-labelledby="clara-end-provision-title" aria-hidden="true">
+        <div class="modal-dialog">
+            <form class="modal-content" method="post" action="<?= View::e($endBase . 'end_provision') ?>">
+                <?= $view->csrfField() ?>
+                <div class="modal-header">
+                    <h2 class="modal-title h6" id="clara-end-provision-title"><?= View::e($view->t('endproject.provision_modal_title')) ?></h2>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="<?= View::e($view->t('action.close')) ?>"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="small"><?= View::e($view->t('endproject.provision_warning')) ?></p>
+                    <?php foreach (['delete', 'anonymize'] as $provision): ?>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="radio" name="provision" required
+                                   id="end-provision-<?= View::e($provision) ?>" value="<?= View::e($provision) ?>">
+                            <label class="form-check-label" for="end-provision-<?= View::e($provision) ?>">
+                                <?= View::e($view->t('endproject.provision.' . $provision)) ?>
+                                <span class="d-block small text-body-secondary"><?= View::e($view->t('endproject.provision.' . $provision . '_help')) ?></span>
+                            </label>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal"><?= View::e($view->t('action.cancel')) ?></button>
+                    <button type="submit" class="btn btn-sm btn-danger"><?= View::e($view->t('endproject.provision_submit')) ?></button>
+                </div>
+            </form>
+        </div>
+    </div>
 <?php endif; ?>

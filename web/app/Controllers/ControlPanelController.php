@@ -70,7 +70,7 @@ final class ControlPanelController extends Controller
         'instrument_reordered', 'instrument_uncompleted', 'instrument_unverified', 'instrument_updated', 'invite_accepted',
         'login_failure',
         'login_success', 'logout', 'mapping_updated', 'membership_changed', 'odm_export', 'odm_import', 'password_changed',
-        'password_reset_completed', 'password_reset_requested', 'preferred_region_changed', 'project_created', 'project_ended',
+        'password_reset_completed', 'password_reset_requested', 'preferred_region_changed', 'project_created', 'project_deleted', 'project_ended',
         'project_mode_changed', 'project_updated', 'record_created', 'record_deleted', 'record_read', 'record_updated',
         'region_mapping_changed', 'role_created', 'role_updated', 'session_replay_detected', 'settings_updated', 'sso_login',
         'sso_logout', 'sso_rejected', 'staging_committed',

@@ -103,6 +103,7 @@ Rules: `old` is `null` for `create`; for `delete`, `new` is `null` and the `old`
 | `field_moved` | REQ-API-157 | `{"field":"age","from_instrument":"intake","to_instrument":"visits","position":1,"before":"visit_note"}` — `before` is `null` for a move to the end; within one instrument `from_instrument` and `to_instrument` are the same. A move to the place the field already holds writes no entry |
 | `mapping_updated` | REQ-API-073 | `{"arm_num":1,"pairs":{"intake":{"e1_arm_1":1,"e2_arm_1":0}}}` |
 | `project_ended` | the one-shot end-of-project provision action — `POST /api/v1/projects/{id}/end-provision` (BR-009, `API_Endpoints_Design.md` §4.20; rules `Data_Export_Anonymization_Design.md` §7.2) | `{"provision":"delete or anonymize","records_affected":42,"values_affected":1287}` |
+| `project_deleted` | an installation administrator deleted the whole project — `DELETE /api/v1/projects/{id}` (REQ-EXP-044, REQ-AUD-038, `API_Endpoints_Design.md` §4.20; rules `Data_Export_Anonymization_Design.md` §7.5). Written in the deletion's transaction under the deleted project's id; the project's earlier entries stay | `{"project_name":"8DISC","mode":"production","records_deleted":42,"values_deleted":1287}` |
 
 Field renames are `field_updated` with `"changes":{"name":{"old":"…","new":"…"}}` (REQ-VAL-014, DEV-VAL-4); the stored values are renamed in the same transaction (`Data_Validation_Design.md` §9).
 

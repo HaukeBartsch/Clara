@@ -35,7 +35,7 @@ func (s *Store) SetProjectModeTx(ctx context.Context, tx *sql.Tx, id int64, mode
 // PurgeProjectDataTx deletes the project's record data with the end-provision
 // delete scope of Data_Export_Anonymization_Design.md §7.3 — every data-plane
 // table keyed by project_id (EAV rows, record entities, survey links,
-// anonymization offsets). Project metadata, structure, roles, memberships,
+// anonymization offsets, completion assignments). Project metadata, structure, roles, memberships,
 // tokens and the audit trail are kept, so the project stays administrable and
 // the deletion itself auditable (used by development → production with
 // keep_data = false, REQ-API-105). It returns the number of records removed.
@@ -45,12 +45,15 @@ func (s *Store) PurgeProjectDataTx(ctx context.Context, tx *sql.Tx, projectID in
 		`SELECT COUNT(*) FROM record_entities WHERE project_id = ?`, projectID).Scan(&records); err != nil {
 		return 0, err
 	}
-	// survey_links reference records; data and anon_offsets are keyed by
-	// record_id without a foreign key to record_entities, so clear the
-	// dependants first and the entities last.
+	// survey_links reference records; data, anon_offsets and the completion
+	// assignments are keyed by record_id without a foreign key to
+	// record_entities, so clear the dependants first and the entities last. A
+	// completion row left behind would reappear on a later record given the
+	// same id (Data_Export_Anonymization_Design.md §7.3).
 	for _, stmt := range []string{
 		`DELETE FROM survey_links WHERE project_id = ?`,
 		`DELETE FROM anon_offsets WHERE project_id = ?`,
+		`DELETE FROM instrument_completion WHERE project_id = ?`,
 		`DELETE FROM data WHERE project_id = ?`,
 		`DELETE FROM record_entities WHERE project_id = ?`,
 	} {

@@ -17,6 +17,19 @@ import (
 func TestEndProvisionDelete(t *testing.T) {
 	f := newExportFixture(t)
 	admin := f.e.mustAdmin("admin@example.org")
+	// A completion mark is record data too (§7.3): left behind, it would show on
+	// a later record given the same id.
+	tx, err := f.e.Store.DB.Begin()
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if _, err := f.e.Store.SetInstrumentCompletionTx(context.Background(), tx, f.pid, "REC-001",
+		f.evBaseline, f.demoID, 1, "finished", admin.ID); err != nil {
+		t.Fatalf("seed completion: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
 
 	rec := f.e.do(http.MethodPost, "/api/v1/projects/"+itoa(f.pid)+"/end-provision",
 		map[string]string{"provision": "delete"}, admin)
@@ -33,6 +46,7 @@ func TestEndProvisionDelete(t *testing.T) {
 	for _, q := range []string{
 		`SELECT COUNT(*) FROM data`, `SELECT COUNT(*) FROM record_entities`,
 		`SELECT COUNT(*) FROM survey_links`, `SELECT COUNT(*) FROM anon_offsets`,
+		`SELECT COUNT(*) FROM instrument_completion`,
 	} {
 		var n int
 		if err := f.e.Store.DB.QueryRow(q).Scan(&n); err != nil || n != 0 {

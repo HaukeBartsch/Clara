@@ -899,6 +899,19 @@
           "404": { "$ref": "#/components/responses/NotFound" },
           "409": { "$ref": "#/components/responses/Conflict" }
         }
+      },
+      "delete": {
+        "tags": ["Admin: Projects"],
+        "operationId": "deleteProject",
+        "summary": "Delete a whole project (REQ-API-187, REQ-EXP-044)",
+        "description": "`is_admin` only — a project's own `project_admin` is refused (403). Deletes the project with everything that belongs to it — structure, roles, memberships and their tokens, data access groups, an open staging set and every stored record value — in any mode. Irreversible: no copy is kept; export the project as CDISC ODM (`project_and_data`) first and import that file to create it again. The audit trail stays: the deletion and its `project_deleted` entry commit in one transaction under the deleted id, which no later project receives (REQ-DB-055). Afterwards every call naming the project answers 404 and its tokens are refused on the data API.",
+        "parameters": [ { "$ref": "#/components/parameters/ProjectId" } ],
+        "responses": {
+          "200": { "description": "The deleted project and what went with it.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProjectDeleteResult" }, "example": { "project_id": 7, "project_name": "8DISC", "records_deleted": 42, "values_deleted": 1287 } } } },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
       }
     },
     "/api/v1/projects/{id}/users": {
@@ -3550,6 +3563,16 @@
         "type": "object",
         "required": ["key", "text", "missing"],
         "properties": { "key": { "type": "string" }, "text": { "type": "string" }, "missing": { "type": "boolean" } }
+      },
+      "ProjectDeleteResult": {
+        "type": "object",
+        "required": ["project_id", "project_name", "records_deleted", "values_deleted"],
+        "properties": {
+          "project_id": { "type": "integer", "description": "The deleted id; the audit trail keeps it, no later project receives it." },
+          "project_name": { "type": "string" },
+          "records_deleted": { "type": "integer", "description": "The project's records (`record_entities` rows) at the moment of deletion." },
+          "values_deleted": { "type": "integer", "description": "The project's stored values (`data` rows) at the moment of deletion." }
+        }
       },
       "EndProvisionResult": {
         "type": "object",

@@ -93,6 +93,7 @@ func New(store *db.Store, cfg *config.Config, aw *audit.Writer, reg *metrics.Reg
 	h.registerExport(mux)
 	h.registerODM(mux) // project interchange in CDISC ODM XML (§4.29)
 	h.registerEndProvision(mux)
+	h.registerProjectDelete(mux) // the whole project, beside the provision (§4.20)
 	h.registerQueries(mux)
 	h.registerCompletion(mux)
 	h.registerTransfer(mux)

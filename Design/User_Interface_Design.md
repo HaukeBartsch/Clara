@@ -58,7 +58,7 @@ Common conventions (REQ-UI-001…008), binding on every page:
 | `GET\|POST /set-password?token=…` | set password via invite/reset token (§2.6) | public — valid token, no session | `POST /api/v1/auth/invite/complete`, `POST /api/v1/auth/password-reset/complete` (GD-22/GD-23, Sequence H) |
 | `GET /admin?section=projects\|users\|regions\|audits\|translations\|settings\|api` | **Control Panel** (§5) — the one administration page; its left panel selects the section, the right-hand panel shows it (REQ-UI-047). `section` defaults to the first available | `is_admin` | per section (§5.1/§5.2/§5.13/§5.6/§5.7/§5.8): `GET /api/v1/users/search`, `POST /api/v1/users`, `PUT /api/v1/users/{id}` · `GET/POST /api/v1/provider-roles`, `PUT/DELETE /api/v1/provider-roles/{id}` · `POST /api/v1/projects`, `GET/PUT /api/v1/projects/{id}`, `POST /api/v1/projects/import/odm` · `GET /api/v1/audit`, `GET /api/v1/audit/export`, `GET /api/v1/users/search` (the user filter) · `GET /api/v1/i18n/strings?language=`, `PUT /api/v1/i18n/strings` · `GET/PUT /api/v1/settings` |
 | `GET /projects/{id}` | project page — **entry**: resolves the first available section (§6.1) and redirects to it | project visibility (REQ-API-007) | `GET /api/v1/projects/{id}` (its permissions block decides the target, REQ-API-126) |
-| `GET /projects/{id}/overview` | project Overview — summary, metadata, mode (§6.1) | project visibility (REQ-API-007) | `GET /api/v1/projects/{id}` |
+| `GET /projects/{id}/overview` | project Overview — summary, metadata, mode (§6.1); for `is_admin` the mode card (`?action=set_mode`, §6.6) and the End of project card (`?action=end_provision`, `?action=delete_project`, §6.5) | project visibility (REQ-API-007); the three actions `is_admin` | `GET /api/v1/projects/{id}`; `PUT …/mode`, `POST …/end-provision`, `DELETE /api/v1/projects/{id}` |
 | `GET /projects/{id}/setup` | setup page (§6.2) | `project_admin` | arms / events / instruments / mapping endpoints |
 | `GET /projects/{id}/design` | instrument designer (§7.1) and instrument import (§7.6) | `project_admin` | instruments / fields endpoints; `POST …/instruments/import` (REQ-API-152) |
 | `GET /projects/{id}/design/instruments/{iid}` | field editor (§7.2) | `project_admin` | `GET/POST …/instruments/{iid}/fields`, `PUT/DELETE …/fields/{fid}`, `PUT …/fields/order` |
@@ -230,7 +230,7 @@ Success confirmations (created/updated/removed) are one translated alert line at
 
 ### 3.5 Confirmations and destructive actions (GD-3, REQ-UI-015/027)
 
-- Destructive or hard-to-reverse actions open a Bootstrap **modal** stating the consequence, requiring an explicit confirm click (which carries the CSRF token): delete record/scoped values (§8.7), remove member (§5.3), delete group (§5.5), delete field with stored values (§7.2), revoke survey link (§8.7), delete arm/event where supported.
+- Destructive or hard-to-reverse actions open a Bootstrap **modal** stating the consequence, requiring an explicit confirm click (which carries the CSRF token): delete record/scoped values (§8.7), remove member (§5.3), delete group (§5.5), delete field with stored values (§7.2), revoke survey link (§8.7), delete arm/event where supported, execute the end provision (§6.5), delete a project (§6.5 — which additionally needs the typed word `DELETE`, REQ-UI-084).
 - Token display (add/rotate, §5.3): the new token appears **exactly once**, **masked** — a read-only `<input type="password">` that is empty (a row of bullets as placeholder), so the page does not hold the value — with a **Show** button and a warning line that it will not be shown again (REQ-API-055, REQ-UI-013/062). Show is a form `POST …/members?action=show_token`: PHP has the view recorded (`POST …/users/{uid}/token-viewed`, `token_viewed`, REQ-AUD-033) and only on success redirects to the same reveal unmasked — a read-only text input, **Hide** (`action=hide_token`, nothing recorded) and **Copy**. A failed record keeps it masked with the §3.4 line. No copy is offered while masked, so every sight of the value is in the trail. Between the add/rotate redirect and the Show/Hide redirects PHP keeps the value in the session (`Session::holdReveal`), never in the browser; any other render of Members drops it, so a reload ends the reveal. The admin's copy is not the only one: the member can later see their own token on the account page behind the same audited Show (§2.8, REQ-API-162), and PHP fetches it for UI data entry per REQ-API-102 (§8.6).
 
 ### 3.6 Lists, pagination, empty states
@@ -501,7 +501,7 @@ The project page is a left-panel shell (§2.4 B): its left panel lists the proje
 | Groups | `/projects/{id}/groups` (§5.5) | data access ≥ `read_only` (mutate: `project_admin`) | (record scope) |
 
 - **Default section** (REQ-UI-017). `GET /projects/{id}` is the entry point PHP resolves rather than a page of its own: it reads the project and answers `303 See Other` to the first available entry **after Overview** — `/setup` for a member allowed to change the setup, otherwise `/record-status` for a member with data access ≥ `read_only`, otherwise `/overview`. Clicking a project on the overview screen therefore lands a project administrator on **Setup** and a data-entry member on the **Record Status Dashboard**, without a per-project permission read on the overview page itself (the list endpoint does not carry one, REQ-API-049). The left panel still lists everything else the user may use, so each remains one click away.
-- **Overview** (`GET /projects/{id}/overview`) — the project's own summary page: record count, instrument count, field count (REQ-API-051), the metadata block (name, organization, PI, REK number, dates — read-only display; editing goes to §5.2 for `project_admin`), the mode badge and its control (§6.6, REQ-UI-033), and the End provision card (§6.5, `is_admin`, BR-009).
+- **Overview** (`GET /projects/{id}/overview`) — the project's own summary page: record count, instrument count, field count (REQ-API-051), the metadata block (name, organization, PI, REK number, dates — read-only display; editing goes to §5.2 for `project_admin`), the mode badge and its control (§6.6, REQ-UI-033), and the End of project card — end provision and project deletion (§6.5, `is_admin`, BR-009, REQ-UI-084).
 - **Header breadcrumb** — the project's name links back to Overview; the brand link leaves the project for the project overview (`/`) (§2.4).
 
 ### 6.2 Setup page (`GET /projects/{id}/setup`, `project_admin`, REQ-UI-018)
@@ -560,16 +560,28 @@ The counted fields are those the completeness counter counts — the enterable f
 - Gating: present only when the member holds a non-`export_none` level on at least one (instrument, event) pair (REQ-UI-017/020, REQ-API-075); no exportable pair at all → the card is absent (REQ-UI-003), and a partly permitted scope is stated on the card rather than hidden (REQ-UI-020).
 - Every call is audit-logged with `surface:"ui"`, the project, and the sensitivity level (REQ-API-076, `Audit_Logging_Design.md` §3.5).
 
-### 6.5 End-of-Project Provision (Overview card, `is_admin`, BR-009)
+### 6.5 End of project (Overview card, `is_admin`, BR-009, REQ-UI-084)
 
-Present on Overview (§6.1) **only** for `is_admin` (REQ-UI-003; the action is `is_admin`-gated at the API, `API_Endpoints_Design.md` §4.20). The operator's cue is the REK end date in the §6.1 summary (`rek_end_date`, `Data_Export_Anonymization_Design.md` §7.1) — nothing runs automatically (no scheduler, `Project_Charter_Design.md` §5).
+Present on Overview (§6.1), below the mode card, **only** for `is_admin` (REQ-UI-003); both actions are `is_admin`-gated at the API too (`API_Endpoints_Design.md` §4.20) and at the route (guard `admin`). The operator's cue is the REK end date in the §6.1 summary (`rek_end_date`, `Data_Export_Anonymization_Design.md` §7.1) — nothing runs automatically (no scheduler, `Project_Charter_Design.md` §5). The card holds two parts, the provision first because it keeps the project.
 
-- **Action**: `POST` to the project route (CSRF, §3.3) → `POST /api/v1/projects/{id}/end-provision` (contract `API_Endpoints_Design.md` §4.20; rules `Data_Export_Anonymization_Design.md` §7).
-- **Choice** — a radio pair in the confirmation modal:
-  - `delete` — removes the project's stored record data (values, record entities, survey links, anonymization offsets); project metadata, structure, roles, and the audit trail remain (`Data_Export_Anonymization_Design.md` §7.3);
+**End provision** (REQ-EXP-040…043)
+
+- **Action**: `POST /projects/{id}/overview?action=end_provision` (CSRF, §3.3) → `POST /api/v1/projects/{id}/end-provision` (contract `API_Endpoints_Design.md` §4.20; rules `Data_Export_Anonymization_Design.md` §7).
+- **Confirmation modal** (§3.5 — destructive and hard to reverse): the card's **Execute end provision…** button opens a server-rendered Bootstrap modal holding the form. It states the one-shot consequence, carries the choice, and submits only from its own explicit confirm button.
+- **Choice** — a radio pair in that modal, neither pre-selected and `required`, so the browser holds the submit until one is chosen:
+  - `delete` — removes the project's stored record data (values, record entities, completion marks, survey links, anonymization offsets); project metadata, structure, roles, and the audit trail remain (`Data_Export_Anonymization_Design.md` §7.3);
   - `anonymize` — applies the de-identified pipeline **in place**; every later read and export of the project returns the anonymized form — irreversible (§7.4).
-- **Confirmation modal** (§3.5 — destructive and hard-to-reverse): states the chosen provision and the one-shot consequence, requires an explicit confirm click.
-- **Result**: on 200, a success line naming the provision and the affected records/values; on 409 (already executed) the conflict line per §3.4.
+  PHP sends only `delete` or `anonymize`; anything else is refused with the §3.4 line `endproject.provision_invalid` and no API call.
+- **Result**: on 200, a success line naming the provision and the affected records/values; on 409 (already executed) the conflict line per §3.4. Either way the redirect returns to Overview (PRG).
+
+**Delete project** (REQ-EXP-044, REQ-API-187)
+
+- **Warning**: the part states that deleting removes the project with its structure, members and their tokens, and every record, that only the audit trail stays, and that it **cannot be undone**.
+- **Export first**: it advises exporting the project as CDISC ODM — **Project and data** — before deleting, because importing that file through the Control Panel (§5.2) is the only way to create the project again, and links to the Export page (`/projects/{id}/export`), whose ODM card is the administrator's (§6.4).
+- **Typed confirmation**: a text input `confirm_text` labelled "Type DELETE to confirm" (`required`, `pattern="DELETE"`, `autocomplete="off"`, `spellcheck="false"`), so the browser holds the submit until the exact word is there. `admin.js` (`data-clara-typed-confirm`) disables the **Delete project** button (`btn-danger`) until the field reads `DELETE`; without JavaScript the browser's own check still applies. The form also carries `data-clara-confirm` (§3.5) naming the project, so the confirm click in the modal is the last step. The word is the same in every UI language — it is what the user types, not a label — and only the label around it is translated.
+- **Server check**: PHP compares `confirm_text` with `DELETE` exactly (case-sensitive, nothing trimmed) and, on a mismatch, flashes the §3.4 line `endproject.delete_unconfirmed` and sends nothing to the API. The card's strings are the `endproject.*` keys.
+- **Action**: `POST /projects/{id}/overview?action=delete_project` → `DELETE /api/v1/projects/{id}`.
+- **Result**: on 200 the project no longer exists, so the redirect goes to the project overview (`/`) with a success line naming the deleted project and its record count. A refusal returns to Overview with the §3.4 line.
 
 ### 6.6 Project mode (GD-20, REQ-UI-033)
 
