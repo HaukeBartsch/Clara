@@ -45,7 +45,8 @@ async function signInAsAdmin(page: Page): Promise<void> {
 
 const seconds = (ms: number | undefined) => (ms === undefined ? "—" : (ms / 1000).toFixed(2) + " s")
 
-test.describe("record status dashboard display time (§6.3)", () => {
+// Tagged @perf: ci/run.sh leaves it out (--grep-invert @perf), since the gate has no filled project.
+test.describe("record status dashboard display time (§6.3)", { tag: "@perf" }, () => {
   test.skip(!process.env.CLARA_WEB_URL || !PROJECT,
     "CLARA_WEB_URL and CLARA_PERF_PROJECT not set — no running stack with a filled project to measure")
 

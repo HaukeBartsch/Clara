@@ -221,9 +221,11 @@ if ! curl -sf -o /dev/null "http://127.0.0.1:$web_port/login"; then
 fi
 
 # The JSON report is what tells a spec that failed from one that never ran.
+# Specs tagged @perf are measurements against a project filled beforehand (stress/), not
+# coverage; they are left out here rather than counted as skips by the guard below.
 if ! (cd "$root/e2e" && CLARA_WEB_URL="http://127.0.0.1:$web_port" \
 	PLAYWRIGHT_JSON_OUTPUT_NAME="$state/e2e.json" \
-	./node_modules/.bin/playwright test --reporter=list,json); then
+	./node_modules/.bin/playwright test --grep-invert @perf --reporter=list,json); then
 	echo "FAIL: Playwright reported failing browser specs (REQ-TECH-028)." >&2
 	exit 1
 fi
