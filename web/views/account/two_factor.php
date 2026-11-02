@@ -8,10 +8,10 @@
  * them and appear on no other page — reloading shows the status view instead (REQ-AUTH-056),
  * which is why the copy says so rather than leaving the user to find out.
  *
- * As in the login wizard, the `otpauth://` URI is offered as text: a scannable QR needs a
- * client-side generator vendored under assets/vendor/, and admitting one is an amendment to
- * `Design/Technology_Stack_Design.md` §3 first (REQ-TECH-026). The manual key works with
- * every authenticator app in the meantime.
+ * As in the login wizard, the QR code is drawn in the browser from the `otpauth://` URI by
+ * the vendored qrcodejs (`Design/Technology_Stack_Design.md` §3, assets/js/two_factor.js);
+ * its panel stays hidden until then, so without scripts the manual key — which works with
+ * every authenticator app — is the way in.
  */
 
 use Clara\View;
@@ -74,6 +74,11 @@ $step = $step ?? '';
     </ol>
 
     <?php if (($secret ?? '') !== ''): ?>
+        <?php if (($otpauthUri ?? '') !== ''): ?>
+            <!-- Drawn client-side from the URI (§2.5); hidden until it is. -->
+            <div class="clara-qr mb-3" role="img" aria-label="<?= View::e($view->t('tfa.qr_label')) ?>"
+                 data-clara-qr="<?= View::e($otpauthUri) ?>" hidden></div>
+        <?php endif; ?>
         <div class="mb-3">
             <div class="form-label"><?= View::e($view->t('tfa.manual_key')) ?></div>
             <output id="clara-tfa-secret" class="d-block font-monospace user-select-all bg-body-tertiary rounded p-2"><?= View::e($secret) ?></output>

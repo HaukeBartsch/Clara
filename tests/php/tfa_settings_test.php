@@ -82,6 +82,23 @@ describe('two-factor settings (§2.5, REQ-UI-039)', function (): void {
             'a value shown once is stored nowhere (REQ-AUTH-056)');
     });
 
+    it('hands the otpauth URI to the QR panel, hidden until two_factor.js draws it (§2.5)', function (): void {
+        sign_in();
+        queue_shell();
+        api_route('/api/v1/users/me/tfa/totp/enroll', [
+            'secret' => 'JBSWY3DPEHPK3PXP',
+            'otpauth_uri' => 'otpauth://totp/CLARA:member@example.org?issuer=CLARA&secret=JBSWY3DPEHPK3PXP',
+        ]);
+        queue_tfa_status();
+
+        $body = tfa_post('totp_start')->body();
+
+        // Escaped like every other attribute value (REQ-UI-004): the & arrives as &amp;.
+        assert_contains('data-clara-qr="otpauth://totp/CLARA:member@example.org?issuer=CLARA&amp;secret=JBSWY3DPEHPK3PXP" hidden', $body);
+        assert_contains('role="img" aria-label="QR code for your authenticator app"', $body);
+        assert_contains('<script type="module" src="/assets/js/two_factor.js"></script>', $body);
+    });
+
     it('enrolls through the session identity, not a pre-auth override (REQ-API-115)', function (): void {
         sign_in();
         queue_shell();
@@ -124,6 +141,7 @@ describe('two-factor settings (§2.5, REQ-UI-039)', function (): void {
 
         assert_contains('wrong or has expired', $response->body());
         assert_not_contains('Manual-entry key', $response->body(), 'the secret is not repeated (§2.5)');
+        assert_not_contains('data-clara-qr', $response->body(), 'nor is its QR code');
     });
 
     it('hides the e-mail method when the installation cannot deliver it (REQ-AUTH-057)', function (): void {

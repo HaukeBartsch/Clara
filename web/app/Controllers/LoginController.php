@@ -440,7 +440,12 @@ final class LoginController extends Controller
             'recoveryCodes' => is_array($codes) ? array_values(array_map('strval', $codes)) : [],
             'error' => $error,
             'next' => $this->safeNext(),
-        ], ['titleKey' => 'login.enroll.title']);
+        ], [
+            'titleKey' => 'login.enroll.title',
+            // Draws the TOTP step's QR code (§2.5) — an enhancement: the manual key works
+            // without it (REQ-UI-045).
+            'scripts' => ['/assets/js/two_factor.js'],
+        ]);
     }
 
     /** @param string $error a failure line to show above the form */

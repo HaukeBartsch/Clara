@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto"
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test"
 
 // The account page (User_Interface_Design.md §2.8, REQ-UI-063): reached from the header's
@@ -31,6 +32,21 @@ async function signIn(page: Page, email: string, password: string): Promise<void
   await page.fill("#login-password", password)
   await page.locator('form[action="/login?action=credentials"] button[type="submit"]').click()
   await expect(page.locator("#clara-account-menu")).toBeVisible()
+}
+
+/** RFC 6238 with the API's parameters (SHA-1, six digits, 30 s) from a base32 secret. */
+function totp(secret: string, now = Date.now()): string {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+  let bits = ""
+  for (const char of secret.replace(/=+$/, "").toUpperCase()) {
+    bits += alphabet.indexOf(char).toString(2).padStart(5, "0")
+  }
+  const key = Buffer.from((bits.match(/.{8}/g) ?? []).map((byte) => parseInt(byte, 2)))
+  const counter = Buffer.alloc(8)
+  counter.writeBigUInt64BE(BigInt(Math.floor(now / 30000)))
+  const mac = createHmac("sha1", key).update(counter).digest()
+  const offset = mac[mac.length - 1] & 0x0f
+  return String((mac.readUInt32BE(offset) & 0x7fffffff) % 1000000).padStart(6, "0")
 }
 
 test.describe("account page (REQ-UI-063)", () => {
@@ -89,6 +105,57 @@ test.describe("account page (REQ-UI-063)", () => {
     const views = page.locator("table.clara-audits tbody tr", { hasText: "token_viewed" })
     await expect(views).toHaveCount(1)
     await expect(views.first()).toContainText(email)
+  })
+
+  test("TOTP enrollment draws a QR code that scans to the key on the page and enrolls (§2.5)", async ({ browser, request }) => {
+    const tag = Date.now()
+    const email = `qr-${tag}@example.org`
+    const password = `qr-${tag}-password`
+    await admin(request, "POST", "/api/v1/users", { email, display_name: `QR ${tag}`, password })
+
+    const member = await (await browser.newContext()).newPage()
+    const refused: string[] = []
+    member.on("console", (message) => {
+      if (/Content Security Policy/i.test(message.text())) refused.push(message.text())
+    })
+    await signIn(member, email, password)
+    await member.goto("/account/two-factor")
+    await member.getByRole("button", { name: "Use an authenticator app" }).click()
+
+    const panel = member.locator(".clara-qr")
+    await expect(panel).toBeVisible()
+    await expect(panel).toHaveAttribute("role", "img")
+    await expect(panel).toHaveAttribute("aria-label", "QR code for your authenticator app")
+    // The library would have left the URI — secret included — in a hover tooltip.
+    await expect(panel).not.toHaveAttribute("title", /.*/)
+    const image = panel.locator("img")
+    await expect(image).toBeVisible()
+    await expect(image).toHaveAttribute("src", /^data:image\/png;base64,/)
+
+    const secret = (await member.locator("#clara-tfa-secret").textContent())?.trim() ?? ""
+    const uri = (await panel.getAttribute("data-clara-qr")) ?? ""
+    expect(uri).toContain(`secret=${secret}`)
+
+    // Read the drawing back where the engine can (Chromium on macOS ships BarcodeDetector).
+    const decoded = await image.evaluate(async (img: HTMLImageElement) => {
+      const Detector = (window as any).BarcodeDetector
+      if (!Detector || !(await Detector.getSupportedFormats()).includes("qr_code")) return null
+      const codes = await new Detector({ formats: ["qr_code"] }).detect(img)
+      return codes.length === 1 ? codes[0].rawValue as string : `${codes.length} codes`
+    })
+    if (decoded === null) {
+      test.info().annotations.push({ type: "note", description: "no BarcodeDetector here: the drawing was not read back" })
+    } else {
+      expect(decoded).toBe(uri)
+    }
+
+    // The code an authenticator app would derive from what it scanned enables the factor.
+    const scannedSecret = new URL(decoded ?? uri).searchParams.get("secret") ?? ""
+    await member.fill("#tfa-code", totp(scannedSecret))
+    await member.getByRole("button", { name: "Confirm and enable" }).click()
+    await expect(member.locator("#clara-recovery-codes")).toBeVisible()
+    await expect(member.locator(".clara-qr")).toHaveCount(0)
+    expect(refused).toEqual([])
   })
 
   test("the account panel keeps the two-factor and password pages aligned with the token section", async ({ page }) => {

@@ -9,10 +9,11 @@
  * them, which is what "shown exactly once" means, and the copy says so rather
  * than leaving the user to discover it.
  *
- * The `otpauth://` link is offered as text. A scannable QR needs a client-side
- * generator vendored under assets/vendor/ (§2.5 of the UI design), and admitting
- * one is an amendment to Technology_Stack_Design.md §3 — until that happens the
- * manual key below is the way in, and it works with every authenticator app.
+ * The QR code is drawn in the browser from the `otpauth://` URI by the vendored
+ * qrcodejs (§2.5 of the UI design, Technology_Stack_Design.md §3), through the
+ * same assets/js/two_factor.js as the settings page. Its panel stays hidden until
+ * it is drawn, so without scripts the manual key below is the way in — it works
+ * with every authenticator app.
  */
 
 use Clara\View;
@@ -50,6 +51,12 @@ $next = $next ?? '/';
         <li><?= View::e($view->t('login.enroll.totp_step1')) ?></li>
         <li><?= View::e($view->t('login.enroll.totp_step2')) ?></li>
     </ol>
+
+    <?php if (($otpauthUri ?? '') !== ''): ?>
+        <!-- Drawn client-side from the URI (§2.5); hidden until it is. -->
+        <div class="clara-qr mb-3" role="img" aria-label="<?= View::e($view->t('login.enroll.qr_label')) ?>"
+             data-clara-qr="<?= View::e($otpauthUri) ?>" hidden></div>
+    <?php endif; ?>
 
     <div class="mb-3">
         <div class="form-label"><?= View::e($view->t('login.enroll.manual_key')) ?></div>

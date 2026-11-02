@@ -13,7 +13,7 @@
 # out of scope rather than waived finding by finding.
 assets/
 
-# Vendored third-party libraries (Bootstrap, Tabulator, D3, Geist, Swagger UI),
+# Vendored third-party libraries (Bootstrap, Tabulator, D3, Geist, Swagger UI, qrcodejs),
 # copied locally instead of loaded from a CDN per REQ-TECH-021. Upstream code;
 # the fix for a finding in it is a newer upstream copy.
 web/assets/vendor/

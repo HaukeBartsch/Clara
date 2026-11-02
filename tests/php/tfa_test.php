@@ -168,6 +168,19 @@ describe('two-factor enrollment wizard (mandated, §2.7)', function (): void {
         assert_true(!str_contains(serialize($_SESSION), 'JBSWY3DPEHPK3PXP'), 'a secret shown once is not stored (REQ-AUTH-056)');
     });
 
+    it('offers the TOTP step\'s QR code through two_factor.js (§2.5)', function (): void {
+        pending_state(['method' => '']);
+        api_route('/tfa/totp/enroll', ['secret' => 'JBSWY3DPEHPK3PXP', 'otpauth_uri' => 'otpauth://totp/CLARA:a@example.org?secret=JBSWY3DPEHPK3PXP']);
+
+        $body = router_for(http_request(
+            'POST', '/login', browser_headers(),
+            ['csrf_token' => str_repeat('c', 64)], ['action' => 'enroll_totp']
+        ))->dispatch()->body();
+
+        assert_contains('data-clara-qr="otpauth://totp/CLARA:a@example.org?secret=JBSWY3DPEHPK3PXP" hidden', $body);
+        assert_contains('<script type="module" src="/assets/js/two_factor.js"></script>', $body);
+    });
+
     it('shows the recovery codes exactly once, on the response that created them', function (): void {
         pending_state(['method' => '']);
         api_route('/tfa/totp/confirm', ['method' => 'totp', 'recovery_codes' => ['ab12cd-ef34567890', '012345-abcdef6789']]);

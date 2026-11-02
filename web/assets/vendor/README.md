@@ -165,3 +165,35 @@ imports. The data is a generated structure embedded in the page
 (`tools/build_relevance_sankey.php` → `web/app/data/relevance_sankey.php`);
 neither library fetches anything at runtime and neither file carries an
 external reference (CI's ASM-TECH-2 check).
+
+## qrcodejs 1.0.0 (TOTP enrollment QR code)
+
+| | |
+|---|---|
+| Source | jsDelivr `qrcodejs@1.0.0` (npm, MIT — `LICENSE` taken along) |
+| Files taken | `qrcode.min.js`, `LICENSE` |
+| Version pin | 1.0.0 — the package's only release (`Design/Technology_Stack_Design.md` §3 carries the integrity hash and review date) |
+
+```sh
+mkdir -p web/assets/vendor/qrcodejs
+curl -sf https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js \
+  -o web/assets/vendor/qrcodejs/qrcode.min.js
+curl -sf https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/LICENSE \
+  -o web/assets/vendor/qrcodejs/LICENSE
+shasum -a 256 web/assets/vendor/qrcodejs/qrcode.min.js
+# c541ef06327885a8415bca8df6071e14189b4855336def4f36db54bde8484f36
+```
+
+The jsDelivr copy is byte-identical to `qrcode.min.js` in the npm tarball (whose
+registry integrity was checked) and to the file in upstream `davidshimjs/qrcodejs`,
+unchanged there since 2013; the npm package itself is a third party's republish, so
+check the hash against both when re-vendoring.
+
+Used only by the two TOTP enrollment views — the account page's two-factor section and
+the enrollment wizard a mandate opens at sign-in (`User_Interface_Design.md` §2.5) —
+through `web/assets/js/two_factor.js`. It is a **classic script** that assigns the global
+`QRCode` and is written as sloppy-mode code, so the module loads it with a script element
+(the d3/Swagger precedent), never as an import. The page-level panel is hidden until the
+code is drawn, so the manual-entry key still works without it. The library makes no
+network request, and its only external-looking strings are SVG/XLink namespace URIs, not
+fetches (CI's ASM-TECH-2 check passes).

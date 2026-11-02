@@ -503,6 +503,27 @@
   }
 }
 
+/* --- TOTP enrollment QR code (§2.5, REQ-UI-039) --- */
+
+/* White on every theme, darkly included: the padding is the quiet zone a scanner needs around
+   the modules (at least four of them wide at any URI length the API produces). The drawing is
+   rendered at a fixed resolution by two_factor.js and scaled to the panel here; the library hides
+   whichever of its canvas and img is not in use with an inline display, which wins over this. */
+.clara-qr {
+  width: 15rem;
+  max-width: 100%;
+  padding: 1.25rem;
+  background-color: #fff;
+  border-radius: var(--bs-border-radius);
+}
+
+.clara-qr canvas,
+.clara-qr img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
 /* --- project-mode badge (§6.6, REQ-UI-033) --- */
 
 /* Beside a heading the badge stays label-sized instead of inheriting the heading's size. */
