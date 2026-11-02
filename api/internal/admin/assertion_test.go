@@ -798,15 +798,19 @@ func TestSequenceJSubjectBinding(t *testing.T) {
 		}
 	})
 
-	t.Run("an unknown address stays account_not_found", func(t *testing.T) {
+	t.Run("an unknown address gets an account bound to the subject (REQ-AUTH-091)", func(t *testing.T) {
 		e := newEnv(t)
 		idp, provider := e.useIdP(t)
 		token := idp.mint(map[string]any{"email": "nobody@example.org", "email_verified": true})
 		body := loginArgs("nobody@example.org", token, "")
 		body["provider"] = provider.Issuer
 		rec := e.do("POST", "/api/v1/auth/login", body, nil)
-		if rec.Code != http.StatusUnauthorized || !strings.Contains(rec.Body.String(), "account_not_found") {
+		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		link, err := e.Store.GetProviderLinkBySubject(ctx, provider.Issuer, "subject-42")
+		if err != nil || link == nil {
+			t.Fatalf("link = %+v, err %v; want the new account bound", link, err)
 		}
 	})
 }

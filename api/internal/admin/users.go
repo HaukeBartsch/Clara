@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"csms/api/internal/audit"
@@ -16,6 +18,7 @@ import (
 
 func (h *Handler) registerUsers(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/users", h.listUsers)
+	mux.HandleFunc("GET /api/v1/users/search", h.searchUsers)
 	mux.HandleFunc("POST /api/v1/users", h.createUser)
 	mux.HandleFunc("PUT /api/v1/users/{id}", h.updateUser)
 }
@@ -46,6 +49,102 @@ func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 		out = append(out, obj)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// UserSearchRow is one account of the user search: the user object plus when the
+// account was created and how many projects it belongs to (REQ-API-186).
+type UserSearchRow struct {
+	UserObject
+	CreatedAt    string `json:"created_at"`
+	ProjectCount int    `json:"project_count"`
+}
+
+// searchUsers answers one page of the accounts a filter selects, and how many it
+// selects in all (REQ-API-186): the Control Panel's user list and the project
+// members page's account search. Paging is by offset — the page shows "page 3 of
+// 25" and a list of accounts is small enough for that to stay cheap; the order
+// is stable, so pages do not overlap while nothing changes.
+func (h *Handler) searchUsers(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireAdmin(w, r); !ok {
+		return
+	}
+	q := r.URL.Query()
+	f := db.UserFilter{
+		Query:  strings.TrimSpace(q.Get("q")),
+		Source: q.Get("source"),
+		Limit:  ParseLimit(r),
+	}
+	if len(f.Query) > 200 {
+		errBadRequest(w, "q is longer than 200 bytes")
+		return
+	}
+	switch f.Source {
+	case "", "local", "ldap", "oauth2":
+	default:
+		errBadRequest(w, "source must be local, ldap or oauth2")
+		return
+	}
+	switch q.Get("projects") {
+	case "":
+	case "none":
+		f.NoProjects = true
+	default:
+		errBadRequest(w, "projects must be none or absent")
+		return
+	}
+	switch q.Get("sort") {
+	case "", "email":
+	case "created":
+		f.Newest = true
+	default:
+		errBadRequest(w, "sort must be email or created")
+		return
+	}
+	switch q.Get("enabled") {
+	case "":
+	case "1":
+		f.EnabledOnly = true
+	default:
+		errBadRequest(w, "enabled must be 1 or absent")
+		return
+	}
+	if v := q.Get("not_in_project"); v != "" {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || id <= 0 {
+			errBadRequest(w, "not_in_project must be a project id")
+			return
+		}
+		f.NotInProject = id
+	}
+	if v := q.Get("offset"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 || n > 1_000_000 {
+			errBadRequest(w, "offset must be a whole number from 0")
+			return
+		}
+		f.Offset = n
+	}
+
+	rows, total, err := h.Store.SearchUsers(r.Context(), f)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	tfaMethods, err := h.Store.ListTFAMethods(r.Context())
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	now := time.Now().UTC()
+	out := make([]UserSearchRow, 0, len(rows))
+	for i := range rows {
+		obj := NewUserObject(&rows[i].User, now)
+		if m, ok := tfaMethods[rows[i].ID]; ok {
+			obj.TFAMethod = m
+		}
+		out = append(out, UserSearchRow{UserObject: obj, CreatedAt: rows[i].CreatedAt, ProjectCount: rows[i].ProjectCount})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"users": out, "total": total, "limit": f.Limit, "offset": f.Offset})
 }
 
 // validUntilFromDays maps a valid_days value to the stored DATE: 0 (or an

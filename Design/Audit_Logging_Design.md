@@ -110,7 +110,7 @@ Field renames are `field_updated` with `"changes":{"name":{"old":"…","new":"�
 
 | Code | When | `details` payload |
 |---|---|---|
-| `user_created` | REQ-API-047; a first LDAP sign-in (REQ-AUTH-091) | `{"email":"…","display_name":"…","re_enabled":false}` — `re_enabled:true` when a disabled account is re-enabled. The account a first LDAP sign-in creates adds `"valid_until":null,"automatic":true,"source":"ldap","provider":"ldap-N"`, with the new account as acting user |
+| `user_created` | REQ-API-047; a first LDAP or OAuth2 sign-in (REQ-AUTH-091) | `{"email":"…","display_name":"…","re_enabled":false}` — `re_enabled:true` when a disabled account is re-enabled. The account a first sign-in creates adds `"valid_until":null,"automatic":true,"source":"ldap","provider":"ldap-N"` — on the OAuth2 path `"source":"oauth2"` and the provider's issuer as `provider` — with the new account as acting user |
 | `user_updated` | REQ-API-048/136 | `{"email":"…","enabled":0,"is_admin":{"old":1,"new":0}}` — one key per changed attribute; a grant/revoke of `is_admin` rides this event, no separate type (a rejected last-admin change writes nothing) |
 | `membership_changed` | REQ-API-054 | `{"member_email":"…","action":"add or role_change or remove","role":"data-entry or null"}`, plus `"region_placeholder":"OUS"` on an add that set the member's placeholder region (REQ-API-179, REQ-AUD-036) |
 | `token_issued` | first issuance via REQ-API-054 (REQ-AUTH-030) | `{"member_email":"…"}` — the token value is never in `details` (REQ-API-005) |

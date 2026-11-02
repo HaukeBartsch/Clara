@@ -51,8 +51,7 @@ async function mapToBaseline(page: Page): Promise<void> {
 /** Adds the administrator as a plain member (data entry needs it, §8.6 — like fieldtypes.spec). */
 async function joinProject(page: Page, projectId: number): Promise<void> {
   await page.goto(`/projects/${projectId}/members`)
-  const adminOption = await page.locator("#member-user option", { hasText: ADMIN_EMAIL }).getAttribute("value")
-  await page.locator("#member-user").selectOption(adminOption ?? "")
+  await page.locator("#member-account").fill(ADMIN_EMAIL)
   await page.locator('form[action*="action=add_member"] button[type="submit"]').click()
 }
 

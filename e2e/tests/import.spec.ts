@@ -99,8 +99,7 @@ test.describe("instrument import (REQ-UI-053)", () => {
     await expect(success(page)).toContainText("Instrument assignment of arm 1 saved.")
 
     await page.locator("#clara-nav").getByRole("link", { name: "Members" }).click()
-    const adminOption = await page.locator("#member-user option", { hasText: ADMIN_EMAIL }).getAttribute("value")
-    await page.locator("#member-user").selectOption(adminOption ?? "")
+    await page.locator("#member-account").fill(ADMIN_EMAIL)
     await page.locator('form[action*="action=add_member"] button[type="submit"]').click()
 
     await page.locator("#clara-nav").getByRole("link", { name: "Record Status Dashboard" }).click()
@@ -179,8 +178,7 @@ test.describe("instrument import (REQ-UI-053)", () => {
 
     // Give the acting administrator project access, create a participant, and save entered values.
     await page.locator("#clara-nav").getByRole("link", { name: "Members" }).click()
-    const adminOption = await page.locator("#member-user option", { hasText: ADMIN_EMAIL }).getAttribute("value")
-    await page.locator("#member-user").selectOption(adminOption ?? "")
+    await page.locator("#member-account").fill(ADMIN_EMAIL)
     await page.locator('form[action*="action=add_member"] button[type="submit"]').click()
 
     await page.locator("#clara-nav").getByRole("link", { name: "Record Status Dashboard" }).click()

@@ -675,6 +675,38 @@
         }
       }
     },
+    "/api/v1/users/search": {
+      "get": {
+        "tags": ["Admin: Users"],
+        "operationId": "searchUsers",
+        "summary": "Search users, one page (REQ-API-186)",
+        "description": "Requires `is_admin` (403 `forbidden` otherwise). One page of the accounts the filters select, in a stable order, and how many they select in all — the Control Panel's user list and the project members page's account search. `GET /api/v1/users` still answers every account. An unknown filter value is 400 `invalid_request`.",
+        "parameters": [
+          { "name": "q", "in": "query", "description": "Substring of the address or the display name, ignoring ASCII case; `%` and `_` are literal. At most 200 bytes.", "schema": { "type": "string", "maxLength": 200 } },
+          { "name": "source", "in": "query", "description": "Only accounts whose last sign-in used this source.", "schema": { "type": "string", "enum": ["local", "ldap", "oauth2"] } },
+          { "name": "projects", "in": "query", "description": "`none`: only accounts that belong to no project.", "schema": { "type": "string", "enum": ["none"] } },
+          { "name": "not_in_project", "in": "query", "description": "Only accounts that are not members of this project.", "schema": { "type": "integer", "minimum": 1 } },
+          { "name": "enabled", "in": "query", "description": "`1`: only enabled accounts.", "schema": { "type": "string", "enum": ["1"] } },
+          { "name": "sort", "in": "query", "description": "`email` (default), or `created` — newest first.", "schema": { "type": "string", "enum": ["email", "created"] } },
+          { "name": "limit", "in": "query", "description": "Page size; default 50, at most 200.", "schema": { "type": "integer", "minimum": 1, "maximum": 200 } },
+          { "name": "offset", "in": "query", "description": "Accounts to skip; default 0.", "schema": { "type": "integer", "minimum": 0, "maximum": 1000000 } }
+        ],
+        "responses": {
+          "200": { "description": "One page of accounts.", "content": { "application/json": { "schema": {
+            "type": "object", "required": ["users", "total", "limit", "offset"],
+            "properties": {
+              "users": { "type": "array", "items": { "allOf": [ { "$ref": "#/components/schemas/User" }, { "type": "object", "properties": {
+                "created_at": { "type": "string", "description": "When the account was created, UTC `YYYY-MM-DD HH:MM:SS`." },
+                "project_count": { "type": "integer", "description": "How many projects the account belongs to." } } } ] } },
+              "total": { "type": "integer", "description": "How many accounts the filters select in all." },
+              "limit": { "type": "integer" },
+              "offset": { "type": "integer" } } } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" }
+        }
+      }
+    },
     "/api/v1/users/{id}": {
       "put": {
         "tags": ["Admin: Users"],

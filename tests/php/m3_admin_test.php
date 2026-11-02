@@ -81,7 +81,7 @@ describe('Control Panel — Users (§5.1, REQ-UI-011)', function (): void {
     it('lists accounts with the derived status, and escapes what it shows', function (): void {
         sign_in(['is_admin' => 1]);
         queue_shell();
-        api_route('/api/v1/users', [m3_user(['display_name' => '<script>x</script>', 'status' => 'auto_disabled', 'enabled' => false])]);
+        api_users_page([m3_user(['display_name' => '<script>x</script>', 'status' => 'auto_disabled', 'enabled' => false])]);
 
         $body = router_for(http_request('GET', '/admin', browser_headers(), [], ['section' => 'users']))->dispatch()->body();
 
@@ -89,6 +89,75 @@ describe('Control Panel — Users (§5.1, REQ-UI-011)', function (): void {
         assert_contains('auto-disabled', $body);
         assert_contains('&lt;script&gt;x&lt;/script&gt;', $body);
         assert_not_contains('<script>x</script>', $body);
+    });
+
+    it('sends the checked filters and the page to the search (REQ-API-186)', function (): void {
+        sign_in(['is_admin' => 1]);
+        queue_shell();
+        api_users_page([m3_user(['project_count' => 3, 'created_at' => '2026-10-01 08:00:00'])], 120, 50);
+
+        $body = router_for(http_request('GET', '/admin', browser_headers(), [], ['section' => 'users',
+            'q' => '  kari ', 'source' => 'ldap', 'projects' => 'none', 'sort' => 'created', 'page' => '2']))->dispatch()->body();
+
+        assert_same([['q' => 'kari', 'source' => 'ldap', 'projects' => 'none', 'sort' => 'created', 'limit' => '50', 'offset' => '50']],
+            api_queries('/api/v1/users/search'));
+        assert_contains('Accounts 51–100 of 120', $body);
+        assert_contains('Page 2 of 3', $body);
+        assert_contains('href="/admin?section=users&amp;q=kari&amp;source=ldap&amp;projects=none&amp;sort=created"', $body, 'Previous: page 1 is the default');
+        assert_contains('href="/admin?section=users&amp;q=kari&amp;source=ldap&amp;projects=none&amp;sort=created&amp;page=3"', $body);
+        assert_contains('name="back" value="q=kari&amp;source=ldap&amp;projects=none&amp;sort=created&amp;page=2"', $body);
+        assert_contains('2026-10-01 08:00:00', $body);
+        assert_same(1, preg_match('/<td class="text-end">3<\/td>/', $body), 'the project count');
+        assert_contains('value="kari"', $body, 'the search box keeps the query');
+    });
+
+    it('drops a filter it does not know rather than forwarding it (§2.1)', function (): void {
+        sign_in(['is_admin' => 1]);
+        queue_shell();
+        api_users_page([]);
+
+        $body = router_for(http_request('GET', '/admin', browser_headers(), [], ['section' => 'users',
+            'source' => 'saml', 'projects' => 'all', 'sort' => 'name', 'page' => '-1', 'enabled' => '1']))->dispatch()->body();
+
+        assert_same([['limit' => '50', 'offset' => '0']], api_queries('/api/v1/users/search'));
+        assert_contains('No accounts.', $body);
+        assert_not_contains('Page 1 of', $body, 'one page needs no pager');
+    });
+
+    it('says when nothing matches the filters', function (): void {
+        sign_in(['is_admin' => 1]);
+        queue_shell();
+        api_users_page([]);
+
+        $body = router_for(http_request('GET', '/admin', browser_headers(), [], ['section' => 'users', 'q' => 'nobody']))->dispatch()->body();
+
+        assert_contains('No account matches these filters.', $body);
+        assert_contains('href="/admin?section=users"', $body, 'Clear');
+    });
+
+    it('shows the last page when asked for one past the end', function (): void {
+        sign_in(['is_admin' => 1]);
+        queue_shell();
+        api_users_page([m3_user()], 60, 50);
+
+        $body = router_for(http_request('GET', '/admin', browser_headers(), [], ['section' => 'users', 'page' => '9']))->dispatch()->body();
+
+        assert_same(['400', '50'], array_column(api_queries('/api/v1/users/search'), 'offset'));
+        assert_contains('Page 2 of 2', $body);
+    });
+
+    it('returns a row action to the filtered page it came from — and only to allowed filters', function (): void {
+        sign_in(['is_admin' => 1]);
+        queue_shell();
+        api_route('/api/v1/users/9', m3_user(['enabled' => false]));
+
+        $done = m3_post('/admin', ['id' => '9', 'email' => 'ada@example.org', 'enabled' => '0',
+            'back' => 'q=kari&page=2&source=saml&section=projects'], 'user_enabled');
+        assert_same('/admin?section=users&q=kari&page=2', $done->headers()['Location']);
+
+        // A refusal before any call returns there too.
+        $refused = m3_post('/admin', ['id' => '9', 'valid_days' => 'x', 'back' => 'projects=none'], 'user_validity');
+        assert_same('/admin?section=users&projects=none', $refused->headers()['Location']);
     });
 
     it('creates with exactly the whitelisted attributes, and no password when none is given', function (): void {
@@ -143,7 +212,7 @@ describe('Control Panel — Users (§5.1, REQ-UI-011)', function (): void {
     it('asks for confirmation before disabling, resetting two-factor and changing the admin flag (§3.5)', function (): void {
         sign_in(['is_admin' => 1]);
         queue_shell();
-        api_route('/api/v1/users', [m3_user(['tfa_method' => 'totp'])]);
+        api_users_page([m3_user(['tfa_method' => 'totp'])]);
 
         $body = router_for(http_request('GET', '/admin', browser_headers(), [], ['section' => 'users']))->dispatch()->body();
 
@@ -307,7 +376,6 @@ describe('Control Panel — Audits (§5.6, REQ-UI-016)', function (): void {
             'email' => 'admin@example.org', 'event_type' => 'user_created', 'details' => ['display_name' => '<b>x</b>'],
         ]], 'next_cursor' => 'abc123']);
         api_route('/api/v1/projects', []);
-        api_route('/api/v1/users', []);
 
         $body = router_for(http_request('GET', '/admin', browser_headers(), [], [
             'section' => 'audits', 'event_type' => 'not_a_code', 'from' => '2026-10-01', 'to' => 'yesterday',
@@ -338,7 +406,6 @@ describe('Control Panel — Audits (§5.6, REQ-UI-016)', function (): void {
                 'details' => ['changes' => []]],
         ], 'next_cursor' => null]);
         api_route('/api/v1/projects', []);
-        api_route('/api/v1/users', []);
 
         $body = router_for(http_request('GET', '/admin', browser_headers(), [], ['section' => 'audits']))->dispatch()->body();
 
@@ -359,6 +426,103 @@ describe('Control Panel — Audits (§5.6, REQ-UI-016)', function (): void {
         $filter = \Clara\Controllers\ControlPanelController::AUDIT_EVENT_TYPES;
         assert_true(count($catalog) > 50, 'the catalog parsed');
         assert_same($catalog, $filter, 'the filter lists the catalog, alphabetically');
+    });
+
+    it('filters by user through a search field, never a list of every account', function (): void {
+        sign_in(['is_admin' => 1]);
+        queue_shell();
+        api_route('/api/v1/audit', ['entries' => [], 'next_cursor' => null]);
+        api_route('/api/v1/projects', []);
+
+        $body = router_for(http_request('GET', '/admin', browser_headers(), [], ['section' => 'audits']))->dispatch()->body();
+
+        assert_same(1, preg_match('/<input[^>]*name="user"[^>]*list="audit-user-options"[^>]*value=""[^>]*data-clara-account-search="\/admin\?section=audits" data-clara-account-min="3"/', $body));
+        assert_contains('<datalist id="audit-user-options"></datalist>', $body);
+        assert_not_contains('<select class="form-select form-select-sm" id="audit-user"', $body);
+        assert_same(0, api_calls_to('/api/v1/users'), 'no account list, and no search without a user filter');
+    });
+
+    it('sends the id of the account the address names, preferring the exact spelling', function (): void {
+        sign_in(['is_admin' => 1]);
+        queue_shell();
+        api_users_page([
+            m3_user(['id' => 5, 'email' => 'Kari@example.org']),
+            m3_user(['id' => 6, 'email' => 'kari@example.org']),
+            m3_user(['id' => 7, 'email' => 'kari@example.org.uk']),
+        ]);
+        api_route('/api/v1/audit', ['entries' => [], 'next_cursor' => 'abc123']);
+        api_route('/api/v1/projects', []);
+
+        $body = router_for(http_request('GET', '/admin', browser_headers(), [], ['section' => 'audits', 'user' => ' kari@example.org ']))->dispatch()->body();
+
+        assert_same([['q' => 'kari@example.org', 'limit' => '200']], api_queries('/api/v1/users/search'));
+        assert_same('6', api_queries('/api/v1/audit')[0]['user'] ?? null);
+        assert_contains('value="kari@example.org"', $body, 'the field keeps the address');
+        assert_contains('user=kari%40example.org&amp;cursor=abc123', $body, 'Next keeps the user filter');
+    });
+
+    it('takes the one account an address names ignoring case, and refuses two', function (): void {
+        sign_in(['is_admin' => 1]);
+        queue_shell();
+        api_users_page([m3_user(['id' => 5, 'email' => 'kari@example.org']), m3_user(['id' => 9, 'email' => 'ola@example.org'])]);
+        api_route('/api/v1/audit', ['entries' => [], 'next_cursor' => null]);
+        api_route('/api/v1/projects', []);
+
+        router_for(http_request('GET', '/admin', browser_headers(), [], ['section' => 'audits', 'user' => 'KARI@example.org']))->dispatch();
+        assert_same('5', api_queries('/api/v1/audit')[0]['user'] ?? null);
+
+        resetApi();
+        queue_shell();
+        api_users_page([m3_user(['id' => 5, 'email' => 'Kari@example.org']), m3_user(['id' => 6, 'email' => 'kari@example.org'])]);
+        api_route('/api/v1/projects', []);
+        $body = router_for(http_request('GET', '/admin', browser_headers(), [], ['section' => 'audits', 'user' => 'KARI@example.org']))->dispatch()->body();
+        assert_contains('No account has the address KARI@example.org.', $body);
+        assert_same(0, api_calls_to('/api/v1/audit'));
+    });
+
+    it('shows no trail, exports nothing and prices nothing for an address no account has', function (): void {
+        sign_in(['is_admin' => 1]);
+        queue_shell();
+        api_users_page([m3_user(['id' => 7, 'email' => 'kari@example.org.uk'])]);
+        api_route('/api/v1/projects', []);
+
+        $page = router_for(http_request('GET', '/admin', browser_headers(), [], ['section' => 'audits', 'user' => 'kari@example.org']))->dispatch();
+        assert_same(200, $page->status());
+        assert_contains('No account has the address kari@example.org.', $page->body());
+
+        $download = router_for(http_request('GET', '/admin', browser_headers(), [], ['section' => 'audits', 'user' => 'kari@example.org', 'download' => '1']))->dispatch();
+        assert_contains('No account has the address kari@example.org.', $download->body(), 'the download shows the line instead');
+
+        $estimate = router_for(http_request('GET', '/admin', json_headers(), [], ['section' => 'audits', 'user' => 'kari@example.org', 'estimate' => '1']))->dispatch();
+        assert_same(400, $estimate->status());
+        assert_same(0, api_calls_to('/api/v1/audit'), 'neither the trail nor its export was asked for');
+    });
+
+    it('suggests accounts from three characters, with id, address and name only (the audits region)', function (): void {
+        sign_in(['is_admin' => 1]);
+        api_users_page([m3_user(['id' => 12, 'email' => 'kari@example.org', 'display_name' => 'Kari', 'enabled' => false,
+            'is_admin' => true, 'tfa_method' => 'totp'])]);
+
+        $response = router_for(http_request('GET', '/admin', json_headers(), [], ['section' => 'audits', 'q' => 'kar']))->dispatch();
+
+        assert_same(200, $response->status());
+        assert_same([['id' => 12, 'email' => 'kari@example.org', 'display_name' => 'Kari']], json_decode($response->body(), true));
+        assert_same([['q' => 'kar', 'limit' => '20']], api_queries('/api/v1/users/search'), 'disabled accounts are suggested too');
+
+        $short = router_for(http_request('GET', '/admin', json_headers(), [], ['section' => 'audits', 'q' => 'ka']))->dispatch();
+        assert_same('[]', $short->body());
+        assert_same(1, api_calls_to('/api/v1/users/search'), 'two characters are not searched');
+    });
+
+    it('answers the export estimate to the JSON request audits.js sends (REQ-AUD-032)', function (): void {
+        sign_in(['is_admin' => 1]);
+        api_route('/api/v1/audit/export', ['rows' => 9000000, 'estimated_bytes' => 4831838208]);
+
+        $response = router_for(http_request('GET', '/admin', json_headers(), [], ['section' => 'audits', 'estimate' => '1', 'type' => 'views']))->dispatch();
+
+        assert_same(200, $response->status(), 'a JSON request to this section is no longer refused 406');
+        assert_same(4831838208, json_decode($response->body(), true)['estimated_bytes'] ?? null);
+        assert_same('views', api_queries('/api/v1/audit/export')[0]['type'] ?? null);
     });
 });
 
@@ -430,7 +594,6 @@ function m3_queue_members(): void
 {
     api_route('/api/v1/projects/3/users', []);
     api_route('/api/v1/projects/3/roles', []);
-    api_route('/api/v1/users', []);
     api_route('/api/v1/projects/3', m3_detail());
 }
 
@@ -538,6 +701,76 @@ describe('project page — Members (§5.3, REQ-UI-013)', function (): void {
         assert_contains('action=show_token', $body, 'the reveal stays, masked, for another try');
     });
 
+    it('names the account by its address and reads no account list (§5.3)', function (): void {
+        sign_in(['is_admin' => 1]);
+        m3_queue_project();
+        m3_queue_members();
+
+        $body = router_for(http_request('GET', '/projects/3/members', browser_headers()))->dispatch()->body();
+
+        assert_same(1, preg_match('/<input[^>]*name="account"[^>]*list="member-candidates"[^>]*data-clara-account-search="\/projects\/3\/members"/', $body));
+        assert_contains('<datalist id="member-candidates"></datalist>', $body);
+        assert_not_contains('name="user_id" required', $body, 'no account dropdown');
+        assert_same(0, api_calls_to('/api/v1/users'), 'the page never loads every account');
+    });
+
+    it('adds the account whose address is exactly the typed one, ignoring case', function (): void {
+        sign_in(['is_admin' => 1]);
+        m3_queue_project();
+        api_users_page([m3_user(['id' => 12, 'email' => 'kari.n@example.org']), m3_user(['id' => 9, 'email' => 'Kari@Example.org'])]);
+        api_route('/api/v1/projects/3/users/9', ['user_id' => 9, 'email' => 'Kari@Example.org', 'token' => 't1'], 201);
+
+        $post = m3_post('/projects/3/members', ['account' => ' kari@example.org ', 'role' => 'data-entry'], 'add_member');
+
+        assert_same('/projects/3/members', $post->headers()['Location']);
+        assert_same([['q' => 'kari@example.org', 'enabled' => '1', 'not_in_project' => '3', 'limit' => '200']],
+            api_queries('/api/v1/users/search'));
+        assert_same(['role' => 'data-entry'], m3_last_put('/api/v1/projects/3/users/9'));
+        assert_same(0, api_calls_to('/api/v1/projects/3/users/12'));
+    });
+
+    it('refuses an address no candidate has exactly — a near match is never taken', function (): void {
+        sign_in(['is_admin' => 1]);
+        m3_queue_project();
+        api_users_page([m3_user(['id' => 12, 'email' => 'kari.n@example.org'])]);
+
+        $post = m3_post('/projects/3/members', ['account' => 'kari@example.org'], 'add_member');
+        assert_same('/projects/3/members', $post->headers()['Location']);
+        $flash = Session::takeFlash();
+        assert_same('danger', $flash[0]['level'] ?? '');
+        assert_contains('No enabled account outside this project has that address', $flash[0]['text'] ?? '');
+
+        m3_post('/projects/3/members', ['account' => ''], 'add_member');
+        assert_same(1, api_calls_to('/api/v1/users/search'), 'an empty field is not searched');
+        assert_same([], array_values(array_filter($GLOBALS['api_calls'], static fn (array $c): bool => $c['method'] === 'PUT')));
+    });
+
+    it('suggests enabled non-members with id, address and name only (the candidates region)', function (): void {
+        sign_in(['is_admin' => 1]);
+        api_users_page([m3_user(['id' => 12, 'email' => 'kari@example.org', 'display_name' => 'Kari', 'is_admin' => true,
+            'tfa_method' => 'totp', 'project_count' => 4])]);
+
+        $response = router_for(http_request('GET', '/projects/3/members', json_headers(), [], ['q' => 'ka']))->dispatch();
+
+        assert_same(200, $response->status());
+        assert_same([['id' => 12, 'email' => 'kari@example.org', 'display_name' => 'Kari']], json_decode($response->body(), true));
+        assert_same([['q' => 'ka', 'enabled' => '1', 'not_in_project' => '3', 'limit' => '20']], api_queries('/api/v1/users/search'));
+
+        $short = router_for(http_request('GET', '/projects/3/members', json_headers(), [], ['q' => 'k']))->dispatch();
+        assert_same('[]', $short->body());
+        assert_same(1, api_calls_to('/api/v1/users/search'), 'one character is not searched');
+    });
+
+    it('keeps the suggestions from a member who is not an administrator', function (): void {
+        sign_in();
+        queue_shell();
+
+        $response = router_for(http_request('GET', '/projects/3/members', json_headers(), [], ['q' => 'ka']))->dispatch();
+
+        assert_same(403, $response->status());
+        assert_same(0, api_calls_to('/api/v1/users/search'));
+    });
+
     it('sends "no role" as null, rotation and removal as their single flag', function (): void {
         sign_in(['is_admin' => 1]);
         m3_queue_project();
@@ -589,7 +822,6 @@ describe('project page — Members (§5.3, REQ-UI-013)', function (): void {
         api_route('/api/v1/projects/3/users', [['user_id' => 9, 'email' => 'ada@example.org', 'display_name' => 'Ada',
             'role' => null, 'token_present' => true, 'enabled' => true]]);
         api_route('/api/v1/projects/3/roles', []);
-        api_route('/api/v1/users', []);
         api_route('/api/v1/projects/3', m3_detail());
 
         $body = router_for(http_request('GET', '/projects/3/members', browser_headers()))->dispatch()->body();

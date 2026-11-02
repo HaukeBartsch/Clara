@@ -168,7 +168,7 @@ await openLink.click()
 await page.locator("#clara-nav").getByRole("link", { name: "Members" }).click()
 const addMember = page.locator('form[action*="action=add_member"]')
 await addMember.waitFor()
-await selectContaining("#member-user", "Kari Nordmann")
+await page.fill("#member-account", "kari.nordmann@example.org")
 await selectContaining("#member-role", "Study nurse")
 await outline(addMember.locator('button[type="submit"]'))
 await shot("01-create-project/04.png")
@@ -178,7 +178,7 @@ await page.locator(".clara-members tbody tr").first().waitFor()
 
 // The administrator has to be a member too before the record pages open (§5.3) — added after the
 // picture, which shows the account and role a plan step names.
-await selectContaining("#member-user", ADMIN.email)
+await page.fill("#member-account", ADMIN.email)
 await addMember.locator('button[type="submit"]').click()
 await page.locator(".clara-members tbody tr").nth(1).waitFor()
 

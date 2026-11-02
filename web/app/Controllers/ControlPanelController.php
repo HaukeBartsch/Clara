@@ -82,6 +82,9 @@ final class ControlPanelController extends Controller
     /** Audit rows per page (§3.6). */
     private const AUDIT_PAGE = 50;
 
+    /** Accounts per page of the Users section (§5.1). */
+    private const USERS_PAGE = 50;
+
     public function index(): Response
     {
         return $this->renderSection(Navigation::resolveAdminSection($this->request->query('section')));
@@ -222,17 +225,127 @@ final class ControlPanelController extends Controller
 
     // --- Users (§5.1, REQ-UI-011) -----------------------------------------------
 
-    /** @param array<string, string> $form the create form's sticky values (never a password) */
+    /**
+     * One page of the account list (§5.1): the filters ride in the query string, so a page is
+     * reloadable and a row action returns to it (`back`), and the API does the searching and
+     * paging (REQ-API-186) — the page never loads every account.
+     *
+     * @param array<string, string> $form the create form's sticky values (never a password)
+     */
     private function usersPage(string $error = '', array $form = []): Response
     {
-        $users = $this->api->get('/api/v1/users');
+        $filters = $this->userFilters([
+            'q' => $this->request->query('q'),
+            'source' => $this->request->query('source'),
+            'projects' => $this->request->query('projects'),
+            'sort' => $this->request->query('sort'),
+            'page' => $this->request->query('page'),
+        ]);
+        $answer = $this->searchUsers($filters);
+        $total = $answer['total'];
+        $pages = max(1, (int) ceil($total / self::USERS_PAGE));
+        // A page past the end — the list shrank, or the address was edited — shows the last one.
+        if ($filters['page'] > $pages) {
+            $filters['page'] = $pages;
+            $answer = $this->searchUsers($filters);
+            $total = $answer['total'];
+            $pages = max(1, (int) ceil($total / self::USERS_PAGE));
+        }
 
         return $this->section('users', 'admin/users', 'admin.users.title', [
-            'users' => is_array($users) ? array_values(array_filter($users, 'is_array')) : [],
+            'users' => $answer['users'],
+            'total' => $total,
+            'page' => $filters['page'],
+            'pages' => $pages,
+            'perPage' => self::USERS_PAGE,
+            'filters' => $filters,
+            'back' => $this->userListQuery($filters),
+            'pageUrl' => fn (int $page): string => $this->usersUrl(array_replace($filters, ['page' => $page])),
             'error' => $error,
             'form' => $form,
             'selfId' => Session::userId(),
         ]);
+    }
+
+    /**
+     * The Users list's filters (§5.1) from a query-shaped array — the address, or the `back`
+     * field a row form posts. Each value is checked here before it becomes an API parameter
+     * (§2.1: allowlisted, never forwarded as typed); anything else reads as "no filter".
+     *
+     * @param array<mixed> $raw
+     * @return array{q: string, source: string, projects: string, sort: string, page: int}
+     */
+    private function userFilters(array $raw): array
+    {
+        $text = static fn (string $key): string => is_string($raw[$key] ?? null) ? $raw[$key] : '';
+        $q = trim($text('q'));
+        if (strlen($q) > 200) {
+            $q = mb_strcut($q, 0, 200, 'UTF-8'); // the API's limit, cut on a character boundary
+        }
+        $page = filter_var($text('page'), FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 20000]]);
+
+        return [
+            'q' => $q,
+            'source' => in_array($text('source'), ['local', 'ldap', 'oauth2'], true) ? $text('source') : '',
+            'projects' => $text('projects') === 'none' ? 'none' : '',
+            'sort' => $text('sort') === 'created' ? 'created' : '',
+            'page' => $page === false ? 1 : $page,
+        ];
+    }
+
+    /**
+     * One `GET /api/v1/users/search` read for the Users list (REQ-API-186).
+     *
+     * @param array{q: string, source: string, projects: string, sort: string, page: int} $filters
+     * @return array{users: list<array<string, mixed>>, total: int}
+     */
+    private function searchUsers(array $filters): array
+    {
+        $query = array_filter([
+            'q' => $filters['q'],
+            'source' => $filters['source'],
+            'projects' => $filters['projects'],
+            'sort' => $filters['sort'],
+        ], static fn (string $value): bool => $value !== '');
+        $query['limit'] = (string) self::USERS_PAGE;
+        $query['offset'] = (string) (($filters['page'] - 1) * self::USERS_PAGE);
+
+        $answer = $this->api->get('/api/v1/users/search', $query);
+        $users = is_array($answer) && is_array($answer['users'] ?? null) ? $answer['users'] : [];
+
+        return [
+            'users' => array_values(array_filter($users, 'is_array')),
+            'total' => is_array($answer) && is_int($answer['total'] ?? null) ? max(0, $answer['total']) : 0,
+        ];
+    }
+
+    /**
+     * The filters and page that differ from the default, as a query string: the row forms
+     * carry it as `back`, so an action returns to the same filtered page.
+     *
+     * @param array{q: string, source: string, projects: string, sort: string, page: int} $filters
+     */
+    private function userListQuery(array $filters): string
+    {
+        $query = array_filter($filters, static fn (string|int $value): bool => $value !== '' && $value !== 1);
+
+        return http_build_query($query, '', '&', PHP_QUERY_RFC3986);
+    }
+
+    /** @param array{q: string, source: string, projects: string, sort: string, page: int} $filters */
+    private function usersUrl(array $filters): string
+    {
+        $query = $this->userListQuery($filters);
+
+        return '/admin?section=users' . ($query === '' ? '' : '&' . $query);
+    }
+
+    /** The redirect after a row action (PRG): back to the filtered page the form was on. */
+    private function toUsers(): Response
+    {
+        parse_str($this->request->field('back'), $raw);
+
+        return Response::redirect($this->usersUrl($this->userFilters($raw)));
     }
 
     public function createUser(): Response
@@ -293,7 +406,7 @@ final class ControlPanelController extends Controller
         if (preg_match('/^\d{1,5}$/', $days) !== 1) {
             $this->flashDanger($this->i18n->t('admin.users.valid_days_invalid'));
 
-            return $this->toSection('users');
+            return $this->toUsers();
         }
 
         return $this->userUpdate(['valid_days' => (int) $days], 'admin.users.validity_set');
@@ -305,7 +418,7 @@ final class ControlPanelController extends Controller
         if ($password !== $this->request->field('repeat_password')) {
             $this->flashDanger($this->i18n->t('account.password.failure.mismatch'));
 
-            return $this->toSection('users');
+            return $this->toUsers();
         }
 
         // An empty password clears the local credential (§5.1).
@@ -324,7 +437,7 @@ final class ControlPanelController extends Controller
             $this->logger->info('admin flag change rejected', ['code' => $e->code(), 'status' => $e->status()]);
             $this->flashDanger($this->apiFailureMessage($e));
 
-            return $this->toSection('users');
+            return $this->toUsers();
         }
         $this->flashSuccess($this->i18n->t(
             $makeAdmin ? 'admin.users.admin_granted' : 'admin.users.admin_revoked',
@@ -339,7 +452,7 @@ final class ControlPanelController extends Controller
             return Response::redirect('/');
         }
 
-        return $this->toSection('users');
+        return $this->toUsers();
     }
 
     public function inviteUser(): Response
@@ -353,11 +466,11 @@ final class ControlPanelController extends Controller
                 ? $this->i18n->t('admin.users.smtp_not_configured')
                 : $this->apiFailureMessage($e));
 
-            return $this->toSection('users');
+            return $this->toUsers();
         }
         $this->flashSuccess($this->i18n->t('admin.users.invited', ['email' => $this->targetEmail()]));
 
-        return $this->toSection('users');
+        return $this->toUsers();
     }
 
     public function resetUserTfa(): Response
@@ -368,12 +481,12 @@ final class ControlPanelController extends Controller
         } catch (ApiException $e) {
             $this->flashDanger($this->apiFailureMessage($e));
 
-            return $this->toSection('users');
+            return $this->toUsers();
         }
         $this->keepOwnSession($id, $answer);
         $this->flashSuccess($this->i18n->t('admin.users.tfa_reset', ['email' => $this->targetEmail()]));
 
-        return $this->toSection('users');
+        return $this->toUsers();
     }
 
     /** One `PUT /api/v1/users/{id}` row action with exactly one attribute (§12 rule 1). */
@@ -386,12 +499,12 @@ final class ControlPanelController extends Controller
             $this->logger->info('user update rejected', ['code' => $e->code(), 'status' => $e->status()]);
             $this->flashDanger($this->apiFailureMessage($e));
 
-            return $this->toSection('users');
+            return $this->toUsers();
         }
         $this->keepOwnSession($id, $answer);
         $this->flashSuccess($this->i18n->t($successKey, ['email' => $this->targetEmail()]));
 
-        return $this->toSection('users');
+        return $this->toUsers();
     }
 
     /**
@@ -801,50 +914,40 @@ final class ControlPanelController extends Controller
 
     private function auditsPage(): Response
     {
-        // The filters ride in the query string so a page is reloadable (§3.6). Each value is
-        // checked here before it becomes an API query parameter (§2.1: allowlisted, never
-        // forwarded as typed).
-        $filters = [
-            'type' => in_array($this->request->query('type'), ['events', 'views'], true) ? $this->request->query('type') : 'events',
-            'project' => (string) $this->idParam($this->request->query('project')),
-            'user' => (string) $this->idParam($this->request->query('user')),
-            'event_type' => in_array($this->request->query('event_type'), self::AUDIT_EVENT_TYPES, true)
-                ? $this->request->query('event_type') : '',
-            'from' => $this->dateParam($this->request->query('from')),
-            'to' => $this->dateParam($this->request->query('to')),
-        ];
+        $filters = $this->auditFilters();
         // The Export control (REQ-UI-058) rides the same filter form: `download=1` streams
         // the ZIP, `estimate=1` prices it for the > 1 GiB warning (REQ-AUD-032). Both reuse
-        // the allowlisted filters — nothing from the browser reaches the API unchecked.
-        $filtered = $this->auditFilterQuery($filters);
-        if ($this->request->query('download') === '1') {
+        // the allowlisted filters — nothing from the browser reaches the API unchecked. A user
+        // filter that names no account stops all three: an unfiltered trail would answer a
+        // question nobody asked.
+        [$filtered, $error] = $this->auditFilterQuery($filters);
+        if ($error === '' && $this->request->query('download') === '1') {
             return $this->auditExportStream($filtered);
         }
         if ($this->request->query('estimate') === '1') {
-            return $this->auditExportEstimate($filtered);
+            return $this->auditExportEstimate($filtered, $error);
         }
 
         $cursor = $this->request->query('cursor');
         $cursor = preg_match('/^[A-Za-z0-9_=-]{1,512}$/', $cursor) === 1 ? $cursor : '';
 
-        $query = $filtered;
-        $query['limit'] = (string) self::AUDIT_PAGE;
-        if ($cursor !== '') {
-            $query['cursor'] = $cursor;
-        }
-
-        $error = '';
         $page = ['entries' => [], 'next_cursor' => null];
-        try {
-            $read = $this->api->get('/api/v1/audit', $query);
-            $page = is_array($read) ? $read + $page : $page;
-        } catch (ApiException $e) {
-            if ($e->status() !== 400) {
-                throw $e;
+        if ($error === '') {
+            $query = $filtered;
+            $query['limit'] = (string) self::AUDIT_PAGE;
+            if ($cursor !== '') {
+                $query['cursor'] = $cursor;
             }
-            $error = $this->apiFailureMessage($e);
+            try {
+                $read = $this->api->get('/api/v1/audit', $query);
+                $page = is_array($read) ? $read + $page : $page;
+            } catch (ApiException $e) {
+                if ($e->status() !== 400) {
+                    throw $e;
+                }
+                $error = $this->apiFailureMessage($e);
+            }
         }
-        $users = $this->api->get('/api/v1/users');
 
         return $this->section('audits', 'admin/audits', 'admin.audits.title', [
             'filters' => $filters,
@@ -852,7 +955,6 @@ final class ControlPanelController extends Controller
             'entries' => is_array($page['entries']) ? array_values(array_filter($page['entries'], 'is_array')) : [],
             'nextCursor' => is_string($page['next_cursor'] ?? null) ? $page['next_cursor'] : '',
             'projects' => $this->visibleProjects(),
-            'users' => is_array($users) ? array_values(array_filter($users, 'is_array')) : [],
             'eventTypes' => self::AUDIT_EVENT_TYPES,
             'error' => $error,
         ], [
@@ -862,19 +964,52 @@ final class ControlPanelController extends Controller
     }
 
     /**
-     * The audited filters as API query parameters (the listing and the export share them):
-     * `type` always, the rest only when set — a 0 id or empty string means "all".
+     * The Audits filters (§5.6). They ride in the query string so a page is reloadable
+     * (§3.6), and each value is checked here before it becomes an API query parameter
+     * (§2.1: allowlisted, never forwarded as typed). The user filter is an account's address
+     * — what the search field shows — and becomes its id only on the way to the API.
      *
-     * @param array<string, string> $filters
-     * @return array<string, scalar>
+     * @return array{type: string, project: string, user: string, event_type: string, from: string, to: string}
+     */
+    private function auditFilters(): array
+    {
+        $user = trim($this->request->query('user'));
+        if (strlen($user) > 200) {
+            $user = mb_strcut($user, 0, 200, 'UTF-8');
+        }
+
+        return [
+            'type' => in_array($this->request->query('type'), ['events', 'views'], true) ? $this->request->query('type') : 'events',
+            'project' => (string) $this->idParam($this->request->query('project')),
+            'user' => $user,
+            'event_type' => in_array($this->request->query('event_type'), self::AUDIT_EVENT_TYPES, true)
+                ? $this->request->query('event_type') : '',
+            'from' => $this->dateParam($this->request->query('from')),
+            'to' => $this->dateParam($this->request->query('to')),
+        ];
+    }
+
+    /**
+     * The audited filters as API query parameters (the listing and the export share them):
+     * `type` always, the rest only when set — a 0 id or empty string means "all". The user
+     * filter's address is resolved to its account id; one that names no account comes back
+     * as the error line instead.
+     *
+     * @param array{type: string, project: string, user: string, event_type: string, from: string, to: string} $filters
+     * @return array{0: array<string, scalar>, 1: string}
      */
     private function auditFilterQuery(array $filters): array
     {
         $query = ['type' => $filters['type']];
-        foreach (['project', 'user'] as $key) {
-            if ($filters[$key] !== '0') {
-                $query[$key] = $filters[$key];
+        if ($filters['project'] !== '0') {
+            $query['project'] = $filters['project'];
+        }
+        if ($filters['user'] !== '') {
+            $userId = $this->accountIdByAddress($filters['user']);
+            if ($userId === 0) {
+                return [$query, $this->i18n->t('admin.audits.user_unknown', ['email' => $filters['user']])];
             }
+            $query['user'] = (string) $userId;
         }
         foreach (['event_type', 'from', 'to'] as $key) {
             if ($filters[$key] !== '') {
@@ -882,18 +1017,73 @@ final class ControlPanelController extends Controller
             }
         }
 
-        return $query;
+        return [$query, ''];
+    }
+
+    /**
+     * The account an address names, enabled or not — the trail keeps a disabled account's
+     * entries (REQ-API-186): the one whose address is exactly it, else the single one it
+     * names ignoring letter case. 0 when there is none, or when two differ only in case.
+     */
+    private function accountIdByAddress(string $address): int
+    {
+        $answer = $this->api->get('/api/v1/users/search', ['q' => $address, 'limit' => '200']);
+        $users = is_array($answer) && is_array($answer['users'] ?? null) ? $answer['users'] : [];
+        $wanted = mb_strtolower($address, 'UTF-8');
+        $folded = [];
+        foreach ($users as $account) {
+            $email = is_array($account) && is_string($account['email'] ?? null) ? $account['email'] : '';
+            if ($email === $address) {
+                return (int) ($account['id'] ?? 0);
+            }
+            if ($email !== '' && mb_strtolower($email, 'UTF-8') === $wanted) {
+                $folded[] = (int) ($account['id'] ?? 0);
+            }
+        }
+
+        return count($folded) === 1 ? $folded[0] : 0;
+    }
+
+    /**
+     * The `audits` data region (REQ-UI-044): the user filter's suggestions — up to 20
+     * accounts, enabled or not, whose address or name contains `q` (id, address and name
+     * only; under three characters nothing is searched) — and, with `estimate=1`, the
+     * export estimate audits.js asks for before a download (REQ-AUD-032).
+     */
+    private function auditsData(): Response
+    {
+        if ($this->request->query('estimate') === '1') {
+            [$query, $error] = $this->auditFilterQuery($this->auditFilters());
+
+            return $this->auditExportEstimate($query, $error);
+        }
+        $q = trim($this->request->query('q'));
+        if (mb_strlen($q, 'UTF-8') < 3 || strlen($q) > 200) {
+            return Response::json([]);
+        }
+        $answer = $this->api->get('/api/v1/users/search', ['q' => $q, 'limit' => '20']);
+        $users = is_array($answer) && is_array($answer['users'] ?? null) ? $answer['users'] : [];
+
+        return Response::json(array_values(array_map(static fn (array $account): array => [
+            'id' => (int) ($account['id'] ?? 0),
+            'email' => (string) ($account['email'] ?? ''),
+            'display_name' => (string) ($account['display_name'] ?? ''),
+        ], array_filter($users, 'is_array'))));
     }
 
     /**
      * `estimate=1` (REQ-API-158): the API's {rows, estimated_bytes} passed straight through
      * as JSON for audits.js. A failure answers JSON too — the JS treats any non-ok estimate
-     * as "start the export without a warning" rather than blocking it.
+     * as "start the export without a warning" rather than blocking it — and so does a user
+     * filter that names no account: the download it starts then shows that line instead.
      *
      * @param array<string, scalar> $query
      */
-    private function auditExportEstimate(array $query): Response
+    private function auditExportEstimate(array $query, string $error = ''): Response
     {
+        if ($error !== '') {
+            return Response::json(['error' => 'unknown_user'], 400);
+        }
         try {
             $estimate = $this->api->get('/api/v1/audit/export', $query + ['estimate' => '1']);
         } catch (ApiException $e) {
@@ -1009,6 +1199,9 @@ final class ControlPanelController extends Controller
         }
         if (($section['key'] ?? '') === 'regions') {
             return $this->regionsData();
+        }
+        if (($section['key'] ?? '') === 'audits') {
+            return $this->auditsData();
         }
         if (($section['key'] ?? '') !== 'translations') {
             return Response::notAcceptable();

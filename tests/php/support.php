@@ -195,6 +195,36 @@ function api_route(string $fragment, mixed $body, int $status = 200, array $head
     $GLOBALS['api_routes'][$fragment][] = ['status' => $status, 'body' => $encoded, 'headers' => $headers];
 }
 
+/**
+ * One page of `GET /api/v1/users/search` (REQ-API-186) — the Users section's list read, and
+ * the Members page's account search. Queue it before any `/api/v1/users` fragment: that one
+ * is a prefix of it, and the fake transport answers the first fragment it finds.
+ *
+ * @param list<array<string, mixed>> $users
+ */
+function api_users_page(array $users, ?int $total = null, int $offset = 0): void
+{
+    api_route('/api/v1/users/search', ['users' => $users, 'total' => $total ?? count($users), 'limit' => 50, 'offset' => $offset]);
+}
+
+/**
+ * The query parameters of every call to one endpoint, in order.
+ *
+ * @return list<array<string, mixed>>
+ */
+function api_queries(string $fragment): array
+{
+    $queries = [];
+    foreach ($GLOBALS['api_calls'] as $call) {
+        if (str_contains($call['url'], $fragment)) {
+            parse_str((string) parse_url($call['url'], PHP_URL_QUERY), $query);
+            $queries[] = $query;
+        }
+    }
+
+    return $queries;
+}
+
 /** The two reads an authenticated page render spends before its own data. */
 function queue_shell(): void
 {

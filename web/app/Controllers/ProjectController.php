@@ -154,6 +154,10 @@ final class ProjectController extends ProjectPageController
      */
     public function data(): Response
     {
+        // The Members page's region is its own: the add form's account suggestions.
+        if (str_ends_with($this->request->path(), '/members')) {
+            return $this->memberCandidates();
+        }
         $detail = $this->projectDetail();
 
         return Response::json([
@@ -275,21 +279,71 @@ final class ProjectController extends ProjectPageController
         $members = $this->api->get('/api/v1/projects/' . $projectId . '/users');
         $members = is_array($members) ? array_values(array_filter($members, 'is_array')) : [];
         $roles = $this->api->get('/api/v1/projects/' . $projectId . '/roles');
-        $accounts = $this->api->get('/api/v1/users');
 
-        // The add form offers enabled accounts that are not members yet.
-        $memberIds = array_map(static fn (array $m): int => (int) ($m['user_id'] ?? 0), $members);
-        $candidates = array_values(array_filter(
-            is_array($accounts) ? $accounts : [],
-            static fn ($a): bool => is_array($a) && !empty($a['enabled']) && !in_array((int) ($a['id'] ?? 0), $memberIds, true)
-        ));
-
+        // The add form names the account by its address; the suggestions come from the
+        // `candidates` region as the administrator types — the page never loads every account.
         return $this->projectSection($detail, 'project/members', 'members.title', [
             'members' => $members,
             'roles' => array_values(array_filter(is_array($roles) ? $roles : [], 'is_array')),
-            'candidates' => $candidates,
             'reveal' => $this->takeMembersReveal($projectId),
         ]);
+    }
+
+    /**
+     * The `candidates` data region of the Members page (§5.3): up to 20 enabled accounts that
+     * are not members of this project yet and whose address or name contains `q`
+     * (REQ-API-186) — id, address and name only. Under two characters nothing is searched.
+     */
+    private function memberCandidates(): Response
+    {
+        $q = trim($this->request->query('q'));
+        if (mb_strlen($q, 'UTF-8') < 2 || strlen($q) > 200) {
+            return Response::json([]);
+        }
+
+        return Response::json(array_map(static fn (array $account): array => [
+            'id' => (int) ($account['id'] ?? 0),
+            'email' => (string) ($account['email'] ?? ''),
+            'display_name' => (string) ($account['display_name'] ?? ''),
+        ], $this->candidates($this->projectIdFromPath(), $q, 20)));
+    }
+
+    /**
+     * Enabled accounts outside the project whose address or name contains `$q`, by address.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function candidates(int $projectId, string $q, int $limit): array
+    {
+        $answer = $this->api->get('/api/v1/users/search', [
+            'q' => $q,
+            'enabled' => '1',
+            'not_in_project' => (string) $projectId,
+            'limit' => (string) $limit,
+        ]);
+        $users = is_array($answer) && is_array($answer['users'] ?? null) ? $answer['users'] : [];
+
+        return array_values(array_filter($users, 'is_array'));
+    }
+
+    /**
+     * The account a typed address names (§5.3): the one enabled non-member whose address is
+     * exactly it, ignoring case — the search matches parts of addresses, so a near match is
+     * never taken for it. 0 when there is none.
+     */
+    private function candidateByAddress(int $projectId, string $address): int
+    {
+        if ($address === '' || strlen($address) > 200) {
+            return 0;
+        }
+        $wanted = mb_strtolower($address, 'UTF-8');
+        foreach ($this->candidates($projectId, $address, 200) as $account) {
+            if (is_string($account['email'] ?? null) && mb_strtolower($account['email'], 'UTF-8') === $wanted) {
+                return (int) ($account['id'] ?? 0);
+            }
+        }
+
+        return 0;
     }
 
     /**
@@ -358,9 +412,22 @@ final class ProjectController extends ProjectPageController
         return Response::redirect('/projects/' . $projectId . '/members');
     }
 
+    /**
+     * POST ?action=add_member. The form names the account by its address (`account`); a
+     * posted `user_id` — a client that already knows the id — is taken as it is.
+     */
     public function addMember(): Response
     {
         $uid = $this->fieldId('user_id');
+        if ($uid === 0) {
+            $projectId = $this->projectIdFromPath();
+            $uid = $this->candidateByAddress($projectId, trim($this->request->field('account')));
+            if ($uid === 0) {
+                $this->flashDanger($this->i18n->t('members.account_unknown'));
+
+                return Response::redirect('/projects/' . $projectId . '/members');
+            }
+        }
         $role = $this->request->field('role');
 
         return $this->memberWrite($uid, ['role' => $role === '' ? null : $role], 'members.added');

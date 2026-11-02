@@ -342,7 +342,7 @@ describe('Control Panel — Users region column (§5.1, REQ-UI-079)', function (
         queue_shell();
         $base = ['display_name' => 'U', 'enabled' => true, 'is_admin' => false, 'auth_source' => 'oauth2',
             'last_login_at' => null, 'valid_until' => null, 'status' => 'active', 'tfa_method' => 'off'];
-        api_route('/api/v1/users', [
+        api_users_page([
             $base + ['id' => 1, 'email' => 'own@example.org', 'region' => 'SUN', 'preferred_region' => 'SUN',
                 'automatic_region' => 'OUS', 'automatic_region_source' => 'provider'],
             $base + ['id' => 2, 'email' => 'placed@example.org', 'region' => 'Ahus', 'preferred_region' => null,

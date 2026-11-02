@@ -238,8 +238,9 @@ final class Router
         // The Control Panel (§5, REQ-UI-047): one is_admin route whose `?section=` picks the
         // section shown in the right-hand panel, defaulting to the first available.
         // A JSON request receives the requested section's data region — the Translations key
-        // list, and the API documentation section's OpenAPI document; every other section
-        // answers 406 (§2.1, REQ-UI-044).
+        // list, the API documentation section's OpenAPI document, Monitoring's snapshots,
+        // Regions' role values, and Audits' user suggestions and export estimate; every other
+        // section answers 406 (§2.1, REQ-UI-044).
         ['method' => 'GET', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
             'handler' => 'index', 'guard' => 'admin', 'region' => 'translations'],
         ['method' => 'POST', 'pattern' => '/admin', 'controller' => Controllers\ControlPanelController::class,
@@ -296,8 +297,9 @@ final class Router
         // Project-scoped administration on the project page (§5.3/§5.4/§5.5, REQ-UI-047):
         // Members and Roles are is_admin; Groups are readable by members with data access
         // and changed by project_admin — the API decides both (REQ-AUTH-033).
+        // The Members page's data region is the add form's account suggestions (`?q=`, §5.3).
         ['method' => 'GET', 'pattern' => '/projects/{id}/members', 'controller' => Controllers\ProjectController::class,
-            'handler' => 'members', 'guard' => 'admin'],
+            'handler' => 'members', 'guard' => 'admin', 'region' => 'candidates'],
         ['method' => 'POST', 'pattern' => '/projects/{id}/members', 'controller' => Controllers\ProjectController::class,
             'handler' => 'addMember', 'guard' => 'admin', 'action' => 'add_member'],
         ['method' => 'POST', 'pattern' => '/projects/{id}/members', 'controller' => Controllers\ProjectController::class,

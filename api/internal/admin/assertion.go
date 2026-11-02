@@ -67,6 +67,10 @@ type verifiedAssertion struct {
 	Acr           string // observed assurance claims — recorded, never interpreted again
 	Amr           []string
 	NonceChecked  bool // a nonce claim was present and matched (REQ-AUTH-079)
+	// DisplayName is the person's name as the provider releases it (`name`, else
+	// `given_name` + `family_name`), used only when a first sign-in creates the
+	// account (REQ-AUTH-091). Like the role values, it stays out of auditDetails.
+	DisplayName string
 
 	// The provider's role values for the preferred-region default (REQ-AUTH-088), read
 	// from the claim OAUTH2_N_ROLES_ATTR names. They are not claim material for the audit
@@ -581,6 +585,10 @@ func (h *Handler) verifyAssertion(ctx context.Context, issuer, rawAssertion, exp
 	}
 	found.Subject = subject
 	found.NonceChecked = nonceChecked
+	found.DisplayName = displayNameOf(claims)
+	if found.DisplayName == "" && uiClaims != nil {
+		found.DisplayName = displayNameOf(uiClaims)
+	}
 
 	// The roles claim for the preferred region (REQ-AUTH-088, §2.12): from the verified ID
 	// token, else from userinfo held to the same subject — PingFederate releases the two
@@ -609,6 +617,22 @@ func (h *Handler) verifyAssertion(ctx context.Context, issuer, rawAssertion, exp
 	}
 
 	return found, nil
+}
+
+// displayNameOf reads a person's name from one claim set: `name`, else `given_name`
+// and `family_name` joined. A claim that is not a string contributes nothing.
+func displayNameOf(claims map[string]json.RawMessage) string {
+	str := func(key string) string {
+		var v string
+		if raw, ok := claims[key]; ok {
+			_ = json.Unmarshal(raw, &v)
+		}
+		return strings.TrimSpace(v)
+	}
+	if name := str("name"); name != "" {
+		return name
+	}
+	return strings.TrimSpace(str("given_name") + " " + str("family_name"))
 }
 
 // assuranceAccepted reports whether an assertion's acr/amr satisfy a configured gate.

@@ -4,7 +4,9 @@
  * is reloadable — §3.6), the reverse-chronological table, and each entry's `details` as an
  * escaped key/value list in a disclosure (§3.2, REQ-UI-004). There is no write control on this
  * page (REQ-DB-024); the Export control downloads the filtered trail as zip-compressed CSV
- * (REQ-UI-058). Pagination follows the API's opaque forward cursor: "Next" carries it,
+ * (REQ-UI-058). The user filter is a search field holding an account's address: from three
+ * typed characters admin.js offers the matching accounts as a list to pick from.
+ * Pagination follows the API's opaque forward cursor: "Next" carries it,
  * and "First page" returns to the newest entries (the cursor cannot be walked backwards).
  */
 
@@ -56,12 +58,14 @@ $renderValue = static fn (mixed $value): string => is_scalar($value) || $value =
     </div>
     <div class="col-6 col-md-2">
         <label class="form-label mb-0 small" for="audit-user"><?= View::e($view->t('admin.audits.user')) ?></label>
-        <select class="form-select form-select-sm" id="audit-user" name="user">
-            <option value=""><?= View::e($view->t('admin.audits.all')) ?></option>
-            <?php foreach ($users as $user): ?>
-                <option value="<?= (int) $user['id'] ?>"<?= $filters['user'] === (string) $user['id'] ? ' selected' : '' ?>><?= View::e($user['email'] ?? '') ?></option>
-            <?php endforeach; ?>
-        </select>
+        <?php // A search field, not a list of every account: admin.js suggests accounts from this
+              // section's data region once three characters are typed (§5.6). ?>
+        <input class="form-control form-control-sm" type="search" id="audit-user" name="user" maxlength="200"
+               autocomplete="off" spellcheck="false" list="audit-user-options"
+               placeholder="<?= View::e($view->t('admin.audits.user_placeholder')) ?>"
+               value="<?= View::e($filters['user']) ?>"
+               data-clara-account-search="/admin?section=audits" data-clara-account-min="3">
+        <datalist id="audit-user-options"></datalist>
     </div>
     <div class="col-6 col-md-2">
         <label class="form-label mb-0 small" for="audit-event"><?= View::e($view->t('admin.audits.event_type')) ?></label>

@@ -152,7 +152,6 @@ describe('audit export (§5.6, REQ-UI-058, REQ-API-158)', function (): void {
         sign_in(['is_admin' => 1]);
         queue_shell();
         api_route('/api/v1/audit', ['entries' => [], 'next_cursor' => null]);
-        api_route('/api/v1/users', []);
         queue_sidebar_projects();
 
         $body = audits_request([])->body();

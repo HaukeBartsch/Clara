@@ -69,7 +69,7 @@ test.describe("administration surface (M3)", () => {
     // Add the member with that role: the token is shown exactly once (§3.5) — masked, its
     // value only on the page after Show (REQ-UI-062).
     await page.locator("#clara-nav").getByRole("link", { name: "Members" }).click()
-    await page.locator("#member-user").selectOption({ label: `${email} — Member ${tag}` })
+    await page.locator("#member-account").fill(email)
     await page.selectOption("#member-role", roleName)
     await page.locator('form[action*="action=add_member"] button[type="submit"]').click()
     const reveal = page.locator("#clara-new-token")

@@ -169,9 +169,8 @@ const mapAllInstruments = async (instrumentNames) => {
 const addSelfAsMember = async () => {
   await page.locator("#clara-nav").getByRole("link", { name: "Members" }).click()
   await settle()
-  const option = page.locator("#member-user option", { hasText: ADMIN_EMAIL })
-  if ((await option.count()) === 0) return // already a member
-  await page.locator("#member-user").selectOption((await option.first().getAttribute("value")) ?? "")
+  if ((await page.locator(".clara-members tbody tr", { hasText: ADMIN_EMAIL }).count()) > 0) return // already a member
+  await page.locator("#member-account").fill(ADMIN_EMAIL)
   await page.locator('form[action*="action=add_member"] button[type="submit"]').click()
 }
 

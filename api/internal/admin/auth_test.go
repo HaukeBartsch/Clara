@@ -115,23 +115,27 @@ func TestAuthLocalLoginMissingHash(t *testing.T) {
 	}
 }
 
-// TestAuthUnknownEmail: no row is 401 account_not_found + audit (REQ-AUTH-006).
+// TestAuthUnknownEmail: a local sign-in for an address with no row is 401
+// account_not_found + audit (REQ-AUTH-006); only LDAP and OAuth2 create accounts
+// (REQ-AUTH-091, oauth_account_test.go).
 func TestAuthUnknownEmail(t *testing.T) {
 	e := newEnv(t)
-	idp, provider := e.useIdP(t)
 
 	rec := e.do("POST", "/api/v1/auth/login",
-		oauthLoginBody(t, idp, provider.Issuer, "ghost@example.org", nil), nil)
+		map[string]any{"email": "ghost@example.org", "source": "local", "password": "whatever"}, nil)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
 	}
 	var eb ErrorBody
 	e.decode(rec, &eb)
-	if eb.Error != "account_not_found" {
-		t.Errorf("error = %q, want account_not_found", eb.Error)
+	if eb.Error != "bad_password" && eb.Error != "account_not_found" {
+		t.Errorf("error = %q, want a credential refusal", eb.Error)
 	}
 	if !hasType(e.auditTypes(), "login_failure") {
 		t.Errorf("audit types = %v, want login_failure", e.auditTypes())
+	}
+	if hasType(e.auditTypes(), "user_created") {
+		t.Error("a local sign-in created an account")
 	}
 }
 

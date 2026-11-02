@@ -65,8 +65,7 @@ test.describe("record naming mode (Setup ↔ dashboard, REQ-UI-052)", () => {
 
     // --- the acting user needs a project assignment for the data API (§8.6, REQ-API-102) ---
     await page.goto(`${projectUrl}/members`)
-    const adminOption = await page.locator("#member-user option", { hasText: ADMIN_EMAIL }).getAttribute("value")
-    await page.locator("#member-user").selectOption(adminOption ?? "")
+    await page.locator("#member-account").fill(ADMIN_EMAIL)
     await page.locator('form[action*="action=add_member"] button[type="submit"]').click()
 
     // --- manual mode: the dashboard offers the free-text field, not the auto button ---

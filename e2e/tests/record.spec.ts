@@ -120,8 +120,7 @@ test.describe("data entry and the record view (M5)", () => {
 
     // --- the acting user needs a project token for data entry (§8.6, REQ-API-102) ---
     await page.locator("#clara-nav").getByRole("link", { name: "Members" }).click()
-    const adminOption = await page.locator("#member-user option", { hasText: ADMIN_EMAIL }).getAttribute("value")
-    await page.locator("#member-user").selectOption(adminOption ?? "")
+    await page.locator("#member-account").fill(ADMIN_EMAIL)
     await page.locator('form[action*="action=add_member"] button[type="submit"]').click()
     // The reveal arrives masked; Show (audited, REQ-AUD-033) puts the value on the page.
     await page.locator("[data-clara-token-show]").click()

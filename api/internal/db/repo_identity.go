@@ -821,3 +821,88 @@ func (s *Store) RemoveAssignment(ctx context.Context, userID, projectID int64) e
 		`DELETE FROM user_projects WHERE user_id = ? AND project_id = ?`, userID, projectID)
 	return err
 }
+
+// UserFilter selects accounts for the Control Panel's user list and the member
+// search (REQ-API-186). Zero values mean "no restriction".
+type UserFilter struct {
+	Query        string // substring of the address or the display name, ignoring ASCII case
+	Source       string // auth_source: local | ldap | oauth2
+	NoProjects   bool   // only accounts that belong to no project
+	NotInProject int64  // only accounts that are not members of this project
+	EnabledOnly  bool   // only enabled accounts
+	Newest       bool   // order by creation, newest first; otherwise by address
+	Limit        int
+	Offset       int
+}
+
+// UserRow is one account of a search with the number of projects it belongs to.
+type UserRow struct {
+	User
+	ProjectCount int
+}
+
+// SearchUsers answers one page of the accounts a filter selects and how many it
+// selects in all. The order is stable (address or creation time, then id), so
+// pages do not overlap while nothing changes.
+func (s *Store) SearchUsers(ctx context.Context, f UserFilter) ([]UserRow, int, error) {
+	where := []string{"1 = 1"}
+	var args []any
+	if q := strings.ToLower(strings.TrimSpace(f.Query)); q != "" {
+		pattern := "%" + likeEscape(q) + "%"
+		where = append(where, `(LOWER(email) LIKE ? ESCAPE '!' OR LOWER(display_name) LIKE ? ESCAPE '!')`)
+		args = append(args, pattern, pattern)
+	}
+	if f.Source != "" {
+		where = append(where, "auth_source = ?")
+		args = append(args, f.Source)
+	}
+	if f.NoProjects {
+		where = append(where, "NOT EXISTS (SELECT 1 FROM user_projects up WHERE up.user_id = users.id)")
+	}
+	if f.NotInProject > 0 {
+		where = append(where, "NOT EXISTS (SELECT 1 FROM user_projects up WHERE up.user_id = users.id AND up.project_id = ?)")
+		args = append(args, f.NotInProject)
+	}
+	if f.EnabledOnly {
+		where = append(where, "enabled = 1")
+	}
+	cond := strings.Join(where, " AND ")
+
+	var total int
+	if err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE `+cond, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	order := "email, id"
+	if f.Newest {
+		order = "created_at DESC, id DESC"
+	}
+	rows, err := s.DB.QueryContext(ctx,
+		`SELECT `+userColumns+`, (SELECT COUNT(*) FROM user_projects up WHERE up.user_id = users.id)
+		 FROM users WHERE `+cond+` ORDER BY `+order+` LIMIT ? OFFSET ?`,
+		append(args, f.Limit, f.Offset)...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	out := []UserRow{}
+	for rows.Next() {
+		var count int
+		u, err := scanUser(rowWithTail{rows, &count})
+		if err != nil {
+			return nil, 0, err
+		}
+		out = append(out, UserRow{User: u, ProjectCount: count})
+	}
+	return out, total, rows.Err()
+}
+
+// rowWithTail lets scanUser read a row that carries extra columns after the user's:
+// they are scanned into tail, in order.
+type rowWithTail struct {
+	row  interface{ Scan(dest ...any) error }
+	tail *int
+}
+
+func (r rowWithTail) Scan(dest ...any) error {
+	return r.row.Scan(append(dest, r.tail)...)
+}

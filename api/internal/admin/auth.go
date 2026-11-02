@@ -56,6 +56,7 @@ type loginRequest struct {
 	// DisplayName is the name the directory entry carries (LDAP_SERVER_n_NAME_ATTR),
 	// sent beside the address the directory returned. It is used once: as the
 	// display name of the account a first directory sign-in creates (REQ-AUTH-091).
+	// An oauth2 call's is ignored: that name comes from the verified claims.
 	DisplayName string `json:"display_name"`
 	// AssertionNonce is the nonce PHP stored with the state and PKCE verifier.
 	// The API exchanges the code and verifies the returned ID token itself.
@@ -251,23 +252,27 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else if u == nil && !h.isBootstrapEmail(bootstrapEmail) {
-		// A directory that bound the user is the authority on who they are
-		// (REQ-AUTH-004): a first LDAP sign-in creates the account — enabled, not an
-		// administrator, in no project — and the user waits on the information page
-		// until an administrator adds them to one (REQ-AUTH-091, REQ-AUTH-028). The
-		// OAuth2 path keeps refusing an unknown identity (REQ-AUTH-006).
-		if body.Source != "ldap" {
-			h.loginFailure(ctx, &body, "account_not_found")
-			APIError(w, http.StatusUnauthorized, "account_not_found", "no account for this email")
-			return
+		// A directory that bound the user, or a provider whose assertion Sequence J has
+		// verified, is the authority on who they are (REQ-AUTH-004): a first sign-in
+		// creates the account — enabled, not an administrator, in no project — and the
+		// user waits on the information page until an administrator adds them to one
+		// (REQ-AUTH-091, REQ-AUTH-028). On the oauth2 leg the address and the name come
+		// from the verified assertion, never from the request body.
+		displayName := body.DisplayName
+		if assertion != nil {
+			displayName = assertion.DisplayName
 		}
-		created, reason, err := h.directoryAccount(ctx, &body)
+		created, reason, err := h.signInAccount(ctx, &body, displayName)
 		if err != nil {
 			errInternal(w)
 			return
 		}
 		if created == nil {
-			h.loginFailure(ctx, &body, reason)
+			if assertion != nil {
+				h.loginFailureExtra(ctx, &body, reason, assertion.auditDetails())
+			} else {
+				h.loginFailure(ctx, &body, reason)
+			}
 			APIError(w, http.StatusUnauthorized, "account_not_found", "no account for this email")
 			return
 		}
@@ -402,24 +407,27 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.userObject(ctx, u, now)) // tfa_method per REQ-API-116
 }
 
-// directoryAccount resolves the account of an LDAP sign-in whose address matched
-// no row exactly (REQ-AUTH-091). An account whose address differs only in case is
-// that person's account — a directory's `mail` attribute and an administrator's
-// typing need not agree on capitals — and is returned as it is, disabled or not:
-// the active rule judges it next, and a disable sticks. Two such accounts are
-// ambiguous and refused. With none, the account is created: enabled, not an
-// administrator, no password, in no project, `auth_source` ldap, its display
-// name from the directory entry; user_created records it with `automatic: true`
-// in the same transaction.
+// signInAccount resolves the account of an LDAP or OAuth2 sign-in whose address
+// matched no row exactly (REQ-AUTH-091). An account whose address differs only in
+// case is that person's account — a directory's `mail` attribute, a provider's
+// email claim and an administrator's typing need not agree on capitals — and is
+// returned as it is, disabled or not: the active rule judges it next, and a
+// disable sticks. Two such accounts are ambiguous and refused. With none, the
+// account is created: enabled, not an administrator, no password, in no project,
+// `auth_source` the sign-in's source, its display name the directory entry's or
+// the provider's; user_created records it with `automatic: true` in the same
+// transaction. On the oauth2 leg the caller has already verified the assertion
+// the address and the name come from (Sequence J); the provider subject binding
+// follows at the end of the login like any first verified sign-in.
 //
 // It returns nil and a login_failure reason when it refuses. A first sign-in
 // racing a second one for the same address loses the insert to the UNIQUE
 // constraint and reads the winner's row.
-func (h *Handler) directoryAccount(ctx context.Context, body *loginRequest) (*db.User, string, error) {
+func (h *Handler) signInAccount(ctx context.Context, body *loginRequest, displayName string) (*db.User, string, error) {
 	email := strings.TrimSpace(body.Email)
 	if !plausibleAddress(email) {
-		// The directory's answer is an address (ldap_attempt.php refuses an entry
-		// without one); a value that is not one names nobody to create.
+		// A directory's or provider's answer is an address (ldap_attempt.php refuses an
+		// entry without one); a value that is not one names nobody to create.
 		return nil, "account_not_found", nil
 	}
 	folded, n, err := h.Store.GetUserByEmailFold(ctx, email)
@@ -433,19 +441,19 @@ func (h *Handler) directoryAccount(ctx context.Context, body *loginRequest) (*db
 		return nil, "account_ambiguous", nil
 	}
 
-	display := strings.TrimSpace(body.DisplayName)
+	display := strings.TrimSpace(displayName)
 	if display == "" {
 		display = email[:strings.IndexByte(email, '@')]
 	}
 	if len(display) > 255 {
-		// Cut on a character boundary: a directory name is UTF-8 (æ, ø, å are two bytes).
+		// Cut on a character boundary: a name is UTF-8 (æ, ø, å are two bytes).
 		cut := 255
 		for cut > 0 && !utf8.RuneStart(display[cut]) {
 			cut--
 		}
 		display = display[:cut]
 	}
-	nu := &db.User{Email: email, DisplayName: display, Enabled: true, AuthSource: "ldap", UILanguage: "en"}
+	nu := &db.User{Email: email, DisplayName: display, Enabled: true, AuthSource: body.Source, UILanguage: "en"}
 	tx, err := h.Store.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, "", err
@@ -464,7 +472,7 @@ func (h *Handler) directoryAccount(ctx context.Context, body *loginRequest) (*db
 	nu.ID = id
 	details := map[string]any{
 		"email": email, "display_name": display, "re_enabled": false, "valid_until": nil,
-		"automatic": true, "source": "ldap",
+		"automatic": true, "source": body.Source,
 	}
 	if body.Provider != "" {
 		details["provider"] = body.Provider

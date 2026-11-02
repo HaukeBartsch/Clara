@@ -15,8 +15,14 @@
 //    the project name — uppercased, spaces to underscores, plus a three-digit counter suffix.
 //    An edit's stored pattern is left alone (ControlPanelController::derivedPattern mirrors
 //    the rule for a create without JavaScript).
+// 5. Account search (§5.3, §5.6): a field carrying data-clara-account-search="<page path>"
+//    and data-clara-account-min="<n>" asks that page's data region for accounts matching what
+//    is typed (`q`), once at least n characters are there and a quarter second after typing
+//    stops, and offers them in its <datalist> to pick from — the Members add form's enabled
+//    non-members, the Audits user filter's accounts. The suggestions only help: the form sends
+//    the address in the field, and the server resolves it.
 
-import { el, ready, t } from "../app.js"
+import { el, fetchJson, ready, t } from "../app.js"
 
 let modal = null
 let pending = null
@@ -76,6 +82,24 @@ async function copyFrom(selector) {
 }
 
 // The project-name-derived pattern: upper case, spaces to underscores, three-digit counter.
+async function suggestAccounts(field, list) {
+  const q = field.value.trim()
+  if (q.length < Number(field.dataset.claraAccountMin || 2)) {
+    list.replaceChildren()
+    return
+  }
+  const url = new URL(field.dataset.claraAccountSearch, window.location.origin)
+  url.searchParams.set("q", q)
+  try {
+    const rows = await fetchJson(url.pathname + url.search)
+    // A later keystroke has asked again: its answer is the one to show.
+    if (field.value.trim() !== q || !Array.isArray(rows)) return
+    list.replaceChildren(...rows.map((row) => el("option", { value: row.email }, row.display_name)))
+  } catch (error) {
+    // No suggestions: the full address typed by hand still adds the member.
+  }
+}
+
 function derivedPattern(name) {
   const base = name.trim().toUpperCase().replace(/ /g, "_")
   return base === "" ? "" : base + "_[0-9][0-9][0-9]"
@@ -99,6 +123,16 @@ ready(() => {
       } catch (error) {
         // A refused clipboard needs no message: the value is on the page, selected.
       }
+    })
+  }
+
+  for (const field of document.querySelectorAll("[data-clara-account-search]")) {
+    const list = document.getElementById(field.getAttribute("list"))
+    if (!list) continue
+    let timer = null
+    field.addEventListener("input", () => {
+      clearTimeout(timer)
+      timer = setTimeout(() => suggestAccounts(field, list), 250)
     })
   }
 

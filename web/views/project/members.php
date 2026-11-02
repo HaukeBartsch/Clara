@@ -2,7 +2,9 @@
 /**
  * Project page — Members and tokens (§5.3, is_admin, REQ-UI-013). One row per member (role or
  * "no role — full permissions" per REQ-AUTH-022, whether a token exists, account state), an
- * add form over the enabled accounts that are not members yet, and per-row role change, token
+ * add form that names the account by its address — assets/js/admin.js suggests enabled
+ * accounts that are not members yet as the administrator types (the page's `candidates`
+ * region, REQ-API-186) — and per-row role change, token
  * rotation, adoption of an existing REDCap token (REQ-AUTH-090: a masked input, never filled
  * back) and removal. A token value never appears in the table (REQ-API-005): a just-issued
  * one (add, rotate) is shown exactly once above it, read-only, with warning (§3.5) — masked
@@ -17,7 +19,6 @@ use Clara\View;
 
 /** @var list<array<string, mixed>> $members */
 /** @var list<array<string, mixed>> $roles */
-/** @var list<array<string, mixed>> $candidates */
 /** @var array{token: string, email: string, user_id: int, visible: bool}|null $reveal */
 $base = '/projects/' . (int) $projectId . '/members';
 $roleOptions = static function (?string $current) use ($roles, $view): string {
@@ -59,20 +60,19 @@ $roleOptions = static function (?string $current) use ($roles, $view): string {
     <?= $view->csrfField() ?>
     <div class="row g-2 align-items-end">
         <div class="col-md-6">
-            <label class="form-label mb-0" for="member-user"><?= View::e($view->t('members.account')) ?></label>
-            <select class="form-select form-select-sm" id="member-user" name="user_id" required>
-                <option value=""></option>
-                <?php foreach ($candidates as $account): ?>
-                    <option value="<?= (int) $account['id'] ?>"><?= View::e(($account['email'] ?? '') . ' — ' . ($account['display_name'] ?? '')) ?></option>
-                <?php endforeach; ?>
-            </select>
+            <label class="form-label mb-0" for="member-account"><?= View::e($view->t('members.account')) ?></label>
+            <input class="form-control form-control-sm" type="text" inputmode="email" id="member-account" name="account"
+                   required maxlength="200" autocomplete="off" spellcheck="false" list="member-candidates"
+                   placeholder="<?= View::e($view->t('members.account_placeholder')) ?>"
+                   data-clara-account-search="<?= $base ?>" data-clara-account-min="2">
+            <datalist id="member-candidates"></datalist>
         </div>
         <div class="col-md-4">
             <label class="form-label mb-0" for="member-role"><?= View::e($view->t('members.role')) ?></label>
             <select class="form-select form-select-sm" id="member-role" name="role"><?= $roleOptions(null) ?></select>
         </div>
         <div class="col-md-2">
-            <button class="btn btn-sm btn-primary w-100" type="submit"<?= $candidates === [] ? ' disabled' : '' ?>><?= View::e($view->t('members.add')) ?></button>
+            <button class="btn btn-sm btn-primary w-100" type="submit"><?= View::e($view->t('members.add')) ?></button>
         </div>
     </div>
     <div class="form-text"><?= View::e($view->t('members.add_help')) ?></div>
