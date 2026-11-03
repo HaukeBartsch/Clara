@@ -25,7 +25,11 @@ import (
 // breaks ties when a sign-in's roles map to several regions (REQ-AUTH-088), and the
 // overview lists the groups after the preferred one in it (REQ-UI-076). The PHP layer
 // keeps the display text in the same order (ControlPanelController::ORGANIZATIONS).
-var Organizations = []string{"OUS", "Ahus", "SØ", "SiV", "ST", "SSHF", "SI", "VVHF", "SUN", "NAT EU", "OTHER"}
+//
+// Four hospitals are offered since 2026-11-03, which withdrew SØ, ST, SI, VVHF and SUN. A
+// region already stored under a withdrawn code stays readable and keeps ranking after every
+// listed one (regionRank); only writing it is refused until the code returns to the list.
+var Organizations = []string{"OUS", "Ahus", "SiV", "SSHF", "NAT EU", "OTHER"}
 
 // validRegion reports whether code is one of the enumeration's codes.
 func validRegion(code string) bool { return slices.Contains(Organizations, code) }
@@ -87,7 +91,7 @@ func regionValue(raw json.RawMessage) (sql.NullString, bool) {
 	return sql.NullString{String: code, Valid: true}, true
 }
 
-const regionValueMessage = "region must be one of OUS, Ahus, SØ, SiV, ST, SSHF, SI, VVHF, SUN, NAT EU, OTHER, or null"
+const regionValueMessage = "region must be one of OUS, Ahus, SiV, SSHF, NAT EU, OTHER, or null"
 
 // --- GET/PUT /api/v1/users/me/region (REQ-API-175) ---
 

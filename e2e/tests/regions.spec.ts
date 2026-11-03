@@ -67,7 +67,7 @@ test.describe("preferred region (REQ-UI-075/076/078)", () => {
   test("the overview groups by region, the chosen one first, and regroups after a change", async ({ browser, request }) => {
     const user = await member(request, "region")
     const tag = Date.now()
-    await project(request, `Region SUN ${tag}`, "SUN", [user.id])
+    await project(request, `Region SSHF ${tag}`, "SSHF", [user.id])
     await project(request, `Region OUS ${tag}`, "OUS", [user.id])
     await project(request, `Region Ahus ${tag}`, "Ahus", [user.id])
 
@@ -75,16 +75,16 @@ test.describe("preferred region (REQ-UI-075/076/078)", () => {
     await signIn(page, user.email, user.password)
     await page.goto("/")
     // No region yet: every group in REQ-DB-006 order.
-    await expect.poll(() => headings(page)).toEqual(["OUS · 1", "Ahus · 1", "SUN · 1"])
+    await expect.poll(() => headings(page)).toEqual(["OUS · 1", "Ahus · 1", "SSHF · 1"])
 
     // The account page sets the region; the overview follows on its next read.
     await page.goto("/account")
     await expect(page.locator("#clara-region option").first()).toHaveText("Automatic — none")
-    await page.selectOption("#clara-region", "SUN")
+    await page.selectOption("#clara-region", "SSHF")
     await page.locator('form[action="/account?action=set_region"] button[type="submit"]').click()
-    await expect(page.locator("#clara-region")).toHaveValue("SUN")
+    await expect(page.locator("#clara-region")).toHaveValue("SSHF")
     await page.goto("/")
-    await expect.poll(() => headings(page)).toEqual(["Your region: SUN · 1", "OUS · 1", "Ahus · 1"])
+    await expect.poll(() => headings(page)).toEqual(["Your region: SSHF · 1", "OUS · 1", "Ahus · 1"])
 
     // A change made in another tab regroups the open overview without a reload (REQ-UI-073).
     const other = await page.context().newPage()
@@ -94,7 +94,7 @@ test.describe("preferred region (REQ-UI-075/076/078)", () => {
     await expect(other.locator("#clara-region")).toHaveValue("Ahus")
     await other.close()
     await expect.poll(() => headings(page), { timeout: 10_000 })
-      .toEqual(["Your region: Ahus · 1", "OUS · 1", "SUN · 1"])
+      .toEqual(["Your region: Ahus · 1", "OUS · 1", "SSHF · 1"])
     const firstBox = page.locator("[data-region='projects'] .clara-project-open").first()
     await expect(firstBox).toHaveText(`Region Ahus ${tag}`)
   })

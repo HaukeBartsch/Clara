@@ -323,7 +323,7 @@ describe('Control Panel — Projects (§5.2, REQ-UI-012)', function (): void {
         assert_same(['PUT /api/v1/projects/12'], m3_calls('/api/v1/projects/12'));
     });
 
-    it('offers the Helse Sør-Øst institutions by code and does not display the name pattern', function (): void {
+    it('offers the four hospitals by code and does not display the name pattern', function (): void {
         sign_in(['is_admin' => 1]);
         queue_shell();
         api_route('/api/v1/projects', []);
@@ -331,13 +331,15 @@ describe('Control Panel — Projects (§5.2, REQ-UI-012)', function (): void {
         $body = router_for(http_request('GET', '/admin', browser_headers(), [], ['section' => 'projects']))->dispatch()->body();
 
         assert_contains('<option value="OUS">Oslo University Hospital, Rikshospitalet, Ullevål, Radiumhospitalet, Aker</option>', $body);
-        assert_contains('<option value="SUN">Sunnaas Sykehus, Nesodden (Specialized rehabilitation hospital)</option>', $body);
+        assert_contains('<option value="SiV">Sykehuset i Vestfold, Tønsberg, Larvik</option>', $body);
+        assert_contains('<option value="SSHF">Sørlandet Sykehus, Kristiansand, Arendal, Flekkefjord</option>', $body);
         assert_contains('<option value="NAT EU">NAT EU</option>', $body);
         assert_contains('<option value="OTHER">Other</option>', $body);
         assert_contains('action=import_project', $body);
         assert_contains('name="odm_file"', $body);
         assert_contains('Import project</button>', $body);
-        assert_same(0, preg_match('/value="HBE"/', $body), 'the previous codes are gone');
+        // The codes withdrawn on 2026-10-13 and on 2026-11-03 are out of the select.
+        assert_same(0, preg_match('/value="(HBE|SØ|ST|SI|VVHF|SUN)"/', $body), 'the withdrawn codes are gone');
         assert_same(1, preg_match('/<input type="hidden" id="project-participant_names" name="participant_names"/', $body));
         assert_same(0, preg_match('/<label[^>]*for="project-participant_names"/', $body), 'no label for the pattern');
     });

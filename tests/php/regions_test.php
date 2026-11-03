@@ -65,15 +65,19 @@ describe('region grouping (REQ-UI-076/077)', function (): void {
             rg_project(4, 'D', 'OUS'), rg_project(5, 'E', 'HBE'), rg_project(6, 'F', 'Ahus', true),
         ]);
 
-        assert_same(['Ahus', 'OUS', 'SUN', 'HBE', 'VEST'], array_column($groups, 'code'));
+        assert_same(['Ahus', 'OUS', 'HBE', 'SUN', 'VEST'], array_column($groups, 'code')); // SUN withdrew on 2026-11-03, so it sinks with the stale codes
         assert_same([true, false, false, false, false], array_column($groups, 'preferred'));
         assert_same(['C', 'F'], array_column($groups[0]['projects'], 'project_name'), 'the order inside a group is kept');
     });
 
     it('follows REQ-DB-006 order without a preferred region', function (): void {
-        $groups = Regions::group([rg_project(1, 'A', 'OTHER'), rg_project(2, 'B', 'SØ'), rg_project(3, 'C', 'OUS')]);
+        $groups = Regions::group([rg_project(1, 'A', 'OTHER'), rg_project(2, 'B', 'SiV'), rg_project(3, 'C', 'OUS')]);
 
-        assert_same(['OUS', 'SØ', 'OTHER'], array_column($groups, 'code'));
+        assert_same(['OUS', 'SiV', 'OTHER'], array_column($groups, 'code'));
+
+        // A code withdrawn on 2026-11-03 ranks after every listed one — OTHER included.
+        $stale = Regions::group([rg_project(4, 'D', 'SØ'), rg_project(1, 'A', 'OTHER'), rg_project(3, 'C', 'OUS')]);
+        assert_same(['OUS', 'OTHER', 'SØ'], array_column($stale, 'code'));
     });
 
     it('labels a code with the project form text and a withdrawn code as itself', function (): void {
@@ -83,8 +87,10 @@ describe('region grouping (REQ-UI-076/077)', function (): void {
             http_request('GET', '/'), new FakeTransport()), new Logger('error', true), true);
 
         assert_contains('Akershus University Hospital', Regions::label($i18n, 'Ahus'));
+        assert_contains('Sykehuset i Vestfold', Regions::label($i18n, 'SiV'));
         assert_same('Other', Regions::label($i18n, 'OTHER'));
         assert_same('VEST', Regions::label($i18n, 'VEST'));
+        assert_same('SØ', Regions::label($i18n, 'SØ'), 'withdrawn on 2026-11-03, so the bare code');
     });
 });
 
@@ -264,6 +270,8 @@ describe('Control Panel — Regions (§5.13, REQ-UI-078)', function (): void {
         sign_in(['is_admin' => 1]);
 
         rg_post('/admin', ['id' => '4', 'region' => 'Oslo'], 'map_role', rg_roles_config());
+        // A code withdrawn on 2026-11-03 is no longer a region to map either.
+        rg_post('/admin', ['id' => '4', 'region' => 'SUN'], 'map_role', rg_roles_config());
 
         assert_same(0, api_calls_to('/api/v1/provider-roles'));
         assert_contains('region', implode(' ', array_column(Session::takeFlash(), 'text')));
@@ -271,23 +279,23 @@ describe('Control Panel — Regions (§5.13, REQ-UI-078)', function (): void {
 
     it('adds a value, and names a duplicate', function (): void {
         sign_in(['is_admin' => 1]);
-        api_route('/api/v1/provider-roles', rg_row(9, 'HSO-SUN', 'SUN', true), 201);
+        api_route('/api/v1/provider-roles', rg_row(9, 'HSO-SSHF', 'SSHF', true), 201);
 
-        $response = rg_post('/admin', ['issuer' => 'https://idp.example.org/idp', 'role_value' => ' HSO-SUN ',
-            'region' => 'SUN'], 'add_role', rg_roles_config());
+        $response = rg_post('/admin', ['issuer' => 'https://idp.example.org/idp', 'role_value' => ' HSO-SSHF ',
+            'region' => 'SSHF'], 'add_role', rg_roles_config());
 
         assert_same('/admin?section=regions', $response->headers()['Location']);
-        assert_same(['issuer' => 'https://idp.example.org/idp', 'role_value' => 'HSO-SUN', 'region' => 'SUN'],
+        assert_same(['issuer' => 'https://idp.example.org/idp', 'role_value' => 'HSO-SSHF', 'region' => 'SSHF'],
             api_request_body('/api/v1/provider-roles'));
 
         resetApi();
         sign_in(['is_admin' => 1]);
         queue_shell();
         api_route('/api/v1/provider-roles', ['error' => 'conflict', 'message' => 'this role value is already listed'], 409);
-        $body = rg_post('/admin', ['issuer' => 'https://idp.example.org/idp', 'role_value' => 'HSO-SUN',
-            'region' => 'SUN'], 'add_role', rg_roles_config())->body();
+        $body = rg_post('/admin', ['issuer' => 'https://idp.example.org/idp', 'role_value' => 'HSO-SSHF',
+            'region' => 'SSHF'], 'add_role', rg_roles_config())->body();
         assert_contains('This role value is already listed.', $body);
-        assert_contains('value="HSO-SUN"', $body, 'the form keeps what was typed');
+        assert_contains('value="HSO-SSHF"', $body, 'the form keeps what was typed');
     });
 
     it('refuses an issuer that reads no roles', function (): void {

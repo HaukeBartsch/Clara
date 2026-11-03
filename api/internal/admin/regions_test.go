@@ -105,12 +105,12 @@ func TestNormalizeRoleValues(t *testing.T) {
 }
 
 func TestDeriveRegionTakesEnumerationOrder(t *testing.T) {
-	mapped := map[string]string{"sun": "SUN", "ahus": "Ahus", "gone": "WITHDRAWN", "other": "OTHER"}
+	mapped := map[string]string{"sshf": "SSHF", "ahus": "Ahus", "gone": "WITHDRAWN", "other": "OTHER"}
 	cases := []struct {
 		values []string
 		want   string
 	}{
-		{[]string{"sun", "ahus"}, "Ahus"}, // Ahus precedes SUN in REQ-DB-006, whatever the claim order
+		{[]string{"sshf", "ahus"}, "Ahus"}, // Ahus precedes SSHF in REQ-DB-006, whatever the claim order
 		{[]string{"other", "gone"}, "OTHER"},
 		{[]string{"gone"}, "WITHDRAWN"}, // a withdrawn code still wins when nothing current maps
 		{[]string{"unmapped"}, ""},
@@ -130,7 +130,7 @@ func TestMyRegion(t *testing.T) {
 	e := newEnv(t)
 	u := e.mustUser("me@example.org")
 	ctx := context.Background()
-	if err := e.Store.SetProviderRegion(ctx, u.ID, "ST"); err != nil {
+	if err := e.Store.SetProviderRegion(ctx, u.ID, "SSHF"); err != nil {
 		t.Fatalf("SetProviderRegion: %v", err)
 	}
 
@@ -146,35 +146,36 @@ func TestMyRegion(t *testing.T) {
 	}
 
 	got := read("GET", nil)
-	if strOrEmpty(got.Region) != "ST" || got.PreferredRegion != nil || strOrEmpty(got.AutomaticRegionSource) != "provider" {
-		t.Errorf("initial state = %+v, want the automatic ST", got)
+	if strOrEmpty(got.Region) != "SSHF" || got.PreferredRegion != nil || strOrEmpty(got.AutomaticRegionSource) != "provider" {
+		t.Errorf("initial state = %+v, want the automatic SSHF", got)
 	}
 
-	got = read("PUT", map[string]any{"region": "SØ"})
-	if strOrEmpty(got.Region) != "SØ" || strOrEmpty(got.PreferredRegion) != "SØ" || strOrEmpty(got.AutomaticRegion) != "ST" {
-		t.Errorf("after choice = %+v, want SØ chosen over the kept ST", got)
+	got = read("PUT", map[string]any{"region": "SiV"})
+	if strOrEmpty(got.Region) != "SiV" || strOrEmpty(got.PreferredRegion) != "SiV" || strOrEmpty(got.AutomaticRegion) != "SSHF" {
+		t.Errorf("after choice = %+v, want SiV chosen over the kept SSHF", got)
 	}
 	if n := e.countType("preferred_region_changed"); n != 1 {
 		t.Fatalf("preferred_region_changed entries = %d, want 1", n)
 	}
 	details := lastAuditDetails(t, e, "preferred_region_changed")
-	if details["old"] != nil || details["new"] != "SØ" {
-		t.Errorf("audit details = %v, want old null, new SØ", details)
+	if details["old"] != nil || details["new"] != "SiV" {
+		t.Errorf("audit details = %v, want old null, new SiV", details)
 	}
 
-	read("PUT", map[string]any{"region": "SØ"})
+	read("PUT", map[string]any{"region": "SiV"})
 	if n := e.countType("preferred_region_changed"); n != 1 {
 		t.Errorf("an unchanged value wrote an entry: %d entries, want 1", n)
 	}
 
 	got = read("PUT", map[string]any{"region": nil})
-	if strOrEmpty(got.Region) != "ST" || got.PreferredRegion != nil {
-		t.Errorf("after Automatic = %+v, want the automatic ST back", got)
+	if strOrEmpty(got.Region) != "SSHF" || got.PreferredRegion != nil {
+		t.Errorf("after Automatic = %+v, want the automatic SSHF back", got)
 	}
 
 	for _, body := range []any{
 		map[string]any{"region": "Oslo"},
 		map[string]any{"region": "ous"},
+		map[string]any{"region": "SUN"}, // withdrawn on 2026-11-03: readable, no longer writable
 		map[string]any{"region": 3},
 		map[string]any{},
 		map[string]any{"region": "OUS", "theme": "dark"},
@@ -341,6 +342,8 @@ func TestSignInSetsRegionFromProviderRoles(t *testing.T) {
 	e := newEnv(t)
 	idp, provider := e.useRolesIdP(t)
 	u := e.mustUser("sso@example.org")
+	// The HSO-SUN mapping is written past the API's allowlist, as a mapping made before 2026-11-03
+	// would have been: it stays in the store and ranks after every listed code, so Ahus wins.
 	e.mustRoleMapping(provider.Issuer, "HSO-SUN", "SUN")
 	e.mustRoleMapping(provider.Issuer, "HSO-Ahus", "Ahus")
 
@@ -394,14 +397,14 @@ func TestSignInWithoutMappedRolesKeepsRegion(t *testing.T) {
 		t.Errorf("region = %q, want SI kept without a claim", strOrEmpty(obj.Region))
 	}
 
-	rec := e.do("PUT", "/api/v1/users/me/region", map[string]any{"region": "VVHF"}, e.reload(u))
+	rec := e.do("PUT", "/api/v1/users/me/region", map[string]any{"region": "SiV"}, e.reload(u))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PUT status = %d", rec.Code)
 	}
 	e.mustRoleMapping(provider.Issuer, "HSO-OUS", "OUS")
 	obj = rolesLogin(t, e, idp, provider.Issuer, u.Email, map[string]any{"groups": []string{"HSO-OUS"}})
-	if strOrEmpty(obj.Region) != "VVHF" || strOrEmpty(obj.AutomaticRegion) != "OUS" {
-		t.Errorf("region = %q (automatic %q), want the own VVHF over the provider's OUS",
+	if strOrEmpty(obj.Region) != "SiV" || strOrEmpty(obj.AutomaticRegion) != "OUS" {
+		t.Errorf("region = %q (automatic %q), want the own SiV over the provider's OUS",
 			strOrEmpty(obj.Region), strOrEmpty(obj.AutomaticRegion))
 	}
 }
@@ -518,13 +521,13 @@ func TestMemberAddSetsRegionPlaceholder(t *testing.T) {
 	}
 
 	own := e.mustUser("own@example.org")
-	if rec := e.do("PUT", "/api/v1/users/me/region", map[string]any{"region": "SUN"}, own); rec.Code != http.StatusOK {
+	if rec := e.do("PUT", "/api/v1/users/me/region", map[string]any{"region": "SiV"}, own); rec.Code != http.StatusOK {
 		t.Fatalf("PUT region status = %d", rec.Code)
 	}
 	if rec := e.do("PUT", "/api/v1/projects/1/users/"+itoa(own.ID), map[string]any{}, admin); rec.Code != http.StatusCreated {
 		t.Fatalf("add status = %d", rec.Code)
 	}
-	if got := e.reload(own); got.AutomaticRegion.Valid || got.EffectiveRegion() != "SUN" {
+	if got := e.reload(own); got.AutomaticRegion.Valid || got.EffectiveRegion() != "SiV" {
 		t.Errorf("own-region account = %+v, want no placeholder", got)
 	}
 	if _, has := lastAuditDetails(t, e, "membership_changed")["region_placeholder"]; has {

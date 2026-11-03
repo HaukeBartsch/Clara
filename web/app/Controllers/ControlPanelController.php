@@ -29,19 +29,20 @@ final class ControlPanelController extends Controller
 {
     /**
      * The main supporting institutions of REQ-DB-006 (GD-17) — the organization select: the
-     * stored code => its display text (the hospitals of Helse Sør-Øst with their sites). OTHER's
-     * text is translated (`admin.projects.organization.other`), hence empty here.
+     * stored code => its display text (the four hospitals offered since 2026-11-03, with their
+     * sites, then the two catch-alls). OTHER's text is translated
+     * (`admin.projects.organization.other`), hence empty here.
+     *
+     * The codes withdrawn on 2026-11-03 (SØ, ST, SI, VVHF, SUN — and before them VEST, HBE, …)
+     * are not offered but never lost: a project or account stored under one keeps it, shows the
+     * code as itself (`Regions::label()`) and groups after every listed code. The same codes in
+     * the same order are the API's region allowlist (`admin.Organizations`).
      */
     public const ORGANIZATIONS = [
         'OUS' => 'Oslo University Hospital, Rikshospitalet, Ullevål, Radiumhospitalet, Aker',
         'Ahus' => 'Akershus University Hospital, Nordbyhagen (Lørenskog), Kongsvinger',
-        'SØ' => 'Sykehuset Østfold, Kalnes (Sarpsborg), Moss',
         'SiV' => 'Sykehuset i Vestfold, Tønsberg, Larvik',
-        'ST' => 'Sykehuset Telemark, Skien, Notodden, Porsgrunn, Rjukan',
         'SSHF' => 'Sørlandet Sykehus, Kristiansand, Arendal, Flekkefjord',
-        'SI' => 'Sykehuset Innlandet, Hamar, Elverum, Lillehammer, Gjøvik, Kongsvinger (psychiatry)',
-        'VVHF' => 'Vestre Viken, Drammen, Bærum, Ringerike (Hønefoss), Kongsberg',
-        'SUN' => 'Sunnaas Sykehus, Nesodden (Specialized rehabilitation hospital)',
         'NAT EU' => 'NAT EU',
         'OTHER' => '',
     ];

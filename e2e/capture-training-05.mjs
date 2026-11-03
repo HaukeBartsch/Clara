@@ -88,7 +88,7 @@ const projects = [
     visit: () => ({ hba1c: (40 + rnd() * 35).toFixed(1), bmi: (21 + rnd() * 12).toFixed(1) }),
   },
   {
-    name: "Stroke Rehabilitation", organization: "SUN", pi: staff.ingrid, prefix: "REHAB",
+    name: "Stroke Rehabilitation", organization: "SSHF", pi: staff.ingrid, prefix: "REHAB",
     events: ["discharge"],
     instruments: {
       admission: [

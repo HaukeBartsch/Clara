@@ -1285,6 +1285,7 @@ Each of the hospital regions can have hundreds of projects. A user that uses Cla
 
 If an administrator assigns a user to a project that administrators preferred region can serve as the first placeholder for the users preferred region.
 
+**Status:** Narrowed 2026-11-03 — the select quoted above listed every Helse Sør-Øst hospital; it now offers the four institutions in use — `OUS`, `Ahus` (Akershus), `SiV` (Sykehuset i Vestfold) and `SSHF` (Sørlandet) — followed by `NAT EU` and Other. `SØ`, `ST`, `SI`, `VVHF` and `SUN` are withdrawn, from the project form and from the region list this one enumeration also drives: a stored value keeps its code, is shown as the bare code rather than a hospital name, and groups after every listed region (REQ-DB-006, REQ-UI-012, `User_Interface_Design.md` §5.2). Tests: `tests/php/m3_admin_test.php`, `tests/php/regions_test.php`, `e2e/tests/regions.spec.ts`.
 
 ## Record display
 

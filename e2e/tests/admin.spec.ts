@@ -142,7 +142,7 @@ test.describe("administration surface (M3)", () => {
     await expect(pattern).toHaveValue(`RENAMED_${tag}_[0-9][0-9][0-9]`)
 
     // … and is what the project is created with.
-    await organization.selectOption("SUN")
+    await organization.selectOption("SSHF")
     await page.fill("#project-pi_name", "Principal Investigator")
     await page.fill("#project-pi_email", "pi@example.org")
     await page.locator('form[action*="action=create_project"] button[type="submit"]').click()
@@ -150,6 +150,6 @@ test.describe("administration surface (M3)", () => {
     // The project overview still shows the stored pattern, read-only (§6.1).
     await page.locator('#clara-nav a[href$="/overview"]').click()
     await expect(page.locator("main")).toContainText(`RENAMED_${tag}_[0-9][0-9][0-9]`)
-    await expect(page.locator("main")).toContainText("SUN")
+    await expect(page.locator("main")).toContainText("SSHF")
   })
 })
