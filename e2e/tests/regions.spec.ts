@@ -56,9 +56,9 @@ async function project(request: APIRequestContext, name: string, organization: s
   return created.id
 }
 
-/** The overview's group headings, in page order. */
+/** The overview's group headings, in page order — the heading text alone, not the first row's controls. */
 async function headings(page: Page): Promise<string[]> {
-  return page.locator("[data-region='projects'] .clara-project-group").allTextContents()
+  return page.locator("[data-region='projects'] .clara-project-group h2:visible").allTextContents()
 }
 
 test.describe("preferred region (REQ-UI-075/076/078)", () => {
@@ -109,7 +109,9 @@ test.describe("preferred region (REQ-UI-075/076/078)", () => {
     await signIn(page, user.email, user.password)
     await page.goto("/")
     await expect(page.locator("[data-region='projects'] .clara-project-open")).toHaveCount(2)
-    await expect(page.locator("[data-region='projects'] .clara-project-group")).toHaveCount(0)
+    // The one group's row still carries the search and the star switch (REQ-UI-086/087), but no heading.
+    await expect(page.locator("[data-region='projects'] .clara-project-group h2:visible")).toHaveCount(0)
+    await expect(page.locator("[data-region='projects'] .clara-project-search")).toBeVisible()
   })
 
   test("another member working in a project today never makes it read \"today\" for this one", async ({ browser, request }) => {

@@ -2104,6 +2104,34 @@
         }
       }
     },
+    "/api/v1/users/me/starred-projects/{id}": {
+      "put": {
+        "tags": ["Admin: Users"],
+        "operationId": "putProjectStar",
+        "summary": "Star a project on my overview (REQ-API-188)",
+        "description": "Any authenticated user acting on themselves, for a project they can see — every project for `is_admin`, their memberships otherwise (REQ-AUTH-026). A project outside a member's memberships → 403 whether it exists or not; an administrator gets 404 for one that does not exist. Idempotent. The star is the user's own, orders presentation only (REQ-UI-087) and is not audited.",
+        "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64" } } ],
+        "responses": {
+          "200": { "description": "The project is starred.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProjectStar" }, "example": { "project_id": 33, "starred": true } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "delete": {
+        "tags": ["Admin: Users"],
+        "operationId": "deleteProjectStar",
+        "summary": "Unstar a project on my overview (REQ-API-188)",
+        "description": "As PUT, removing the star. Idempotent: a project without a star answers the same.",
+        "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "integer", "format": "int64" } } ],
+        "responses": {
+          "200": { "description": "The project is not starred.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProjectStar" }, "example": { "project_id": 33, "starred": false } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
     "/api/v1/provider-roles": {
       "get": {
         "tags": ["Admin: Users"],
@@ -3098,9 +3126,18 @@
           "instrument_count": { "type": "integer" },
           "field_count": { "type": "integer" },
           "last_accessed_at": { "type": ["string", "null"], "description": "The acting user's own newest audit event in the project, UTC; `null` when they have none there (REQ-UI-071)." },
-          "in_preferred_region": { "type": "boolean", "description": "The project's organization is the acting user's effective region (REQ-API-049); the list order is unchanged by it." }
+          "in_preferred_region": { "type": "boolean", "description": "The project's organization is the acting user's effective region (REQ-API-049); the list order is unchanged by it." },
+          "starred": { "type": "boolean", "description": "The acting user starred the project (REQ-API-049/188); the list order is unchanged by it." }
         },
-        "example": { "id": 33, "project_name": "8DISC", "organization": "NAT EU", "mode": "production", "record_count": 42, "instrument_count": 5, "field_count": 128, "last_accessed_at": "2026-10-20 08:00:00", "in_preferred_region": false }
+        "example": { "id": 33, "project_name": "8DISC", "organization": "NAT EU", "mode": "production", "record_count": 42, "instrument_count": 5, "field_count": 128, "last_accessed_at": "2026-10-20 08:00:00", "in_preferred_region": false, "starred": true }
+      },
+      "ProjectStar": {
+        "type": "object",
+        "required": ["project_id", "starred"],
+        "properties": {
+          "project_id": { "type": "integer", "format": "int64" },
+          "starred": { "type": "boolean" }
+        }
       },
       "ProjectCreate": {
         "type": "object",

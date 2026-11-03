@@ -24,9 +24,12 @@ use Clara\View;
      the list because app.css removes its bullets, and Safari drops the list semantics of a bulleted
      list once it has none — the count of projects is what a listener is there to hear. The projects are
      grouped by region, the user's own first and the rest in the order data-clara-region-order gives
-     (REQ-UI-076). -->
+     (REQ-UI-076). The first group's heading row carries the search over that group and the
+     "Starred only" switch (REQ-UI-086/087); data-clara-account keys the switch's memory in this
+     browser to the signed-in account. -->
 <ul class="clara-projects" role="list" data-region="projects"
-    data-clara-region-order="<?= View::e((string) json_encode($regionOrder ?? [], JSON_UNESCAPED_UNICODE)) ?>">
+    data-clara-region-order="<?= View::e((string) json_encode($regionOrder ?? [], JSON_UNESCAPED_UNICODE)) ?>"
+    data-clara-account="<?= View::e((string) ($account ?? 0)) ?>">
     <li class="clara-project-cell clara-project-cell--message">
         <p class="clara-region-empty mb-0"><?= View::e($view->t('js.loading')) ?></p>
     </li>

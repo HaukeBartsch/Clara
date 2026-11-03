@@ -250,6 +250,11 @@ type projectSummary struct {
 	// Like LastAccessedAt it leaves the list in name order: grouping is the page's
 	// presentation (REQ-UI-076/077).
 	InPreferredRegion bool `json:"in_preferred_region"`
+	// Starred is true when the acting user starred the project on the overview
+	// (REQ-API-049/188, REQ-DB-056). Per actor like the two fields above, read once for
+	// the whole list, and like them it leaves the list in name order: showing the
+	// starred projects alone is the overview's presentation (REQ-UI-087).
+	Starred bool `json:"starred"`
 }
 
 // listProjects returns the projects within the acting user's visibility —
@@ -282,6 +287,12 @@ func (h *Handler) listProjects(w http.ResponseWriter, r *http.Request) {
 	// The acting user's own recency, read once for the whole list (REQ-UI-071). It is a
 	// property of the actor rather than of a project, so it is never fetched per project.
 	recency, err := h.Store.LatestProjectActivityByUser(ctx, u.ID)
+	if err != nil {
+		errInternal(w)
+		return
+	}
+	// The actor's stars, likewise one read for the list (REQ-API-049).
+	starred, err := h.Store.StarredProjectIDs(ctx, u.ID)
 	if err != nil {
 		errInternal(w)
 		return
@@ -319,6 +330,7 @@ func (h *Handler) listProjects(w http.ResponseWriter, r *http.Request) {
 			RecordCount: records, InstrumentCount: len(instruments),
 			FieldCount: len(fields), LastAccessedAt: lastAccessed,
 			InPreferredRegion: region != "" && p.Organization == region,
+			Starred:           starred[p.ID],
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

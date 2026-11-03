@@ -6,10 +6,13 @@
 // The server renders the grid with its loading line and this module fills it from the same route's
 // JSON (REQ-UI-032, REQ-UI-044), then re-reads it while the page is visible so the grid stays
 // current (REQ-UI-073). The boxes are grouped by region — the user's own first — and ranked by
-// recency inside each group (REQ-UI-076). One module for one surface (REQ-UI-045); no UI string
-// appears here — every label comes from the injected data-i18n block (REQ-UI-008).
+// recency inside each group (REQ-UI-076). The first group's heading row carries a search over that
+// group's names (REQ-UI-086) and a "Starred only" switch, and every box a star (REQ-UI-087); both
+// filters hide boxes rather than remove them, so the in-place refresh keeps working under them. One
+// module for one surface (REQ-UI-045); no UI string appears here — every label comes from the
+// injected data-i18n block (REQ-UI-008).
 
-import { el, fetchJson, fill, ready, t } from "../app.js"
+import { el, fetchJson, fill, postAction, ready, t } from "../app.js"
 
 const DAY = 86400000
 
@@ -125,10 +128,15 @@ function groupHeading() {
   return el("li", { class: "clara-project-group" }, el("h2", { class: "h6 mb-0" }))
 }
 
-function headingText(group) {
-  const params = { region: group.code || "—", count: String(group.entries.length) }
+/** The heading's text; while a filter hides some of the group's projects it says how many show. */
+function headingText(group, shown) {
+  const count = String(group.entries.length)
+  if (shown === group.entries.length) {
+    return t(group.preferred ? "dashboard.group.preferred" : "dashboard.group.region", { region: group.code || "—", count })
+  }
 
-  return t(group.preferred ? "dashboard.group.preferred" : "dashboard.group.region", params)
+  return t(group.preferred ? "dashboard.group.preferred.filtered" : "dashboard.group.region.filtered",
+    { region: group.code || "—", count, shown: String(shown) })
 }
 
 // A date says less than a day count and more than a word, so the box shows "today", "yesterday", or
@@ -172,6 +180,70 @@ function stat(label, value) {
 
 const TIER_CLASSES = ["recent", "active", "idle"].map((tier) => "clara-project-cell--" + tier)
 
+// --- stars (REQ-UI-087) ---
+
+const SVG_NS = "http://www.w3.org/2000/svg"
+
+// A star clicked but not yet confirmed by a list read that began after the API stored it, by
+// project id: { value, until } — `until` is null while the POST is under way, then the number of the
+// last list read started before it was answered. A read started earlier may still carry the old star
+// and would flick the box back for a refresh period; a read numbered past `until` is the API's word.
+const starOverrides = new Map()
+// How many list reads this page has started; numbers the reads for the overrides above.
+let readsStarted = 0
+
+/** Whether a project shows as starred: the click not yet confirmed, else what the list said. */
+function isStarred(project) {
+  const override = starOverrides.get(project.id)
+
+  return override ? override.value : project.starred === true
+}
+
+/** The outline of a five-pointed star; app.css fills it when the project is starred. */
+function starIcon() {
+  const svg = document.createElementNS(SVG_NS, "svg")
+  svg.setAttribute("viewBox", "0 0 16 16")
+  svg.setAttribute("aria-hidden", "true")
+  svg.setAttribute("focusable", "false")
+  const star = document.createElementNS(SVG_NS, "polygon")
+  star.setAttribute("points", "8 1.3 10.1 5.6 14.8 6.3 11.4 9.6 12.2 14.3 8 12.1 3.8 14.3 4.6 9.6 1.2 6.3 5.9 5.6")
+  svg.appendChild(star)
+
+  return svg
+}
+
+/**
+ * The star toggle under the mode badge. It is a toggle button: its name stays "Star <project>" and
+ * aria-pressed says whether the project is starred, so a screen reader announces the state rather
+ * than a label that changes under the reader's focus.
+ */
+function starButton(project) {
+  const button = el("button", {
+    type: "button",
+    class: "clara-project-star",
+    "aria-pressed": "false",
+    dataset: { projectId: String(project.id) },
+  })
+  button.appendChild(starIcon())
+
+  return button
+}
+
+/** Writes an attribute only where it differs, like setText. */
+function setAttr(node, name, value) {
+  if (node.getAttribute(name) !== value) {
+    node.setAttribute(name, value)
+  }
+}
+
+function paintStar(box, project) {
+  const star = box.querySelector(".clara-project-star")
+  const label = t("dashboard.project.star", { project: String(project.project_name) })
+  setAttr(star, "aria-pressed", String(isStarred(project)))
+  setAttr(star, "aria-label", label)
+  setAttr(star, "title", label)
+}
+
 // The mode badge takes the project home's colours (partials/mode-badge.php, REQ-UI-033), so a mode
 // reads the same on both pages; a mode outside the three of GD-20 draws no badge.
 const MODE_CLASSES = new Map([
@@ -197,7 +269,11 @@ function projectBox(project) {
         el("p", { class: "clara-project-org" }),
         el("p", { class: "clara-project-used" }),
       ]),
-      el("span", { class: "badge clara-project-mode" }),
+      // The mode keeps the top-right corner (REQ-UI-070) and the star sits under it (REQ-UI-087).
+      el("div", { class: "clara-project-corner" }, [
+        el("span", { class: "badge clara-project-mode" }),
+        starButton(project),
+      ]),
       el("div", { class: "clara-project-tail" }, [
         el("div", { class: "clara-project-stats" }, [
           stat(t("dashboard.project.records"), ""),
@@ -219,7 +295,7 @@ function setText(node, text) {
 
 /**
  * Brings a box up to date with its project: tier, name, mode (hidden where it is none of the three),
- * organization (hidden where there is none), last used and the three counts.
+ * star, organization (hidden where there is none), last used and the three counts.
  */
 function paint(box, entry) {
   const tier = "clara-project-cell--" + entry.tier
@@ -236,6 +312,7 @@ function paint(box, entry) {
   }
   setText(mode, modeClass ? t("dashboard.project.mode." + entry.project.mode) : "")
   mode.hidden = !modeClass
+  paintStar(box, entry.project)
   const org = box.querySelector(".clara-project-org")
   setText(org, entry.project.organization ? String(entry.project.organization) : "")
   org.hidden = !entry.project.organization
@@ -269,6 +346,223 @@ let listed = false
 let boxes = new Map()
 // The heading each region group is drawn under, by organization code — kept the same way as the boxes.
 let headings = new Map()
+// The groups as last drawn, and whether their headings show: what the filters below are applied to.
+let drawnGroups = []
+let titled = false
+
+// --- the search and the "Starred only" switch (REQ-UI-086/087) ---
+
+// The search text as typed. It filters the first group alone — the user's own region whenever they
+// have one — and lives as long as the page: a refresh redraws under it, a reload clears it.
+let query = ""
+// Whether only starred projects show, in every group. Remembered in this browser for the signed-in
+// account, so the overview opens the way the user left it.
+let starredOnly = false
+
+/** The browser's memory of the switch, per account: one browser may serve several people. */
+function starredOnlyKey(grid) {
+  return "clara.overview.starredOnly." + (grid.dataset.claraAccount || "0")
+}
+
+function readStarredOnly(grid) {
+  try {
+    return window.localStorage.getItem(starredOnlyKey(grid)) === "1"
+  } catch (error) {
+    return false // storage refused (a private window, a policy): the switch starts off
+  }
+}
+
+function storeStarredOnly(grid) {
+  try {
+    if (starredOnly) {
+      window.localStorage.setItem(starredOnlyKey(grid), "1")
+    } else {
+      window.localStorage.removeItem(starredOnlyKey(grid))
+    }
+  } catch (error) {
+    // Not remembered; the switch still works on this page.
+  }
+}
+
+// The controls of the first group's heading row, built once and moved with the group if another
+// region comes first, so the search keeps its text and its focus across refreshes.
+let tools = null
+
+function buildTools(grid) {
+  const search = el("input", {
+    type: "search",
+    class: "form-control form-control-sm clara-project-search",
+    placeholder: t("dashboard.search.placeholder"),
+    "aria-label": t("dashboard.search.label"),
+    autocomplete: "off",
+    spellcheck: "false",
+  })
+  const toggle = el("input", { type: "checkbox", class: "form-check-input", role: "switch", id: "clara-starred-only" })
+  toggle.checked = starredOnly
+  const controls = el("div", { class: "clara-project-tools", role: "search" }, [
+    search,
+    el("div", { class: "form-check form-switch mb-0" }, [
+      toggle,
+      el("label", { class: "form-check-label", for: "clara-starred-only" }, t("dashboard.starred_only")),
+    ]),
+  ])
+  // Says that a filter left the group empty; polite, so typing is not interrupted.
+  const empty = el("p", { class: "clara-region-empty clara-project-filter-empty mb-0", "aria-live": "polite" })
+  empty.hidden = true
+  const failed = el("p", { class: "text-danger small clara-project-star-failed mb-0", role: "alert" })
+  failed.hidden = true
+
+  search.addEventListener("input", () => {
+    query = search.value
+    applyFilters(grid)
+  })
+  toggle.addEventListener("change", () => {
+    starredOnly = toggle.checked
+    storeStarredOnly(grid)
+    applyFilters(grid)
+  })
+
+  return { nodes: [controls, empty, failed], search, toggle, empty, failed }
+}
+
+/**
+ * Shows each box that passes the filters and hides the rest, then the headings: the first group's
+ * row always stays — it holds the controls — and says so when nothing in it passes; another group
+ * with nothing left to show is hidden with its heading. Hiding rather than removing keeps every box
+ * where render() expects it, so a refresh under an active filter still updates in place.
+ */
+function applyFilters(grid) {
+  if (!tools || !drawnGroups.length) {
+    return
+  }
+  const needle = query.trim().toLocaleLowerCase()
+  drawnGroups.forEach((group, index) => {
+    const searched = index === 0 && needle !== ""
+    let shown = 0
+    group.entries.forEach((entry) => {
+      const box = boxes.get(entry.project.id)
+      const passes = (!starredOnly || isStarred(entry.project))
+        && (!searched || String(entry.project.project_name).toLocaleLowerCase().includes(needle))
+      if (box && box.hidden === passes) {
+        box.hidden = !passes
+      }
+      shown += passes ? 1 : 0
+    })
+    const heading = headings.get(group.code)
+    if (heading) {
+      setText(heading.firstElementChild, titled ? headingText(group, shown) : "")
+      const hide = index > 0 && shown === 0
+      if (heading.hidden !== hide) {
+        heading.hidden = hide
+      }
+    }
+    if (index === 0) {
+      let line = ""
+      if (shown === 0 && searched) {
+        line = t("dashboard.search.none", { query: query.trim() })
+      } else if (shown === 0 && starredOnly) {
+        line = t("dashboard.starred.none")
+      }
+      setText(tools.empty, line)
+      tools.empty.hidden = line === ""
+    }
+  })
+
+  // A control that a filter just hid — the star of a project unstarred under "Starred only" — would
+  // drop keyboard focus onto the page; it goes to the switch instead.
+  const active = document.activeElement
+  if (active && grid.contains(active) && active.closest("[hidden]")) {
+    tools.toggle.focus({ preventScroll: true })
+  }
+}
+
+/** The entry a project id is drawn as now — a refresh may have replaced it since a click. */
+function drawnEntry(id) {
+  for (const group of drawnGroups) {
+    const entry = group.entries.find((candidate) => candidate.project.id === id)
+    if (entry) {
+      return entry
+    }
+  }
+
+  return null
+}
+
+// The star requests of each project, chained: a quick second click is sent after the first has been
+// answered, so the API stores the last state the user chose rather than whichever arrived last.
+const starChains = new Map()
+
+/**
+ * Stars or unstars the project of a clicked star. The box changes at once and the switch's filter
+ * with it; the POST follows, and a refused or failed one puts the star back and says so under the
+ * controls. A session that ended reloads, so the guard can show the login page with its reason.
+ */
+function toggleStar(grid, button) {
+  const id = Number(button.dataset.projectId)
+  const entry = drawnEntry(id)
+  if (!entry || !boxes.has(id)) {
+    return
+  }
+  const want = !isStarred(entry.project)
+  const override = { value: want, until: null }
+  starOverrides.set(id, override)
+  if (tools) {
+    tools.failed.hidden = true
+  }
+  paintStar(boxes.get(id), entry.project)
+  applyFilters(grid)
+
+  const send = async () => {
+    try {
+      const answer = await postAction("/", "star_project", { project_id: String(id), starred: want ? "1" : "0" })
+      if (typeof answer.starred !== "boolean") {
+        throw new Error("internal")
+      }
+      override.value = answer.starred
+      override.until = readsStarted
+    } catch (error) {
+      if (error.message === "forbidden") {
+        window.location.reload()
+        return
+      }
+      // A later click on the same star has the last word; only this click's own guess is withdrawn.
+      if (starOverrides.get(id) === override) {
+        starOverrides.delete(id)
+      }
+      if (tools) {
+        setText(tools.failed, t("dashboard.project.star_failed"))
+        tools.failed.hidden = false
+      }
+    }
+    const current = drawnEntry(id)
+    if (current && boxes.has(id)) {
+      paintStar(boxes.get(id), current.project)
+    }
+    applyFilters(grid)
+  }
+  const chain = (starChains.get(id) || Promise.resolve()).then(send)
+  starChains.set(id, chain)
+  chain.then(() => {
+    if (starChains.get(id) === chain) {
+      starChains.delete(id)
+    }
+  })
+}
+
+/** The stars are buttons inside the boxes; one listener on the region serves every box. */
+function bindStars() {
+  const grid = document.querySelector("[data-region='projects']")
+  if (!grid) {
+    return
+  }
+  grid.addEventListener("click", (event) => {
+    const button = event.target.closest(".clara-project-star")
+    if (button && grid.contains(button)) {
+      event.preventDefault()
+      toggleStar(grid, button)
+    }
+  })
+}
 
 /**
  * Brings the grid and the heading's count to the list in place (REQ-UI-073): each project's box is
@@ -291,19 +585,28 @@ function render(grid, projects) {
   if (!ranked.length) {
     boxes = new Map()
     headings = new Map()
+    drawnGroups = []
     fill(grid, [message(t("dashboard.empty"), false)])
     return
   }
 
   const groups = groupByRegion(ranked, regionOrder(grid))
-  const titled = groups.length > 1
+  titled = groups.length > 1
+  if (!tools) {
+    tools = buildTools(grid)
+  }
   const kept = new Map()
   const keptHeadings = new Map()
   const wanted = []
-  groups.forEach((group) => {
-    if (titled) {
+  groups.forEach((group, index) => {
+    // The first group always has its row, because the search and the switch live there; with one
+    // group that row names no region (REQ-UI-076) and holds the controls alone.
+    if (titled || index === 0) {
       const heading = headings.get(group.code) || groupHeading()
-      setText(heading.firstElementChild, headingText(group))
+      heading.firstElementChild.hidden = !titled
+      if (index === 0 && tools.nodes[0].parentNode !== heading) {
+        tools.nodes.forEach((node) => heading.appendChild(node))
+      }
       keptHeadings.set(group.code, heading)
       wanted.push(heading)
     }
@@ -316,6 +619,9 @@ function render(grid, projects) {
   })
   boxes = kept
   headings = keptHeadings
+  drawnGroups = groups
+  // Before the boxes move, so a box the filters hide is hidden on its way into place.
+  applyFilters(grid)
 
   // Whatever is not a box or heading to show — a project no longer visible, a region with nothing left,
   // the loading or failure line — goes first, so it cannot stand in the way of what comes after it.
@@ -355,6 +661,7 @@ async function loadProjects(refresh) {
     return false
   }
 
+  const read = ++readsStarted
   let projects
   try {
     projects = await fetchJson("/", { refresh })
@@ -382,6 +689,14 @@ async function loadProjects(refresh) {
   if (grid.querySelector(".clara-project-cell--opening")) {
     return true
   }
+  // A star this read began after the API stored is the list's to show from now on; one that lost to
+  // another tab's change must be redrawn even when the list itself is the one already drawn.
+  starOverrides.forEach((override, id) => {
+    if (override.until !== null && read > override.until) {
+      starOverrides.delete(id)
+      drawn = null
+    }
+  })
   const shape = JSON.stringify(projects) + "|" + new Date().toDateString()
   if (shape !== drawn) {
     drawn = shape
@@ -482,6 +797,10 @@ function bindProjectOpen() {
 }
 
 ready(() => {
+  const grid = document.querySelector("[data-region='projects']")
+  if (grid) {
+    starredOnly = readStarredOnly(grid)
+  }
   // The server-rendered placeholder says "loading"; the region is filled from the JSON the same
   // route serves, and navigation stays a plain GET (§3.7).
   loadProjects(false).then((going) => {
@@ -490,4 +809,5 @@ ready(() => {
     }
   })
   bindProjectOpen()
+  bindStars()
 })

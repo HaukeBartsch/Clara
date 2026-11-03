@@ -560,12 +560,14 @@ Administrator (requires `is_admin`), REQ-API-116: `POST /api/v1/users/{id}/tfa/r
 
 ```json
 [ { "id": 33, "project_name": "MOBA", "organization": "NAT EU", "mode": "production", "record_count": 42, "instrument_count": 5,
-    "field_count": 128, "last_accessed_at": "2026-10-20 08:00:00", "in_preferred_region": false } ]
+    "field_count": 128, "last_accessed_at": "2026-10-20 08:00:00", "in_preferred_region": false, "starred": true } ]
 ```
 
 `mode` is the project's stored mode (`development`, `production` or `analysis` — GD-20, REQ-DB-034), the value `GET …/mode` reports (§4.21), read with the project row the list already loads. It lets the overview badge every box (REQ-UI-070) without one mode read per project.
 
 `in_preferred_region` is `true` when `organization` equals the acting user's effective region, `COALESCE(preferred_region, automatic_region)` from the user row the call has already loaded (REQ-API-049, REQ-DB-052). It is `false` for every project when the user has no region. It is computed after the visibility filter, from the region as it stands at that call. So a region changed in another session — a placeholder set by an administrator, a choice made in a second tab — regroups an open overview on its next two-second read without waiting for a new sign-in (`User_Interface_Design.md` §4). Like `last_accessed_at`, it leaves the list in name order: grouping is the page's presentation (REQ-UI-076/077). A per-project flag keeps the response a plain array, which every existing consumer already reads.
+
+`starred` is `true` when the acting user starred the project (REQ-API-188, §4.32). The user's stars are read once for the whole list (`SELECT project_id FROM project_stars WHERE user_id = ?`), after the visibility filter, so a star on a project the user can no longer see is never reported. Like the two flags around it, it leaves the list in name order: showing the starred projects alone is the overview's presentation (REQ-UI-087).
 
 `last_accessed_at` is the **acting user's** newest audit event in that project — `SELECT project_id, MAX(created_at) FROM audit_events WHERE user_id = ? AND project_id IS NOT NULL GROUP BY project_id`, one read for the whole list (never one per project), served by `idx_audit_events_user_project` (`Audit_Logging_Design.md` §6.4). The stored UTC text passes through unformatted, and `null` means this account has never generated an event in that project — a project-less event (a login) belongs to no project (REQ-UI-071). It is what the overview orders its boxes by; this endpoint stays in name order, because recency is one page's presentation rather than a property of the list.
 
@@ -1537,6 +1539,20 @@ With `active: false`, `reason` is `unknown` (no such grant, or another client's)
 
 **`POST /api/v1/sso/end`** — acting user. Body `{ "sid": "…" }`. Ends every grant and unredeemed code of the acting user under that sign-in id. 200 `{ "status": "ok", "clients": ["fiona"] }`. Audit `sso_logout` `{clients}` when at least one row ended.
 
+### 4.32 Starred projects (REQ-API-188, REQ-UI-087)
+
+**`PUT /api/v1/users/me/starred-projects/{id}`** — any authenticated user, acting on themselves, for a project they can see (REQ-AUTH-026). Stars the project. No body. 200:
+
+```json
+{ "project_id": 33, "starred": true }
+```
+
+**`DELETE /api/v1/users/me/starred-projects/{id}`** — the same gate; removes the star and answers `{ "project_id": 33, "starred": false }`.
+
+Both are idempotent (REQ-API-042): starring a starred project keeps its first `created_at`, and unstarring a project without a star deletes nothing. Visibility is checked without loading the project's permissions. An administrator needs the project to exist (404 `not_found` otherwise). Anyone else needs a membership row, and every other id is the uniform 403 `forbidden`, so a member cannot probe which ids exist (REQ-API-007). A malformed or non-positive id is 400 `invalid_request`. The star is stored in `project_stars` (`Database_Schema_Design.md` §4) and reported by `GET /api/v1/projects` as `starred` (§4.5).
+
+No audit entry (DEV-API-45), as for the UI language and theme (§4.19). The star is the user's presentation preference, and a project-scoped entry would make `last_accessed_at` (§4.5) report the project as used at the moment it was starred.
+
 ## 5. Permission summary
 
 The normative endpoint → permission mapping is in `API_Endpoints_Requirements.md` §4.22; it is reproduced here as an overview:
@@ -1585,6 +1601,7 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirements.
 | `GET /api/v1/system/blocked-ips` (§4.26, REQ-API-164) | `is_admin` only |
 | `GET /i18n/languages`, `PUT /users/me/ui-language`, `PUT /users/me/ui-theme` (§4.19) | any authenticated user |
 | `GET/PUT /users/me/region` (§4.30, REQ-API-175) | any authenticated user (self) |
+| `PUT/DELETE /users/me/starred-projects/{id}` (§4.32, REQ-API-188) | any authenticated user (self), for a project they can see |
 | `GET/POST /api/v1/provider-roles`, `PUT/DELETE /api/v1/provider-roles/{id}` (§4.30, REQ-API-177/178) | `is_admin` |
 | `GET/PUT /i18n/strings` | `is_admin` |
 | `POST …/end-provision` (§4.20) | `is_admin` (BR-009) |

@@ -34,7 +34,9 @@ final class Router
      *
      * A row marked `'json' => true` always answers JSON from its own handler, whatever the
      * request's Accept header says: an endpoint another application's server calls rather
-     * than a page (the client endpoints of Sequence K, REQ-AUTH-093). It has no data region.
+     * than a page (the client endpoints of Sequence K, REQ-AUTH-093), or a mutation a page's
+     * own module posts and reads the answer of (the overview's star, REQ-UI-087). It has no
+     * data region.
      *
      * A row marked `'streams' => true` also serves its region as newline-delimited JSON,
      * written as it is produced, to a request preferring it — its controller's `stream()`
@@ -82,6 +84,10 @@ final class Router
 
         ['method' => 'GET', 'pattern' => '/', 'controller' => Controllers\DashboardController::class,
             'handler' => 'index', 'guard' => 'login', 'region' => 'projects'],
+        // A project's star on the overview (REQ-UI-087): dashboard.js posts it and reads the
+        // answer, so the row answers JSON from its handler whatever Accept says (see above).
+        ['method' => 'POST', 'pattern' => '/', 'controller' => Controllers\DashboardController::class,
+            'handler' => 'star', 'guard' => 'login', 'action' => 'star_project', 'json' => true],
 
         // The Training page (§2.7, REQ-UI-059): any signed-in user; its region is the plans
         // installed under web/assets/training/.
@@ -484,6 +490,11 @@ final class Router
         // travels in its own path (the survey link, §8.8) ---
         if ($this->request->isPost() && self::usesSession($route) && !Csrf::validate($this->request)) {
             $this->logger->warn('csrf rejection', ['path' => $this->request->path()]);
+            // A JSON row is read by a script, which would follow the redirect below into the
+            // page's data region and take that for the answer: it is refused in its own shape.
+            if (($route['json'] ?? false) === true) {
+                return Response::apiError('forbidden', $this->i18n->t('error.csrf'), 403, $this->request->ref());
+            }
             Session::flash('danger', $this->i18n->t('error.csrf'));
 
             // Back to the page the mutation was aimed at, which is also the route

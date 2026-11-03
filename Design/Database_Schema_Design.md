@@ -187,11 +187,21 @@ CREATE TABLE IF NOT EXISTS sso_grants (          -- REQ-DB-054 (Sequence K, REQ-
 );
 CREATE INDEX IF NOT EXISTS idx_sso_grants_sid ON sso_grants (sid_hash);
 CREATE INDEX IF NOT EXISTS idx_sso_grants_expires ON sso_grants (expires_at);
+
+CREATE TABLE IF NOT EXISTS project_stars (       -- REQ-DB-056 (REQ-UI-087); migration 0023
+    user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    created_at DATETIME NOT NULL,              -- UTC; when the star was set
+    PRIMARY KEY (user_id, project_id)
+);
+CREATE INDEX IF NOT EXISTS idx_project_stars_project ON project_stars (project_id);
 ```
 
 Notes: `organization` and the level enums are enforced by the API's allowlists (SQLite `CHECK` is not portable); `ON DELETE SET NULL` on `role_id` means deleting a role leaves the assignment role-less (full permissions) — the API's role-deletion rule (REQ-API-059) is the authority on when deletion is allowed.
 
 **Client sign-in grants** (REQ-DB-054, `Authentication_Authorization_Design.md` §2.13). One row is one authorization: a code when `/sso/authorize` runs for a signed-in browser, a grant once the client redeems it, ended by a CLARA sign-out (`POST /api/v1/sso/end` matches `user_id` and `sid_hash`) or a refused redemption. Redemption is one conditional `UPDATE … WHERE redeemed_at IS NULL AND ended_at IS NULL AND code_expires_at >= now`, so two concurrent redemptions cannot both succeed. Only hashes of the code, the grant and the sign-in id are stored. Inserting a code first deletes rows whose code expired unredeemed, or whose grant expired, more than a day ago; no job runs. The SQLite file declares the hash and address columns `TEXT`.
+
+**Starred projects** (REQ-DB-056, `API_Endpoints_Design.md` §4.32). One row is one star; unstarring deletes it, so the table holds only starred pairs. Starring is one dialect upsert that keeps the first `created_at` (SQLite `ON CONFLICT … DO NOTHING`, MariaDB `ON DUPLICATE KEY UPDATE created_at = created_at`), so two tabs starring the same project both succeed. The project list reads a user's stars once per call through the primary key's `user_id` prefix. The `project_id` index serves the cascade when a project is deleted. Visibility is not repeated here: the list filters by it before the stars are applied (REQ-API-049), which is why a star survives a lost membership.
 
 **Region columns** (REQ-DB-052/053, master spec "Organization by hospital regions"). `preferred_region`, `automatic_region` and `provider_role_regions.region` hold codes of the `projects.organization` enumeration and are checked against the same API allowlist. That list lives once in Go (`admin.Organizations`, in REQ-DB-006 order — the order also breaks ties when sign-in roles map to several regions, `Authentication_Authorization_Design.md` §2.12). PHP keeps only the display text. The effective region is `COALESCE(preferred_region, automatic_region)`. It is computed where it is read and never stored, so choosing "Automatic" takes effect without a write to `automatic_region`. A sign-in records its role values with one dialect upsert per value (§10): an insert enters a new value as unreviewed with `seen_count = 1`; an update raises `seen_count`, sets `last_seen_at`, and sets `first_seen_at` only while it is still `NULL`. The unique key (`VARCHAR(500)` + `VARCHAR(255)`) has the same 3,020-byte utf8mb4 size as `provider_subject_links`' primary key, so the same row-format rule applies (§10).
 
@@ -532,6 +542,7 @@ Reference scale (REQ-DB-025): 100 projects × 10,000 records × 200 fields × 10
 | two-factor authentication (master spec "Details", GD-21) | `user_two_factor` — one row per user, method/secret/replay step/pending-code hash/recovery hashes (§4); verification and enrollment in `Authentication_Authorization_Design.md` §2.7 |
 | account onboarding and password lifecycle (GD-22/GD-23) | `password_tokens` — single-use hashed invite/reset tokens (§4); issuance, email, and completion in `Authentication_Authorization_Design.md` §2.8 |
 | sign-in for registered applications (owner request 2026-11-02, Sequence K) | `sso_grants` (§4, REQ-DB-054, migration 0022): hashed code, grant and sign-in id per authorization, deleted with the account |
+| starred projects (owner request 2026-11-03, REQ-UI-087) | `project_stars` (§4, REQ-DB-056, migration `0023_project_stars.sql` for both dialects): one row per starred (user, project), deleted with either |
 | preferred region (master spec "Organization by hospital regions") | `users.preferred_region` / `automatic_region` / `automatic_region_source` and `provider_role_regions` (§4, REQ-DB-052/053, migration `0020_preferred_region.sql` for both dialects); derivation and placeholder rules in `Authentication_Authorization_Design.md` §2.12 and `API_Endpoints_Design.md` §4.6 |
 | project modes (master spec "Project modes", GD-20) | `projects.mode` (`development` default, §4) + `project_staging` JSON-snapshot table (§5 — the live structure tables stay untouched while a set is open); transition/staging rules normative in `API_Endpoints_Design.md` §4.21 |
 

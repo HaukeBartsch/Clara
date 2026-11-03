@@ -81,6 +81,7 @@ func New(store *db.Store, cfg *config.Config, aw *audit.Writer, reg *metrics.Reg
 	h.registerTfa(mux)
 	h.registerUsers(mux)
 	h.registerRegions(mux) // preferred region and the provider role mapping (§4.30)
+	h.registerStars(mux)   // starred projects of the overview (§4.32)
 	h.registerPasswords(mux)
 	h.registerProjects(mux)
 	h.registerModes(mux)

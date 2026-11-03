@@ -185,10 +185,40 @@
   grid-column: 1 / -1;
 }
 
-/* A region group's heading (REQ-UI-076) spans every track, so each group starts on a row of its own. */
+/* A region group's heading (REQ-UI-076) spans every track, so each group starts on a row of its own.
+ * The first group's row also holds the search over that group and the "Starred only" switch
+ * (REQ-UI-086/087): the heading on the left and the controls at the right end, wrapping under it on a
+ * narrow screen, and a line saying a filter left the group empty on a row of its own. */
 .clara-project-group {
   grid-column: 1 / -1;
   margin-top: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+}
+
+.clara-project-group > h2 {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+
+.clara-project-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin-left: auto;
+}
+
+.clara-project-search {
+  width: 16rem;
+  max-width: 100%;
+}
+
+.clara-project-filter-empty,
+.clara-project-star-failed {
+  flex: 1 0 100%;
 }
 
 .clara-project-group:first-child {
@@ -234,13 +264,63 @@
   min-width: 0;
 }
 
-/* Held to the top of the name's line; the small offset centres the badge on that line's text. */
-.clara-project-mode {
+/* The top-right corner: the mode badge held to the top of the name's line — the small offset centres
+ * it on that line's text — and the star under it (REQ-UI-070/087). */
+.clara-project-corner {
   grid-column: 2;
   grid-row: 1;
   align-self: start;
   justify-self: end;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.25rem;
+}
+
+.clara-project-mode {
   margin-top: 0.125rem;
+}
+
+/* The star is the one control in a box besides the name's link, so it sits above the link's
+ * stretched overlay, which covers the whole card. Unstarred it is an outline in the quiet colour;
+ * starred it is filled, with a darker edge so the shape keeps its contrast on a light background. */
+.clara-project-star {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  padding: 0.125rem;
+  margin: -0.125rem;
+  border: 0;
+  border-radius: var(--bs-border-radius-sm);
+  background: none;
+  color: var(--bs-secondary-color);
+  line-height: 0;
+}
+
+.clara-project-star svg {
+  width: 1.125rem;
+  height: 1.125rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.2;
+  stroke-linejoin: round;
+}
+
+.clara-project-star:hover {
+  color: var(--bs-warning-text-emphasis);
+}
+
+.clara-project-star:focus-visible {
+  outline: 2px solid var(--bs-primary);
+  outline-offset: 1px;
+}
+
+.clara-project-star[aria-pressed="true"] {
+  color: var(--bs-warning-text-emphasis);
+}
+
+.clara-project-star[aria-pressed="true"] svg {
+  fill: var(--bs-warning);
 }
 
 .clara-project-name {

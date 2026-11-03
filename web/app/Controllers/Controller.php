@@ -142,6 +142,9 @@ abstract class Controller
                 // The project is in this user's effective region (REQ-API-049); the page groups by
                 // it (REQ-UI-076/077), the list order stays the API's.
                 'in_preferred_region' => ($project['in_preferred_region'] ?? false) === true,
+                // The acting user starred the project (REQ-API-049); the overview can show the
+                // starred projects alone (REQ-UI-087).
+                'starred' => ($project['starred'] ?? false) === true,
             ];
         }
 
