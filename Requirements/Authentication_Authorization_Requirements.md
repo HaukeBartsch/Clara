@@ -111,7 +111,7 @@ The OAuth2 path is the one authentication path on which CLARA does not hold a us
 
 A user's **preferred region** (REQ-DB-052) decides which projects the overview shows first (REQ-UI-076). Its first value comes from the provider's roles at sign-in. When the sign-in supplies none, an assigning administrator's region is used as a placeholder (REQ-API-179). The user can always choose their own (REQ-UI-075).
 
-**Status:** not implemented.
+**Status:** implemented 2026-10-31 in the API and the web layer (`Authentication_Authorization_Design.md` §2.12). The development stack configures no OAuth2 provider, so the roles claim is exercised by Go tests (`TestSignInSetsRegionFromProviderRoles`, `TestSignInReadsRolesFromUserinfo`, `TestSignInNeverRefusedForRoles`) and the mapping's create/update/delete by `TestProviderRolesCRUD`; the web side runs end to end for the overview grouping and the Regions section's unconfigured state (`tests/php/regions_test.php`, `e2e/tests/regions.spec.ts`).
 
 | ID | Requirement |
 |---|------|
