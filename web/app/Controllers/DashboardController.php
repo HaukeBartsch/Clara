@@ -64,10 +64,10 @@ final class DashboardController extends Controller
                 'dashboard.project.mode.analysis',
                 'dashboard.project.last_used.today', 'dashboard.project.last_used.yesterday',
                 'dashboard.project.never_used', 'dashboard.group.preferred', 'dashboard.group.region',
-                // The search and the star filter of the first group's heading (REQ-UI-086/087).
+                // What the search and the star filter write (REQ-UI-086/087); their own controls are
+                // rendered by the page with their labels.
                 'dashboard.group.preferred.filtered', 'dashboard.group.region.filtered',
-                'dashboard.search.label', 'dashboard.search.placeholder', 'dashboard.starred_only',
-                'dashboard.search.none', 'dashboard.starred.none',
+                'dashboard.search.none', 'dashboard.search.none_starred', 'dashboard.starred.none',
                 'dashboard.project.star', 'dashboard.project.star_failed',
             ],
         ]);

@@ -6,9 +6,10 @@
 // The server renders the grid with its loading line and this module fills it from the same route's
 // JSON (REQ-UI-032, REQ-UI-044), then re-reads it while the page is visible so the grid stays
 // current (REQ-UI-073). The boxes are grouped by region — the user's own first — and ranked by
-// recency inside each group (REQ-UI-076). The first group's heading row carries a search over that
-// group's names (REQ-UI-086) and a "Starred only" switch, and every box a star (REQ-UI-087); both
-// filters hide boxes rather than remove them, so the in-place refresh keeps working under them. One
+// recency inside each group (REQ-UI-076). The heading row beside the project count carries a search
+// by name (REQ-UI-086) and a "Starred only" switch, and every box a star (REQ-UI-087); both filters
+// apply to every group and hide boxes rather than remove them, so the in-place refresh keeps working
+// under them. One
 // module for one surface (REQ-UI-045); no UI string appears here — every label comes from the
 // injected data-i18n block (REQ-UI-008).
 
@@ -346,14 +347,13 @@ let listed = false
 let boxes = new Map()
 // The heading each region group is drawn under, by organization code — kept the same way as the boxes.
 let headings = new Map()
-// The groups as last drawn, and whether their headings show: what the filters below are applied to.
+// The groups as last drawn: what the filters below are applied to.
 let drawnGroups = []
-let titled = false
 
 // --- the search and the "Starred only" switch (REQ-UI-086/087) ---
 
-// The search text as typed. It filters the first group alone — the user's own region whenever they
-// have one — and lives as long as the page: a refresh redraws under it, a reload clears it.
+// The search text as typed. It filters every group and lives as long as the page: a refresh redraws
+// under it, a reload clears it.
 let query = ""
 // Whether only starred projects show, in every group. Remembered in this browser for the signed-in
 // account, so the overview opens the way the user left it.
@@ -384,33 +384,23 @@ function storeStarredOnly(grid) {
   }
 }
 
-// The controls of the first group's heading row, built once and moved with the group if another
-// region comes first, so the search keeps its text and its focus across refreshes.
+// The controls the page renders in the heading row beside the project count, and the two lines under
+// it: one says the filters left nothing to show, one that a star was not saved. Outside the grid, so a
+// refresh never touches them and the search keeps its text and its focus.
 let tools = null
 
-function buildTools(grid) {
-  const search = el("input", {
-    type: "search",
-    class: "form-control form-control-sm clara-project-search",
-    placeholder: t("dashboard.search.placeholder"),
-    "aria-label": t("dashboard.search.label"),
-    autocomplete: "off",
-    spellcheck: "false",
-  })
-  const toggle = el("input", { type: "checkbox", class: "form-check-input", role: "switch", id: "clara-starred-only" })
+function bindTools(grid) {
+  const row = document.querySelector("[data-clara-project-tools]")
+  const search = document.querySelector("[data-clara-project-search]")
+  const toggle = document.getElementById("clara-starred-only")
+  const empty = document.querySelector("[data-clara-project-filter-empty]")
+  const failed = document.querySelector("[data-clara-star-failed]")
+  if (!row || !search || !toggle || !empty || !failed) {
+    return null
+  }
+  starredOnly = readStarredOnly(grid)
   toggle.checked = starredOnly
-  const controls = el("div", { class: "clara-project-tools", role: "search" }, [
-    search,
-    el("div", { class: "form-check form-switch mb-0" }, [
-      toggle,
-      el("label", { class: "form-check-label", for: "clara-starred-only" }, t("dashboard.starred_only")),
-    ]),
-  ])
-  // Says that a filter left the group empty; polite, so typing is not interrupted.
-  const empty = el("p", { class: "clara-region-empty clara-project-filter-empty mb-0", "aria-live": "polite" })
-  empty.hidden = true
-  const failed = el("p", { class: "text-danger small clara-project-star-failed mb-0", role: "alert" })
-  failed.hidden = true
+  query = search.value // a value the browser restored on back navigation filters like a typed one
 
   search.addEventListener("input", () => {
     query = search.value
@@ -422,51 +412,52 @@ function buildTools(grid) {
     applyFilters(grid)
   })
 
-  return { nodes: [controls, empty, failed], search, toggle, empty, failed }
+  return { row, search, toggle, empty, failed }
 }
 
 /**
- * Shows each box that passes the filters and hides the rest, then the headings: the first group's
- * row always stays — it holds the controls — and says so when nothing in it passes; another group
- * with nothing left to show is hidden with its heading. Hiding rather than removing keeps every box
- * where render() expects it, so a refresh under an active filter still updates in place.
+ * Shows each box that passes both filters and hides the rest, in every group, then the headings: a
+ * group with nothing left to show is hidden with its heading, and the line under the controls says
+ * so when nothing is left anywhere. Hiding rather than removing keeps every box where render()
+ * expects it, so a refresh under an active filter still updates in place.
  */
 function applyFilters(grid) {
-  if (!tools || !drawnGroups.length) {
-    return
-  }
   const needle = query.trim().toLocaleLowerCase()
-  drawnGroups.forEach((group, index) => {
-    const searched = index === 0 && needle !== ""
+  let total = 0
+  drawnGroups.forEach((group) => {
     let shown = 0
     group.entries.forEach((entry) => {
       const box = boxes.get(entry.project.id)
       const passes = (!starredOnly || isStarred(entry.project))
-        && (!searched || String(entry.project.project_name).toLocaleLowerCase().includes(needle))
+        && (needle === "" || String(entry.project.project_name).toLocaleLowerCase().includes(needle))
       if (box && box.hidden === passes) {
         box.hidden = !passes
       }
       shown += passes ? 1 : 0
     })
+    total += shown
     const heading = headings.get(group.code)
     if (heading) {
-      setText(heading.firstElementChild, titled ? headingText(group, shown) : "")
-      const hide = index > 0 && shown === 0
-      if (heading.hidden !== hide) {
-        heading.hidden = hide
+      setText(heading.firstElementChild, headingText(group, shown))
+      if (heading.hidden !== (shown === 0)) {
+        heading.hidden = shown === 0
       }
-    }
-    if (index === 0) {
-      let line = ""
-      if (shown === 0 && searched) {
-        line = t("dashboard.search.none", { query: query.trim() })
-      } else if (shown === 0 && starredOnly) {
-        line = t("dashboard.starred.none")
-      }
-      setText(tools.empty, line)
-      tools.empty.hidden = line === ""
     }
   })
+
+  if (!tools) {
+    return
+  }
+  let line = ""
+  if (drawnGroups.length && total === 0) {
+    if (needle !== "") {
+      line = t(starredOnly ? "dashboard.search.none_starred" : "dashboard.search.none", { query: query.trim() })
+    } else if (starredOnly) {
+      line = t("dashboard.starred.none")
+    }
+  }
+  setText(tools.empty, line)
+  tools.empty.hidden = line === ""
 
   // A control that a filter just hid — the star of a project unstarred under "Starred only" — would
   // drop keyboard focus onto the page; it goes to the switch instead.
@@ -564,6 +555,13 @@ function bindStars() {
   })
 }
 
+/** The search and the switch have nothing to filter until the list holds a project. */
+function showTools(shown) {
+  if (tools && tools.row.hidden === shown) {
+    tools.row.hidden = !shown
+  }
+}
+
 /**
  * Brings the grid and the heading's count to the list in place (REQ-UI-073): each project's box is
  * reused and repainted, a box moves only where the order changed, a new project gets a new box, and
@@ -586,27 +584,21 @@ function render(grid, projects) {
     boxes = new Map()
     headings = new Map()
     drawnGroups = []
+    applyFilters(grid)
+    showTools(false)
     fill(grid, [message(t("dashboard.empty"), false)])
     return
   }
+  showTools(true)
 
   const groups = groupByRegion(ranked, regionOrder(grid))
-  titled = groups.length > 1
-  if (!tools) {
-    tools = buildTools(grid)
-  }
+  const titled = groups.length > 1
   const kept = new Map()
   const keptHeadings = new Map()
   const wanted = []
-  groups.forEach((group, index) => {
-    // The first group always has its row, because the search and the switch live there; with one
-    // group that row names no region (REQ-UI-076) and holds the controls alone.
-    if (titled || index === 0) {
+  groups.forEach((group) => {
+    if (titled) {
       const heading = headings.get(group.code) || groupHeading()
-      heading.firstElementChild.hidden = !titled
-      if (index === 0 && tools.nodes[0].parentNode !== heading) {
-        tools.nodes.forEach((node) => heading.appendChild(node))
-      }
       keptHeadings.set(group.code, heading)
       wanted.push(heading)
     }
@@ -799,7 +791,7 @@ function bindProjectOpen() {
 ready(() => {
   const grid = document.querySelector("[data-region='projects']")
   if (grid) {
-    starredOnly = readStarredOnly(grid)
+    tools = bindTools(grid)
   }
   // The server-rendered placeholder says "loading"; the region is filled from the JSON the same
   // route serves, and navigation stays a plain GET (§3.7).

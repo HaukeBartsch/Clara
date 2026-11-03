@@ -1,9 +1,9 @@
 import { expect, test, type APIRequestContext, type Locator, type Page } from "@playwright/test"
 
-// The overview's search and starred projects (User_Interface_Design.md §4): the search on the first
-// group's heading row filters that group by name and leaves the other groups alone (REQ-UI-086);
-// a star under a box's mode badge is stored for the account, and "Starred only" hides every other
-// project, remembered across reloads (REQ-UI-087). Both hold under the two-second refresh
+// The overview's search and starred projects (User_Interface_Design.md §4): the search beside the
+// project count filters every group by name, and a group with nothing left goes with its heading
+// (REQ-UI-086); a star under a box's mode badge is stored for the account, and "Starred only" hides
+// every other project, remembered across reloads (REQ-UI-087). Both hold under the two-second refresh
 // (REQ-UI-073).
 //
 // Members, projects and memberships are seeded through the administration API with the development
@@ -67,7 +67,7 @@ async function headings(page: Page): Promise<string[]> {
 test.describe("overview search and starred projects (REQ-UI-086/087)", () => {
   test.skip(!process.env.CLARA_WEB_URL, "CLARA_WEB_URL not set — no running web/ application to drive")
 
-  test("the search filters the user's own group by name and leaves the other groups alone", async ({ browser, request }) => {
+  test("the search filters every group by name and hides a group with nothing left", async ({ browser, request }) => {
     const user = await member(request, "search", "OUS")
     const tag = Date.now()
     await project(request, `Search Alpha ${tag}`, "OUS", [user.id])
@@ -79,29 +79,34 @@ test.describe("overview search and starred projects (REQ-UI-086/087)", () => {
     await page.goto("/")
     await expect.poll(() => headings(page)).toEqual(["Your region: OUS · 2", "Ahus · 1"])
 
-    const search = page.getByRole("searchbox", { name: "Search the projects of this group by name" })
+    // The controls sit in the heading row beside the project count, outside the grid.
+    const search = page.getByRole("searchbox", { name: "Search projects by name" })
+    await expect(grid(page).locator("[data-clara-project-search]")).toHaveCount(0)
     await search.fill("ALPHA")
     await expect(box(page, `Search Alpha ${tag}`)).toBeVisible()
     await expect(box(page, `Search Beta ${tag}`)).toBeHidden()
-    // Another region's group is not searched: its project stays, whatever its name.
     await expect(box(page, `Search Alpha Ahus ${tag}`)).toBeVisible()
     await expect.poll(() => headings(page)).toEqual(["Your region: OUS · 1 of 2", "Ahus · 1"])
 
-    // A project added while the search is active arrives under it on the next refresh (REQ-UI-073).
+    // Another region's group is searched too: with no match there, it goes with its heading.
     await search.fill("beta")
+    await expect(box(page, `Search Alpha Ahus ${tag}`)).toBeHidden()
+    await expect.poll(() => headings(page)).toEqual(["Your region: OUS · 1 of 2"])
+
+    // A project added while the search is active arrives under it on the next refresh (REQ-UI-073).
     await project(request, `Search Gamma ${tag}`, "OUS", [user.id])
-    await expect.poll(() => headings(page), { timeout: 10_000 }).toEqual(["Your region: OUS · 1 of 3", "Ahus · 1"])
+    await expect.poll(() => headings(page), { timeout: 10_000 }).toEqual(["Your region: OUS · 1 of 3"])
     await expect(box(page, `Search Gamma ${tag}`)).toBeHidden()
     await expect(box(page, `Search Beta ${tag}`)).toBeVisible()
     await expect(search).toBeFocused()
     await expect(search).toHaveValue("beta")
 
     await search.fill("zzz")
-    await expect(grid(page).locator(".clara-project-filter-empty")).toHaveText("No project in this group has “zzz” in its name.")
-    await expect(box(page, `Search Alpha Ahus ${tag}`)).toBeVisible()
+    await expect.poll(() => headings(page)).toEqual([])
+    await expect(page.locator("[data-clara-project-filter-empty]")).toHaveText("No project has “zzz” in its name.")
 
     await search.fill("")
-    await expect(grid(page).locator(".clara-project-filter-empty")).toBeHidden()
+    await expect(page.locator("[data-clara-project-filter-empty]")).toBeHidden()
     await expect.poll(() => headings(page)).toEqual(["Your region: OUS · 3", "Ahus · 1"])
   })
 
@@ -137,7 +142,7 @@ test.describe("overview search and starred projects (REQ-UI-086/087)", () => {
     await expect(box(page, `Star Two ${tag}`)).toBeVisible()
     await expect(box(page, `Star One ${tag}`)).toBeHidden()
     await expect(box(page, `Star Three ${tag}`)).toBeHidden()
-    // The Ahus group has nothing starred, so its heading goes too; the user's own row keeps the controls.
+    // The Ahus group has nothing starred, so its heading goes too.
     await expect.poll(() => headings(page)).toEqual(["Your region: OUS · 1 of 2"])
 
     await page.reload()
@@ -145,14 +150,22 @@ test.describe("overview search and starred projects (REQ-UI-086/087)", () => {
     await expect(box(page, `Star Two ${tag}`)).toBeVisible()
     await expect(box(page, `Star One ${tag}`)).toBeHidden()
 
-    // Unstarring under the switch hides the box at once and says the group has nothing starred. Pressed
+    // Both filters at once: a name that only an unstarred project carries leaves nothing.
+    const search = page.getByRole("searchbox", { name: "Search projects by name" })
+    await search.fill("one")
+    await expect(page.locator("[data-clara-project-filter-empty]")).toHaveText("No starred project has “one” in its name.")
+    await search.fill("")
+    await expect(box(page, `Star Two ${tag}`)).toBeVisible()
+
+    // Unstarring under the switch hides the box at once and says nothing is starred. Pressed
     // from the keyboard, so the star holds focus in every engine (Safari does not focus a clicked
     // button): focus moves on to the switch instead of dropping onto the page.
     const unstar = page.getByRole("button", { name: `Star Star Two ${tag}`, exact: true })
     await unstar.focus()
     await unstar.press("Enter")
     await expect(box(page, `Star Two ${tag}`)).toBeHidden()
-    await expect(grid(page).locator(".clara-project-filter-empty")).toContainText("No starred project in this group.")
+    await expect(page.locator("[data-clara-project-filter-empty]")).toContainText("No starred project.")
+    await expect.poll(() => headings(page)).toEqual([])
     await expect(page.getByRole("switch", { name: "Starred only" })).toBeFocused()
 
     await page.getByRole("switch", { name: "Starred only" }).uncheck()

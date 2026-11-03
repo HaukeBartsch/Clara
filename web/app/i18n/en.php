@@ -149,15 +149,16 @@ return [
     'dashboard.project.never_used' => 'Never opened',
     // The overview's table body when an administrator's installation has no projects yet (§4).
     'dashboard.empty' => 'No projects yet. Create one in the Control Panel.',
-    // The search and the star filter on the heading row of the user's own group (REQ-UI-086/087).
-    // While either hides projects, a group heading counts what it shows of what it holds.
+    // The search and the star filter beside the overview's project count (REQ-UI-086/087). While
+    // either hides projects, a group heading counts what it shows of what it holds.
     'dashboard.group.preferred.filtered' => 'Your region: {region} · {shown} of {count}',
     'dashboard.group.region.filtered' => '{region} · {shown} of {count}',
-    'dashboard.search.label' => 'Search the projects of this group by name',
+    'dashboard.search.label' => 'Search projects by name',
     'dashboard.search.placeholder' => 'Search by name',
     'dashboard.starred_only' => 'Starred only',
-    'dashboard.search.none' => 'No project in this group has “{query}” in its name.',
-    'dashboard.starred.none' => 'No starred project in this group. Star a project with ☆ to keep it here.',
+    'dashboard.search.none' => 'No project has “{query}” in its name.',
+    'dashboard.search.none_starred' => 'No starred project has “{query}” in its name.',
+    'dashboard.starred.none' => 'No starred project. Star a project with ☆ to keep it here.',
     // The star toggle of a project box (REQ-UI-087): a toggle button, so its name stays the same
     // and the pressed state says whether the project is starred.
     'dashboard.project.star' => 'Star {project}',

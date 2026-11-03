@@ -1,7 +1,7 @@
 <?php
 // Starred projects and the overview's filters on the web side (User_Interface_Design.md §4,
-// REQ-UI-086/087): the data region passes each project's star through, the page names the
-// account the "Starred only" switch is remembered for, and POST /?action=star_project stars or
+// REQ-UI-086/087): the data region passes each project's star through, the page renders the search
+// and the switch beside the project count and names the account the switch is remembered for, and POST /?action=star_project stars or
 // unstars through the API and answers JSON — the shape dashboard.js reads — including when it is
 // refused. The search and the filtering run in the browser (dashboard.js) and are covered end to
 // end (e2e/tests/dashboard.spec.ts).
@@ -51,7 +51,7 @@ describe('overview — starred projects (§4, REQ-UI-087)', function (): void {
         assert_same([true, false], array_column($rows, 'starred'));
     });
 
-    it('names the account the switch is remembered for', function (): void {
+    it('renders the search and the switch beside the project count, and names the account', function (): void {
         resetApi();
         sign_in(['user_id' => 42]);
         queue_shell();
@@ -59,9 +59,25 @@ describe('overview — starred projects (§4, REQ-UI-087)', function (): void {
 
         $body = router_for(http_request('GET', '/', browser_headers()))->dispatch()->body();
 
+        $row = substr($body, (int) strpos($body, 'data-clara-project-count'));
+        $row = substr($row, 0, (int) strpos($row, 'data-region="projects"'));
+        assert_contains('aria-label="Search projects by name"', $row, 'the search sits in the heading row, outside the grid');
+        assert_contains('<label class="form-check-label" for="clara-starred-only">Starred only</label>', $row);
+        assert_not_contains('data-clara-project-tools hidden', $body, 'a list with a project shows the controls');
         assert_contains('data-clara-account="42"', $body);
-        assert_contains('"dashboard.starred_only":"Starred only"', $body);
         assert_contains('"dashboard.project.star":"Star {project}"', $body);
+        assert_contains('"dashboard.search.none":', $body);
+    });
+
+    it('hides the controls while an administrator\'s installation has no project', function (): void {
+        resetApi();
+        sign_in(['is_admin' => 1]);
+        queue_shell();
+        api_route('/api/v1/projects', []);
+
+        $body = router_for(http_request('GET', '/', browser_headers()))->dispatch()->body();
+
+        assert_contains('data-clara-project-tools hidden', $body);
     });
 
     it('stars with PUT and unstars with DELETE, answering what the API stored', function (): void {

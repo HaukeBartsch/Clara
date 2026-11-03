@@ -185,40 +185,25 @@
   grid-column: 1 / -1;
 }
 
-/* A region group's heading (REQ-UI-076) spans every track, so each group starts on a row of its own.
- * The first group's row also holds the search over that group and the "Starred only" switch
- * (REQ-UI-086/087): the heading on the left and the controls at the right end, wrapping under it on a
- * narrow screen, and a line saying a filter left the group empty on a row of its own. */
+/* A region group's heading (REQ-UI-076) spans every track, so each group starts on a row of its own. */
 .clara-project-group {
   grid-column: 1 / -1;
   margin-top: 0.75rem;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem 1rem;
 }
 
-.clara-project-group > h2 {
-  flex: 1 1 12rem;
-  min-width: 0;
-}
-
+/* The search and the "Starred only" switch (REQ-UI-086/087) sit at the right end of the overview's
+ * heading row, on the baseline of "Projects (n)", and wrap under it on a narrow screen. On a phone
+ * the search takes what width the row leaves. */
 .clara-project-tools {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: baseline;
   gap: 0.5rem 1rem;
-  margin-left: auto;
 }
 
 .clara-project-search {
   width: 16rem;
   max-width: 100%;
-}
-
-.clara-project-filter-empty,
-.clara-project-star-failed {
-  flex: 1 0 100%;
 }
 
 .clara-project-group:first-child {
