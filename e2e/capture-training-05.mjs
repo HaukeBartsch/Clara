@@ -1,13 +1,15 @@
 // Seeds a FRESH e2e/dev-stack.sh with three projects of medium activity, then re-captures
 // web/assets/training/05-export-audit-trails/0{1,2}.png (a second run fails on the existing
 // users and projects). Run: node e2e/capture-training-05.mjs
+// SHOTS_DIR, CLARA_API_URL and CLARA_WEB_URL work as in capture-training.mjs.
 import { chromium } from "playwright"
+import { mkdirSync } from "node:fs"
 
-const API = "http://127.0.0.1:8085"
-const WEB = "http://127.0.0.1:8090"
+const API = process.env.CLARA_API_URL ?? "http://127.0.0.1:8085"
+const WEB = process.env.CLARA_WEB_URL ?? "http://127.0.0.1:8090"
 const SERVICE_TOKEN = "clara-dev-481516-svc" // dev-stack.sh, development only
 const ADMIN = { email: "admin@example.org", password: "clara-dev-481516-pw" }
-const OUT = new URL("../web/assets/training/05-export-audit-trails/", import.meta.url).pathname
+const OUT = `${process.env.SHOTS_DIR ?? new URL("../web/assets/training/", import.meta.url).pathname}/05-export-audit-trails/`
 
 // Deterministic "random" values, so a re-run produces the same data.
 let seed = 20261013
@@ -214,6 +216,8 @@ for (const [key, project] of [["kari", projects[0]], ["ola", projects[1]], ["ing
   await context.close()
   await sleep(300)
 }
+
+mkdirSync(OUT, { recursive: true })
 
 // --- the pictures ---------------------------------------------------------------------------
 const context = await browser.newContext({ viewport: { width: 1280, height: 860 } })

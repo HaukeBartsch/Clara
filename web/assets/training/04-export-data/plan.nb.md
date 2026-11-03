@@ -1,10 +1,10 @@
 # Eksportere data
 
-Last ned prosjektets data som CSV eller JSON, struktur og data som ei CDISC ODM-XML-fil, eller datadictionaryen som en REDCap-instrument-ZIP. Hva datafilen inneholder, følger eksportrettighetene dine.
+Last ned prosjektets data som CSV eller JSON, prosjektet som en CDISC ODM-XML-fil, eller datadictionaryen som en REDCap-instrument-ZIP. Hva datafilen inneholder, følger eksportrettighetene dine.
 
 1. Åpne prosjektet og velg **Eksport** i panelet til venstre.
-2. Vel format, om valg skrives som koder eller etiketter, kolonneoverskriftene og, for CSV, skilletegn og desimalseparator. **Anvendt følsomhet** viser nivået filen blir eksportert på. Velg **Last ned data**.
-3. **Export project as CDISC ODM** skriver prosjektets struktur og data i én XML-fil, i den ODM-versjonen du velger, til et annet fagsystem. Denne biten ser du som prosjektadministrator.
+2. Velg format, om valg skrives som koder eller etiketter, kolonneoverskriftene og, for CSV, skilletegn og desimalseparator. **Anvendt følsomhet** viser nivået filen blir eksportert på. Velg **Last ned data**.
+3. **Eksporter prosjektet som CDISC ODM** skriver prosjektet i én XML-fil som et annet fagsystem kan lese. Velg **ODM-versjon**, og under **Innhold** enten **Prosjekt og data** eller **Bare prosjektet** — strukturen uten registrerte feltverdier. Bare administratorer ser denne delen.
 4. **Last ned datadictionary** gir prosjektets utforming uten registrerte feltverdier. Siden **Utforming** i et annet prosjekt kan importere den.
 
 ## Verdt å vite

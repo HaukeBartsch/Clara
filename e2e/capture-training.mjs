@@ -7,14 +7,15 @@
 // several authors, so it stays with capture-training-05.mjs on its own fresh stack.
 //
 // SHOTS_DIR=<dir> writes the PNGs somewhere else than web/assets/training/ — for looking at a
-// draft before replacing the committed pictures. The plans number their steps to match the file
+// draft before replacing the committed pictures. CLARA_API_URL / CLARA_WEB_URL point the run at a
+// stack started on other ports (CLARA_API_PORT=8185 CLARA_WEB_PORT=8190 ./e2e/dev-stack.sh). The plans number their steps to match the file
 // names, so a step added to a plan means a picture added here and a renumbered list in plan.md,
 // plan.nb.md and plan.nn.md.
 import { chromium } from "playwright"
 import { mkdirSync } from "node:fs"
 
-const API = "http://127.0.0.1:8085"
-const WEB = "http://127.0.0.1:8090"
+const API = process.env.CLARA_API_URL ?? "http://127.0.0.1:8085"
+const WEB = process.env.CLARA_WEB_URL ?? "http://127.0.0.1:8090"
 const SERVICE_TOKEN = "clara-dev-481516-svc" // dev-stack.sh, development only
 const ADMIN = { email: "admin@example.org", password: "clara-dev-481516-pw" }
 const PLANS = ["01-create-project", "02-data-collection-forms", "03-collect-data", "04-export-data"]
@@ -78,18 +79,21 @@ const shot = async (name) => {
 }
 // A row of a wide table cannot carry the outline itself: it follows the table's border model and its
 // right edge can sit outside the frame. Those get a drawn box, clamped to what the picture shows.
-const markBox = async (locator) => {
-  await locator.evaluate((el) => {
+// `pad` > 0 draws the box that far outside the element instead of on its edge — for a block whose
+// own content would sit under the line.
+const markBox = async (locator, pad = 0) => {
+  await locator.evaluate((el, gap) => {
     const box = el.getBoundingClientRect()
+    const inset = gap > 0 ? 0 : 6
     const overlay = document.createElement("div")
     overlay.setAttribute("data-clara-shot-mark", "")
     overlay.style.cssText = "position:absolute;border:3px solid #fd7e14;border-radius:6px;pointer-events:none;z-index:2000;"
-    overlay.style.left = `${box.left + window.scrollX}px`
-    overlay.style.top = `${box.top + window.scrollY}px`
-    overlay.style.width = `${Math.min(box.right, document.documentElement.clientWidth - 8) - box.left - 6}px`
-    overlay.style.height = `${box.height - 6}px`
+    overlay.style.left = `${box.left + window.scrollX - gap}px`
+    overlay.style.top = `${box.top + window.scrollY - gap}px`
+    overlay.style.width = `${Math.min(box.right + gap, document.documentElement.clientWidth - 8) - box.left + gap - inset}px`
+    overlay.style.height = `${box.height + 2 * gap - inset}px`
     document.body.append(overlay)
-  })
+  }, pad)
 }
 const clearMarks = () => page.evaluate(() => document.querySelectorAll("[data-clara-shot-mark]").forEach((el) => el.remove()))
 
@@ -314,8 +318,12 @@ await page.locator("#f-weight").waitFor()
 await page.fill("#f-weight", "72.5")
 await page.locator("#f-smoker-0").check()
 await selectContaining("#record-completion", "Finished")
+// The step chooses the form in the record's instruments-by-event table, then saves it. The table
+// sits in a .table-responsive wrapper that would clip its own outline, so it gets a drawn box.
+await markBox(page.locator(".clara-instrument-nav"), 5)
 await outline(page.locator("[data-clara-save]"))
 await shot("03-collect-data/02.png")
+await clearMarks()
 await clearOutline(page.locator("[data-clara-save]"))
 await page.locator("[data-clara-save]").click()
 await page.locator(".alert-success").first().waitFor()
@@ -323,16 +331,22 @@ await page.locator(".alert-success").first().waitFor()
 // 3. The confirmation that the form was saved.
 await shot("03-collect-data/03.png")
 
-// 4. Back on the dashboard: one row per record, one dot per form at one event. Saving demographics
-//    without finishing it gives the middle colour of the legend.
+// 4. Back on the dashboard: one row per record, one dot per form at one event. Demographics saved
+//    with one of its fields left empty and without finishing it gives the "some data" colour,
+//    with part of the dot's tiles filled.
 await page.goto(`${recordUrl.split("?")[0]}?event=baseline_arm_1`)
 await page.locator('.clara-instrument-nav td[data-event="baseline_arm_1"][data-instrument="demographics"] a.clara-state-link').first().click()
-await page.locator("form.clara-record-form").waitFor()
+await page.locator("#f-age").waitFor()
+await page.fill("#f-age", "64")
 await page.locator("[data-clara-save]").click()
 await page.locator(".alert-success").first().waitFor()
 await page.goto(statusUrl)
-const recordRow = page.locator("table tbody tr").first()
+// The dashboard is a Tabulator grid streamed in after the page (record-status.js): its rows are
+// .tabulator-row elements, there once the region says its load is complete.
+await page.locator('.clara-record-status[data-loaded="complete"]').waitFor()
+const recordRow = page.locator('.tabulator-row[data-record="HEART001"]')
 await recordRow.waitFor()
+await page.evaluate(() => document.fonts.ready)
 await markBox(recordRow)
 await shot("03-collect-data/04.png")
 await clearMarks()
