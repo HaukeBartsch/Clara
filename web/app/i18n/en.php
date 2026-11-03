@@ -901,6 +901,14 @@ return [
     'tfa.email_unavailable' => 'Codes by e-mail are not available on this installation: it has no mail server configured.',
     'tfa.failure.no_email' => 'This installation cannot send e-mail, so a code by e-mail is not available. Use an authenticator app instead.',
     'tfa.failure.send_failed' => 'The code could not be sent. Try again shortly or use a recovery code.',
+    // The single sign-on note, shown to administrators only (REQ-UI-085, DEV-UI-27).
+    'tfa.sso.heading' => 'Single sign-on is not covered',
+    'tfa.sso.body' => 'This second factor protects CLARA-account and directory (LDAP) sign-ins only. A sign-in through a single sign-on provider (OAuth2 / OpenID Connect, for example PingFederate) never asks for it, and the installation-wide requirement (AUTH_REQUIRE_2FA) does not apply to it: the provider decides whether a second factor is needed.',
+    'tfa.sso.none' => 'No single sign-on provider is configured on this installation, so this does not apply.',
+    'tfa.sso.provider' => 'Provider {n}',
+    'tfa.sso.gated' => 'CLARA accepts a sign-in only when its acr or amr names {values} ({variable}).',
+    'tfa.sso.ungated' => 'No check: CLARA accepts any sign-in this provider accepts. Set {variable} to require a multi-factor sign-in.',
+    'tfa.sso.admin_only' => 'Shown to administrators only.',
 
     // --- the account page (§2.8, REQ-UI-063) ---
     'account.section.profile' => 'Profile',

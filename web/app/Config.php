@@ -124,7 +124,7 @@ final class Config
      * only the provider metadata needed to route the callback and render the Control
      * Panel; it does not load or retain the client secret.
      *
-     * @var list<array{index: int, issuer: string, client_id: string, redirect_uri: string, email_attr: string, roles_attr: string, names: list<string>}>
+     * @var list<array{index: int, issuer: string, client_id: string, redirect_uri: string, email_attr: string, roles_attr: string, min_acr: list<string>, names: list<string>}>
      */
     public array $oauthProviders = [];
 
@@ -500,6 +500,13 @@ final class Config
                     'email_attr' => $get("OAUTH2_{$n}_EMAIL_ATTR", 'email'),
                     // Display only: the Go API reads and validates the claim (REQ-CFG-037).
                     'roles_attr' => trim($get("OAUTH2_{$n}_ROLES_ATTR")),
+                    // Display only, for an administrator's two-factor page (REQ-UI-085): the
+                    // Go API applies the assurance gate (REQ-AUTH-081). Split and trimmed the
+                    // way the API reads it, so the page names the values the API enforces.
+                    'min_acr' => array_values(array_filter(
+                        array_map('trim', explode(',', $get("OAUTH2_{$n}_MIN_ACR"))),
+                        static fn (string $v): bool => $v !== ''
+                    )),
                     'names' => self::nameList("OAUTH2_{$n}_NAMES", $get("OAUTH2_{$n}_NAMES"), $errors),
                 ];
             }
@@ -660,6 +667,7 @@ final class Config
             $keys[] = "OAUTH2_{$n}_REDIRECT_URI";
             $keys[] = "OAUTH2_{$n}_EMAIL_ATTR";
             $keys[] = "OAUTH2_{$n}_ROLES_ATTR";
+            $keys[] = "OAUTH2_{$n}_MIN_ACR";
             $keys[] = "OAUTH2_{$n}_NAMES";
             $keys[] = "LDAP_SERVER_{$n}_URL";
             $keys[] = "LDAP_SERVER_{$n}_BIND_DN";

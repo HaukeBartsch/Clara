@@ -228,4 +228,67 @@ describe('two-factor settings (§2.5, REQ-UI-039)', function (): void {
         assert_same(302, $response->status());
         assert_same('/login?next=%2Faccount%2Ftwo-factor', $response->headers()['Location']);
     });
+
+    // --- the single sign-on note (REQ-UI-085, DEV-UI-27) ----------------------
+
+    it('tells an administrator which single sign-on providers it does not guard, and what each must prove', function (): void {
+        sign_in(['is_admin' => 1]);
+        queue_tfa_status();
+        $config = test_config([
+            'OAUTH2_1_ISSUER' => 'https://idp.example.org/idp',
+            'OAUTH2_1_CLIENT_ID' => 'clara',
+            'OAUTH2_1_NAMES' => 'Hospital 1',
+            'OAUTH2_1_MIN_ACR' => ' mfa , ,otp',
+            'OAUTH2_3_ISSUER' => 'https://ping.example.org/idp',
+            'OAUTH2_3_CLIENT_ID' => 'clara',
+        ]);
+
+        $body = router_for(http_request('GET', '/account/two-factor', browser_headers()), $config)->dispatch()->body();
+
+        assert_contains('Single sign-on is not covered', $body);
+        assert_contains('PingFederate', $body);
+        assert_contains('AUTH_REQUIRE_2FA', $body);
+        assert_contains('Hospital 1', $body);
+        assert_contains('names mfa, otp (OAUTH2_1_MIN_ACR)', $body, 'the values as the API splits and trims them');
+        assert_contains('Provider 3', $body, 'a provider with no source name is named by its index');
+        assert_contains('https://ping.example.org/idp', $body);
+        assert_contains('No check: CLARA accepts any sign-in this provider accepts. Set OAUTH2_3_MIN_ACR', $body);
+    });
+
+    it('says the note does not apply when no single sign-on provider is configured', function (): void {
+        sign_in(['is_admin' => 1]);
+        queue_tfa_status();
+
+        $body = router_for(http_request('GET', '/account/two-factor', browser_headers()))->dispatch()->body();
+
+        assert_contains('Single sign-on is not covered', $body);
+        assert_contains('No single sign-on provider is configured', $body);
+    });
+
+    it('keeps the note in every step, the recovery codes included', function (): void {
+        sign_in(['is_admin' => 1]);
+        queue_shell();
+        api_route('/api/v1/users/me/tfa/totp/confirm', ['recovery_codes' => ['aaaa-bbbb']]);
+        queue_tfa_status(['method' => 'totp', 'enrolled_at' => '2026-11-03 09:00:00', 'recovery_codes_remaining' => 1]);
+
+        $body = tfa_post('totp_confirm', ['code' => '123456'])->body();
+
+        assert_contains('aaaa-bbbb', $body);
+        assert_contains('Single sign-on is not covered', $body);
+    });
+
+    it('shows the note to nobody but an administrator (§3.1)', function (): void {
+        sign_in();
+        queue_tfa_status();
+        $config = test_config([
+            'OAUTH2_1_ISSUER' => 'https://idp.example.org/idp',
+            'OAUTH2_1_CLIENT_ID' => 'clara',
+        ]);
+
+        $body = router_for(http_request('GET', '/account/two-factor', browser_headers()), $config)->dispatch()->body();
+
+        assert_not_contains('Single sign-on is not covered', $body);
+        assert_not_contains('idp.example.org', $body);
+        assert_not_contains('MIN_ACR', $body);
+    });
 });

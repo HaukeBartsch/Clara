@@ -44,6 +44,37 @@ $step = $step ?? '';
     <?php endif; ?>
 </div>
 
+<?php if (is_array($ssoProviders ?? null)): ?>
+    <!-- Administrators only (REQ-UI-085): the sign-ins this factor does not guard, and what
+         CLARA asks of each provider instead. Present in every step of the section. -->
+    <section class="border rounded p-3 mb-4 small" aria-labelledby="clara-tfa-sso">
+        <h2 class="h6" id="clara-tfa-sso"><?= View::e($view->t('tfa.sso.heading')) ?></h2>
+        <p class="mb-2"><?= View::e($view->t('tfa.sso.body')) ?></p>
+        <?php if ($ssoProviders === []): ?>
+            <p class="mb-2 text-body-secondary"><?= View::e($view->t('tfa.sso.none')) ?></p>
+        <?php else: ?>
+            <ul class="mb-2 ps-3">
+                <?php foreach ($ssoProviders as $provider): ?>
+                    <?php $variable = 'OAUTH2_' . $provider['index'] . '_MIN_ACR'; ?>
+                    <li>
+                        <strong><?= View::e($provider['label']) ?></strong>
+                        <span class="text-body-secondary text-break">· <?= View::e($provider['issuer']) ?></span><br>
+                        <?php if ($provider['min_acr'] !== []): ?>
+                            <?= View::e($view->t('tfa.sso.gated', [
+                                'values' => implode(', ', $provider['min_acr']),
+                                'variable' => $variable,
+                            ])) ?>
+                        <?php else: ?>
+                            <?= View::e($view->t('tfa.sso.ungated', ['variable' => $variable])) ?>
+                        <?php endif; ?>
+                    </li>
+                <?php endforeach; ?>
+            </ul>
+        <?php endif; ?>
+        <p class="mb-0 text-body-secondary"><?= View::e($view->t('tfa.sso.admin_only')) ?></p>
+    </section>
+<?php endif; ?>
+
 <?php if (($error ?? '') !== ''): ?>
     <div class="alert alert-danger py-2" role="alert"><?= View::e($error) ?></div>
 <?php endif; ?>

@@ -26,6 +26,7 @@ use Clara\ApiException;
 use Clara\Messages;
 use Clara\Navigation;
 use Clara\Response;
+use Clara\Session;
 
 final class TwoFactorController extends Controller
 {
@@ -198,6 +199,33 @@ final class TwoFactorController extends Controller
     }
 
     /**
+     * What the single sign-on note says about each OAuth2 provider (REQ-UI-085): how the
+     * login page names it, where it lives, and what CLARA requires of its sign-ins. Read
+     * from the configuration PHP shares with the API; the API alone applies the gate
+     * (REQ-AUTH-081), so this is a description of it, never a second copy of the rule.
+     *
+     * @return list<array{index: int, label: string, issuer: string, min_acr: list<string>}>
+     */
+    private function ssoProviders(): array
+    {
+        $out = [];
+        foreach ($this->config->oauthProviders as $provider) {
+            $index = (int) $provider['index'];
+            $names = $provider['names'] ?? [];
+            $out[] = [
+                'index' => $index,
+                'label' => $names !== []
+                    ? implode(', ', $names)
+                    : $this->i18n->t('tfa.sso.provider', ['n' => (string) $index]),
+                'issuer' => (string) $provider['issuer'],
+                'min_acr' => array_values($provider['min_acr'] ?? []),
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
      * Renders the page. `$status` is the status read; `null` asks for a fresh one, which
      * keeps every failure path from having to fetch it itself — and still means one read
      * per render (User_Interface_Design.md §12 rule 13).
@@ -219,6 +247,9 @@ final class TwoFactorController extends Controller
             'emailAvailable' => empty($view['emailUnavailable']),
             // A section of the account page (§2.8, REQ-UI-063).
             'nav' => Navigation::accountNav('two_factor'),
+            // The single sign-on note (REQ-UI-085): null for anyone but an administrator,
+            // so the view has nothing to emit (§3.1).
+            'ssoProviders' => Session::isAdmin() ? $this->ssoProviders() : null,
         ], [
             'titleKey' => '',
             'scripts' => ['/assets/app.js', '/assets/js/two_factor.js'],
