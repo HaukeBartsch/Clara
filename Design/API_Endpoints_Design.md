@@ -492,6 +492,39 @@ Each refusal is audited as `login_failure` with that reason and the assertion de
 
 `stage` (`discovery` | `token_exchange` | `assertion`) and `error` appear only when `ok` is `false`; `endpoints` is absent when discovery failed. `discovery_status` and `userinfo_status` are the provider's HTTP statuses (`0` = no response or not reached); `token_status` is `200` after a successful exchange, otherwise the status the login call would have answered. `id_token_claims` is filled on success with the verified assertion's audit details (`provider_issuer`, `provider_subject`, `email_verified`, `address_source`, `acr`, `amr`). `userinfo_claims` holds only allowlisted identity, assurance and group/role claims, each value cut to 500 characters and each list to 30 entries. No code, token, signature or client secret appears in the report (REQ-AUTH-036). Errors: 400 `unknown_provider`; 403 for a caller without `is_admin`.
 
+**`POST /api/v1/auth/oauth/end-session`** — acting user with session epoch (an ordinary session call); `{ "provider": 1 }`, the `N` the session signed in through (`oauth2_provider`). Builds the provider sign-out address of Sequence L1 (REQ-API-189, REQ-AUTH-097, `Authentication_Authorization_Design.md` §2.14). The API resolves the discovery document and answers 200:
+
+```json
+{ "end_session_url": "<end_session_endpoint>?client_id=clara&post_logout_redirect_uri=https%3A%2F%2Fclara.example.org%2Fauth%2Flogged-out&state=…",
+  "state": "…" }
+```
+
+The address is the document's `end_session_endpoint` with `client_id`, `post_logout_redirect_uri` (`OAUTH2_N_POST_LOGOUT_REDIRECT_URI`) and `state` appended; a query the endpoint already carries is kept. `state` is 32 random bytes, base64url-encoded. There is no `id_token_hint` (DEV-AUTH-23). The API keeps nothing and writes no audit entry: Sequence D's `POST /api/v1/auth/logout` records the sign-out. Errors: 400 `unknown_provider`; 409 `single_sign_out_disabled`; 502 `provider_issuer_mismatch` / `provider_unavailable` (discovery, as for `oauth/start`); 502 `end_session_unsupported` when the document names no `end_session_endpoint`. PHP treats every error the same way: the CLARA sign-out completes, and the login page says the provider may still be signed in (REQ-UI-088).
+
+**`POST /api/v1/auth/oauth/backchannel-logout`** — pre-authentication: service token only, no `X-Internal-User-Id` (DEV-API-46). The provider-initiated sign-out of Sequence L2 (REQ-API-190, REQ-AUTH-098/099). PHP relays the provider's form field unchanged:
+
+```json
+{ "provider": 1, "logout_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6ImxvZ291dCtqd3QifQ.…" }
+```
+
+The API verifies the token (`Authentication_Authorization_Design.md` §2.14 L2.3). In one transaction it then records the `jti` in `oidc_logout_jtis`, raises the linked account's `session_epoch`, ends all of that account's `sso_grants` rows, and audits `provider_logout` (L2.4). It answers 200:
+
+```json
+{ "status": "ok", "matched": true, "user_id": 21, "clients": ["fiona"] }
+```
+
+`clients` lists the distinct client ids whose rows ended (possibly empty). A subject with no account link answers `{ "status": "ok", "matched": false, "user_id": null, "clients": [] }`, audited the same way without an acting user.
+
+| Status | `error` | Cause |
+|---|---|---|
+| 400 | `invalid_request` | body not JSON, `provider` not an integer, `logout_token` missing or empty |
+| 400 | `unknown_provider` | `provider` names no configured provider |
+| 400 | `invalid_logout_token` | any verification failure or a replayed `jti`; the reason (`malformed`, `algorithm`, `unknown_key`, `signature`, `claims`, `events`, `nonce_present`, `subject_missing`, `jti_missing`, `replayed`) is in the `provider_logout_rejected` audit entry and the API log, never in the answer |
+| 409 | `single_sign_out_disabled` | `OIDC_SINGLE_SIGN_OUT` is off |
+| 502 | `provider_unavailable` | the discovery document or the key set cannot be read |
+
+The token, its signature and its claims other than issuer and subject are never logged or audited (REQ-AUTH-036). A failed transaction leaves no `jti` row, so the provider's retry is accepted.
+
 **`POST /api/v1/auth/verify-password`** — `{ "email": "…", "password": "***" }`: the side-effect-free verify step of the named-source credential race (`Authentication_Authorization_Design.md` §2.9, REQ-API-123). Runs the login endpoint's hash check and account-active rule only and answers `ok` / `bad_password` / `account_disabled` / `account_expired` — no `last_login_at`/`auth_source` write, no audit event, no user object; login finalizes exactly once through `POST /api/v1/auth/login`. Pre-authentication: service token only, no `X-Internal-User-Id` (DEV-API-17); password never logged (REQ-AUTH-036).
 
 For an account a second factor still guards, the `ok` answer additionally carries the handle the challenge's second login call presents in place of the password (REQ-API-131, DEV-API-19):
@@ -1567,6 +1600,8 @@ The normative endpoint → permission mapping is in `API_Endpoints_Requirements.
 | `POST /api/v1/auth/verify-password` (§4.3, REQ-API-123) | pre-authentication — service token only, no user id (DEV-API-17) |
 | `POST /api/v1/auth/oauth/start` (§4.3, REQ-API-173) | pre-authentication — service token only, no user id (DEV-API-32) |
 | `POST /api/v1/auth/oauth/test` (§4.3, REQ-API-174) | `is_admin` |
+| `POST /api/v1/auth/oauth/end-session` (§4.3, REQ-API-189) | any active user (self, with the session epoch) |
+| `POST /api/v1/auth/oauth/backchannel-logout` (§4.3, REQ-API-190) | pre-authentication — service token only, no user id (DEV-API-46) |
 | `POST /api/v1/sso/token`, `POST /api/v1/sso/check` (§4.31, REQ-API-183/184) | pre-authentication — service token and the client's secret, no user id (DEV-API-44) |
 | `POST /api/v1/sso/codes`, `POST /api/v1/sso/end` (§4.31, REQ-API-182/185) | any active user (self, with the session epoch) |
 | `POST /api/v1/auth/session-replay` (§4.3, REQ-API-148) | any active user (self — the account whose session id was replayed; no session epoch) |

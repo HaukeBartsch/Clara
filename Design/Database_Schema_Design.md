@@ -195,11 +195,20 @@ CREATE TABLE IF NOT EXISTS project_stars (       -- REQ-DB-056 (REQ-UI-087); mig
     PRIMARY KEY (user_id, project_id)
 );
 CREATE INDEX IF NOT EXISTS idx_project_stars_project ON project_stars (project_id);
+
+CREATE TABLE IF NOT EXISTS oidc_logout_jtis (    -- REQ-DB-057 (REQ-AUTH-098, Sequence L); migration 0024
+    key_hash    CHAR(64) PRIMARY KEY,           -- SHA-256 hex of issuer || 0x00 || jti
+    expires_at  DATETIME NOT NULL,              -- UTC; the token's iat + 10 min + 120 s skew
+    created_at  DATETIME NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_oidc_logout_jtis_expires ON oidc_logout_jtis (expires_at);
 ```
 
 Notes: `organization` and the level enums are enforced by the API's allowlists (SQLite `CHECK` is not portable); `ON DELETE SET NULL` on `role_id` means deleting a role leaves the assignment role-less (full permissions) — the API's role-deletion rule (REQ-API-059) is the authority on when deletion is allowed.
 
 **Client sign-in grants** (REQ-DB-054, `Authentication_Authorization_Design.md` §2.13). One row is one authorization: a code when `/sso/authorize` runs for a signed-in browser, a grant once the client redeems it, ended by a CLARA sign-out (`POST /api/v1/sso/end` matches `user_id` and `sid_hash`) or a refused redemption. Redemption is one conditional `UPDATE … WHERE redeemed_at IS NULL AND ended_at IS NULL AND code_expires_at >= now`, so two concurrent redemptions cannot both succeed. Only hashes of the code, the grant and the sign-in id are stored. Inserting a code first deletes rows whose code expired unredeemed, or whose grant expired, more than a day ago; no job runs. The SQLite file declares the hash and address columns `TEXT`.
+
+**Logout-token replay window** (REQ-DB-057, `Authentication_Authorization_Design.md` §2.14 L2.4). One row is one accepted provider logout token. The table is a rolling window, not a log: every accept first deletes the rows whose `expires_at` has passed and then inserts its own, so the table holds only tokens that are young enough to be presented again; past `expires_at`, a token is refused by its age (`iat` older than 10 minutes), so its row is no longer needed. The key hashes issuer and `jti` together, so the key has a fixed width whatever the provider puts in `jti` (no row-format concern, unlike `provider_subject_links`, §10), and one provider cannot block another's `jti`. A conflict on the key is the replay. The insert shares the transaction of the sign-out it records, so a rolled-back sign-out leaves no row. The size is bounded by the sign-outs of about twelve minutes. Nothing about the account is stored: `provider_logout` in the audit trail carries the history (REQ-AUD-039). The SQLite file declares `key_hash` `TEXT`.
 
 **Starred projects** (REQ-DB-056, `API_Endpoints_Design.md` §4.32). One row is one star; unstarring deletes it, so the table holds only starred pairs. Starring is one dialect upsert that keeps the first `created_at` (SQLite `ON CONFLICT … DO NOTHING`, MariaDB `ON DUPLICATE KEY UPDATE created_at = created_at`), so two tabs starring the same project both succeed. The project list reads a user's stars once per call through the primary key's `user_id` prefix. The `project_id` index serves the cascade when a project is deleted. Visibility is not repeated here: the list filters by it before the stars are applied (REQ-API-049), which is why a star survives a lost membership.
 
@@ -543,6 +552,7 @@ Reference scale (REQ-DB-025): 100 projects × 10,000 records × 200 fields × 10
 | account onboarding and password lifecycle (GD-22/GD-23) | `password_tokens` — single-use hashed invite/reset tokens (§4); issuance, email, and completion in `Authentication_Authorization_Design.md` §2.8 |
 | sign-in for registered applications (owner request 2026-11-02, Sequence K) | `sso_grants` (§4, REQ-DB-054, migration 0022): hashed code, grant and sign-in id per authorization, deleted with the account |
 | starred projects (owner request 2026-11-03, REQ-UI-087) | `project_stars` (§4, REQ-DB-056, migration `0023_project_stars.sql` for both dialects): one row per starred (user, project), deleted with either |
+| single sign-out replay protection (owner instruction 2026-11-06, REQ-AUTH-098) | `oidc_logout_jtis` (§4, REQ-DB-057, migration `0024_oidc_logout_jtis.sql` for both dialects): a rolling window of accepted logout-token ids, pruned on insert |
 | preferred region (master spec "Organization by hospital regions") | `users.preferred_region` / `automatic_region` / `automatic_region_source` and `provider_role_regions` (§4, REQ-DB-052/053, migration `0020_preferred_region.sql` for both dialects); derivation and placeholder rules in `Authentication_Authorization_Design.md` §2.12 and `API_Endpoints_Design.md` §4.6 |
 | project modes (master spec "Project modes", GD-20) | `projects.mode` (`development` default, §4) + `project_staging` JSON-snapshot table (§5 — the live structure tables stay untouched while a set is open); transition/staging rules normative in `API_Endpoints_Design.md` §4.21 |
 

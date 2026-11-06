@@ -73,9 +73,13 @@ Per provider `N` (1…3):
 | `OAUTH2_N_NONCE_REQUIRED` | api | `0`\|`1` | `0` | — | `1` refuses an ID token without `nonce`; `0` means "not yet observed", not "satisfied" (REQ-CFG-035, REQ-AUTH-079) |
 | `OAUTH2_N_ID_TOKEN_ALG` | api | JWS algorithm | `RS256` | — | the pinned signing algorithm; any value outside the asymmetric RS/PS/ES/EdDSA set — including `none` and the HMAC family — is a startup error (REQ-CFG-035, REQ-AUTH-077) |
 | `OAUTH2_N_ROLES_ATTR` | api (web: display only) | claim name | empty | — | the claim carrying the provider's role values for the preferred-region default, read from the verified ID token, else from userinfo; empty = the provider's roles are not read (REQ-CFG-037, REQ-AUTH-088, `Authentication_Authorization_Design.md` §2.12) |
+| `OAUTH2_N_POST_LOGOUT_REDIRECT_URI` | api (web: display only) | absolute URL | — | if `OIDC_SINGLE_SIGN_OUT=1` | the address of CLARA's `GET /auth/logged-out` (normally `WEB_PUBLIC_URL + /auth/logged-out`), registered at the provider character for character; `https`, except `http` under `APP_ENV=development`; no fragment. Sent as `post_logout_redirect_uri` by Sequence L1 (REQ-CFG-036, REQ-AUTH-097, REQ-API-189) |
+| `OAUTH2_N_BACKCHANNEL_LOGOUT_PATH` | web | path | — | if `OIDC_SINGLE_SIGN_OUT=1` | where the provider POSTs its logout token: `/auth/backchannel-logout/` plus one segment of letters, digits, `-` or `_` (for example `/auth/backchannel-logout/ping`), distinct per provider. The provider is registered with `WEB_PUBLIC_URL` + this path (REQ-CFG-036, REQ-AUTH-098) |
 | `OAUTH2_N_NAMES` | web | comma-separated display names | unset → implicit default set | — | names this provider is selected by on the login page (master spec "Authentication order", REQ-CFG-032, REQ-AUTH-063/064); entries empty after trimming rejected at startup (§4.1) |
 
 Shared by all providers: `OAUTH2_JWKS_TTL` (api; positive integer seconds; default `3600`) bounds how long a fetched provider key set is reused before a scheduled refetch; an unknown `kid` refetches at once (REQ-CFG-035, REQ-AUTH-077).
+
+Single sign-out, shared by all providers: `OIDC_SINGLE_SIGN_OUT` (both; `0`|`1`; default `0`) turns on Sequence L (`Authentication_Authorization_Design.md` §2.14) for every configured OAuth2 provider. With it at `0`, neither the end-session call nor the back-channel route exists, and the configuration check says that signing out of CLARA leaves the provider session alive, and that a sign-out or revocation at the provider does not end a CLARA session before it expires (REQ-CFG-036, REQ-AUTH-083). Anything but `0` or `1` is a startup error, because a sign-out that silently does not reach the provider is the failure this setting exists to prevent.
 
 ### 3.5 LDAP (servers 1–3, tried in parallel within the selected source name; 2 and 3 optional)
 
@@ -199,6 +203,7 @@ Per client `N` (1…3); a client exists when its `ID` is set.
 | `UI_THEME` ∈ {`bootstrap`, `darkly`, `yeti`} (default `bootstrap`) | required | required (GD-26, REQ-CFG-031) |
 | `MONITORING_PERIOD_MINUTES` is an integer ≥ 1 and ≤ 1440 (default `10`) | required | required (REQ-CFG-034) |
 | `OAUTH2_N_ROLES_ATTR`, when set, is one claim name — no whitespace, no comma | required | required (REQ-CFG-037) |
+| `OIDC_SINGLE_SIGN_OUT` ∈ {`0`,`1`} (default `0`); with `1`, every provider with a set `ISSUER` has `POST_LOGOUT_REDIRECT_URI` (absolute URL, no fragment) and `BACKCHANNEL_LOGOUT_PATH` (pattern of §3.4, unique across providers) set, and `SUBJECT_ATTR` at `sub` | required | required, plus an `https` post-logout address (REQ-CFG-036) |
 | every client with `SSO_CLIENT_N_ID` set: the id matches its pattern and is not repeated; `SECRET` set; `REDIRECT_URI` an absolute URL without user info or fragment; `LOGOUT_URI` unset or the same | required | required, plus `https` addresses and a secret of at least 32 bytes (REQ-CFG-038) |
 
 The API refuses to start with a non-zero exit and a message naming each missing/invalid variable (REQ-CFG-004); the PHP app fails at entry-point boot with an operator-readable page and no stack trace in production (REQ-CFG-005).
@@ -255,6 +260,10 @@ OAUTH2_1_NAMES=Hospital 1
 #OAUTH2_JWKS_TTL=3600
 # claim with the provider's role values; mapped to a preferred region in the Control Panel (REQ-CFG-037) — empty = not read
 #OAUTH2_1_ROLES_ATTR=
+# single sign-out with the provider (REQ-CFG-036) — off by default; with 1 both lines below are required per provider
+#OIDC_SINGLE_SIGN_OUT=0
+#OAUTH2_1_POST_LOGOUT_REDIRECT_URI=http://localhost:8000/auth/logged-out
+#OAUTH2_1_BACKCHANNEL_LOGOUT_PATH=/auth/backchannel-logout/idp1
 
 # local (table-based) source names — optional; unset everywhere = one implicit default set
 #LOCAL_LOGIN_NAMES=Clinic A

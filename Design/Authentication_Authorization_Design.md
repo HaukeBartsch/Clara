@@ -126,9 +126,11 @@ The API is stateless with respect to sessions: it MUST NOT create or store a ses
 1. Browser `POST /logout` (CSRF token, REQ-AUTH-037).
 2. PHP reads the acting user id from the session.
 2.5. If this session ever gave a client a code (it holds `sso_sid`, §2.13), PHP → API `POST /api/v1/sso/end` `{sid}`: every client grant issued under this sign-in ends now (REQ-AUTH-094). A failure is logged and does not stop the sign-out. `POST /sso/logout` (a client's sign-out link, §2.13) runs this same sequence and returns to the client instead of step 5.
+2.7. If `OIDC_SINGLE_SIGN_OUT=1` and the session signed in through OAuth2 provider N (`oauth2_provider`, §3), PHP → API `POST /api/v1/auth/oauth/end-session` `{provider: N}` as the user, with the session epoch (REQ-API-189). PHP keeps the answer's `end_session_url` and `state` for step 4.5. A failure is logged, does not stop the sign-out, and selects the "provider may still be signed in" line of step 5 (REQ-UI-088). Local and LDAP sessions skip this step.
 3. PHP → API `POST /api/v1/auth/logout` (service token + `X-Internal-User-Id`) → the API records `logout` (audit) and returns 200.
-4. PHP destroys the session (cookie invalidated).
-5. `302` to `/login`.
+4. PHP destroys the session (cookie invalidated) and drops its id from the account's session index (§3).
+4.5. With an `end_session_url` from step 2.7, PHP starts a fresh **pre-authentication** session that holds only `oidc_logout_state` (§3) and answers `302` to `end_session_url`. The provider ends its own session and returns the browser to `GET /auth/logged-out?state=…` (Sequence L, §2.14).
+5. Otherwise `302` to `/login`, with the "provider may still be signed in" line when step 2.7 failed.
 
 Normative ordering: the audit call **precedes** session destruction (REQ-AUTH-015); REQ-API-045's assignment of destruction to the PHP layer is satisfied by step 4.
 
@@ -219,7 +221,7 @@ Runs in the API on the `source = "oauth2"` leg of Sequence C, **before any accou
 
 **Discovery posture.** The discovery document is required: it names `jwks_uri`, and its own `issuer` value MUST equal the configured issuer (REQ-AUTH-082). Deriving `authorize`/`token`/`userinfo` by appending conventional names to the issuer root is withdrawn — PingFederate serves `/as/authorization.oauth2`, `/as/token.oauth2` and `/idp/userinfo.openid`, so a derived path produces a misleading upstream error where a hard stop names the provider. INSTALL.md §14 gains "the provider publishes no discovery document" as its own cause. The 502 names only the reason; the API log carries the cause of every discovery failure — both issuer values for a mismatch, the parse error for an unusable document, and for an unreachable provider the discovery URL tried with the transport error (refused, DNS, TLS, timeout).
 
-**Logout receiver (REQ-AUTH-083).** With `OIDC_SINGLE_SIGN_OUT=1` the web layer exposes `OAUTH2_N_BACKCHANNEL_LOGOUT_PATH` for the provider to POST a `logout_token` to. The token is verified by steps 1–5 above — with `event` required to name back-channel logout and the same issuer/audience rules — and then every session of that account ends. Sessions live in PHP files keyed by session id (§3), so this needs a secondary index from (`iss`, `sub`) to live session ids, written at login and dropped at logout or expiry under `SESSION_DIR` (0700); the receiver additionally raises the account's session epoch (REQ-AUTH-074) so that in-flight API calls stop. PingFederate publishes its session identifier as `pi.sri`, not OIDC `sid`, and offers no Session Management iframe: resolution is by subject, and polling is not designed for. The proxy must expose this path to the provider and nothing else (REQ-CFG-036).
+**Logout token (REQ-AUTH-083/098).** A provider's back-channel logout token is verified by this sequence's key machinery (steps 2–4: pinned algorithm, `jwks_uri` keys and cache, signature) with its own claim rules in place of steps 5–9. That sequence is Sequence L (§2.14).
 
 ### 2.11 Authentication connection diagnostics (REQ-AUTH-085)
 
@@ -279,6 +281,62 @@ browser          client server            CLARA web (PHP)                    CLA
 
 **Not covered.** The idle timeout of the CLARA session does not end a grant: an idle CLARA tab must not sign the user out of a client being used, so each side applies its own idle rule. The grant gives no access to CLARA's API, so a client cannot read projects or data with it. A user with no CLARA account who signs in through LDAP or OAuth2 gets one in no project (REQ-AUTH-091): the client is told who they are, and CLARA grants them nothing until an administrator adds them to a project.
 
+### 2.14 Sequence L — single sign-out with the provider (REQ-AUTH-083, REQ-AUTH-097…099, DEV-AUTH-23)
+
+Active only with `OIDC_SINGLE_SIGN_OUT=1` (REQ-CFG-036), and only for OAuth2 providers. It has two directions, which share nothing at run time: CLARA telling the provider that the user signed out (L1), and the provider telling CLARA (L2). Startup refuses the switch unless every configured provider has both `OAUTH2_N_POST_LOGOUT_REDIRECT_URI` and `OAUTH2_N_BACKCHANNEL_LOGOUT_PATH`, and `OAUTH2_N_SUBJECT_ATTR` left at `sub` (`System_Configuration_Design.md` §4.1).
+
+```
+L1  Browser          PHP (web)                        Go API                       Provider
+     | POST /logout     |                                |                             |
+     |----------------->| Sequence D 2.5 sso/end         |                             |
+     |                  | 2.7 POST auth/oauth/end-session|                             |
+     |                  |------------------------------->| discovery: end_session_     |
+     |                  |<-- {end_session_url, state} ---|   endpoint                  |
+     |                  | 3 auth/logout · 4 destroy      |                             |
+     |<-- 302 end_session_url (new pre-auth session: oidc_logout_state) ---------------|
+     |-------------------------------------------------------------------------------->| ends its session
+     |<-- 302 /auth/logged-out?state=… ------------------------------------------------|
+     |----------------->| state check (single use) → 302 /login (or client LOGOUT_URI)|
+
+L2  Provider (server)    PHP (web)                          Go API
+     | POST /auth/backchannel-logout/<seg>  logout_token=…    |
+     |--------------------->| POST auth/oauth/backchannel-logout {provider, logout_token}
+     |                      |-------------------------------->| verify (L2.3) · one tx (L2.4)
+     |                      |<-- {matched, user_id, clients} -|
+     |                      | remove the account's session files (§3)
+     |<-- 200 (empty, no-store) | 400 {"error":"invalid_request"} | 503 ------------------|
+```
+
+**L1 — CLARA-initiated sign-out** (REQ-AUTH-097). Runs inside Sequence D (§2.4 steps 2.7, 4.5).
+
+1. **Address.** `POST /api/v1/auth/oauth/end-session` resolves provider N's discovery document through the same cache as Sequence A and reads `end_session_endpoint`. It appends `client_id`, `post_logout_redirect_uri` and a fresh 32-byte base64url `state` to it, keeping any query the endpoint already carries, and returns the address and the `state`. It sends no `id_token_hint` (DEV-AUTH-23) and stores nothing (GD-1).
+2. **The browser leaves.** PHP finishes CLARA's sign-out first (grants, audit, session destruction), so a provider that never sends the browser back leaves nothing of the CLARA session behind. The fresh pre-authentication session holds only `oidc_logout_state = {state, at, return}`. `return` is the registered `SSO_CLIENT_N_LOGOUT_URI` when the sign-out came from a client's sign-out link (`POST /sso/logout`, §2.13 step 6); otherwise it is empty.
+3. **The browser returns** to `GET /auth/logged-out?state=…` (guard `public`). PHP compares `state` with `oidc_logout_state.state` in constant time and clears the key whatever the outcome. A match within 10 minutes of `at` goes to `return`, or to `/login` with the "signed out of CLARA and of the provider" line. Anything else — no state, a wrong one, an expired one, no pre-authentication session — goes to `/login` with the plain "signed out of CLARA" line (REQ-UI-088). The return changes no session and no account: it only chooses a line of text, so a forged return gains nothing.
+
+**L2 — provider-initiated sign-out** (REQ-AUTH-098/099).
+
+1. **Receive.** The provider POSTs `application/x-www-form-urlencoded` with `logout_token` to `OAUTH2_N_BACKCHANNEL_LOGOUT_PATH` (one path per provider under `/auth/backchannel-logout/`). The route is `'session' => false` and takes no CSRF token, like `POST /sso/token`: the signed token is the credential (DEV-TECH-4). The configured path selects provider N; a path naming no provider is 404. A request without exactly one `logout_token`, or with a body above 16 KiB, is answered 400 `{"error":"invalid_request"}` without calling the API. The reverse proxy exposes this prefix to the provider's addresses and nothing else (REQ-CFG-036, INSTALL.md §11).
+2. **Relay.** PHP → API `POST /api/v1/auth/oauth/backchannel-logout` `{provider: N, logout_token}` with the service token and no user header (DEV-API-46).
+3. **Verify** (refusals are 400 `invalid_logout_token`; the audit reason of REQ-AUD-039 is in brackets):
+   1. Compact JWS in three parts, header and payload valid JSON objects [`malformed`].
+   2. Header `alg` equals `OAUTH2_N_ID_TOKEN_ALG`, checked before a key is consulted; `typ`, when present, is `logout+jwt` (case-insensitive, an `application/` prefix allowed) [`algorithm`].
+   3. Key from `jwks_uri`, using Sequence J step 3's cache and its single refetch on an unknown `kid` [`unknown_key`]; the signature verifies over the exact header-payload bytes [`signature`].
+   4. `iss` equals provider N's issuer; `aud` equals or contains its client id; `iat` is present, not more than the 120 s skew in the future, and not older than 10 minutes; `exp`, when present, has not passed (with the same skew) [`claims`].
+   5. `events` is an object with the member `http://schemas.openid.net/event/backchannel-logout`, whose value is an object [`events`].
+   6. No `nonce` claim [`nonce_present`] — so an ID token can never pass as a logout token.
+   7. `sub` is a non-empty string of at most 255 characters [`subject_missing`]. A token that carries only `sid` is refused (DEV-AUTH-23).
+   8. `jti` is a non-empty string of at most 255 characters [`jti_missing`].
+4. **Apply** in one write transaction (`IMMEDIATE`, `Database_Schema_Design.md` §10):
+   1. Delete the `oidc_logout_jtis` rows whose `expires_at` has passed; insert `(SHA-256(issuer ‖ 0x00 ‖ jti), iat + 10 min + 120 s)`. A key conflict is a replay: roll back, audit `provider_logout_rejected` with `replayed`, and answer 400.
+   2. Look up `provider_subject_links` by (`iss`, `sub`). No row → `matched: false`; skip to step 5.
+   3. Raise the account's `session_epoch` (REQ-AUTH-074). Every CLARA session of the account, whatever its source, gets 401 `session_revoked` on its next API call (REQ-API-147).
+   4. End every row of `sso_grants` with this `user_id` and `ended_at IS NULL`, collecting their distinct `client_id`s first. This covers codes and grants issued under every sign-in of the account, not only one `sid` as `POST /api/v1/sso/end` does. A client's next `POST /sso/check` answers `active: false` with `reason: ended`.
+   5. Write `provider_logout` `{issuer, provider_subject, matched, clients}`, with the account as acting user, or none when unmatched (REQ-AUD-039).
+   6. Commit. A failure anywhere rolls everything back, including the `jti` row, so the provider's retry of the same token is accepted rather than refused as a replay.
+5. **Answer.** The API answers `{status: "ok", matched, user_id, clients}`. When `matched`, PHP deletes the session files listed in the account's session index (§3). The epoch raise already ends each session at its next API call; deleting the files also ends it on a request that would not have called the API. PHP answers the provider 200 with an empty body; a 400 from the API is relayed as 400 `{"error":"invalid_request"}`; an unreachable API is 503 `{"error":"temporarily_unavailable"}`, which the provider may retry. Every answer carries `Cache-Control: no-store`.
+
+**What it does not do.** No front-channel logout and no session-management iframe (PingFederate offers neither the iframe nor `sid`, §2.10). L1 does not wait for the provider to confirm. A user who closes the tab on the provider's page is still signed out of CLARA. L2 resolves by subject only, so it ends every session of the person, not just the one browser the provider had in mind (DEV-AUTH-23).
+
 ## 3. Session Schema (GD-1)
 
 The session is owned by the PHP web application: PHP-native session, file storage in `SESSION_DIR` (MUST NOT be the application database, REQ-CFG-017). The API never sees the session (GD-1, REQ-API-044).
@@ -301,11 +359,15 @@ The session is owned by the PHP web application: PHP-native session, file storag
 | `oauth2_state` | `/login` | 16-byte random hex | callback (single use) |
 | `oauth2_pkce_verifier` | `/login` | random (S256) | callback (single use) |
 | `sso_sid` | the first client code of this sign-in (§2.13) | 32-byte random hex — the sign-in id whose hash binds client grants to this session; kept across id rotation, never sent to a client | logout (after `POST /api/v1/sso/end`), or any new sign-in |
+| `oauth2_provider` | OAuth2 login | the `N` of the provider the session signed in through — selects the provider of Sequence L1 (§2.14) | logout / timeout |
+| `oidc_logout_state` | Sequence D step 4.5, in a fresh **pre-authentication** session that holds nothing else | `{state, at, return}` (§2.14 L1) — never signed in, never rendered | `GET /auth/logged-out` (single use), or 10 minutes |
 | `_login_next` | `/login` before an OAuth2 redirect (REQ-AUTH-096) | the same-site landing path the provider's callback cannot carry | the callback (single use) |
 | `tombstone` | id rotation, on the **replaced** id only | `{successor, at, user_id}` — the only key a replaced id holds; never signed in, never rendered (§3.1) | replay detection, or session GC |
 | `tfa_pending` | login 401 `mfa_required` / `tfa_enrollment_required` (§2.7) | `{email, source, verified_at}` plus `user_id` on `tfa_enrollment_required` (drives the wizard, §2.7), plus `first_factor` on the local path — the handle of REQ-API-131 that stands in for the password when the code is submitted, so the credential is never persisted here — **pre-authentication**: not a session; every page guard rejects it | second factor verified or enrollment completed (promoted via `session_regenerate_id(true)`), or TTL 5 min / abort |
 
 The identity keys above are written **only after the two-factor gate has passed** for accounts with a method other than `off` (GD-21, §2.7); while only `tfa_pending` exists, no authenticated page is reachable.
+
+**Session index** (REQ-AUTH-083/099). With `OIDC_SINGLE_SIGN_OUT=1`, PHP keeps one index file per account under `SESSION_DIR` (mode 0700, the same directory and permissions as the sessions). It lists the live session ids of that account. PHP adds the id at login and on every id rotation (§3.1), and removes it at logout, at the end of a session, and when it finds a listed id that no longer exists. Sequence L2 reads it to delete the files of a signed-out account. The index is keyed by user id, which is what the API returns, and not by provider subject: PHP never sees the subject. An index that is wrong costs only promptness, because the epoch raise ends every session regardless.
 
 All page reads go through a single `require_login()` helper; a missing session redirects to `/login`. The session stores **identity only** — no permissions, no project tokens, no data: permissions are re-derived from the API on every request (REQ-AUTH-033), and project tokens live in `user_projects.token`, never in the session.
 
@@ -478,6 +540,7 @@ Rules:
 
 - **Whether the provider echoes `nonce`** is an observed fact, not a documented one — PingFederate's OIDC policy settings expose no nonce option and its discovery sample shows none. `OAUTH2_N_NONCE_REQUIRED` stays at `0` until one live exchange has been inspected per provider (REQ-AUTH-079).
 - **The JSON type of `email_verified`** under the mapping a given installation chooses, and whether that directory can attest verification at all. If it cannot, the honest configuration is to say so in the installation notes rather than map a constant true (REQ-AUTH-078).
+- **What the provider's logout token and logout endpoint accept** (ASM-AUTH-7): that its back-channel token carries `sub`, and that its RP-initiated logout accepts `client_id` with the registered `post_logout_redirect_uri` without `id_token_hint`. Observe one live sign-out in each direction before enabling `OIDC_SINGLE_SIGN_OUT` (§2.14).
 - **Provider version floor and entitlements.** Back-channel logout needs PingFederate 11.3 or newer and RP-initiated logout 12.0 or newer; nothing public gates these behind an entitlement, but licensing is by managed identities and enforcement can be by licence key, so both are confirmations to obtain rather than assumptions to design on (ASM-AUTH-6).
 - **Which PingFederate attribute carries the region roles**, and whether the attribute contract releases it to the ID token or to userinfo only, is installation-specific. The installation records the claim name in `OAUTH2_N_ROLES_ATTR` and checks it with the Authentication Test (§2.11) before relying on sign-in regions. Reading LDAP `memberOf` for the same mapping is not designed.
 - **A pairwise subject's sector identifier** must be recorded per installation and treated as immutable: changing it invalidates every stored `sub` and orphans the account links built with it (REQ-AUTH-080).
@@ -520,4 +583,10 @@ Why authentication and authorization are built this way, and what each choice co
 | A rotated cookie never reaches the browser, and the next request comes after more than 60 s | Reads as a replay: the user signs in again, and the audit trail shows it | §3.1 |
 | A password change, disable, or 2FA reset elsewhere | The account epoch rises; every other session gets 401 `session_revoked` on its next API call | §3.1, §6 |
 | Production with `SESSION_COOKIE_SECURE=0` | Startup is refused | §3, §3.1 |
+| Provider sign-out address cannot be built (discovery fails, no `end_session_endpoint`) | CLARA's sign-out completes; the login page says the provider sign-in may still be active | §2.4, §2.14 L1 |
+| The browser returns to `/auth/logged-out` with no or a wrong `state` | The plain "signed out of CLARA" line; no session or account changes | §2.14 L1 |
+| A logout token is presented a second time | Refused as `replayed` while its `jti` is in the replay window; after the window it is refused by age | §2.14 L2, REQ-DB-057 |
+| A logout token names a subject with no account link | 200 to the provider, `provider_logout` with `matched: false`; nothing ends | §2.14 L2 |
+| The API fails while applying a logout token | Nothing is recorded, the provider gets 503 and may retry; the retry is not a replay | §2.14 L2 |
+| An ID token is posted to the back-channel path | Refused: it carries `nonce` or lacks `events` | §2.14 L2 |
 | Unknown or disabled acting user on `/api/v1/*` | 403, `admin_rejected` audited; a disabled account keeps its 403 even with a stale epoch | §6 |
