@@ -319,7 +319,7 @@ L2  Provider (server)    PHP (web)                          Go API
 2. **Relay.** PHP → API `POST /api/v1/auth/oauth/backchannel-logout` `{provider: N, logout_token}` with the service token and no user header (DEV-API-46).
 3. **Verify** (refusals are 400 `invalid_logout_token`; the audit reason of REQ-AUD-039 is in brackets):
    1. Compact JWS in three parts, header and payload valid JSON objects [`malformed`].
-   2. Header `alg` equals `OAUTH2_N_ID_TOKEN_ALG`, checked before a key is consulted; `typ`, when present, is `logout+jwt` (case-insensitive, an `application/` prefix allowed) [`algorithm`].
+   2. Header `alg` equals `OAUTH2_N_ID_TOKEN_ALG`, checked before a key is consulted; `typ`, when present, is `logout+jwt` or `JWT` (case-insensitive, an `application/` prefix allowed); any other value is refused [`algorithm`]. An ID token cannot pass on its `typ` alone, because steps 5 and 6 refuse it (DEV-AUTH-23).
    3. Key from `jwks_uri`, using Sequence J step 3's cache and its single refetch on an unknown `kid` [`unknown_key`]; the signature verifies over the exact header-payload bytes [`signature`].
    4. `iss` equals provider N's issuer; `aud` equals or contains its client id; `iat` is present, not more than the 120 s skew in the future, and not older than 10 minutes; `exp`, when present, has not passed (with the same skew) [`claims`].
    5. `events` is an object with the member `http://schemas.openid.net/event/backchannel-logout`, whose value is an object [`events`].
