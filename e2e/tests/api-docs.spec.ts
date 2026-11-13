@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test"
+import type { Page } from "@playwright/test"
+import { expect, test } from "./fixtures"
 
 // The Control Panel's API documentation section (REQ-UI-057): the left panel links it, and the
 // section renders the API's OpenAPI document with the vendored Swagger UI — read-only, the Data

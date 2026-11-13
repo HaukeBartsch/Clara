@@ -1,4 +1,5 @@
-import { expect, test, type APIRequestContext, type Browser, type Page } from "@playwright/test"
+import type { APIRequestContext, Browser, Page } from "@playwright/test"
+import { expect, holdUntilReady, test } from "./fixtures"
 
 // M6 — the export action (User_Interface_Design.md §6.4, REQ-UI-020): the page states the
 // sensitivity level before the download starts, the level follows the arm selection (the most
@@ -38,7 +39,7 @@ async function signIn(page: Page, email: string, password: string): Promise<void
 }
 
 async function newPage(browser: Browser): Promise<Page> {
-  return (await browser.newContext()).newPage()
+  return (await holdUntilReady(await browser.newContext())).newPage()
 }
 
 test.describe("export (M6)", () => {

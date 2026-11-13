@@ -241,6 +241,23 @@ test.describe("reverse-proxy reference configurations", () => {
     expect(guide).toContain(`Require ip ${PLACEHOLDER}`)
   })
 
+  test("the data API answers with nosniff and keeps HSTS, in both servers", () => {
+    // The data API's plain-text and CSV answers carry an explicit Content-Type that a browser must
+    // not second-guess (docs/Static_Analysis_Triage.md, the Go response-writer row). Apache sets
+    // the header at vhost level; nginx needs it inside the location, and because a location's
+    // add_header replaces the server-level ones, HSTS has to be repeated there or it is lost.
+    const nginx = codeOnly(read(NGINX_FILE))
+    const start = nginx.indexOf("location = /api/ {")
+    expect(start, "nginx lost its data API location").toBeGreaterThan(-1)
+    const block = nginx.slice(start, nginx.indexOf("location /api/ {", start))
+    expect(block).toContain('add_header X-Content-Type-Options "nosniff" always;')
+    expect(block, "the data API location drops the server's HSTS").toContain(
+      'add_header Strict-Transport-Security "max-age=31536000" always;',
+    )
+
+    expect(codeOnly(read(APACHE_FILE))).toContain('Header always set X-Content-Type-Options "nosniff"')
+  })
+
   test("each file names the other, so a change lands in both", () => {
     expect(read(NGINX_FILE)).toContain("deploy/apache2/clara.conf")
     expect(read(APACHE_FILE)).toContain("deploy/nginx/clara.conf")
@@ -337,6 +354,9 @@ if (PROXY && BASE) {
       // 401 from the API, not a proxy page: the body is REDCap's own line (§13.1).
       expect(response.status()).toBe(401)
       expect(await response.text()).toContain("Invalid token")
+      // The edge's headers reach this route too: nosniff, and HSTS not lost to a location block.
+      expect(response.headers()["x-content-type-options"] ?? "").toBe("nosniff")
+      expect(response.headers()["strict-transport-security"] ?? "").toContain("max-age=31536000")
     })
 
     test("a caller cannot claim an internal identity", async ({ request }) => {

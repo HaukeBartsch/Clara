@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test"
+import type { Page } from "@playwright/test"
+import { expect, test } from "./fixtures"
 
 // The transfer field type end to end (REQ-DB-050, REQ-UI-065, REQ-API-165): designed as raw
 // copy instructions in the field editor, executed as a confirmed button in data entry, and

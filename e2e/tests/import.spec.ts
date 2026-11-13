@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test"
+import type { Page } from "@playwright/test"
+import { expect, test } from "./fixtures"
 
 // The instrument import end to end (REQ-UI-053, REQ-API-152): two REDCap dictionaries chosen in
 // one go are previewed in file-name order, reordered — which moves the record identifier — and

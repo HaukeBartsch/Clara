@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test"
+import type { Page } from "@playwright/test"
+import { expect, test } from "./fixtures"
 
 // Repeating instruments end to end (REQ-UI-054, REQ-UI-055, REQ-API-154/155): a second instrument
 // is switched to repeating at baseline in the Design page's dropdown, filled out once, then a

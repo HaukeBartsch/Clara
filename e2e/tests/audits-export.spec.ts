@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test"
+import type { Page } from "@playwright/test"
+import { expect, test } from "./fixtures"
 import { readFileSync } from "node:fs"
 
 // The Audits page's Export control (§5.6, REQ-UI-058): clicking it downloads the filtered

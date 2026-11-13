@@ -201,3 +201,17 @@ export function ready(fn) {
   }
   fn()
 }
+
+// The page is wired: <html data-clara-ready> once every module of the page has run its ready()
+// callbacks. Page modules are deferred, so all of them — and this runtime, which each imports —
+// are evaluated before DOMContentLoaded; a callback either ran during that evaluation or is a
+// DOMContentLoaded listener registered after this one. The task queued from this listener
+// therefore runs after all of them. Nothing in the application reads the marker; the browser specs
+// wait for it before acting on a page a click has just opened (e2e/tests/fixtures.ts), since a
+// field typed into before its module ran never fires the handler the spec is testing.
+const markReady = () => setTimeout(() => document.documentElement.setAttribute("data-clara-ready", ""), 0)
+if (document.readyState === "complete") {
+  markReady()
+} else {
+  document.addEventListener("DOMContentLoaded", markReady, { once: true })
+}

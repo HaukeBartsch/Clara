@@ -1,4 +1,5 @@
-import { expect, test, type APIRequestContext, type Page } from "@playwright/test"
+import type { APIRequestContext, Page } from "@playwright/test"
+import { expect, holdUntilReady, test } from "./fixtures"
 
 // M6 — the responsive pass (Plan/Web_Implementation.md §6; REQ-UI-032, AGENTS.md: "keep tables
 // responsive on tablets and phones"). Every page type renders at phone and tablet width
@@ -80,7 +81,7 @@ test.describe("responsive pass (M6)", () => {
 
     const offenders: string[] = []
     for (const viewport of VIEWPORTS) {
-      const context = await browser.newContext({ viewport: { width: viewport.width, height: viewport.height } })
+      const context = await holdUntilReady(await browser.newContext({ viewport: { width: viewport.width, height: viewport.height } }))
       const page = await context.newPage()
 
       // Public pages first, without a session.

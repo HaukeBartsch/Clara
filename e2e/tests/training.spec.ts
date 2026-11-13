@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test"
+import type { Page } from "@playwright/test"
+import { expect, test } from "./fixtures"
 
 // The Training page (REQ-UI-059): the header links it, the page shows one card per plan installed
 // under web/assets/training/, and a card opens a modal with the plan's picture gallery above its

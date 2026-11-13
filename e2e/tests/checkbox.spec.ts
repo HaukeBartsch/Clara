@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test"
+import type { Page } from "@playwright/test"
+import { expect, test } from "./fixtures"
 
 // The checkbox field type end to end (REQ-DB-042, REQ-EXP-053, REQ-UI-025): designed with its
 // choices, entered as one box per choice — branching and the required check reading the boxes —

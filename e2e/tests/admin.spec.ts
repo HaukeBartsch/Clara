@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test"
+import type { Page } from "@playwright/test"
+import { expect, test } from "./fixtures"
 
 // M3 exit criterion (Plan/Web_Implementation.md §6, charter success criterion 3): a full project
 // lifecycle — create project, add role, add member, show token once, rotate, remove — entirely

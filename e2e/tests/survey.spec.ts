@@ -1,4 +1,5 @@
-import { expect, test, type APIRequestContext } from "@playwright/test"
+import type { APIRequestContext } from "@playwright/test"
+import { expect, holdUntilReady, test } from "./fixtures"
 
 // M6 — the public survey page (User_Interface_Design.md §8.8, REQ-UI-028): a link issued from
 // the record view opens in a browser that holds no session, shows the link's instrument with
@@ -74,7 +75,7 @@ test.describe("public survey page (M6)", () => {
     expect(link.startsWith(`${baseURL}/s/`)).toBeTruthy()
 
     // --- the respondent: a fresh browser, no session ---
-    const respondent = await (await browser.newContext()).newPage()
+    const respondent = await (await holdUntilReady(await browser.newContext())).newPage()
     const requests: string[] = []
     respondent.on("request", (r) => requests.push(r.url()))
     const response = await respondent.goto(link)
@@ -218,7 +219,7 @@ test.describe("public survey page (M6)", () => {
     await expect(page.locator('.clara-record-status [data-record="S002"]')).toBeVisible()
 
     // --- and the link is a working survey for that participant ---
-    const respondent = await (await browser.newContext()).newPage()
+    const respondent = await (await holdUntilReady(await browser.newContext())).newPage()
     expect((await respondent.goto(link))?.status()).toBe(200)
     await expect(respondent.getByText("Are you happy?")).toBeVisible()
   })

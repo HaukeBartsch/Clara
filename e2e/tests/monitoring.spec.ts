@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test"
+import type { Page } from "@playwright/test"
+import { expect, test } from "./fixtures"
 
 // The Control Panel's Monitoring section (REQ-UI-064): the left panel links it between Settings
 // and Configuration Check, the first paint renders from the API's metrics and blocked-ips reads,

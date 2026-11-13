@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test"
+import type { Page } from "@playwright/test"
+import { expect, test } from "./fixtures"
 
 // M4 exit criterion (Plan/Web_Implementation.md §6): an instrument designed from scratch —
 // choices, validation, branching and a calculated field tested against a record — and, in

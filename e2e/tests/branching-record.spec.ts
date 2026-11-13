@@ -1,4 +1,5 @@
-import { expect, test, type Locator, type Page } from "@playwright/test"
+import type { Locator, Page } from "@playwright/test"
+import { expect, test } from "./fixtures"
 
 // Field branching against one record's values (GD-13, REQ-VAL-029, Data_Validation_Design.md
 // §7.3/§7.4, User_Interface_Design.md §8.4). branching.spec.mjs proves the evaluator on its

@@ -680,6 +680,13 @@ server {
         proxy_set_header   X-Internal-User-Id "";
         proxy_set_header   X-Internal-Session-Epoch "";
 
+        # nosniff: the answers are JSON, CSV, XML or plain text with an explicit Content-Type,
+        # and a browser must not read them as anything else (Apache sets it on every response).
+        # A location's add_header replaces the server-level ones instead of adding to them, so
+        # HSTS is repeated here, as in the asset locations below.
+        add_header Strict-Transport-Security "max-age=31536000" always;
+        add_header X-Content-Type-Options "nosniff" always;
+
         # exports stream and can take minutes
         proxy_buffering    off;
         proxy_read_timeout 600s;

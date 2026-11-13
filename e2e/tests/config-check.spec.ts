@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test"
+import type { Page } from "@playwright/test"
+import { expect, test } from "./fixtures"
 
 // The Control Panel's Configuration Check section (REQ-UI-061): the left panel links it between
 // Settings and API documentation, the server-rated groups render from the PHP probe and the

@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test"
+import type { Page } from "@playwright/test"
+import { expect, test } from "./fixtures"
 
 // The yesno and notes field types end to end (REQ-DB-043/044, REQ-UI-025): designed without a
 // choice editor, entered as a Yes/No radio pair — branching reading the answer by its label —

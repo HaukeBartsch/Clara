@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test"
+import type { Page } from "@playwright/test"
+import { expect, test } from "./fixtures"
 
 // Moving a field end to end (REQ-UI-056, REQ-API-157): a field that already holds a value is
 // moved out of the first instrument into a second one through the field list's Move dialog —

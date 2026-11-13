@@ -1,4 +1,5 @@
-import { expect, test, type APIRequestContext, type Page } from "@playwright/test"
+import type { APIRequestContext, Page } from "@playwright/test"
+import { expect, holdUntilReady, test } from "./fixtures"
 
 // The preferred region (master spec "Organization by hospital regions"): the overview groups the
 // projects by region, the user's own first and recency inside each group (REQ-UI-076); the
@@ -71,7 +72,7 @@ test.describe("preferred region (REQ-UI-075/076/078)", () => {
     await project(request, `Region OUS ${tag}`, "OUS", [user.id])
     await project(request, `Region Ahus ${tag}`, "Ahus", [user.id])
 
-    const page = await (await browser.newContext()).newPage()
+    const page = await (await holdUntilReady(await browser.newContext())).newPage()
     await signIn(page, user.email, user.password)
     await page.goto("/")
     // No region yet: every group in REQ-DB-006 order.
@@ -105,7 +106,7 @@ test.describe("preferred region (REQ-UI-075/076/078)", () => {
     await project(request, `One A ${tag}`, "OUS", [user.id])
     await project(request, `One B ${tag}`, "OUS", [user.id])
 
-    const page = await (await browser.newContext()).newPage()
+    const page = await (await holdUntilReady(await browser.newContext())).newPage()
     await signIn(page, user.email, user.password)
     await page.goto("/")
     await expect(page.locator("[data-region='projects'] .clara-project-open")).toHaveCount(2)
@@ -122,13 +123,13 @@ test.describe("preferred region (REQ-UI-075/076/078)", () => {
     // project-scoped event of theirs (REQ-API-162).
     await api(request, "POST", `/api/v1/users/me/projects/${id}/token-reveal`, undefined, String(second.id))
 
-    const firstPage = await (await browser.newContext()).newPage()
+    const firstPage = await (await holdUntilReady(await browser.newContext())).newPage()
     await signIn(firstPage, first.email, first.password)
     await firstPage.goto("/")
     const firstBox = firstPage.locator("[data-region='projects'] .clara-project-cell", { hasText: name })
     await expect(firstBox.locator(".clara-project-used")).toHaveText("Never opened")
 
-    const secondPage = await (await browser.newContext()).newPage()
+    const secondPage = await (await holdUntilReady(await browser.newContext())).newPage()
     await signIn(secondPage, second.email, second.password)
     await secondPage.goto("/")
     const secondBox = secondPage.locator("[data-region='projects'] .clara-project-cell", { hasText: name })

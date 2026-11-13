@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test"
+import type { Page } from "@playwright/test"
+import { expect, test } from "./fixtures"
 
 // The project overview keeps itself current (REQ-UI-073, User_Interface_Design.md §4): a project
 // created elsewhere appears on an overview that is already open, with the heading's count, and

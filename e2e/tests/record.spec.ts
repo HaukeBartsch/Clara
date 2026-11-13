@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test"
+import type { Page } from "@playwright/test"
+import { expect, test } from "./fixtures"
 
 // M5 exit criterion (Plan/Web_Implementation.md §6) — charter success criterion 2: a data-entry
 // user creates, reads and updates values through the UI; a partially filled instrument stores

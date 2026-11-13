@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test"
+import type { Page } from "@playwright/test"
+import { expect, test } from "./fixtures"
 
 // The Audits page's two logs and their filters (§5.6, REQ-UI-066, REQ-AUD-035): the Event
 // filter belongs to the events log alone — the API refuses it with any other log (REQ-API-077) —

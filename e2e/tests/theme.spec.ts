@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test"
+import type { Page } from "@playwright/test"
+import { expect, test } from "./fixtures"
 
 // Theme regression (REQ-UI-040): every installed theme must keep the header legible.
 // Bootswatch compiles the navbar brand for a light navbar and only flips it under

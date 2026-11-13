@@ -65,7 +65,18 @@ mariadb() {
 cleanup() {
   trap - INT TERM EXIT
   [[ -n "${api_pid:-}" ]] && kill "$api_pid" 2>/dev/null || true
-  [[ -n "${web_pid:-}" ]] && kill "$web_pid" 2>/dev/null || true
+  if [[ -n "${web_pid:-}" ]]; then
+    # `php -S` with PHP_CLI_SERVER_WORKERS forks its workers, and stopping the parent does not stop
+    # them: they outlive it as orphans of PID 1, still holding the web port, and the next run's
+    # preflight refuses to start. So the workers go first — found by their parent while it still is
+    # their parent — then the parent, and the port is waited for so the next run finds it free.
+    pkill -TERM -P "$web_pid" 2>/dev/null || true
+    kill "$web_pid" 2>/dev/null || true
+    for _ in $(seq 1 20); do
+      (exec 3<>"/dev/tcp/127.0.0.1/$web_port") 2>/dev/null || break
+      sleep 0.25
+    done
+  fi
   if [[ "$db_engine" == mariadb ]]; then
     mariadb -e "DROP DATABASE IF EXISTS \`$mariadb_name\`" 2>/dev/null || true
   fi
@@ -175,7 +186,14 @@ printf '<?php\ndefine(%s, %s);\n' "'CLARA_REPO_ROOT'" "'$state'" > "$state/repo-
 
 # `php -S` with the front controller as router script: requests for paths that are not files under
 # web/public (every route, and /assets/*, which lives outside the document root) go to index.php.
+#
+# Twelve worker processes (PHP_CLI_SERVER_WORKERS; set it to override). A single `php -S` answers
+# one request at a time, every asset included, while Playwright runs its specs fully parallel: one
+# slow request — a sign-in racing two unreachable directories, a streamed export — then holds back
+# the scripts of every other page, and specs fail on behaviour that simply had not loaded yet.
+# Production runs PHP-FPM with a pool of workers (INSTALL.md §10); this is the same shape.
 env APP_ENV=development \
+  PHP_CLI_SERVER_WORKERS="${PHP_CLI_SERVER_WORKERS:-12}" \
   API_ADDR="127.0.0.1:$api_port" \
   INTERNAL_SERVICE_TOKEN="$service_token" \
   WEB_PUBLIC_URL="http://127.0.0.1:$web_port" \

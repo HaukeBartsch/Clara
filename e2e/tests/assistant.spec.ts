@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test"
+import type { Page } from "@playwright/test"
+import { expect, test } from "./fixtures"
 import { readFileSync } from "node:fs"
 import path from "node:path"
 import url from "node:url"
@@ -384,7 +385,10 @@ test.describe("clara assistant (AI_Assistant)", () => {
     await signInAsAdmin(page)
     await page.goto("/admin?section=assistant")
 
-    const call = () => mcp(page, "tools/call", { name: "create_records", arguments: { project_id: 1, records: [{ record_id: "spec-row" }] } })
+    // A project id no stack reaches: only the mode gate is under test here, and once it lets the
+    // call through, a real id would put "spec-row" into whichever spec's project happened to be
+    // created first on the stack (export.spec.ts counts its records exactly).
+    const call = () => mcp(page, "tools/call", { name: "create_records", arguments: { project_id: 2147483647, records: [{ record_id: "spec-row" }] } })
 
     // Read-only (the default): the dispatcher refuses before anything reaches the API (REQ-AI-006).
     const refused = await call()

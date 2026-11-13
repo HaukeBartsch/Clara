@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test"
+import type { Page } from "@playwright/test"
+import { expect, pageReady, test } from "./fixtures"
 
 // M6 — the Tabulator-backed data table REQ-TECH-028 names as essential coverage, and with it
 // the client half of the page/data-region split (REQ-UI-044): the Translations editor's rows
@@ -137,6 +138,8 @@ test.describe("translations key table (M6, REQ-TECH-028)", () => {
     await page.goto("/admin?section=translations")
     await expect(page.locator("#clara-translations")).toContainText("Retry")
 
+    // The fixture's readiness hold also reads as disabled, so these assert on a ready page only.
+    await pageReady(page)
     await expect(page.locator("#tr-export")).toBeDisabled()
     await expect(page.locator("#tr-import-file")).toBeDisabled()
     // The label is what the user sees: it must look disabled too, not like a live button.

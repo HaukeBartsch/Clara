@@ -1,4 +1,5 @@
-import { expect, test, type APIRequestContext, type Page } from "@playwright/test"
+import type { APIRequestContext, Page } from "@playwright/test"
+import { expect, test } from "./fixtures"
 
 // Record Status Dashboard display time for a large project (User_Interface_Design.md §6.3,
 // REQ-UI-019) — a measurement, so it runs only when CLARA_PERF_PROJECT names a project that is

@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test"
+import type { Page } from "@playwright/test"
+import { expect, test } from "./fixtures"
 
 // An imported instrument renamed with spaces and mixed case, end to end: a REDCap instrument export (.zip with
 // instrument.csv + OriginID.txt) is imported into a fresh project, the record identifier moves

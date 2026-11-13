@@ -1,5 +1,6 @@
 import { createHmac } from "node:crypto"
-import { expect, test, type APIRequestContext, type Page } from "@playwright/test"
+import type { APIRequestContext, Page } from "@playwright/test"
+import { expect, holdUntilReady, test } from "./fixtures"
 
 // The account page (User_Interface_Design.md §2.8, REQ-UI-063): reached from the header's
 // account menu, it carries what the footer used to — language, theme, two-factor, password,
@@ -80,7 +81,7 @@ test.describe("account page (REQ-UI-063)", () => {
       { project_name: `Account ${tag}`, organization: "Org", participant_names: "A[0-9][0-9][0-9]" })
     const { token } = await admin(request, "PUT", `/api/v1/projects/${project.id}/users/${user.id}`, { role: null })
 
-    const member = await (await browser.newContext()).newPage()
+    const member = await (await holdUntilReady(await browser.newContext())).newPage()
     await signIn(member, email, password)
     await member.goto("/account/tokens")
     const row = member.locator(`tr[data-project-id="${project.id}"]`)
@@ -113,7 +114,7 @@ test.describe("account page (REQ-UI-063)", () => {
     const password = `qr-${tag}-password`
     await admin(request, "POST", "/api/v1/users", { email, display_name: `QR ${tag}`, password })
 
-    const member = await (await browser.newContext()).newPage()
+    const member = await (await holdUntilReady(await browser.newContext())).newPage()
     const refused: string[] = []
     member.on("console", (message) => {
       if (/Content Security Policy/i.test(message.text())) refused.push(message.text())

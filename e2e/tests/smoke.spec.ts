@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test"
+import { expect, test } from "./fixtures"
 
 // Harness smoke tests (REQ-TECH-028): they prove Playwright drives a real browser before any
 // `web/` page exists to point it at, and pin the two client assumptions the UI rests on — DOM

@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test"
+import type { Page } from "@playwright/test"
+import { expect, test } from "./fixtures"
 
 // The browser half of Sequence I (Authentication_Authorization_Design.md §2.9) against a running
 // stack: what the source picker offers for a name, and how a directory behind that name changes the

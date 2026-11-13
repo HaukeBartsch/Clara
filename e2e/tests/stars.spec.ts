@@ -1,4 +1,5 @@
-import { expect, test, type APIRequestContext, type Locator, type Page } from "@playwright/test"
+import type { APIRequestContext, Locator, Page } from "@playwright/test"
+import { expect, holdUntilReady, test } from "./fixtures"
 
 // The overview's search and starred projects (User_Interface_Design.md §4): the search beside the
 // project count filters every group by name, and a group with nothing left goes with its heading
@@ -74,7 +75,7 @@ test.describe("overview search and starred projects (REQ-UI-086/087)", () => {
     await project(request, `Search Beta ${tag}`, "OUS", [user.id])
     await project(request, `Search Alpha Ahus ${tag}`, "Ahus", [user.id])
 
-    const page = await (await browser.newContext()).newPage()
+    const page = await (await holdUntilReady(await browser.newContext())).newPage()
     await signIn(page, user.email, user.password)
     await page.goto("/")
     await expect.poll(() => headings(page)).toEqual(["Your region: OUS · 2", "Ahus · 1"])
@@ -117,7 +118,7 @@ test.describe("overview search and starred projects (REQ-UI-086/087)", () => {
     const two = await project(request, `Star Two ${tag}`, "OUS", [user.id])
     await project(request, `Star Three ${tag}`, "Ahus", [user.id])
 
-    const page = await (await browser.newContext()).newPage()
+    const page = await (await holdUntilReady(await browser.newContext())).newPage()
     await signIn(page, user.email, user.password)
     await page.goto("/")
     const star = page.getByRole("button", { name: `Star Star Two ${tag}`, exact: true })

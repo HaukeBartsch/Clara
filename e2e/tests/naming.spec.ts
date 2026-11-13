@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test"
+import type { Page } from "@playwright/test"
+import { expect, test } from "./fixtures"
 
 // Record naming mode (REQ-UI-052) end to end: the Setup block flips the project between
 // auto-name and type-record-ID, and the Record Status Dashboard swaps its new-participant
