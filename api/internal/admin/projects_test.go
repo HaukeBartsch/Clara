@@ -83,6 +83,34 @@ func TestProjectsCreateSingleArmAndAudit(t *testing.T) {
 	}
 }
 
+// TestProjectsCreateKeepsAnyOrganization: an organization outside the REQ-DB-006
+// list is stored as given, whatever its length (DEV-DB-20). MariaDB's strict mode
+// refused a value longer than the old VARCHAR(16) with a 500 where SQLite stored it,
+// so this test only says something when run with CLARA_TEST_DB=mariadb.
+func TestProjectsCreateKeepsAnyOrganization(t *testing.T) {
+	e := newEnv(t)
+	admin := e.mustAdmin("admin@example.org")
+
+	organization := "Specification Ward — " + strings.Repeat("Ø", 300)
+	rec := e.do("POST", "/api/v1/projects", map[string]any{
+		"project_name": "Long organization", "organization": organization,
+		"pi_name": "Ole Bull", "pi_email": "ole@example.org",
+		"participant_names": "L[0-9][0-9][0-9]",
+	}, admin)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var p projectObject
+	e.decode(rec, &p)
+	stored, err := e.Store.GetProjectByName(context.Background(), "Long organization")
+	if err != nil || stored == nil {
+		t.Fatalf("GetProjectByName: %v", err)
+	}
+	if p.Organization != organization || stored.Organization != organization {
+		t.Errorf("organization = %q (response) / %q (stored), want it as given", p.Organization, stored.Organization)
+	}
+}
+
 // TestProjectsCreateValidation: duplicate name is 409; the GD-17 removals
 // are rejected as unknown attributes (REQ-API-052); malformed dates and a
 // missing name are 400; non-admins get 403.

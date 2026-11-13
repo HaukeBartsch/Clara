@@ -38,6 +38,7 @@ var wantFiles = []string{
 	"0022_sso_grants.sql",
 	"0023_project_stars.sql",
 	"0024_oidc_logout_jtis.sql",
+	"0025_organization_text.sql",
 }
 
 var dialects = []string{"sqlite", "mariadb"}

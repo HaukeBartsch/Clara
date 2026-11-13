@@ -18,7 +18,9 @@ const PINGFED = "PingFed"
 const ADMIN_PASSWORD = "clara-dev-481516-pw"
 
 const credentialForm = (page: Page) => page.locator('form[action="/login?action=credentials"]')
-const alertLine = (page: Page) => page.locator('[role="alert"]')
+// Only alerts on screen count: a page may carry a hidden role="alert" placeholder that a script
+// fills on failure (the dashboard's star error, dashboard.php), and that is not an alert shown.
+const alertLine = (page: Page) => page.locator('[role="alert"]').filter({ visible: true })
 const sourceRadio = (page: Page, name: string) =>
   page.locator("form[data-clara-source-picker] label", { hasText: name })
 

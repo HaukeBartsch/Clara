@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
 CREATE TABLE IF NOT EXISTS projects (            -- REQ-DB-006 (simplified, GD-17)
     id                          INTEGER PRIMARY KEY,
     project_name                VARCHAR(255) NOT NULL UNIQUE,
-    organization                VARCHAR(16)  NOT NULL,   -- main supporting institution: OUS, Ahus, SiV, SSHF, NAT EU, OTHER
+    organization                TEXT         NOT NULL,   -- main supporting institution: OUS, Ahus, SiV, SSHF, NAT EU, OTHER offered; any value stored as given (DEV-DB-20, migration 0025)
     pi_name                     VARCHAR(255) NOT NULL,
     pi_email                    VARCHAR(254) NOT NULL,
     dm_name                     VARCHAR(255),
@@ -204,7 +204,7 @@ CREATE TABLE IF NOT EXISTS oidc_logout_jtis (    -- REQ-DB-057 (REQ-AUTH-098, Se
 CREATE INDEX IF NOT EXISTS idx_oidc_logout_jtis_expires ON oidc_logout_jtis (expires_at);
 ```
 
-Notes: `organization` and the level enums are enforced by the API's allowlists (SQLite `CHECK` is not portable); `ON DELETE SET NULL` on `role_id` means deleting a role leaves the assignment role-less (full permissions) — the API's role-deletion rule (REQ-API-059) is the authority on when deletion is allowed.
+Notes: the level enums are enforced by the API's allowlists (SQLite `CHECK` is not portable). `projects.organization` is not: the REQ-DB-006 list is what the interface offers, and the API stores any other value as given — unbounded in both dialects, so no length differs between development and production (DEV-DB-20); the region columns below, which hold its codes, are allowlisted. `ON DELETE SET NULL` on `role_id` means deleting a role leaves the assignment role-less (full permissions) — the API's role-deletion rule (REQ-API-059) is the authority on when deletion is allowed.
 
 **Client sign-in grants** (REQ-DB-054, `Authentication_Authorization_Design.md` §2.13). One row is one authorization: a code when `/sso/authorize` runs for a signed-in browser, a grant once the client redeems it, ended by a CLARA sign-out (`POST /api/v1/sso/end` matches `user_id` and `sid_hash`) or a refused redemption. Redemption is one conditional `UPDATE … WHERE redeemed_at IS NULL AND ended_at IS NULL AND code_expires_at >= now`, so two concurrent redemptions cannot both succeed. Only hashes of the code, the grant and the sign-in id are stored. Inserting a code first deletes rows whose code expired unredeemed, or whose grant expired, more than a day ago; no job runs. The SQLite file declares the hash and address columns `TEXT`.
 
@@ -553,6 +553,7 @@ Reference scale (REQ-DB-025): 100 projects × 10,000 records × 200 fields × 10
 | sign-in for registered applications (owner request 2026-11-02, Sequence K) | `sso_grants` (§4, REQ-DB-054, migration 0022): hashed code, grant and sign-in id per authorization, deleted with the account |
 | starred projects (owner request 2026-11-03, REQ-UI-087) | `project_stars` (§4, REQ-DB-056, migration `0023_project_stars.sql` for both dialects): one row per starred (user, project), deleted with either |
 | single sign-out replay protection (owner instruction 2026-11-06, REQ-AUTH-098) | `oidc_logout_jtis` (§4, REQ-DB-057, migration `0024_oidc_logout_jtis.sql` for both dialects): a rolling window of accepted logout-token ids, pruned on insert |
+| organization outside the offered list (owner decision 2026-11-13) | `projects.organization` becomes unbounded text (§4, DEV-DB-20, migration `0025_organization_text.sql` for both dialects — MariaDB widens `VARCHAR(16)` to `TEXT`, SQLite already stores `TEXT`); the API stores the value as given |
 | preferred region (master spec "Organization by hospital regions") | `users.preferred_region` / `automatic_region` / `automatic_region_source` and `provider_role_regions` (§4, REQ-DB-052/053, migration `0020_preferred_region.sql` for both dialects); derivation and placeholder rules in `Authentication_Authorization_Design.md` §2.12 and `API_Endpoints_Design.md` §4.6 |
 | project modes (master spec "Project modes", GD-20) | `projects.mode` (`development` default, §4) + `project_staging` JSON-snapshot table (§5 — the live structure tables stay untouched while a set is open); transition/staging rules normative in `API_Endpoints_Design.md` §4.21 |
 
@@ -572,7 +573,7 @@ Why the schema takes its shape, and what each choice costs. The decision records
 - **One logical schema, two dialects** (§1, §10). The DDL is written in the subset common to SQLite and MariaDB, and every difference is listed in §10, so development and production run the same queries. The cost: no `ENUM` or `CHECK` constraints (enumerations are API allowlists), and features one dialect lacks are worked around rather than used.
 - **Sparse rather than dense** (DEV-DB-10, DEV-DB-14). `instrument_completion` stores only the "unverified" and "finished" assignments, and absence means neither; event-keyed rows require an event rather than carrying a sentinel. Storage and reads grow with what users did, not with the size of the design.
 - **Instance 1 lives where a non-repeating form's only instance does** (§6, DEV-DB-16). Switching repeating on or off never rewrites stored values; the cost is that a reader must treat `repeating_instrument = ''` as the first instance of a repeating form.
-- **Unbounded text where imported data needs it** (DEV-DB-15). Labels and section headers are unbounded because MariaDB's strict mode would refuse a long label that SQLite accepts; a schema that imports in development must import in production.
+- **Unbounded text where imported data needs it** (DEV-DB-15, DEV-DB-20). Labels, section headers and a project's organization are unbounded because MariaDB's strict mode would refuse a long value that SQLite accepts; a schema that imports in development must import in production.
 - **Migrations are numbered and idempotent** (§1, REQ-DB-003). The API applies them at startup, and MariaDB's index DDL is guarded with `IF [NOT] EXISTS` because each DDL statement commits on its own (§10).
 - **SQLite is development and test only** (§10, REQ-TECH-005). Its settings — WAL, `IMMEDIATE` write transactions, a 5-second busy timeout — make it behave enough like InnoDB that concurrency bugs surface in development rather than in production.
 
