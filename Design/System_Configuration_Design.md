@@ -53,6 +53,7 @@ Defines the complete configuration variable inventory, the defaults, and the sta
 |---|---|---|---|---|---|
 | `INTERNAL_SERVICE_TOKEN` | both (web sends, api verifies) | string (secret) | dev: `dev-internal-token` (accepted **only** when `APP_ENV=development`) | prod | shared secret for `X-Internal-Service-Token` (REQ-CFG-013, REQ-AUTH-011); no production default |
 | `ADMIN_BOOTSTRAP_EMAIL` | api | email | — | — | bootstrap administrator (GD-4, REQ-CFG-014); promoted on first login (REQ-AUTH-007) |
+| `ADMIN_BOOTSTRAP_EMAIL_2` | api | email | empty | — | second bootstrap administrator (GD-4, REQ-CFG-042): the same login-time rule as `ADMIN_BOOTSTRAP_EMAIL` (REQ-AUTH-007); never provisioned at startup and never given `ADMIN_BOOTSTRAP_PASSWORD`. Startup error when set without `ADMIN_BOOTSTRAP_EMAIL`, when it is not one address, or when it equals the first (case-insensitive) |
 | `ADMIN_BOOTSTRAP_PASSWORD` | api | string (secret) | — (no default) | if no OAuth2 provider **and** no LDAP server (§4.1) | local password of the bootstrap administrator (GD-18, REQ-CFG-025, REQ-AUTH-051); stored only as an argon2id hash in `users.password_hash`; never logged (§4.4) |
 | `LOCAL_LOGIN_NAMES` | web | comma-separated display names | unset → implicit default set | — | names the table-based (local) source is selected by on the login page — the local kind exists at most once but may carry several names (master spec "Authentication order", REQ-CFG-032, REQ-AUTH-064; `Authentication_Authorization_Design.md` §2.9) |
 
@@ -73,8 +74,9 @@ Per provider `N` (1…3):
 | `OAUTH2_N_NONCE_REQUIRED` | api | `0`\|`1` | `0` | — | `1` refuses an ID token without `nonce`; `0` means "not yet observed", not "satisfied" (REQ-CFG-035, REQ-AUTH-079) |
 | `OAUTH2_N_ID_TOKEN_ALG` | api | JWS algorithm | `RS256` | — | the pinned signing algorithm; any value outside the asymmetric RS/PS/ES/EdDSA set — including `none` and the HMAC family — is a startup error (REQ-CFG-035, REQ-AUTH-077) |
 | `OAUTH2_N_ROLES_ATTR` | api (web: display only) | claim name | empty | — | the claim carrying the provider's role values for the preferred-region default, read from the verified ID token, else from userinfo; empty = the provider's roles are not read (REQ-CFG-037, REQ-AUTH-088, `Authentication_Authorization_Design.md` §2.12) |
-| `OAUTH2_N_POST_LOGOUT_REDIRECT_URI` | api | absolute URL | — | if `OIDC_SINGLE_SIGN_OUT=1` | the address of CLARA's `GET /auth/logged-out` (normally `WEB_PUBLIC_URL + /auth/logged-out`), registered at the provider character for character; `https`, except `http` under `APP_ENV=development`; no fragment. Sent as `post_logout_redirect_uri` by Sequence L1 (REQ-CFG-036, REQ-AUTH-097, REQ-API-189) |
+| `OAUTH2_N_POST_LOGOUT_REDIRECT_URI` | api (web: display only) | absolute URL | — | if `OIDC_SINGLE_SIGN_OUT=1` | the address of CLARA's `GET /auth/logged-out` (normally `WEB_PUBLIC_URL + /auth/logged-out`), registered at the provider character for character; `https`, except `http` under `APP_ENV=development`; no fragment. Sent as `post_logout_redirect_uri` by Sequence L1 (REQ-CFG-036, REQ-AUTH-097, REQ-API-189) |
 | `OAUTH2_N_BACKCHANNEL_LOGOUT_PATH` | web | path | — | if `OIDC_SINGLE_SIGN_OUT=1` | where the provider POSTs its logout token: `/auth/backchannel-logout/` plus one segment of letters, digits, `-` or `_` (for example `/auth/backchannel-logout/ping`), distinct per provider. The provider is registered with `WEB_PUBLIC_URL` + this path (REQ-CFG-036, REQ-AUTH-098) |
+| `OAUTH2_N_RESPONSE_MODE` | both | `query`\|`form_post` | `query` | — | how the provider returns the authorization response (REQ-CFG-041). `form_post`: the API adds `response_mode=form_post` to the authorization request and refuses the start (`response_mode_unsupported`) when discovery does not list it; PHP opens `POST /auth/callback`, which hands the response to `GET /auth/callback` through a single-use handle (`Authentication_Authorization_Design.md` §2.1 step 3a). `GET /auth/callback` takes query responses either way |
 | `OAUTH2_N_NAMES` | web | comma-separated display names | unset → implicit default set | — | names this provider is selected by on the login page (master spec "Authentication order", REQ-CFG-032, REQ-AUTH-063/064); entries empty after trimming rejected at startup (§4.1) |
 
 Shared by all providers: `OAUTH2_JWKS_TTL` (api; positive integer seconds; default `3600`) bounds how long a fetched provider key set is reused before a scheduled refetch; an unknown `kid` refetches at once (REQ-CFG-035, REQ-AUTH-077).
@@ -204,6 +206,7 @@ Per client `N` (1…3); a client exists when its `ID` is set.
 | `MONITORING_PERIOD_MINUTES` is an integer ≥ 1 and ≤ 1440 (default `10`) | required | required (REQ-CFG-034) |
 | `OAUTH2_N_ROLES_ATTR`, when set, is one claim name — no whitespace, no comma | required | required (REQ-CFG-037) |
 | `OIDC_SINGLE_SIGN_OUT` ∈ {`0`,`1`} (default `0`), checked by both components | required | required (REQ-CFG-036) |
+| every `OAUTH2_N_RESPONSE_MODE` ∈ {`query`,`form_post`} (default `query`), checked by both components | required | required (REQ-CFG-041) |
 | **api**, with `OIDC_SINGLE_SIGN_OUT=1`: every provider with a set `ISSUER` has `POST_LOGOUT_REDIRECT_URI` set (absolute URL, no fragment) and `SUBJECT_ATTR` at `sub` | required | required, plus an `https` post-logout address (REQ-CFG-036) |
 | **web**, with `OIDC_SINGLE_SIGN_OUT=1`: every provider with a set `ISSUER` has `BACKCHANNEL_LOGOUT_PATH` set, matching the pattern of §3.4 and unique across providers | required | required (REQ-CFG-036) |
 | every client with `SSO_CLIENT_N_ID` set: the id matches its pattern and is not repeated; `SECRET` set; `REDIRECT_URI` an absolute URL without user info or fragment; `LOGOUT_URI` unset or the same | required | required, plus `https` addresses and a secret of at least 32 bytes (REQ-CFG-038) |
@@ -242,6 +245,9 @@ DB_DATABASE=./data/app.sqlite
 # service boundary
 INTERNAL_SERVICE_TOKEN=dev-internal-token
 ADMIN_BOOTSTRAP_EMAIL=admin@example.org
+# optional second bootstrap administrator (GD-4, REQ-CFG-042): promoted at its first
+# sign-in like the first address; it never gets ADMIN_BOOTSTRAP_PASSWORD
+#ADMIN_BOOTSTRAP_EMAIL_2=deputy@example.org
 # required at startup when NO OAuth2 provider and NO LDAP server are configured (GD-18)
 ADMIN_BOOTSTRAP_PASSWORD=***
 
@@ -266,6 +272,9 @@ OAUTH2_1_NAMES=Hospital 1
 #OIDC_SINGLE_SIGN_OUT=0
 #OAUTH2_1_POST_LOGOUT_REDIRECT_URI=http://localhost:8000/auth/logged-out
 #OAUTH2_1_BACKCHANNEL_LOGOUT_PATH=/auth/backchannel-logout/idp1
+# how the provider returns the sign-in (REQ-CFG-041): query (default) or form_post — the
+# provider's discovery document must list form_post in response_modes_supported
+#OAUTH2_1_RESPONSE_MODE=query
 
 # local (table-based) source names — optional; unset everywhere = one implicit default set
 #LOCAL_LOGIN_NAMES=Clinic A
@@ -347,7 +356,15 @@ OTP_MAIL_FROM=
 
 ## 7. Open Items
 
-None.
+Drafted settings, not designed yet (`System_Configuration_Requirements.md` REQ-CFG-039, 040 and 043, owner request 2026-11-13). Each becomes a row of §3 and a line of §5 when it is designed; until then none of these variables is read:
+
+| Draft | Variable | Open question before design |
+|---|---|---|
+| REQ-CFG-039 | `OAUTH2_N_SCOPES` | none beyond the grammar check; `openid` stays mandatory |
+| REQ-CFG-040 | `OAUTH2_N_DISCOVERY_URL` | the discovery cache key becomes the URL, not the issuer; the issuer-equality check (REQ-AUTH-082) is unchanged |
+| REQ-CFG-043 | `LOGOUT_LANDING_URL` | whether a landing page outside CLARA replaces the client return of Sequence L1 or only the `/login` default (the draft says only the default) |
+
+Login button texts need no setting: they come from the source names (`OAUTH2_N_NAMES`, `LDAP_SERVER_N_NAMES`, `LOCAL_LOGIN_NAMES`) and the translation catalog (`login.provider.submit`).
 
 ## 8. Rationale and Trade-offs
 

@@ -314,7 +314,7 @@ grep -c CHANGE_ME /opt/clara/.env     # must print 0
 Then edit by hand:
 
 - **`WEB_PUBLIC_URL`**: the public `https://` address. OAuth2 redirect URIs and survey links are built from it, so it must match what users type.
-- **`ADMIN_BOOTSTRAP_EMAIL`**: the first administrator's email address. The login page also takes just the part before the `@` (REQ-AUTH-087), but that is short for an account that exists — on a first installation there is none yet, so the first sign-in uses the full address.
+- **`ADMIN_BOOTSTRAP_EMAIL`**: the first administrator's email address. Optionally, `ADMIN_BOOTSTRAP_EMAIL_2` names a second one (see the table below). The login page also takes just the part before the `@` (REQ-AUTH-087), but that is short for an account that exists — on a first installation there is none yet, so the first sign-in uses the full address.
 - **`APP_TIMEZONE`**: the collection time zone (an IANA name such as `Europe/Oslo`). It applies to date/time values imported without an explicit zone (REQ-CFG-026).
 
 Things to know about the values:
@@ -326,6 +326,7 @@ Things to know about the values:
 | `ANON_SALT` | Determines the date shift in anonymized exports. **Never change it after go-live, and back it up.** A different salt produces different shifts, so new exports no longer line up with earlier ones. |
 | `ADMIN_BOOTSTRAP_PASSWORD` | Must be at least 12 characters. It is used **only to create** the account on the first start and is stored as an argon2id hash. Changing it later in `.env` does not change the password. The value stays required at startup while no OAuth2 provider and no LDAP server are configured. |
 | `ADMIN_BOOTSTRAP_EMAIL` | While `ADMIN_BOOTSTRAP_PASSWORD` is set, every API start re-enables this account and makes it an administrator again, so disabling it in the interface does not last. With OAuth2/LDAP configured, the account with this email becomes administrator at its first login through any source. |
+| `ADMIN_BOOTSTRAP_EMAIL_2` | Optional second administrator. Its first sign-in through any source creates it as an administrator. It has no password from `.env` and is not re-enabled at start, so it signs in through OAuth2 or LDAP (or with a password the first administrator sets). If that person already has an account from an earlier OAuth2/LDAP sign-in, make it an administrator in Control Panel → Users instead: a provider sign-in does not promote an existing account while another administrator exists. |
 | `SESSION_COOKIE_SECURE=1` | Session cookies are sent over HTTPS only. That is why nginx must terminate TLS. With `APP_ENV=production` the web layer refuses to start with `0`. The cookie is then named `__Host-csms_session`: a browser accepts it only from this exact host over HTTPS. |
 | `SESSION_IDLE_TIMEOUT`, `SESSION_LIFETIME` | A session ends after 30 minutes without a request, and 8 hours after sign-in however active it was. Users who fill in long forms may need a longer idle timeout; `0` turns it off. |
 | `SESSION_ROTATE_INTERVAL` | Every 15 minutes a signed-in session gets a new id. If an old id is used again more than 60 seconds later, the session was copied: every session of that account ends, and the audit log records `session_replay_detected`. |
@@ -713,6 +714,16 @@ server {
         try_files $uri /index.php$is_args$args;
     }
 
+    # --- the identity provider's back-channel logout (single sign-out, REQ-CFG-036): a page
+    # route like any other, but only for the provider's own servers. Shipped closed: every
+    # caller gets 403 here until you add one "allow" line per provider network above
+    # "deny all;". An installation without OIDC_SINGLE_SIGN_OUT=1 leaves it closed.
+    location ^~ /auth/backchannel-logout/ {
+        # allow <provider-cidr>;
+        deny all;
+        try_files $uri /index.php$is_args$args;
+    }
+
     location = /index.php {
         include       fastcgi_params;
         fastcgi_param SCRIPT_FILENAME $document_root/index.php;
@@ -751,6 +762,7 @@ What the configuration enforces ([Technology_Stack_Design.md](Design/Technology_
 | `X-Real-IP` is always nginx's own `$remote_addr`, for both the API and PHP — and neither believes it from an unlisted peer | `proxy_set_header` / `fastcgi_param HTTP_X_REAL_IP`; `dataapi.SourceIP`, `Request::clientIp` |
 | Access logs omit query strings and referrers, so OAuth callback codes are not logged | `log_format clara_safe` (`$uri`, not `$request`) |
 | Exports stream instead of buffering | `proxy_buffering off`; PHP sends `X-Accel-Buffering: no` |
+| `/auth/backchannel-logout/` answers only the identity provider's servers, and is closed (403 to everyone) until you name them | `location ^~ /auth/backchannel-logout/`: one `allow <provider-cidr>;` line per provider network above `deny all;` (§14.3) |
 
 The stock `/etc/nginx/nginx.conf` still contains a default `server` on port 80. It does not interfere, and you can remove it.
 
@@ -783,6 +795,8 @@ The rule-for-rule mapping is short enough to keep in mind: `client_max_body_size
 `Alias /assets/`, `location = /api/ { proxy_pass … }` ↔ a `RewriteRule [P]` matching exactly `/api/` — and
 deliberately no `ProxyPass` prefix, because mod_proxy answers before mod_rewrite could refuse
 `/api/v1/*` — `fastcgi_pass unix:…` ↔ `SetHandler proxy:unix:…|fcgi://localhost` on `index.php` alone,
+`location ^~ /auth/backchannel-logout/ { allow <provider-cidr>; deny all; }` ↔ `<Location
+"/auth/backchannel-logout/">` with `Require ip <provider-cidr>` in place of `Require all denied`,
 and `try_files $uri /index.php` ↔ a `RewriteCond !-f`/`!-d` pair that must live inside `<Directory>`: at
 vhost level mod_rewrite runs before the URL is mapped to a file, where `-f` always matches and every real
 asset would be routed to PHP.
@@ -824,6 +838,7 @@ curl -sk -o /dev/null -w '%{http_code}\n' $H/api/                           # 40
 curl -sk -o /dev/null -w '%{http_code}\n' $H/api/v1/health                  # 404 (admin API hidden)
 curl -sk -o /dev/null -w '%{http_code}\n' $H/docs                           # 404
 curl -sk -o /dev/null -w '%{http_code}\n' --path-as-is $H/assets/../.env    # 404
+curl -sk -o /dev/null -w '%{http_code}\n' -X POST $H/auth/backchannel-logout/x  # 403 (provider only)
 curl -s  -o /dev/null -w '%{http_code} %{redirect_url}\n' http://clara.example.org/login   # 301 → https
 ```
 
@@ -850,7 +865,7 @@ All of these are `.env` settings. Restart afterwards (`systemctl restart clara-a
 
 | Feature | Variables | Notes |
 |---|---|---|
-| OAuth2 / OpenID Connect (up to 3) | `OAUTH2_n_ISSUER`, `OAUTH2_n_CLIENT_ID`, `OAUTH2_n_CLIENT_SECRET`, `OAUTH2_n_EMAIL_ATTR`, `OAUTH2_n_NAMES`, `OAUTH2_n_ROLES_ATTR` | Register the redirect URI `https://clara.example.org/auth/callback` with the provider. It defaults to `WEB_PUBLIC_URL` + `/auth/callback`. A person's first sign-in through the provider creates their CLARA account (not an administrator, in no project), named from the `name` claim or `given_name` and `family_name`. Anyone the provider lets in therefore gets an account: find them in Control Panel → Users with the source filter and **In no project**, and disable the ones that should not be there. |
+| OAuth2 / OpenID Connect (up to 3) | `OAUTH2_n_ISSUER`, `OAUTH2_n_CLIENT_ID`, `OAUTH2_n_CLIENT_SECRET`, `OAUTH2_n_EMAIL_ATTR`, `OAUTH2_n_NAMES`, `OAUTH2_n_ROLES_ATTR` | Register the redirect URI `https://clara.example.org/auth/callback` with the provider. It defaults to `WEB_PUBLIC_URL` + `/auth/callback`; Control Panel → **Authentication Test** lists it with the other addresses to register (§14.3). If the provider must post the sign-in back instead of redirecting (some PingFederate policies), set `OAUTH2_n_RESPONSE_MODE=form_post`; the same address is used, and the Authentication Test says so when the provider does not offer it. A person's first sign-in through the provider creates their CLARA account (not an administrator, in no project), named from the `name` claim or `given_name` and `family_name`. Anyone the provider lets in therefore gets an account: find them in Control Panel → Users with the source filter and **In no project**, and disable the ones that should not be there. |
 | LDAP (up to 3) | `LDAP_SERVER_n_URL`, `LDAP_SERVER_n_SEARCH_BASE`, `LDAP_SERVER_n_BIND_DN`, `LDAP_SERVER_n_BIND_PASSWORD`, `…_UID_ATTR`, `…_EMAIL_ATTR`, `…_NAME_ATTR`, `…_NAMES` | Prefer `ldaps://`. Trust the directory's CA by copying it to `/etc/pki/ca-trust/source/anchors/` and running `update-ca-trust`. All directories under one login name are tried in parallel. A person's first directory sign-in creates their CLARA account (not an administrator, in no project); they see the "No projects yet" page until an administrator adds them to a project. |
 | Login-page names | `LOCAL_LOGIN_NAMES`, `OAUTH2_n_NAMES`, `LDAP_SERVER_n_NAMES` | Comma-separated names users pick on the login page (REQ-CFG-032). Leave them all unset for one implicit default. |
 | Email (login codes, invitations, password resets) | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY` (`starttls`/`tls`/`none`), `SMTP_USERNAME`, `SMTP_PASSWORD`, `OTP_MAIL_FROM` | Without `SMTP_HOST` the email methods are unavailable. `OTP_MAIL_FROM` is required once `SMTP_HOST` is set. |
@@ -927,6 +942,37 @@ Another application on the same site (FIONA is the first) can use CLARA's sign-i
 Signing out of CLARA signs the user out of every application they entered through it, at that application's next check. So do disabling the account, setting its password and resetting its two-factor authentication. The application's own sign-in stays valid at most as long as the CLARA sign-in it came from (`SESSION_LIFETIME`).
 
 The server-to-server calls go to CLARA's public address like a browser's. If the application runs on the CLARA host, `https://clara.example.org` must resolve and its certificate must be trusted there.
+
+### 14.3 Single sign-out with the identity provider (optional)
+
+Without it, signing out of CLARA leaves the person signed in at the provider: the next **Sign in with
+…** click passes straight through, and a sign-out at the provider leaves CLARA sessions running until
+they time out. The Configuration Check says so. With `OIDC_SINGLE_SIGN_OUT=1`:
+
+* signing out of CLARA also signs the person out at the provider, which returns the browser to
+  `GET /auth/logged-out`; and
+* a sign-out at the provider (or a revocation there) ends every CLARA session and every client
+  sign-in (§14.2) of that person's account, through a server-to-server *back-channel logout*.
+
+Steps, for every configured provider `n`:
+
+1. Set `OAUTH2_n_POST_LOGOUT_REDIRECT_URI=https://clara.example.org/auth/logged-out` and
+   `OAUTH2_n_BACKCHANNEL_LOGOUT_PATH=/auth/backchannel-logout/<name>` (one segment of letters, digits,
+   `-` or `_`, different per provider). `OAUTH2_n_SUBJECT_ATTR` must stay `sub`. The API and PHP refuse
+   to start with the switch on and any of this missing.
+2. At the provider, register the post-logout redirect URI and the back-channel logout URL
+   (`WEB_PUBLIC_URL` + the path). **Control Panel → Authentication Test** lists all three addresses to
+   register, with suggested values while they are not configured. In PingFederate (12.0 or newer) both
+   are fields of the OIDC client.
+3. Open the back-channel path to the provider's servers in the reverse proxy — nginx: replace
+   `# allow <provider-cidr>;` with one `allow` line per provider network; Apache: replace
+   `Require all denied` with `Require ip …` (§11.2, §11.3). Everyone else keeps getting 403.
+4. Restart (`systemctl restart clara-api && systemctl reload php-fpm`), reload the proxy, and sign in and
+   out once: the login page should say you are signed out of CLARA **and** of your identity provider.
+
+A provider that cannot reach the back-channel address retries on its own schedule; until it gets through,
+each CLARA session of the person still ends at its next request once the logout is delivered. Every
+accepted and refused logout is in the audit log (`provider_logout`, `provider_logout_rejected`).
 
 ---
 

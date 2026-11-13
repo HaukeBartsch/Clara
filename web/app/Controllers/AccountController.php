@@ -140,10 +140,20 @@ final class AccountController extends Controller
         return preg_match('/^\d{1,18}$/', $raw) === 1 ? (int) $raw : 0;
     }
 
-    /** POST /logout — Sequence D: audit first, then destroy (REQ-UI-007). */
+    /**
+     * POST /logout — Sequence D: audit first, then destroy (REQ-UI-007). With single sign-out
+     * an OAuth2 session then leaves through the provider's sign-out, which returns the browser
+     * to GET /auth/logged-out (Sequence L1, REQ-UI-088).
+     */
     public function logout(): Response
     {
-        $this->auth->logout();
+        $outcome = $this->auth->logout();
+        if ($outcome['provider_url'] !== '') {
+            return Response::redirect($outcome['provider_url']);
+        }
+        if ($outcome['provider_failed']) {
+            Session::flash('warning', $this->i18n->t('logout.provider_may_be_active'));
+        }
 
         return Response::redirect('/login');
     }

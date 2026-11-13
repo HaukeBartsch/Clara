@@ -313,6 +313,16 @@ final class ConfigCheck
             $checks[] = $roles === []
                 ? self::result('web.oidc_roles', self::INFO, 'unset', [], '§14')
                 : self::result('web.oidc_roles', self::INFO, 'set', ['list' => implode(', ', $roles)], '§14');
+            // Single sign-out (REQ-CFG-036, REQ-AUTH-083): off, the check says plainly what that
+            // leaves alive; on, it names the back-channel addresses the proxy must open to the
+            // providers only (INSTALL.md §11). Startup already refused a half-configured switch.
+            $paths = array_map(
+                fn (array $provider): string => $config->webPublicUrl . $provider['backchannel_logout_path'],
+                $config->oauthProviders
+            );
+            $checks[] = $config->oidcSingleSignOut
+                ? self::result('web.single_sign_out', self::OK, 'on', ['list' => implode(', ', $paths)], '§11')
+                : self::result('web.single_sign_out', self::INFO, 'off', [], '§14');
         }
 
         return $checks;

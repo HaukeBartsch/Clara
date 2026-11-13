@@ -209,6 +209,11 @@ var preAuthPaths = map[string]bool{
 	// acts — the client authenticates itself with its id and secret in the body.
 	"/api/v1/sso/token": true,
 	"/api/v1/sso/check": true,
+	// Sequence L2 (Authentication_Authorization_Design.md §2.14, DEV-API-46): the provider's
+	// back-channel logout, relayed by the web layer. No CLARA user acts — the account is not
+	// known until the provider-signed logout token in the body is verified, and naming one
+	// in a header would let the caller choose whose sessions end.
+	"/api/v1/auth/oauth/backchannel-logout": true,
 }
 
 // AdminBoundary enforces the internal trust boundary on /api/v1/*

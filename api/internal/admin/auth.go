@@ -29,6 +29,9 @@ func (h *Handler) registerAuth(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/auth/session-replay", h.sessionReplay)
 	mux.HandleFunc("POST /api/v1/auth/oauth/start", h.oauthStart)
 	mux.HandleFunc("POST /api/v1/auth/oauth/test", h.oauthTest)
+	// Sequence L, single sign-out with the provider (singlesignout.go, REQ-API-189/190).
+	mux.HandleFunc("POST /api/v1/auth/oauth/end-session", h.oauthEndSession)
+	mux.HandleFunc("POST /api/v1/auth/oauth/backchannel-logout", h.oauthBackchannelLogout)
 }
 
 // loginRequest is the §4.3 body: provider only for oauth2/ldap, password
@@ -498,10 +501,14 @@ func plausibleAddress(s string) bool {
 	return at > 0 && at < len(s)-1 && strings.Count(s, "@") == 1 && !strings.ContainsAny(s, " \t\r\n")
 }
 
-// isBootstrapEmail reports whether the email equals the configured
-// ADMIN_BOOTSTRAP_EMAIL (REQ-AUTH-007); unset config never matches.
+// isBootstrapEmail reports whether the email equals one of the two configured bootstrap
+// administrators, ADMIN_BOOTSTRAP_EMAIL or ADMIN_BOOTSTRAP_EMAIL_2 (REQ-AUTH-007, GD-4);
+// unset config never matches. Both addresses get the same narrow login-time rule.
 func (h *Handler) isBootstrapEmail(email string) bool {
-	return h.Cfg.AdminBootstrapEmail != "" && email == h.Cfg.AdminBootstrapEmail
+	if email == "" {
+		return false
+	}
+	return email == h.Cfg.AdminBootstrapEmail || email == h.Cfg.AdminBootstrapEmail2
 }
 
 // verifyPassword implements POST /api/v1/auth/verify-password (REQ-API-123,

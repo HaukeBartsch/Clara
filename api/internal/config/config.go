@@ -60,7 +60,25 @@ type OAuth2Provider struct {
 	// REQ-CFG-037, REQ-AUTH-088). Empty — the default — leaves the provider's roles
 	// unread. It orders the project overview and grants nothing (REQ-AUTH-089).
 	RolesAttr string
+
+	// PostLogoutRedirectURI is CLARA's GET /auth/logged-out as registered at the provider
+	// (OAUTH2_N_POST_LOGOUT_REDIRECT_URI, REQ-CFG-036): sent as post_logout_redirect_uri when
+	// Sequence L1 sends the browser to the provider's end_session_endpoint (REQ-AUTH-097).
+	// Required for every provider once OIDC_SINGLE_SIGN_OUT=1; empty otherwise.
+	PostLogoutRedirectURI string
+
+	// ResponseMode is how the provider returns the authorization response
+	// (OAUTH2_N_RESPONSE_MODE, REQ-CFG-041): "query" (default) — a redirect to
+	// GET /auth/callback — or "form_post", which asks the provider to POST it, so the code
+	// never appears in a URL. The web layer's callback accepts both either way.
+	ResponseMode string
 }
+
+// Response modes OAUTH2_N_RESPONSE_MODE accepts (REQ-CFG-041).
+const (
+	ResponseModeQuery    = "query"
+	ResponseModeFormPost = "form_post"
+)
 
 // MinACRSet reports whether an assurance gate is configured for this provider.
 func (p OAuth2Provider) AssuranceGate() bool { return len(p.MinACR) > 0 }
@@ -115,7 +133,11 @@ type Config struct {
 	InternalServiceToken   string
 	AdminBootstrapEmail    string
 	AdminBootstrapPassword string
-	LocalLoginNames        []string // LOCAL_LOGIN_NAMES — names the local source is selected by (REQ-CFG-032)
+	// AdminBootstrapEmail2 is the second bootstrap administrator (GD-4, REQ-CFG-042):
+	// promoted at login by the same narrow rule as the first (REQ-AUTH-007), never given
+	// ADMIN_BOOTSTRAP_PASSWORD, which belongs to the first address alone.
+	AdminBootstrapEmail2 string
+	LocalLoginNames      []string // LOCAL_LOGIN_NAMES — names the local source is selected by (REQ-CFG-032)
 
 	// §3.4/§3.5 authentication
 	OAuth2 []OAuth2Provider
@@ -124,6 +146,10 @@ type Config struct {
 	// before a scheduled refetch (OAUTH2_JWKS_TTL, REQ-CFG-035). An unknown `kid`
 	// still triggers an immediate refresh on its own (REQ-AUTH-077).
 	OAuthJWKSTTLSec int
+	// OIDCSingleSignOut turns on Sequence L — sign-out coordinated with every configured
+	// OAuth2 provider (OIDC_SINGLE_SIGN_OUT, REQ-CFG-036, REQ-AUTH-083/097…099). Off, the
+	// end-session and back-channel endpoints answer 409 single_sign_out_disabled.
+	OIDCSingleSignOut bool
 
 	// §3.6 anonymization
 	AnonSalt         string
@@ -351,6 +377,17 @@ func Load() (*Config, error) {
 	}
 	cfg.AdminBootstrapEmail = get("ADMIN_BOOTSTRAP_EMAIL")
 	cfg.AdminBootstrapPassword = get("ADMIN_BOOTSTRAP_PASSWORD")
+	cfg.AdminBootstrapEmail2 = get("ADMIN_BOOTSTRAP_EMAIL_2")
+	if cfg.AdminBootstrapEmail2 != "" {
+		switch {
+		case cfg.AdminBootstrapEmail == "":
+			fail("ADMIN_BOOTSTRAP_EMAIL_2: set without ADMIN_BOOTSTRAP_EMAIL — name the first administrator first")
+		case !looksLikeEmail(cfg.AdminBootstrapEmail2):
+			fail("ADMIN_BOOTSTRAP_EMAIL_2: %q is not an email address", cfg.AdminBootstrapEmail2)
+		case strings.EqualFold(cfg.AdminBootstrapEmail2, cfg.AdminBootstrapEmail):
+			fail("ADMIN_BOOTSTRAP_EMAIL_2: the same address as ADMIN_BOOTSTRAP_EMAIL")
+		}
+	}
 	rawLocalNames := get("LOCAL_LOGIN_NAMES")
 	names, ok := parseNameList(rawLocalNames)
 	if !ok {
@@ -434,7 +471,47 @@ func Load() (*Config, error) {
 			p.RolesAttr = ""
 		}
 
+		p.PostLogoutRedirectURI = strings.TrimSpace(get(fmt.Sprintf("OAUTH2_%d_POST_LOGOUT_REDIRECT_URI", n)))
+		if p.PostLogoutRedirectURI != "" && !validClientURI(p.PostLogoutRedirectURI, production) {
+			fail("OAUTH2_%d_POST_LOGOUT_REDIRECT_URI: %q (want an absolute https URL without a fragment; http only when APP_ENV=development — REQ-CFG-036)",
+				n, p.PostLogoutRedirectURI)
+		}
+
+		switch mode := strings.TrimSpace(get(fmt.Sprintf("OAUTH2_%d_RESPONSE_MODE", n))); mode {
+		case "", ResponseModeQuery:
+			p.ResponseMode = ResponseModeQuery
+		case ResponseModeFormPost:
+			p.ResponseMode = ResponseModeFormPost
+		default:
+			fail("OAUTH2_%d_RESPONSE_MODE: %q (want query or form_post — REQ-CFG-041)", n, mode)
+		}
+
 		cfg.OAuth2 = append(cfg.OAuth2, p)
+	}
+
+	// Single sign-out (REQ-CFG-036). Only 0 or 1: a sign-out that silently does not reach
+	// the provider is the failure this switch exists to prevent, so a value that could be
+	// read either way refuses startup instead of falling back to a default. With 1, each
+	// provider needs the post-logout address it registered (the other half — the back-channel
+	// path — is the web layer's to check), and its subject claim must be `sub`: a logout token
+	// names its subject as `sub`, so links stored from another claim would never match
+	// (REQ-AUTH-099).
+	switch raw := strings.TrimSpace(get("OIDC_SINGLE_SIGN_OUT")); raw {
+	case "", "0":
+	case "1":
+		cfg.OIDCSingleSignOut = true
+	default:
+		fail("OIDC_SINGLE_SIGN_OUT: %q (want 0 or 1 — REQ-CFG-036)", raw)
+	}
+	if cfg.OIDCSingleSignOut {
+		for _, p := range cfg.OAuth2 {
+			if p.PostLogoutRedirectURI == "" {
+				fail("OAUTH2_%d_POST_LOGOUT_REDIRECT_URI: missing (required with OIDC_SINGLE_SIGN_OUT=1 — normally WEB_PUBLIC_URL + /auth/logged-out, REQ-CFG-036)", p.N)
+			}
+			if p.SubjectAttr != "sub" {
+				fail("OAUTH2_%d_SUBJECT_ATTR: %q cannot be combined with OIDC_SINGLE_SIGN_OUT=1 — a logout token names its subject as `sub` (REQ-CFG-036, REQ-AUTH-099)", p.N, p.SubjectAttr)
+			}
+		}
 	}
 
 	// §3.5 LDAP servers 1–3
@@ -724,6 +801,7 @@ func (c *Config) Dump() []string {
 	out = append(out,
 		"INTERNAL_SERVICE_TOKEN="+m,
 		"ADMIN_BOOTSTRAP_EMAIL="+none(c.AdminBootstrapEmail),
+		"ADMIN_BOOTSTRAP_EMAIL_2="+none(c.AdminBootstrapEmail2),
 		"ADMIN_BOOTSTRAP_PASSWORD="+m,
 		"LOCAL_LOGIN_NAMES="+namesStr(c.LocalLoginNames)+" (local source; unset → implicit default set)",
 		"ANON_SALT="+m,
@@ -738,6 +816,7 @@ func (c *Config) Dump() []string {
 		"AUTH_INACTIVITY_LIMIT_DAYS="+itoa(c.AuthInactivityLimitDays)+" (0 = off)",
 		"AUTH_PASSWORD_TOKEN_TTL_DAYS="+itoa(c.AuthPasswordTokenTTLDays),
 		"OAUTH2_JWKS_TTL="+itoa(c.OAuthJWKSTTLSec)+" (bound on provider key reuse, REQ-CFG-035)",
+		"OIDC_SINGLE_SIGN_OUT="+boolStr(c.OIDCSingleSignOut)+" (sign-out with the provider, REQ-CFG-036)",
 		"APP_TIMEZONE="+c.AppTimezone,
 		"AUTH_REQUIRE_2FA="+boolStr(c.AuthRequire2FA),
 		"TOTP_ISSUER="+c.TotpIssuer,
@@ -766,6 +845,8 @@ func (c *Config) Dump() []string {
 			fmt.Sprintf("OAUTH2_%d_NONCE_REQUIRED=%s (REQ-AUTH-079; 0 means unobserved, not satisfied)", p.N, boolStr(p.NonceRequired)),
 			fmt.Sprintf("OAUTH2_%d_MIN_ACR=%s (empty = no assurance gate, REQ-AUTH-081)", p.N, none(strings.Join(p.MinACR, ", "))),
 			fmt.Sprintf("OAUTH2_%d_ROLES_ATTR=%s (preferred-region roles, REQ-CFG-037)", p.N, none(p.RolesAttr)),
+			fmt.Sprintf("OAUTH2_%d_POST_LOGOUT_REDIRECT_URI=%s (REQ-CFG-036)", p.N, none(p.PostLogoutRedirectURI)),
+			fmt.Sprintf("OAUTH2_%d_RESPONSE_MODE=%s (REQ-CFG-041)", p.N, p.ResponseMode),
 		)
 	}
 	for _, s := range c.LDAP {
@@ -892,4 +973,12 @@ func loadDotEnv(path string) map[string]string {
 		}
 	}
 	return out
+}
+
+// looksLikeEmail is the shape check for an address given in configuration: one `@` with
+// text on both sides and no whitespace. Whether it is deliverable is not configuration's
+// business.
+func looksLikeEmail(s string) bool {
+	at := strings.IndexByte(s, '@')
+	return at > 0 && at < len(s)-1 && strings.Count(s, "@") == 1 && !strings.ContainsAny(s, " \t\r\n,;")
 }

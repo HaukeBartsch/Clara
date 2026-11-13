@@ -455,8 +455,19 @@ final class Auth
      * Sequence D: the audit call precedes session destruction (REQ-UI-007,
      * REQ-AUTH-015). A failing audit must not strand the user in a session we
      * cannot end, so its outcome is logged and destruction proceeds either way.
+     *
+     * With single sign-out (OIDC_SINGLE_SIGN_OUT=1) a session that signed in through an
+     * OAuth2 provider also leaves through it (Sequence L1, REQ-AUTH-097): the API builds the
+     * provider's sign-out address after the client grants end (steps 2.5, 2.7), CLARA's own sign-out completes regardless,
+     * and a fresh pre-authentication session then remembers the `state` the provider must hand
+     * back and where its return leads ($returnTo: a registered client's sign-out address, or ''
+     * for the login page). The answer tells the caller where the browser goes next:
+     * `provider_url` when the provider takes over, and `provider_failed` when the address could
+     * not be built — the user is then told the provider sign-in may still be active (REQ-UI-088).
+     *
+     * @return array{provider_url: string, provider_failed: bool}
      */
-    public function logout(): void
+    public function logout(string $returnTo = ''): array
     {
         // The applications this session signed the user in to are signed out with it
         // (Sequence K, REQ-AUTH-094): their grants end now, and each client finds out at its
@@ -470,6 +481,29 @@ final class Auth
             }
         }
 
+        // Sequence L1 / D step 2.7: the provider's sign-out address, built as the user.
+        $providerUrl = '';
+        $providerState = '';
+        $providerFailed = false;
+        $provider = Session::oauthProvider();
+        if ($this->config->oidcSingleSignOut && $provider > 0) {
+            try {
+                $answer = $this->api->post('/api/v1/auth/oauth/end-session', ['provider' => $provider]);
+                $url = $answer['end_session_url'] ?? null;
+                $state = $answer['state'] ?? null;
+                if (is_string($url) && is_string($state) && $state !== ''
+                    && preg_match('#^https?://[^\s]+$#i', $url) === 1) {
+                    $providerUrl = $url;
+                    $providerState = $state;
+                } else {
+                    $providerFailed = true;
+                }
+            } catch (ApiException $e) {
+                $this->logger->warn('provider sign-out address not built', ['code' => $e->code(), 'provider' => $provider]);
+                $providerFailed = true;
+            }
+        }
+
         try {
             $this->api->post('/api/v1/auth/logout');
         } catch (ApiException $e) {
@@ -477,6 +511,15 @@ final class Auth
         }
 
         Session::destroy();
+
+        if ($providerUrl !== '') {
+            Session::startAfterSignOut();
+            Session::rememberLogoutReturn($providerState, $returnTo);
+        } elseif ($providerFailed) {
+            Session::startAfterSignOut();
+        }
+
+        return ['provider_url' => $providerUrl, 'provider_failed' => $providerFailed];
     }
 
     /**
@@ -635,7 +678,7 @@ final class Auth
      * path is never challenged by the second factor — the identity provider owns its own
      * (DEV-AUTH-10) — so no pending state can arise here.
      *
-     * @return array{user: array<mixed>, source_name: string}
+     * @return array{user: array<mixed>, source_name: string, provider_index: int}
      */
     public function completeOauthLogin(string $code, string $state): array
     {

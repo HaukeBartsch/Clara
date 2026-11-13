@@ -32,7 +32,10 @@ final class Request
         private readonly string $ref = '',
         private readonly array $files = [],
         private readonly string $remoteAddr = '',
-        private readonly ?TrustedProxies $trusted = null
+        private readonly ?TrustedProxies $trusted = null,
+        // The body as sent, for the one route that must see it unparsed (rawBody()). Null reads
+        // php://input on demand; a test passes the bytes.
+        private readonly ?string $rawBody = null
     ) {}
 
     public static function fromGlobals(?TrustedProxies $trusted = null): self
@@ -112,13 +115,60 @@ final class Request
             $this->ref,
             $this->files,
             $this->remoteAddr,
-            $this->trusted
+            $this->trusted,
+            $this->rawBody
         );
+    }
+
+    /**
+     * The request body as sent, up to $limit + 1 bytes — so a caller can tell "at the limit"
+     * from "over it" without reading an unbounded body. Only a form a server posts needs this:
+     * PHP's $_POST keeps the last of two equal field names, and the provider's back-channel
+     * logout must be refused when it carries `logout_token` twice (Sequence L2 step 1).
+     */
+    public function rawBody(int $limit): string
+    {
+        if ($this->rawBody !== null) {
+            return substr($this->rawBody, 0, $limit + 1);
+        }
+        $raw = @file_get_contents('php://input', false, null, 0, $limit + 1);
+
+        return is_string($raw) ? $raw : '';
+    }
+
+    /**
+     * Every value a form-encoded body gives the field $name, in order, decoded — so a caller
+     * can insist on exactly one. PHP's $_POST would silently keep the last of two, which is
+     * not acceptable for a field a server or a provider posts: the back-channel logout token
+     * (Sequence L2 step 1) and the form_post authorization response (REQ-CFG-041).
+     *
+     * @return list<string>
+     */
+    public static function formValues(string $rawBody, string $name): array
+    {
+        $found = [];
+        foreach (explode('&', $rawBody) as $pair) {
+            if ($pair === '') {
+                continue;
+            }
+            $parts = explode('=', $pair, 2);
+            if (urldecode($parts[0]) === $name) {
+                $found[] = urldecode($parts[1] ?? '');
+            }
+        }
+
+        return $found;
     }
 
     public function header(string $name): ?string
     {
         return $this->headers[strtolower($name)] ?? null;
+    }
+
+    /** Whether the query names the parameter at all, even with an empty value. */
+    public function hasQuery(string $key): bool
+    {
+        return array_key_exists($key, $this->query);
     }
 
     /** One query parameter as a string; absent or non-scalar reads as ''. */

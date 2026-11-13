@@ -43,6 +43,11 @@ const (
 	SSOLogin    = "sso_login"
 	SSOLogout   = "sso_logout"
 	SSORejected = "sso_rejected"
+	// Single sign-out with the provider, Sequence L2 (REQ-AUD-039): a verified back-channel
+	// logout token was applied, or one was refused. Neither carries the token, its signature
+	// or any claim beyond issuer and subject.
+	ProviderLogout         = "provider_logout"
+	ProviderLogoutRejected = "provider_logout_rejected"
 
 	// §3.2 data change events
 	RecordCreated         = "record_created"

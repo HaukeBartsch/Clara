@@ -47,6 +47,13 @@ type testIdP struct {
 	// always did — including "this provider publishes no claims there".
 	userInfoClaims map[string]any
 	userInfoStatus int // forced status, for the outage and refusal cases
+	// endSession is advertised as end_session_endpoint when a case sets it (Sequence L1);
+	// until then the provider supports no RP-initiated logout, like PingFederate before 12.0.
+	endSession string
+	// responseModes is advertised as response_modes_supported when a case sets it
+	// (REQ-CFG-041); until then the document is silent, which Discovery reads as query and
+	// fragment only.
+	responseModes []string
 }
 
 func newTestIdP(t *testing.T) *testIdP {
@@ -59,14 +66,21 @@ func newTestIdP(t *testing.T) *testIdP {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		doc := map[string]any{
 			"issuer":                                p.srv.URL,
 			"authorization_endpoint":                p.srv.URL + "/authorize",
 			"token_endpoint":                        p.srv.URL + "/token",
 			"userinfo_endpoint":                     p.srv.URL + "/userinfo",
 			"jwks_uri":                              p.srv.URL + "/certs",
 			"id_token_signing_alg_values_supported": []string{"RS256"},
-		})
+		}
+		if p.endSession != "" {
+			doc["end_session_endpoint"] = p.endSession
+		}
+		if p.responseModes != nil {
+			doc["response_modes_supported"] = p.responseModes
+		}
+		_ = json.NewEncoder(w).Encode(doc)
 	})
 	mux.HandleFunc("/certs", func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&p.jwksReqs, 1)

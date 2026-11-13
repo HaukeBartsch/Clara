@@ -253,6 +253,60 @@ func TestAuthBootstrapPromotion(t *testing.T) {
 	}
 }
 
+// TestAuthSecondBootstrapAdmin (REQ-CFG-042, GD-4): ADMIN_BOOTSTRAP_EMAIL_2 is promoted by
+// the same narrow rule as the first address. Its first sign-in creates it as an
+// administrator even though the first bootstrap administrator already exists; an
+// existing account it names is not promoted by a provider login while another enabled
+// administrator exists (security finding F10); an unrelated address stays a plain account.
+func TestAuthSecondBootstrapAdmin(t *testing.T) {
+	e := newEnv(t)
+	idp, provider := e.useIdP(t)
+	e.Cfg.AdminBootstrapEmail = "root@example.org"
+	e.Cfg.AdminBootstrapEmail2 = "deputy@example.org"
+	e.mustAdmin("root@example.org")
+
+	login := func(email string) UserObject {
+		t.Helper()
+		// Each person is their own provider subject, or the second login would resolve to
+		// the first account by its binding (REQ-AUTH-080).
+		body := loginArgs(email, idp.mint(map[string]any{"email": email, "email_verified": true, "sub": "sub-" + email}), "")
+		body["provider"] = provider.Issuer
+		rec := e.do("POST", "/api/v1/auth/login", body, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("login %s: %d %s", email, rec.Code, rec.Body.String())
+		}
+		var obj UserObject
+		e.decode(rec, &obj)
+		return obj
+	}
+
+	if obj := login("deputy@example.org"); !obj.IsAdmin || !obj.Enabled {
+		t.Errorf("second bootstrap address = %+v, want an enabled administrator", obj)
+	}
+	if obj := login("someone@example.org"); obj.IsAdmin {
+		t.Errorf("an unrelated address became an administrator: %+v", obj)
+	}
+
+	later := newEnv(t)
+	lidp, lprovider := later.useIdP(t)
+	later.Cfg.AdminBootstrapEmail = "root@example.org"
+	later.Cfg.AdminBootstrapEmail2 = "deputy@example.org"
+	later.mustAdmin("root@example.org")
+	if _, err := later.Store.CreateUser(context.Background(),
+		&db.User{Email: "deputy@example.org", DisplayName: "Deputy", Enabled: true}); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	rec := later.do("POST", "/api/v1/auth/login", oauthLoginBody(t, lidp, lprovider.Issuer, "deputy@example.org", nil), nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login: %d %s", rec.Code, rec.Body.String())
+	}
+	var obj UserObject
+	later.decode(rec, &obj)
+	if obj.IsAdmin {
+		t.Errorf("a provider login promoted an existing account while an administrator exists: %+v", obj)
+	}
+}
+
 // TestAuthBootstrapDisabledStaysDisabled (security finding F10): a disabled
 // bootstrap account is never re-enabled or promoted by an external-IdP login —
 // the deliberate disable sticks.

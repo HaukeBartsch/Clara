@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"slices"
@@ -110,12 +111,26 @@ func (h *Handler) oauthStart(w http.ResponseWriter, r *http.Request) {
 		errInternal(w)
 		return
 	}
+	// REQ-CFG-041: with form_post the provider POSTs the response to /auth/callback, so the
+	// code never appears in a URL. A provider whose discovery document does not offer it would
+	// fail at its own sign-in page or, worse, fall back silently to a mode CLARA did not ask
+	// for — refused here, before the browser leaves, with a reason the test page can name.
+	if !runtime.offersResponseMode(provider.ResponseMode) {
+		slog.Warn("oauth provider does not offer the configured response mode",
+			"issuer", provider.Issuer, "response_mode", provider.ResponseMode)
+		APIError(w, http.StatusBadGateway, "response_mode_unsupported",
+			"the identity provider does not offer the configured response mode")
+		return
+	}
 	verifier := oauth2.GenerateVerifier()
-	authorizeURL := runtime.oauth.AuthCodeURL(
-		state,
+	opts := []oauth2.AuthCodeOption{
 		oauth2.S256ChallengeOption(verifier),
 		oauth2.SetAuthURLParam("nonce", nonce),
-	)
+	}
+	if provider.ResponseMode == config.ResponseModeFormPost {
+		opts = append(opts, oauth2.SetAuthURLParam("response_mode", config.ResponseModeFormPost))
+	}
+	authorizeURL := runtime.oauth.AuthCodeURL(state, opts...)
 	writeJSON(w, http.StatusOK, map[string]string{
 		"authorize_url": authorizeURL,
 		"state":         state,
@@ -125,11 +140,17 @@ func (h *Handler) oauthStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) oauthRuntime(r *http.Request, provider config.OAuth2Provider) (*providerRuntime, error) {
+	return h.assertions.runtimeFor(r.Context(), provider, h.jwksReuse())
+}
+
+// jwksReuse is OAUTH2_JWKS_TTL as a duration, with config's own default guarding a
+// zero-valued Config in tests (REQ-CFG-035).
+func (h *Handler) jwksReuse() time.Duration {
 	reuse := time.Duration(h.Cfg.OAuthJWKSTTLSec) * time.Second
 	if reuse <= 0 {
 		reuse = time.Hour
 	}
-	return h.assertions.runtimeFor(r.Context(), provider, reuse)
+	return reuse
 }
 
 func (h *Handler) providerByNumber(number int) (config.OAuth2Provider, bool) {

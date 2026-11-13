@@ -88,6 +88,18 @@ final class Response
         return $response;
     }
 
+    /**
+     * An empty answer to another server — the provider's back-channel logout (REQ-UI-088):
+     * no body, no content type, never stored.
+     */
+    public static function emptyBody(int $status = 200): self
+    {
+        $response = new self($status, '');
+        $response->headers['Cache-Control'] = 'no-store';
+
+        return $response;
+    }
+
     /** The §4.2 error envelope, so a data request fails exactly like the API. */
     /**
      * The §4.2 failure envelope. `$ref` is this request's correlation reference

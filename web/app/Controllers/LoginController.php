@@ -24,6 +24,7 @@ namespace Clara\Controllers;
 
 use Clara\ApiException;
 use Clara\Messages;
+use Clara\OauthHandoff;
 use Clara\Response;
 use Clara\Session;
 
@@ -164,10 +165,12 @@ final class LoginController extends Controller
      */
     public function callback(): Response
     {
+        $response = $this->authorizationResponse();
+
         if (Session::oauthTransactionPurpose() === 'auth_test') {
             if (!Session::isAdmin()) {
                 try {
-                    $this->auth->completeOauthTest('', $this->request->query('state'));
+                    $this->auth->completeOauthTest('', $response['state']);
                 } catch (ApiException) {
                     // Consume the transaction; the diagnostic is never resumed without its admin session.
                 }
@@ -177,8 +180,8 @@ final class LoginController extends Controller
 
             try {
                 $report = $this->auth->completeOauthTest(
-                    $this->request->query('error') === '' ? $this->request->query('code') : '',
-                    $this->request->query('state')
+                    $response['error'] === '' ? $response['code'] : '',
+                    $response['state']
                 );
             } catch (ApiException $e) {
                 // No report came back at all, which is itself the finding: name the stage that
@@ -193,10 +196,10 @@ final class LoginController extends Controller
 
         // The error the provider reports (access_denied and friends) is its own words and
         // never a reason to log anybody in: one line, back to the form.
-        if ($this->request->query('error') !== '') {
-            $this->auth->cancelOauth($this->request->query('state'));
+        if ($response['error'] !== '') {
+            $this->auth->cancelOauth($response['state']);
             $this->logger->info('oauth provider reported an error', [
-                'error' => substr($this->request->query('error'), 0, 64),
+                'error' => substr($response['error'], 0, 64),
             ]);
 
             return $this->renderCredentials('', $this->i18n->t('login.failure.state_mismatch'));
@@ -206,17 +209,70 @@ final class LoginController extends Controller
         $this->rememberedNext = Session::takeLoginNext();
 
         try {
-            $signedIn = $this->auth->completeOauthLogin(
-                $this->request->query('code'),
-                $this->request->query('state')
-            );
+            $signedIn = $this->auth->completeOauthLogin($response['code'], $response['state']);
         } catch (ApiException $e) {
             return $this->afterAttempt($e, '');
         }
 
         Session::establish($signedIn['user'], $signedIn['source_name']);
+        // The provider Sequence L1 signs this session out of (Authentication §3).
+        Session::setOauthProvider($signedIn['provider_index']);
 
         return Response::redirect($this->safeNext());
+    }
+
+    /**
+     * The authorization response this callback answers (Sequence A step 3): from the query
+     * for a provider answering with `query`, or — with `handoff` in the query — the one
+     * POST /auth/callback parked for a provider answering with `form_post` (REQ-CFG-041).
+     * A handle that redeems nothing (unknown, used, expired, or the empty one a malformed
+     * POST leaves) reads as a provider error, so the transaction is cleared and the login
+     * form says the sign-in did not complete. The query's own code and state are ignored
+     * beside a handle: one response, one source.
+     *
+     * @return array{code: string, state: string, error: string}
+     */
+    private function authorizationResponse(): array
+    {
+        if (!$this->request->hasQuery('handoff')) {
+            return [
+                'code' => $this->request->query('code'),
+                'state' => $this->request->query('state'),
+                'error' => $this->request->query('error'),
+            ];
+        }
+        $taken = (new OauthHandoff($this->config->sessionDir))->take($this->request->query('handoff'), time());
+        if ($taken === null) {
+            $this->logger->info('oauth form_post handoff not redeemed', []);
+
+            return ['code' => '', 'state' => '', 'error' => 'handoff_invalid'];
+        }
+
+        return $taken;
+    }
+
+    /**
+     * GET /auth/logged-out — the provider's return after Sequence L1 (REQ-AUTH-097, REQ-UI-088).
+     * The `state` is compared with the one this browser's pre-authentication session holds and
+     * is cleared whatever the outcome. A match within the time bound goes on to a registered
+     * client's sign-out address, or to the login page saying the user is signed out of CLARA and
+     * of the provider. Anything else — no state, a wrong or expired one, no session — says only
+     * that the user is signed out of CLARA. The return proves nothing and changes no session or
+     * account: it only chooses a line of text.
+     */
+    public function loggedOut(): Response
+    {
+        $return = Session::takeLogoutReturn($this->request->query('state'), time());
+        if ($return !== null && $return !== '') {
+            return Response::redirect($return);
+        }
+        if (!Session::isAuthenticated()) {
+            Session::flash($return !== null ? 'success' : 'info', $this->i18n->t(
+                $return !== null ? 'logout.signed_out_provider' : 'logout.signed_out'
+            ));
+        }
+
+        return Response::redirect('/login');
     }
 
     /**

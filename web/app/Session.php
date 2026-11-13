@@ -65,7 +65,53 @@ final class Session
     /** Past SESSION_IDLE_TIMEOUT without a request (REQ-AUTH-015). */
     public const IDLE = 'idle';
 
+    /**
+     * How long the provider may take to send the browser back after Sequence L1 before the
+     * return no longer counts as "signed out of the provider" (§2.14 L1 step 3).
+     */
+    public const LOGOUT_RETURN_SECONDS = 600;
+
+    /**
+     * The per-account index of live session ids (§3, REQ-AUTH-083/099) — set by start() only
+     * with OIDC_SINGLE_SIGN_OUT=1; null otherwise, and every index call below is then a no-op.
+     */
+    private static ?SessionIndex $index = null;
+
     private function __construct() {}
+
+    /** Turns the session index on or off (start(); tests). */
+    public static function useIndex(?SessionIndex $index): void
+    {
+        self::$index = $index;
+    }
+
+    /**
+     * Moves one account's entry in the session index from $oldId to $newId (either may be
+     * '' — a sign-in adds, a sign-out removes). A failure is swallowed: the index costs only
+     * promptness, because the epoch raise ends every session regardless (§3).
+     */
+    private static function reindex(int $userId, string $oldId, string $newId): void
+    {
+        if (self::$index === null || $userId <= 0 || $oldId === $newId) {
+            return;
+        }
+        try {
+            if ($oldId !== '') {
+                self::$index->remove($userId, $oldId);
+            }
+            if ($newId !== '') {
+                self::$index->add($userId, $newId);
+            }
+        } catch (\Throwable) {
+            // see above
+        }
+    }
+
+    /** This request's session id, or '' outside a running session. */
+    private static function currentId(): string
+    {
+        return session_status() === PHP_SESSION_ACTIVE ? (string) session_id() : '';
+    }
 
     /**
      * Configures and starts the session. Called once, from the front controller,
@@ -106,6 +152,8 @@ final class Session
         ]);
 
         session_start();
+
+        self::$index = $config->oidcSingleSignOut ? new SessionIndex($config->sessionDir) : null;
 
         // A tombstone stays exactly what rotation left (§3.1): lifecycle() reads it next,
         // and nothing is ever rendered from it.
@@ -228,6 +276,7 @@ final class Session
         }
 
         $data = $_SESSION;
+        $replaced = self::currentId();
         $_SESSION = ['tombstone' => [
             'successor' => $successor,
             'at' => $now,
@@ -244,6 +293,7 @@ final class Session
         session_start(); // issues the new cookie
         $_SESSION = $data;
         $_SESSION['rotated_at'] = $now;
+        self::reindex((int) ($data['user_id'] ?? 0), $replaced, $successor);
     }
 
     /**
@@ -276,11 +326,14 @@ final class Session
      */
     public static function reset(): void
     {
+        $userId = (int) ($_SESSION['user_id'] ?? $_SESSION['tombstone']['user_id'] ?? 0);
+        $ended = self::currentId();
         $_SESSION = [];
         if (session_status() === PHP_SESSION_ACTIVE) {
             session_regenerate_id(true);
         }
         $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+        self::reindex($userId, $ended, '');
     }
 
     /**
@@ -302,10 +355,12 @@ final class Session
     public static function adoptEpoch(int $epoch): void
     {
         $_SESSION['session_epoch'] = $epoch;
+        $replaced = self::currentId();
         if (session_status() === PHP_SESSION_ACTIVE) {
             session_regenerate_id(true);
         }
         $_SESSION['rotated_at'] = time();
+        self::reindex(self::userId(), $replaced, self::currentId());
     }
 
     /** True once the identity keys are present and no pre-auth state stands. */
@@ -594,6 +649,72 @@ final class Session
         // accounts would hold, and that API ignores the header anyway (REQ-AUTH-074).
         $_SESSION['session_epoch'] = (int) ($user['session_epoch'] ?? 0);
         $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+        self::reindex($_SESSION['user_id'], '', self::currentId());
+    }
+
+    /**
+     * Records the OAuth2 provider this session signed in through (`oauth2_provider`, §3) —
+     * the provider Sequence L1 signs the user out of. Called right after establish(), which
+     * starts every sign-in from an empty session, so a local or LDAP session never has one.
+     */
+    public static function setOauthProvider(int $index): void
+    {
+        $_SESSION['oauth2_provider'] = $index;
+    }
+
+    /** The provider index this session signed in through, or 0. */
+    public static function oauthProvider(): int
+    {
+        return (int) ($_SESSION['oauth2_provider'] ?? 0);
+    }
+
+    /**
+     * After Sequence D has destroyed the session: a fresh, empty **pre-authentication**
+     * session under a new id (§2.4 step 4.5), to carry the sign-out's `oidc_logout_state` or
+     * the line the login page shows. It never holds an identity.
+     */
+    public static function startAfterSignOut(): void
+    {
+        if (session_status() === PHP_SESSION_NONE && !headers_sent() && PHP_SAPI !== 'cli') {
+            $id = session_create_id();
+            if (is_string($id) && $id !== '') {
+                // The id was made just now and has no file yet; strict mode steps aside for
+                // this one start, as in rotate().
+                ini_set('session.use_strict_mode', '0');
+                session_id($id);
+                session_start();
+            }
+        }
+        $_SESSION = ['csrf_token' => bin2hex(random_bytes(32))];
+    }
+
+    /**
+     * Sequence L1 step 2: the state the provider must hand back to GET /auth/logged-out, and
+     * where that return leads — a registered client's sign-out address, or '' for /login.
+     */
+    public static function rememberLogoutReturn(string $state, string $return): void
+    {
+        $_SESSION['oidc_logout_state'] = ['state' => $state, 'at' => time(), 'return' => $return];
+    }
+
+    /**
+     * Sequence L1 step 3: takes `oidc_logout_state` — cleared whatever the outcome — and says
+     * whether $state is the one CLARA sent, within LOGOUT_RETURN_SECONDS. A match answers the
+     * remembered return address ('' meaning /login); anything else answers null. The answer
+     * chooses a line of text and a destination, nothing more: no session or account changes.
+     */
+    public static function takeLogoutReturn(string $state, int $now): ?string
+    {
+        $saved = $_SESSION['oidc_logout_state'] ?? null;
+        unset($_SESSION['oidc_logout_state']);
+        if (!is_array($saved) || !is_string($saved['state'] ?? null) || $saved['state'] === '' || $state === '') {
+            return null;
+        }
+        if (!hash_equals($saved['state'], $state) || (int) ($saved['at'] ?? 0) + self::LOGOUT_RETURN_SECONDS < $now) {
+            return null;
+        }
+
+        return is_string($saved['return'] ?? null) ? $saved['return'] : '';
     }
 
     /**
@@ -627,6 +748,7 @@ final class Session
     /** Destroys the session and its cookie (Sequence D step 4). */
     public static function destroy(): void
     {
+        self::reindex(self::userId(), self::currentId(), '');
         $_SESSION = [];
         if (ini_get('session.use_cookies')) {
             $params = session_get_cookie_params();

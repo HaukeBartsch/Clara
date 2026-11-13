@@ -171,6 +171,30 @@ type providerRuntime struct {
 	oauth    *oauth2.Config
 	jwksURI  string
 	userinfo string
+	// keys is the same reuse-bounded key set the verifier uses, kept so a back-channel
+	// logout token is checked against the provider's keys through one cache (Sequence L2,
+	// REQ-AUTH-098) rather than a second fetch path.
+	keys *reuseBoundedKeySet
+	// endSession is the discovery document's end_session_endpoint, empty when it names
+	// none — Sequence L1 then cannot send the browser to the provider (REQ-AUTH-097).
+	endSession string
+	// responseModes is the discovery document's response_modes_supported. Absent, OpenID
+	// Connect Discovery §3 defines it as query and fragment — form_post is then not offered.
+	responseModes []string
+}
+
+// offersResponseMode reports whether discovery lists the mode (REQ-CFG-041). "query" is
+// always offered: it is the default of the authorization-code flow.
+func (r *providerRuntime) offersResponseMode(mode string) bool {
+	if mode == "" || mode == config.ResponseModeQuery {
+		return true
+	}
+	for _, m := range r.responseModes {
+		if m == mode {
+			return true
+		}
+	}
+	return false
 }
 
 func newProviderVerifiers() *providerVerifiers {
@@ -198,6 +222,10 @@ func (c *providerVerifiers) runtimeFor(ctx context.Context, p config.OAuth2Provi
 	var discovered struct {
 		JWKSURI     string `json:"jwks_uri"`
 		UserInfoURL string `json:"userinfo_endpoint"`
+		EndSession  string `json:"end_session_endpoint"`
+		// Decoded loosely so a provider listing something odd here still signs people in;
+		// only form_post's presence matters (REQ-CFG-041).
+		ResponseModes []string `json:"response_modes_supported"`
 	}
 	if err := provider.Claims(&discovered); err != nil || strings.TrimSpace(discovered.JWKSURI) == "" {
 		return nil, fmt.Errorf("discovery document for %s names no jwks_uri (REQ-AUTH-082)", p.Issuer)
@@ -230,8 +258,11 @@ func (c *providerVerifiers) runtimeFor(ctx context.Context, p config.OAuth2Provi
 			RedirectURL:  p.RedirectURI,
 			Scopes:       []string{"openid", "email", "profile"},
 		},
-		jwksURI:  discovered.JWKSURI,
-		userinfo: discovered.UserInfoURL,
+		jwksURI:       discovered.JWKSURI,
+		userinfo:      discovered.UserInfoURL,
+		keys:          keySet,
+		endSession:    strings.TrimSpace(discovered.EndSession),
+		responseModes: discovered.ResponseModes,
 	}
 	c.byIssuer[p.Issuer] = runtime
 	return runtime, nil

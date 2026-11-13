@@ -62,11 +62,49 @@ $oauth = ($report['kind'] ?? '') === 'oauth' ? $report : [];
             <h3 class="h6"><?= View::e($provider['issuer']) ?></h3>
             <dl class="row small mb-3">
                 <dt class="col-sm-3"><?= View::e($view->t('admin.auth.client_id')) ?></dt><dd class="col-sm-9"><?= View::e($provider['client_id']) ?></dd>
-                <dt class="col-sm-3"><?= View::e($view->t('admin.auth.redirect_uri')) ?></dt><dd class="col-sm-9"><?= View::e($provider['redirect_uri']) ?></dd>
                 <dt class="col-sm-3"><?= View::e($view->t('admin.auth.email_claim')) ?></dt><dd class="col-sm-9"><?= View::e($provider['email_attr']) ?></dd>
                 <dt class="col-sm-3"><?= View::e($view->t('admin.auth.roles_claim')) ?></dt><dd class="col-sm-9"><?= View::e($provider['roles_attr'] !== '' ? $provider['roles_attr'] : $view->t('admin.auth.roles_claim.none')) ?></dd>
                 <dt class="col-sm-3"><?= View::e($view->t('admin.auth.names')) ?></dt><dd class="col-sm-9"><?= View::e(implode(', ', $provider['names'])) ?></dd>
+                <dt class="col-sm-3"><?= View::e($view->t('admin.auth.response_mode')) ?></dt><dd class="col-sm-9"><code><?= View::e($provider['response_mode']) ?></code> <span class="text-body-secondary">(<?= View::e($view->t('admin.auth.response_mode.' . ($provider['response_mode'] === 'form_post' ? 'form_post' : 'query'))) ?>)</span></dd>
             </dl>
+            <?php
+            // The addresses this client's registration at the provider must name, character for
+            // character (REQ-AUTH-100). Unconfigured sign-out addresses show the value to configure.
+            $registration = [
+                ['admin.auth.register.redirect', $provider['redirect_uri'], 'OAUTH2_' . $provider['index'] . '_REDIRECT_URI', true],
+                ['admin.auth.register.post_logout', $provider['post_logout_redirect_uri'],
+                    'OAUTH2_' . $provider['index'] . '_POST_LOGOUT_REDIRECT_URI', $provider['post_logout_configured']],
+                ['admin.auth.register.backchannel', $provider['backchannel_logout_uri'],
+                    'OAUTH2_' . $provider['index'] . '_BACKCHANNEL_LOGOUT_PATH', $provider['backchannel_configured']],
+            ];
+            ?>
+            <h4 class="h6 mt-2"><?= View::e($view->t('admin.auth.register.title')) ?></h4>
+            <p class="small mb-2"><?= View::e($view->t('admin.auth.register.intro')) ?></p>
+            <div class="table-responsive">
+                <table class="table table-sm small align-middle mb-2">
+                    <thead><tr>
+                        <th scope="col"><?= View::e($view->t('admin.auth.register.purpose')) ?></th>
+                        <th scope="col"><?= View::e($view->t('admin.auth.register.address')) ?></th>
+                        <th scope="col"><?= View::e($view->t('admin.auth.register.setting')) ?></th>
+                    </tr></thead>
+                    <tbody>
+                    <?php foreach ($registration as [$labelKey, $address, $variable, $configured]): ?>
+                        <tr>
+                            <td><?= View::e($view->t($labelKey)) ?></td>
+                            <td class="text-break"><code><?= View::e($address) ?></code>
+                                <?php if (!$configured): ?>
+                                    <span class="badge text-bg-secondary ms-1"><?= View::e($view->t('admin.auth.register.suggested')) ?></span>
+                                <?php endif; ?>
+                            </td>
+                            <td class="text-break"><code><?= View::e($variable) ?></code></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+            <p class="small text-body-secondary"><?= View::e($view->t($singleSignOut
+                ? 'admin.auth.register.sso_on'
+                : 'admin.auth.register.sso_off')) ?></p>
             <form method="post" action="/admin?action=test_oauth">
                 <?= $view->csrfField() ?>
                 <input type="hidden" name="section" value="auth">
@@ -108,7 +146,7 @@ $oauth = ($report['kind'] ?? '') === 'oauth' ? $report : [];
     $oauthReasons = [
         'unknown_provider', 'provider_unavailable', 'provider_issuer_mismatch',
         'assertion_invalid', 'email_unverified', 'assurance_insufficient', 'nonce_mismatch',
-        'state_mismatch',
+        'state_mismatch', 'response_mode_unsupported',
     ];
     $oauthStage = (string) ($oauth['stage'] ?? '');
     $oauthReason = (string) ($oauth['error'] ?? '');

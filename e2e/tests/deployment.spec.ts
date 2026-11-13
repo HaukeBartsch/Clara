@@ -214,6 +214,33 @@ test.describe("reverse-proxy reference configurations", () => {
     expect(code).toContain("[P,L]")
   })
 
+  test("the provider back-channel path ships closed, the same way in all three", () => {
+    // Technology_Stack_Design.md §5 "Provider back-channel path" (REQ-CFG-036, REQ-AUTH-098):
+    // routed to the front controller for the provider's addresses only, refused to everyone
+    // until the operator fills in the commented placeholder.
+    const PLACEHOLDER = "<provider-cidr>"
+    const nginx = codeOnly(read(NGINX_FILE))
+    const nginxStart = nginx.indexOf("location ^~ /auth/backchannel-logout/ {")
+    expect(nginxStart, "nginx lost its back-channel location").toBeGreaterThan(-1)
+    const nginxBlock = nginx.slice(nginxStart, nginx.indexOf("}", nginxStart))
+    expect(nginxBlock).toContain("deny all;")
+    expect(nginxBlock).toContain("try_files $uri /index.php$is_args$args;")
+    expect(nginxBlock, "nginx ships the path open").not.toContain("allow ")
+
+    const apache = codeOnly(read(APACHE_FILE))
+    const apacheStart = apache.indexOf('<Location "/auth/backchannel-logout/">')
+    expect(apacheStart, "Apache lost its back-channel <Location>").toBeGreaterThan(-1)
+    const apacheBlock = apache.slice(apacheStart, apache.indexOf("</Location>", apacheStart))
+    expect(apacheBlock).toContain("Require all denied")
+    expect(apacheBlock, "Apache ships the path open").not.toContain("Require ip")
+
+    const guide = read("../../INSTALL.md")
+    expect(read(NGINX_FILE)).toContain(`# allow ${PLACEHOLDER};`)
+    expect(read(APACHE_FILE)).toContain(`# Require ip ${PLACEHOLDER}`)
+    expect(guide).toContain(`# allow ${PLACEHOLDER};`)
+    expect(guide).toContain(`Require ip ${PLACEHOLDER}`)
+  })
+
   test("each file names the other, so a change lands in both", () => {
     expect(read(NGINX_FILE)).toContain("deploy/apache2/clara.conf")
     expect(read(APACHE_FILE)).toContain("deploy/nginx/clara.conf")
@@ -324,6 +351,13 @@ if (PROXY && BASE) {
       const page = await request.get(at("/"), { headers, maxRedirects: 0 })
       expect([302, 303]).toContain(page.status())
       expect(page.headers().location ?? "").toContain("/login")
+    })
+
+    test("the provider back-channel path is closed to an ordinary caller", async ({ request }) => {
+      // The reference files ship it closed; an operator opens it to the provider's networks
+      // only, so a test machine is refused either way (INSTALL.md §11, §14.3).
+      const response = await request.post(at("/auth/backchannel-logout/x"), { form: { logout_token: "x" } })
+      expect(response.status()).toBe(403)
     })
 
     test("HSTS is set on the response a browser actually gets", async ({ request }) => {

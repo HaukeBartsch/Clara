@@ -63,6 +63,20 @@ final class Config
     /** `OAUTH2_JWKS_TTL` default (REQ-CFG-035), in seconds. */
     public const DEFAULT_JWKS_TTL_SECONDS = 3600;
 
+    /**
+     * Where a provider posts its back-channel logout token (REQ-CFG-036): one segment under
+     * this prefix per provider, so the reverse proxy needs a single location rule for all of
+     * them (INSTALL.md §11).
+     */
+    public const BACKCHANNEL_LOGOUT_PREFIX = '/auth/backchannel-logout/';
+
+    /** OAUTH2_N_RESPONSE_MODE values (REQ-CFG-041); `query` is the default. */
+    public const RESPONSE_MODE_QUERY = 'query';
+    public const RESPONSE_MODE_FORM_POST = 'form_post';
+
+    /** CLARA's page the provider returns the browser to after Sequence L1 (REQ-AUTH-097). */
+    public const LOGGED_OUT_PATH = '/auth/logged-out';
+
     public string $appEnv = 'development';
 
     public bool $isDevelopment = true;
@@ -124,9 +138,17 @@ final class Config
      * only the provider metadata needed to route the callback and render the Control
      * Panel; it does not load or retain the client secret.
      *
-     * @var list<array{index: int, issuer: string, client_id: string, redirect_uri: string, email_attr: string, roles_attr: string, min_acr: list<string>, names: list<string>}>
+     * @var list<array{index: int, issuer: string, client_id: string, redirect_uri: string, email_attr: string, roles_attr: string, min_acr: list<string>, names: list<string>, post_logout_redirect_uri: string, backchannel_logout_path: string, response_mode: string}>
      */
     public array $oauthProviders = [];
+
+    /**
+     * Sign-out coordinated with the OAuth2 providers (`OIDC_SINGLE_SIGN_OUT`, REQ-CFG-036,
+     * Sequence L). Both components read the same switch: the API builds the provider sign-out
+     * address and verifies logout tokens, this layer sends the browser and receives the
+     * provider's back-channel request. Off, neither route exists.
+     */
+    public bool $oidcSingleSignOut = false;
 
     /**
      * How long a fetched provider key set may be reused before a scheduled refetch
@@ -378,8 +400,18 @@ final class Config
             }
         }
 
+        // --- single sign-out with the provider (REQ-CFG-036) ---
+        // 0 or 1 and nothing else: a sign-out that silently does not reach the provider is the
+        // failure this switch exists to prevent, so an ambiguous value refuses startup.
+        $sso = $get('OIDC_SINGLE_SIGN_OUT', '0');
+        if (!in_array($sso, ['0', '1'], true)) {
+            $errors[] = "OIDC_SINGLE_SIGN_OUT must be 0 or 1, got '{$sso}' (REQ-CFG-036)";
+        }
+        $c->oidcSingleSignOut = $sso === '1';
+
         // --- authentication sources (REQ-CFG-032) ---
         $c->authSources = self::readAuthSources($c, $get, $errors);
+        self::checkBackchannelPaths($c, $errors);
 
         // A configured directory is only usable if this PHP can bind one. Naming the
         // missing extension at startup beats a login page that can never verify anybody
@@ -508,6 +540,16 @@ final class Config
                         static fn (string $v): bool => $v !== ''
                     )),
                     'names' => self::nameList("OAUTH2_{$n}_NAMES", $get("OAUTH2_{$n}_NAMES"), $errors),
+                    // Display only, for the Authentication Test's list of addresses to register
+                    // at the provider: the Go API validates and sends it (REQ-CFG-036).
+                    'post_logout_redirect_uri' => $get("OAUTH2_{$n}_POST_LOGOUT_REDIRECT_URI"),
+                    // This layer's half of single sign-out: the path the provider posts its
+                    // logout token to (Sequence L2). Checked by checkBackchannelPaths().
+                    'backchannel_logout_path' => $get("OAUTH2_{$n}_BACKCHANNEL_LOGOUT_PATH"),
+                    // How the provider returns the authorization response (REQ-CFG-041). The
+                    // API asks for it; this layer opens POST /auth/callback when any provider
+                    // uses form_post, and keeps GET /auth/callback open whatever is set.
+                    'response_mode' => self::responseMode($n, $get("OAUTH2_{$n}_RESPONSE_MODE"), $errors),
                 ];
             }
 
@@ -586,6 +628,98 @@ final class Config
         return $sources;
     }
 
+    /**
+     * The web layer's half of the single sign-out check (REQ-CFG-036, System_Configuration_Design.md
+     * §4.1): a back-channel path, when set, is the prefix plus one segment of letters, digits, `-`
+     * or `_`, and no two providers share one — the path is what selects the provider. With the
+     * switch on, every provider needs one. The API checks the other half (post-logout address,
+     * subject claim) at its own startup, so a half-configured installation starts neither.
+     *
+     * @param list<string> $errors
+     */
+    private static function checkBackchannelPaths(self $c, array &$errors): void
+    {
+        $seen = [];
+        foreach ($c->oauthProviders as $provider) {
+            $n = $provider['index'];
+            $path = $provider['backchannel_logout_path'];
+            if ($path === '') {
+                if ($c->oidcSingleSignOut) {
+                    $errors[] = "OAUTH2_{$n}_BACKCHANNEL_LOGOUT_PATH is required with OIDC_SINGLE_SIGN_OUT=1 — e.g. "
+                        . self::BACKCHANNEL_LOGOUT_PREFIX . "idp{$n} (REQ-CFG-036)";
+                }
+                continue;
+            }
+            if (preg_match('#^' . preg_quote(self::BACKCHANNEL_LOGOUT_PREFIX, '#') . '[A-Za-z0-9_-]{1,64}$#', $path) !== 1) {
+                $errors[] = "OAUTH2_{$n}_BACKCHANNEL_LOGOUT_PATH must be " . self::BACKCHANNEL_LOGOUT_PREFIX
+                    . "<segment> with one segment of letters, digits, - or _, got '{$path}' (REQ-CFG-036)";
+                continue;
+            }
+            if (isset($seen[$path])) {
+                $errors[] = "OAUTH2_{$n}_BACKCHANNEL_LOGOUT_PATH '{$path}' is already OAUTH2_{$seen[$path]}_BACKCHANNEL_LOGOUT_PATH"
+                    . ' — each provider needs its own (REQ-CFG-036)';
+                continue;
+            }
+            $seen[$path] = $n;
+        }
+    }
+
+    /**
+     * OAUTH2_N_RESPONSE_MODE (REQ-CFG-041): `query` (the default) or `form_post`. Anything else
+     * refuses startup, as the API does — a guessed mode would send the response where the
+     * callback does not take it.
+     *
+     * @param list<string> $errors
+     */
+    private static function responseMode(int $n, string $value, array &$errors): string
+    {
+        $value = trim($value);
+        if ($value === '' || $value === self::RESPONSE_MODE_QUERY) {
+            return self::RESPONSE_MODE_QUERY;
+        }
+        if ($value === self::RESPONSE_MODE_FORM_POST) {
+            return self::RESPONSE_MODE_FORM_POST;
+        }
+        $errors[] = "OAUTH2_{$n}_RESPONSE_MODE must be query or form_post, got '{$value}' (REQ-CFG-041)";
+
+        return self::RESPONSE_MODE_QUERY;
+    }
+
+    /**
+     * Whether POST /auth/callback is open: only when some provider is configured to answer
+     * with form_post (REQ-CFG-041). GET /auth/callback is always open.
+     */
+    public function acceptsFormPostCallback(): bool
+    {
+        foreach ($this->oauthProviders as $provider) {
+            if ($provider['response_mode'] === self::RESPONSE_MODE_FORM_POST) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The provider whose back-channel logout path this is (Sequence L2), or null — with
+     * single sign-out off, no path names a provider.
+     *
+     * @return array{index: int, issuer: string, backchannel_logout_path: string}|null
+     */
+    public function providerByBackchannelPath(string $path): ?array
+    {
+        if (!$this->oidcSingleSignOut || $path === '') {
+            return null;
+        }
+        foreach ($this->oauthProviders as $provider) {
+            if ($provider['backchannel_logout_path'] !== '' && hash_equals($provider['backchannel_logout_path'], $path)) {
+                return $provider;
+            }
+        }
+
+        return null;
+    }
+
     /** An absolute http(s) URL with a host, and neither a fragment nor credentials in it. */
     private static function isAbsoluteHttpUrl(string $url): bool
     {
@@ -659,6 +793,7 @@ final class Config
             'SESSION_ROTATE_INTERVAL', 'SESSION_COOKIE_SECURE', 'UI_THEME', 'MONITORING_PERIOD_MINUTES',
             'LOCAL_LOGIN_NAMES',
             'TRUSTED_PROXY_CIDRS',
+            'OIDC_SINGLE_SIGN_OUT',
         ];
         for ($n = 1; $n <= self::SOURCE_INDEX_MAX; $n++) {
             $keys[] = "OAUTH2_{$n}_ISSUER";
@@ -669,6 +804,9 @@ final class Config
             $keys[] = "OAUTH2_{$n}_ROLES_ATTR";
             $keys[] = "OAUTH2_{$n}_MIN_ACR";
             $keys[] = "OAUTH2_{$n}_NAMES";
+            $keys[] = "OAUTH2_{$n}_POST_LOGOUT_REDIRECT_URI";
+            $keys[] = "OAUTH2_{$n}_BACKCHANNEL_LOGOUT_PATH";
+            $keys[] = "OAUTH2_{$n}_RESPONSE_MODE";
             $keys[] = "LDAP_SERVER_{$n}_URL";
             $keys[] = "LDAP_SERVER_{$n}_BIND_DN";
             $keys[] = "LDAP_SERVER_{$n}_BIND_PASSWORD";

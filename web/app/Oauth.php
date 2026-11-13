@@ -61,7 +61,7 @@ final class Oauth
      * Sends the authorization code to the API for PKCE exchange and assertion
      * verification, then returns the API's authenticated user object.
      *
-     * @return array{user: array<mixed>, source_name: string}
+     * @return array{user: array<mixed>, source_name: string, provider_index: int}
      */
     public function complete(string $code, string $state): array
     {
@@ -80,7 +80,7 @@ final class Oauth
             'assertion_nonce' => $txn['nonce'],
         ]);
 
-        return ['user' => $user, 'source_name' => $txn['source_name']];
+        return ['user' => $user, 'source_name' => $txn['source_name'], 'provider_index' => (int) $provider['index']];
     }
 
     /**

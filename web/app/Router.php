@@ -61,6 +61,12 @@ final class Router
         // against the transaction this browser started (§2.1 step 3).
         ['method' => 'GET', 'pattern' => '/auth/callback', 'controller' => Controllers\LoginController::class,
             'handler' => 'callback', 'guard' => 'public'],
+        // The same return as a provider's form_post (REQ-CFG-041): cross-site, so no session
+        // cookie and no CSRF token arrive with it. It only parks the response and sends the
+        // browser to the GET above with a single-use handle; it answers 405 while no provider
+        // is configured for form_post.
+        ['method' => 'POST', 'pattern' => '/auth/callback', 'controller' => Controllers\OauthCallbackController::class,
+            'handler' => 'receive', 'guard' => 'public', 'session' => false],
         // The two-factor panel and the enrollment wizard live on the same route
         // (§2.1: "login incl. source-name picker and the two-factor step"), so
         // the pre-auth `tfa_pending` state reaches exactly these handlers and
@@ -387,6 +393,25 @@ final class Router
 
         ['method' => 'POST', 'pattern' => '/logout', 'controller' => Controllers\AccountController::class,
             'handler' => 'logout', 'guard' => 'login'],
+        // Single sign-out with the provider (Sequence L, Authentication §2.14). The provider sends
+        // the browser back here after its own sign-out; the page only reads the pre-authentication
+        // `oidc_logout_state` and chooses a line for the login page (REQ-UI-088).
+        ['method' => 'GET', 'pattern' => '/auth/logged-out', 'controller' => Controllers\LoginController::class,
+            'handler' => 'loggedOut', 'guard' => 'public'],
+        // The provider's server posts its logout token here (one segment per provider,
+        // OAUTH2_N_BACKCHANNEL_LOGOUT_PATH). No browser, no cookie, no CSRF token — the signed
+        // token is the credential (DEV-TECH-4) — and every other method is 405. With single
+        // sign-out off, the controller answers 404 for every path.
+        ['method' => 'POST', 'pattern' => '/auth/backchannel-logout/{segment}', 'controller' => Controllers\BackchannelLogoutController::class,
+            'handler' => 'receive', 'guard' => 'public', 'session' => false, 'json' => true],
+        ['method' => 'GET', 'pattern' => '/auth/backchannel-logout/{segment}', 'controller' => Controllers\BackchannelLogoutController::class,
+            'handler' => 'methodNotAllowed', 'guard' => 'public', 'session' => false, 'json' => true],
+        ['method' => 'PUT', 'pattern' => '/auth/backchannel-logout/{segment}', 'controller' => Controllers\BackchannelLogoutController::class,
+            'handler' => 'methodNotAllowed', 'guard' => 'public', 'session' => false, 'json' => true],
+        ['method' => 'PATCH', 'pattern' => '/auth/backchannel-logout/{segment}', 'controller' => Controllers\BackchannelLogoutController::class,
+            'handler' => 'methodNotAllowed', 'guard' => 'public', 'session' => false, 'json' => true],
+        ['method' => 'DELETE', 'pattern' => '/auth/backchannel-logout/{segment}', 'controller' => Controllers\BackchannelLogoutController::class,
+            'handler' => 'methodNotAllowed', 'guard' => 'public', 'session' => false, 'json' => true],
 
         // Sign-in for registered applications (Sequence K, REQ-AUTH-092..096,
         // User_Interface_Design.md §2.1). /sso/authorize is public because it decides itself

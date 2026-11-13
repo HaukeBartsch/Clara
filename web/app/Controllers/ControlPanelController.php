@@ -16,6 +16,7 @@ declare(strict_types=1);
 namespace Clara\Controllers;
 
 use Clara\ApiException;
+use Clara\Config;
 use Clara\ConfigCheck;
 use Clara\LdapRace;
 use Clara\MonitoringStressTest;
@@ -72,7 +73,7 @@ final class ControlPanelController extends Controller
         'login_failure',
         'login_success', 'logout', 'mapping_updated', 'membership_changed', 'odm_export', 'odm_import', 'password_changed',
         'password_reset_completed', 'password_reset_requested', 'preferred_region_changed', 'project_created', 'project_deleted', 'project_ended',
-        'project_mode_changed', 'project_updated', 'record_created', 'record_deleted', 'record_read', 'record_updated',
+        'project_mode_changed', 'project_updated', 'provider_logout', 'provider_logout_rejected', 'record_created', 'record_deleted', 'record_read', 'record_updated',
         'region_mapping_changed', 'role_created', 'role_updated', 'session_replay_detected', 'settings_updated', 'sso_login',
         'sso_logout', 'sso_rejected', 'staging_committed',
         'staging_discarded', 'staging_started', 'survey_link_issued', 'survey_link_revoked', 'survey_submitted',
@@ -141,26 +142,49 @@ final class ControlPanelController extends Controller
         $index = filter_var($this->request->field('provider'), FILTER_VALIDATE_INT);
         foreach ($this->config->oauthProviders as $provider) {
             if ($provider['index'] === $index) {
-                return Response::redirect($this->auth->beginOauthTestRedirect($provider));
+                try {
+                    return Response::redirect($this->auth->beginOauthTestRedirect($provider));
+                } catch (ApiException $e) {
+                    // The start failed before the browser left — discovery, or a response mode
+                    // the provider does not offer (REQ-CFG-041). That is the finding: report it
+                    // on the page like any other stage rather than as a server error.
+                    return $this->authTestPage(['kind' => 'oauth', 'ok' => false, 'stage' => 'discovery', 'error' => $e->code()]);
+                }
             }
         }
 
         return $this->authTestPage([], $this->i18n->t('admin.auth.invalid'));
     }
 
-    /** Renders non-secret source settings and a one-time diagnostic report. */
+    /**
+     * Renders non-secret source settings and a one-time diagnostic report. For each OAuth2
+     * provider it also lists the addresses the provider's client registration must name,
+     * character for character (REQ-AUTH-100): the sign-in callback, and — for single sign-out
+     * (REQ-CFG-036) — the post-logout return and the back-channel logout address. An address
+     * that is not configured yet is shown as the value to configure, marked as a suggestion.
+     */
     private function authTestPage(array $report = [], string $error = ''): Response
     {
+        $base = $this->config->webPublicUrl;
         $providers = array_map(fn (array $provider): array => [
             'index' => $provider['index'],
             'issuer' => $provider['issuer'],
             'client_id' => $provider['client_id'],
             'redirect_uri' => $provider['redirect_uri'] !== ''
                 ? $provider['redirect_uri']
-                : $this->config->webPublicUrl . '/auth/callback',
+                : $base . '/auth/callback',
             'email_attr' => $provider['email_attr'],
             'roles_attr' => $provider['roles_attr'],
             'names' => $provider['names'],
+            'response_mode' => $provider['response_mode'],
+            'post_logout_redirect_uri' => $provider['post_logout_redirect_uri'] !== ''
+                ? $provider['post_logout_redirect_uri']
+                : $base . Config::LOGGED_OUT_PATH,
+            'post_logout_configured' => $provider['post_logout_redirect_uri'] !== '',
+            'backchannel_logout_uri' => $base . ($provider['backchannel_logout_path'] !== ''
+                ? $provider['backchannel_logout_path']
+                : Config::BACKCHANNEL_LOGOUT_PREFIX . 'idp' . $provider['index']),
+            'backchannel_configured' => $provider['backchannel_logout_path'] !== '',
         ], $this->config->oauthProviders);
         $servers = array_map(static fn (array $server): array => [
             'index' => $server['index'],
@@ -175,6 +199,7 @@ final class ControlPanelController extends Controller
 
         return $this->section('auth', 'admin/auth_test', 'admin.auth.title', [
             'regionLabel' => fn (string $code): string => Regions::label($this->i18n, $code),
+            'singleSignOut' => $this->config->oidcSingleSignOut,
             'providers' => $providers,
             'servers' => $servers,
             'report' => $report,

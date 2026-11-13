@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -279,6 +280,50 @@ func assertNoTokenMaterial(t *testing.T, body string) {
 	for _, forbidden := range []string{"eyJ", "test-access-token"} {
 		if strings.Contains(body, forbidden) {
 			t.Errorf("report carries %q — REQ-AUTH-085 excludes tokens from report data:\n%s", forbidden, body)
+		}
+	}
+}
+
+// TestOAuthStartResponseMode covers REQ-CFG-041: a form_post provider's authorization URL asks
+// for response_mode=form_post, but only when its discovery document offers it — otherwise the
+// start is refused before the browser leaves, with a reason the diagnostic can name. A query
+// provider's URL is unchanged.
+func TestOAuthStartResponseMode(t *testing.T) {
+	start := func(t *testing.T, mode string, offered []string) (*httptest.ResponseRecorder, url.Values) {
+		t.Helper()
+		e := newEnv(t)
+		idp, provider := e.useIdP(t)
+		idp.responseModes = offered
+		provider.ResponseMode = mode
+		e.Cfg.OAuth2 = []config.OAuth2Provider{provider}
+		rec := e.do("POST", "/api/v1/auth/oauth/start", map[string]any{"provider": 1}, nil)
+		var body struct {
+			AuthorizeURL string `json:"authorize_url"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		parsed, _ := url.Parse(body.AuthorizeURL)
+		if parsed == nil {
+			return rec, url.Values{}
+		}
+		return rec, parsed.Query()
+	}
+
+	rec, q := start(t, config.ResponseModeFormPost, []string{"query", "fragment", "form_post"})
+	if rec.Code != http.StatusOK || q.Get("response_mode") != "form_post" {
+		t.Errorf("form_post offered: %d response_mode=%q, want 200 form_post", rec.Code, q.Get("response_mode"))
+	}
+
+	for name, offered := range map[string][]string{"silent": nil, "query only": {"query", "fragment"}} {
+		rec, _ = start(t, config.ResponseModeFormPost, offered)
+		if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "response_mode_unsupported") {
+			t.Errorf("%s discovery: %d %s, want 502 response_mode_unsupported", name, rec.Code, rec.Body.String())
+		}
+	}
+
+	for _, mode := range []string{config.ResponseModeQuery, ""} {
+		rec, q = start(t, mode, nil)
+		if rec.Code != http.StatusOK || q.Has("response_mode") {
+			t.Errorf("mode %q: %d response_mode=%q, want 200 and no parameter", mode, rec.Code, q.Get("response_mode"))
 		}
 	}
 }

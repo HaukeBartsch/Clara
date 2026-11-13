@@ -20,9 +20,9 @@ func clearAuthEnv(t *testing.T) {
 	for _, k := range []string{
 		"APP_ENV", "WEB_PUBLIC_URL", "API_ADDR", "API_ALLOW_REMOTE",
 		"DB_CONNECTION", "DB_HOST", "DB_USERNAME",
-		"DB_PASSWORD", "INTERNAL_SERVICE_TOKEN", "ADMIN_BOOTSTRAP_EMAIL",
+		"DB_PASSWORD", "INTERNAL_SERVICE_TOKEN", "ADMIN_BOOTSTRAP_EMAIL", "ADMIN_BOOTSTRAP_EMAIL_2",
 		"ADMIN_BOOTSTRAP_PASSWORD", "OAUTH2_1_ISSUER", "OAUTH2_1_CLIENT_ID",
-		"OAUTH2_1_CLIENT_SECRET", "OAUTH2_1_NAMES", "LDAP_SERVER_1_URL",
+		"OAUTH2_1_CLIENT_SECRET", "OAUTH2_1_NAMES", "OAUTH2_1_RESPONSE_MODE", "LDAP_SERVER_1_URL",
 		"LDAP_SERVER_1_SEARCH_BASE", "LDAP_SERVER_1_NAMES", "LOCAL_LOGIN_NAMES",
 		"ANON_SALT", "ANON_DATE_SHIFT_MIN", "ANON_DATE_SHIFT_MAX",
 		"AUTH_INACTIVITY_LIMIT_DAYS", "APP_TIMEZONE", "TRUSTED_PROXY_CIDRS",
@@ -711,5 +711,151 @@ func TestLoadRolesAttr(t *testing.T) {
 				t.Errorf("Load() succeeded for OAUTH2_1_ROLES_ATTR=%q, want rejection (REQ-CFG-037)", raw)
 			}
 		})
+	}
+}
+
+// TestLoadSingleSignOut covers REQ-CFG-036 on the API's half: the switch is 0 or 1 and
+// nothing else; with 1, every provider names the post-logout address it registered and
+// keeps `sub` as its subject claim. Each refusal names the variable to fix.
+func TestLoadSingleSignOut(t *testing.T) {
+	setup := func(t *testing.T) {
+		clearAuthEnv(t)
+		for _, k := range []string{"OIDC_SINGLE_SIGN_OUT", "OAUTH2_1_POST_LOGOUT_REDIRECT_URI", "OAUTH2_1_SUBJECT_ATTR"} {
+			unsetEnv(t, k)
+		}
+		t.Setenv("ADMIN_BOOTSTRAP_EMAIL", "admin@example.org")
+		t.Setenv("OAUTH2_1_ISSUER", "https://idp.example.org")
+		t.Setenv("OAUTH2_1_CLIENT_ID", "csms")
+		t.Setenv("OAUTH2_1_CLIENT_SECRET", "s3cret")
+	}
+	t.Run("off by default", func(t *testing.T) {
+		setup(t)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load(): %v", err)
+		}
+		if cfg.OIDCSingleSignOut || cfg.OAuth2[0].PostLogoutRedirectURI != "" {
+			t.Errorf("single sign-out = %v, post-logout = %q; want off and empty", cfg.OIDCSingleSignOut, cfg.OAuth2[0].PostLogoutRedirectURI)
+		}
+	})
+	t.Run("on with a registered address", func(t *testing.T) {
+		setup(t)
+		t.Setenv("OIDC_SINGLE_SIGN_OUT", "1")
+		t.Setenv("OAUTH2_1_POST_LOGOUT_REDIRECT_URI", " http://localhost:8000/auth/logged-out ")
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load(): %v", err)
+		}
+		if !cfg.OIDCSingleSignOut || cfg.OAuth2[0].PostLogoutRedirectURI != "http://localhost:8000/auth/logged-out" {
+			t.Errorf("single sign-out = %v, post-logout = %q", cfg.OIDCSingleSignOut, cfg.OAuth2[0].PostLogoutRedirectURI)
+		}
+		if !strings.Contains(strings.Join(cfg.Dump(), "\n"), "OAUTH2_1_POST_LOGOUT_REDIRECT_URI=http://localhost:8000/auth/logged-out") {
+			t.Error("the startup dump does not name the post-logout address")
+		}
+	})
+	for name, c := range map[string]struct {
+		env  map[string]string
+		want string
+	}{
+		"a value that is not 0 or 1": {map[string]string{"OIDC_SINGLE_SIGN_OUT": "true"}, "OIDC_SINGLE_SIGN_OUT"},
+		"on without the address":     {map[string]string{"OIDC_SINGLE_SIGN_OUT": "1"}, "OAUTH2_1_POST_LOGOUT_REDIRECT_URI: missing"},
+		"on with another subject claim": {map[string]string{
+			"OIDC_SINGLE_SIGN_OUT": "1", "OAUTH2_1_POST_LOGOUT_REDIRECT_URI": "http://localhost:8000/auth/logged-out",
+			"OAUTH2_1_SUBJECT_ATTR": "pi.sri",
+		}, "OAUTH2_1_SUBJECT_ATTR"},
+		"an address with a fragment": {map[string]string{"OAUTH2_1_POST_LOGOUT_REDIRECT_URI": "http://localhost:8000/auth/logged-out#x"}, "OAUTH2_1_POST_LOGOUT_REDIRECT_URI"},
+		"a relative address":         {map[string]string{"OAUTH2_1_POST_LOGOUT_REDIRECT_URI": "/auth/logged-out"}, "OAUTH2_1_POST_LOGOUT_REDIRECT_URI"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			setup(t)
+			for k, v := range c.env {
+				t.Setenv(k, v)
+			}
+			_, err := Load()
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("Load() error = %v, want one naming %q", err, c.want)
+			}
+		})
+	}
+	t.Run("production wants https", func(t *testing.T) {
+		setup(t)
+		t.Setenv("APP_ENV", "production")
+		t.Setenv("OAUTH2_1_POST_LOGOUT_REDIRECT_URI", "http://clara.example.org/auth/logged-out")
+		_, err := Load()
+		if err == nil || !strings.Contains(err.Error(), "OAUTH2_1_POST_LOGOUT_REDIRECT_URI") {
+			t.Fatalf("Load() error = %v, want the http post-logout address refused in production", err)
+		}
+	})
+}
+
+// TestLoadSecondBootstrapAdmin covers REQ-CFG-042 (GD-4): a second bootstrap address is
+// optional, needs the first, must look like an address and must differ from the first.
+func TestLoadSecondBootstrapAdmin(t *testing.T) {
+	clearAuthEnv(t)
+	t.Setenv("ADMIN_BOOTSTRAP_EMAIL", "admin@example.org")
+	t.Setenv("ADMIN_BOOTSTRAP_PASSWORD", "secret")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() without a second address: %v", err)
+	}
+	if cfg.AdminBootstrapEmail2 != "" {
+		t.Errorf("AdminBootstrapEmail2 = %q, want empty by default", cfg.AdminBootstrapEmail2)
+	}
+
+	t.Setenv("ADMIN_BOOTSTRAP_EMAIL_2", "deputy@example.org")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load() with a second address: %v", err)
+	}
+	if cfg.AdminBootstrapEmail2 != "deputy@example.org" {
+		t.Errorf("AdminBootstrapEmail2 = %q", cfg.AdminBootstrapEmail2)
+	}
+	if !strings.Contains(strings.Join(cfg.Dump(), "\n"), "ADMIN_BOOTSTRAP_EMAIL_2=deputy@example.org") {
+		t.Error("the startup dump does not name the second bootstrap address")
+	}
+
+	for _, tc := range []struct{ first, second, want string }{
+		{"", "deputy@example.org", "without ADMIN_BOOTSTRAP_EMAIL"},
+		{"admin@example.org", "deputy", "not an email address"},
+		{"admin@example.org", "a@example.org,b@example.org", "not an email address"},
+		{"admin@example.org", "Admin@Example.org", "the same address"},
+	} {
+		t.Setenv("ADMIN_BOOTSTRAP_EMAIL", tc.first)
+		t.Setenv("ADMIN_BOOTSTRAP_EMAIL_2", tc.second)
+		t.Setenv("OAUTH2_1_ISSUER", "https://idp.example.org")
+		t.Setenv("OAUTH2_1_CLIENT_ID", "csms")
+		t.Setenv("OAUTH2_1_CLIENT_SECRET", "s")
+		_, err := Load()
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("first=%q second=%q: err = %v, want %q", tc.first, tc.second, err, tc.want)
+		}
+	}
+}
+
+// TestLoadResponseMode covers REQ-CFG-041: query by default, form_post on request, and any
+// other value refuses startup rather than guessing.
+func TestLoadResponseMode(t *testing.T) {
+	clearAuthEnv(t)
+	t.Setenv("ADMIN_BOOTSTRAP_EMAIL", "admin@example.org")
+	t.Setenv("OAUTH2_1_ISSUER", "https://idp.example.org")
+	t.Setenv("OAUTH2_1_CLIENT_ID", "csms")
+	t.Setenv("OAUTH2_1_CLIENT_SECRET", "s")
+
+	for value, want := range map[string]string{"": ResponseModeQuery, "query": ResponseModeQuery, "form_post": ResponseModeFormPost} {
+		t.Setenv("OAUTH2_1_RESPONSE_MODE", value)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("%q: %v", value, err)
+		}
+		if got := cfg.OAuth2[0].ResponseMode; got != want {
+			t.Errorf("%q: ResponseMode = %q, want %q", value, got, want)
+		}
+	}
+	for _, bad := range []string{"fragment", "FORM_POST", "post"} {
+		t.Setenv("OAUTH2_1_RESPONSE_MODE", bad)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "OAUTH2_1_RESPONSE_MODE") {
+			t.Errorf("%q: err = %v, want an OAUTH2_1_RESPONSE_MODE startup error", bad, err)
+		}
 	}
 }

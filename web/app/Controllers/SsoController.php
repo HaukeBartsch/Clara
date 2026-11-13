@@ -183,7 +183,16 @@ final class SsoController extends Controller
     {
         $client = $this->config->ssoClient($this->request->field('client_id'));
         if (Session::isAuthenticated()) {
-            $this->auth->logout();
+            // With single sign-out the provider's sign-out comes first, and its return to
+            // /auth/logged-out carries on to the client's address (Sequence L1 step 2).
+            $returnTo = $client !== null ? $client['logout_uri'] : '';
+            $outcome = $this->auth->logout($returnTo);
+            if ($outcome['provider_url'] !== '') {
+                return Response::redirect($outcome['provider_url']);
+            }
+            if ($outcome['provider_failed'] && $returnTo === '') {
+                Session::flash('warning', $this->i18n->t('logout.provider_may_be_active'));
+            }
         }
 
         return Response::redirect($this->afterLogout($client));
