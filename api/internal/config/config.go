@@ -73,6 +73,57 @@ type OAuth2Provider struct {
 	// GET /auth/callback — or "form_post", which asks the provider to POST it, so the code
 	// never appears in a URL. The web layer's callback accepts both either way.
 	ResponseMode string
+
+	// Scopes is the scope list of the authorization request (OAUTH2_N_SCOPES,
+	// REQ-CFG-039): `openid email profile` unless configured, and always carrying
+	// `openid`. More scopes change only what the provider may release; claims are still
+	// read from the verified assertion through the configured attribute names (REQ-AUTH-076).
+	Scopes []string
+
+	// DiscoveryURL is where the provider's metadata document is read when it is not
+	// served under the issuer (OAUTH2_N_DISCOVERY_URL, REQ-CFG-040); empty means the
+	// conventional address. The document's issuer must still equal Issuer (REQ-AUTH-082):
+	// the override moves where metadata is read, never whom tokens are trusted from.
+	DiscoveryURL string
+}
+
+// DefaultScopes is the scope list of a provider without OAUTH2_N_SCOPES (REQ-CFG-039).
+var DefaultScopes = []string{"openid", "email", "profile"}
+
+// discoveryPathSuffix is the conventional location of the metadata document under an
+// issuer (OpenID Connect Discovery §4), the one go-oidc derives.
+const discoveryPathSuffix = "/.well-known/openid-configuration"
+
+// DiscoveryDocument is the address the provider's metadata is read from: the
+// configured override, or the conventional one under the issuer.
+func (p OAuth2Provider) DiscoveryDocument() string {
+	if p.DiscoveryURL != "" {
+		return p.DiscoveryURL
+	}
+	return strings.TrimSuffix(p.Issuer, "/") + discoveryPathSuffix
+}
+
+// scopeTokenRE is RFC 6749 §3.3's scope-token: %x21 / %x23-5B / %x5D-7E, one or more.
+var scopeTokenRE = regexp.MustCompile(`^[\x21\x23-\x5B\x5D-\x7E]+$`)
+
+// parseScopes reads OAUTH2_N_SCOPES (REQ-CFG-039): space-separated scope tokens,
+// repeats dropped, order kept. A token outside the grammar is returned as bad; a list
+// without openid reports noOpenID. Either way scopes is nil.
+func parseScopes(raw string) (scopes []string, bad string, noOpenID bool) {
+	seen := map[string]bool{}
+	for _, s := range strings.Fields(raw) {
+		if !scopeTokenRE.MatchString(s) {
+			return nil, s, false
+		}
+		if !seen[s] {
+			seen[s] = true
+			scopes = append(scopes, s)
+		}
+	}
+	if !seen["openid"] {
+		return nil, "", true
+	}
+	return scopes, "", false
 }
 
 // Response modes OAUTH2_N_RESPONSE_MODE accepts (REQ-CFG-041).
@@ -487,6 +538,33 @@ func Load() (*Config, error) {
 			fail("OAUTH2_%d_RESPONSE_MODE: %q (want query or form_post — REQ-CFG-041)", n, mode)
 		}
 
+		// The whole scope list, not an addition to it (REQ-CFG-039). Without `openid` the
+		// provider answers as plain OAuth2 and no ID token arrives — a comma-separated list
+		// is one token to RFC 6749, so it lands here too — and a token outside the grammar (a
+		// quote, a backslash) cannot be sent at all. Both refuse startup rather than fail at
+		// the provider's sign-in page.
+		p.Scopes = append([]string(nil), DefaultScopes...)
+		if raw := strings.TrimSpace(get(fmt.Sprintf("OAUTH2_%d_SCOPES", n))); raw != "" {
+			scopes, bad, noOpenID := parseScopes(raw)
+			switch {
+			case bad != "":
+				fail("OAUTH2_%d_SCOPES: %q is not a scope token (RFC 6749 §3.3; separate scopes with spaces — REQ-CFG-039)", n, bad)
+			case noOpenID:
+				fail("OAUTH2_%d_SCOPES: %q leaves out openid, which every request must carry (REQ-CFG-039)", n, raw)
+			default:
+				p.Scopes = scopes
+			}
+		}
+
+		// Where discovery is read when the provider does not serve it under the issuer
+		// (REQ-CFG-040). Same address rules as the post-logout address: absolute, no
+		// credentials or fragment, https except under APP_ENV=development.
+		p.DiscoveryURL = strings.TrimSpace(get(fmt.Sprintf("OAUTH2_%d_DISCOVERY_URL", n)))
+		if p.DiscoveryURL != "" && !validClientURI(p.DiscoveryURL, production) {
+			fail("OAUTH2_%d_DISCOVERY_URL: %q (want an absolute https URL without credentials or a fragment; http only when APP_ENV=development — REQ-CFG-040)",
+				n, p.DiscoveryURL)
+		}
+
 		cfg.OAuth2 = append(cfg.OAuth2, p)
 	}
 
@@ -848,6 +926,8 @@ func (c *Config) Dump() []string {
 			fmt.Sprintf("OAUTH2_%d_ROLES_ATTR=%s (preferred-region roles, REQ-CFG-037)", p.N, none(p.RolesAttr)),
 			fmt.Sprintf("OAUTH2_%d_POST_LOGOUT_REDIRECT_URI=%s (REQ-CFG-036)", p.N, none(p.PostLogoutRedirectURI)),
 			fmt.Sprintf("OAUTH2_%d_RESPONSE_MODE=%s (REQ-CFG-041)", p.N, p.ResponseMode),
+			fmt.Sprintf("OAUTH2_%d_SCOPES=%s (REQ-CFG-039)", p.N, strings.Join(p.Scopes, " ")),
+			fmt.Sprintf("OAUTH2_%d_DISCOVERY_URL=%s (REQ-CFG-040)", p.N, p.DiscoveryDocument()),
 		)
 	}
 	for _, s := range c.LDAP {

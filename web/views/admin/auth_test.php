@@ -66,6 +66,8 @@ $oauth = ($report['kind'] ?? '') === 'oauth' ? $report : [];
                 <dt class="col-sm-3"><?= View::e($view->t('admin.auth.roles_claim')) ?></dt><dd class="col-sm-9"><?= View::e($provider['roles_attr'] !== '' ? $provider['roles_attr'] : $view->t('admin.auth.roles_claim.none')) ?></dd>
                 <dt class="col-sm-3"><?= View::e($view->t('admin.auth.names')) ?></dt><dd class="col-sm-9"><?= View::e(implode(', ', $provider['names'])) ?></dd>
                 <dt class="col-sm-3"><?= View::e($view->t('admin.auth.response_mode')) ?></dt><dd class="col-sm-9"><code><?= View::e($provider['response_mode']) ?></code> <span class="text-body-secondary">(<?= View::e($view->t('admin.auth.response_mode.' . ($provider['response_mode'] === 'form_post' ? 'form_post' : 'query'))) ?>)</span></dd>
+                <dt class="col-sm-3"><?= View::e($view->t('admin.auth.scopes')) ?></dt><dd class="col-sm-9"><code><?= View::e($provider['scopes']) ?></code></dd>
+                <dt class="col-sm-3"><?= View::e($view->t('admin.auth.discovery_url')) ?></dt><dd class="col-sm-9"><code class="text-break"><?= View::e($provider['discovery_url']) ?></code></dd>
             </dl>
             <?php
             // The addresses this client's registration at the provider must name, character for

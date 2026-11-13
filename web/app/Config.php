@@ -138,9 +138,17 @@ final class Config
      * only the provider metadata needed to route the callback and render the Control
      * Panel; it does not load or retain the client secret.
      *
-     * @var list<array{index: int, issuer: string, client_id: string, redirect_uri: string, email_attr: string, roles_attr: string, min_acr: list<string>, names: list<string>, post_logout_redirect_uri: string, backchannel_logout_path: string, response_mode: string}>
+     * @var list<array{index: int, issuer: string, client_id: string, redirect_uri: string, email_attr: string, roles_attr: string, min_acr: list<string>, names: list<string>, post_logout_redirect_uri: string, backchannel_logout_path: string, response_mode: string, scopes: string, discovery_url: string}>
      */
     public array $oauthProviders = [];
+
+    /**
+     * Where the browser goes after a sign-out that has no client return (`LOGOUT_LANDING_URL`,
+     * REQ-CFG-043): an absolute https URL or a same-site path, or '' for CLARA's own login page.
+     * It replaces only that default — a registered client's sign-out address still wins — and
+     * it comes from configuration alone, never from a request, so it opens no redirect.
+     */
+    public string $logoutLandingUrl = '';
 
     /**
      * Sign-out coordinated with the OAuth2 providers (`OIDC_SINGLE_SIGN_OUT`, REQ-CFG-036,
@@ -409,6 +417,18 @@ final class Config
         }
         $c->oidcSingleSignOut = $sso === '1';
 
+        // --- post-logout landing page (REQ-CFG-043) ---
+        // An https address elsewhere, or a path on this site; anything else refuses startup,
+        // because a value that reads as either (`//host`, `/\host`, a bare host name) would send
+        // a signed-out browser somewhere the administrator did not name.
+        $landing = trim($get('LOGOUT_LANDING_URL'));
+        if ($landing !== '' && !Response::isSameSitePath($landing) && !self::isAbsoluteHttpsUrl($landing)) {
+            $errors[] = 'LOGOUT_LANDING_URL must be an absolute https URL without credentials or a fragment, '
+                . "or a path on this site starting with a single /, got '{$landing}' (REQ-CFG-043)";
+        } else {
+            $c->logoutLandingUrl = $landing;
+        }
+
         // --- authentication sources (REQ-CFG-032) ---
         $c->authSources = self::readAuthSources($c, $get, $errors);
         self::checkBackchannelPaths($c, $errors);
@@ -550,6 +570,14 @@ final class Config
                     // API asks for it; this layer opens POST /auth/callback when any provider
                     // uses form_post, and keeps GET /auth/callback open whatever is set.
                     'response_mode' => self::responseMode($n, $get("OAUTH2_{$n}_RESPONSE_MODE"), $errors),
+                    // Display only, for the Authentication Test: the Go API validates both and
+                    // uses them (REQ-CFG-039, REQ-CFG-040). Shown as the API resolves them.
+                    'scopes' => trim($get("OAUTH2_{$n}_SCOPES")) !== ''
+                        ? implode(' ', array_values(array_unique(preg_split('/\s+/', trim($get("OAUTH2_{$n}_SCOPES"))) ?: [])))
+                        : 'openid email profile',
+                    'discovery_url' => trim($get("OAUTH2_{$n}_DISCOVERY_URL")) !== ''
+                        ? trim($get("OAUTH2_{$n}_DISCOVERY_URL"))
+                        : rtrim($issuer, '/') . '/.well-known/openid-configuration',
                 ];
             }
 
@@ -720,6 +748,21 @@ final class Config
         return null;
     }
 
+    /** An absolute https URL with a host, and neither a fragment nor credentials in it. */
+    private static function isAbsoluteHttpsUrl(string $url): bool
+    {
+        return self::isAbsoluteHttpUrl($url) && strtolower((string) parse_url($url, PHP_URL_SCHEME)) === 'https';
+    }
+
+    /**
+     * Where a sign-out without a client return sends the browser (Sequence D step 5,
+     * Sequence L1 step 3): the configured landing page, or the login page (REQ-CFG-043).
+     */
+    public function afterSignOut(): string
+    {
+        return $this->logoutLandingUrl !== '' ? $this->logoutLandingUrl : '/login';
+    }
+
     /** An absolute http(s) URL with a host, and neither a fragment nor credentials in it. */
     private static function isAbsoluteHttpUrl(string $url): bool
     {
@@ -794,6 +837,7 @@ final class Config
             'LOCAL_LOGIN_NAMES',
             'TRUSTED_PROXY_CIDRS',
             'OIDC_SINGLE_SIGN_OUT',
+            'LOGOUT_LANDING_URL',
         ];
         for ($n = 1; $n <= self::SOURCE_INDEX_MAX; $n++) {
             $keys[] = "OAUTH2_{$n}_ISSUER";
@@ -807,6 +851,8 @@ final class Config
             $keys[] = "OAUTH2_{$n}_POST_LOGOUT_REDIRECT_URI";
             $keys[] = "OAUTH2_{$n}_BACKCHANNEL_LOGOUT_PATH";
             $keys[] = "OAUTH2_{$n}_RESPONSE_MODE";
+            $keys[] = "OAUTH2_{$n}_SCOPES";
+            $keys[] = "OAUTH2_{$n}_DISCOVERY_URL";
             $keys[] = "LDAP_SERVER_{$n}_URL";
             $keys[] = "LDAP_SERVER_{$n}_BIND_DN";
             $keys[] = "LDAP_SERVER_{$n}_BIND_PASSWORD";

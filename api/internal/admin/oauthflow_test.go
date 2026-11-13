@@ -158,7 +158,7 @@ func TestOAuthStartLogsWhereAndWhyTheProviderWasUnreachable(t *testing.T) {
 // provider is reachable and healthy, the configuration is not.
 func TestOAuthDiagnosticNamesIssuerMismatch(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasSuffix(r.URL.Path, discoveryPathSuffix) {
+		if !strings.HasSuffix(r.URL.Path, "/.well-known/openid-configuration") {
 			http.NotFound(w, r)
 			return
 		}

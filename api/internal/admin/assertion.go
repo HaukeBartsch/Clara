@@ -151,7 +151,9 @@ const (
 	reasonUnknownProvider  = "unknown_provider"
 )
 
-// providerVerifiers caches one verifier per issuer for the life of the process.
+// providerVerifiers caches one verifier per discovery document for the life of the
+// process — the document's address, which is the issuer's conventional one unless
+// OAUTH2_N_DISCOVERY_URL moved it (REQ-CFG-040).
 //
 // Caching is required, not merely fast: go-oidc's remote key set fetches and caches
 // keys precisely so that it is long lived ("reuse a single remote key set rather than
@@ -161,8 +163,8 @@ const (
 // fixed — or a key set that starts answering again — is picked up on the next
 // attempt without a restart (REQ-AUTH-082).
 type providerVerifiers struct {
-	mu       sync.Mutex
-	byIssuer map[string]*providerRuntime
+	mu          sync.Mutex
+	byDiscovery map[string]*providerRuntime
 }
 
 type providerRuntime struct {
@@ -198,7 +200,7 @@ func (r *providerRuntime) offersResponseMode(mode string) bool {
 }
 
 func newProviderVerifiers() *providerVerifiers {
-	return &providerVerifiers{byIssuer: map[string]*providerRuntime{}}
+	return &providerVerifiers{byDiscovery: map[string]*providerRuntime{}}
 }
 
 // runtimeFor resolves discovery once and shares the resulting endpoints, key source,
@@ -206,11 +208,11 @@ func newProviderVerifiers() *providerVerifiers {
 func (c *providerVerifiers) runtimeFor(ctx context.Context, p config.OAuth2Provider, jwksReuse time.Duration) (*providerRuntime, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if runtime, ok := c.byIssuer[p.Issuer]; ok {
+	if runtime, ok := c.byDiscovery[p.DiscoveryDocument()]; ok {
 		return runtime, nil
 	}
 
-	provider, err := oidc.NewProvider(ctx, p.Issuer)
+	provider, document, err := discoverProvider(ctx, p)
 	if err != nil {
 		return nil, err
 	}
@@ -227,7 +229,7 @@ func (c *providerVerifiers) runtimeFor(ctx context.Context, p config.OAuth2Provi
 		// only form_post's presence matters (REQ-CFG-041).
 		ResponseModes []string `json:"response_modes_supported"`
 	}
-	if err := provider.Claims(&discovered); err != nil || strings.TrimSpace(discovered.JWKSURI) == "" {
+	if err := json.Unmarshal(document, &discovered); err != nil || strings.TrimSpace(discovered.JWKSURI) == "" {
 		return nil, fmt.Errorf("discovery document for %s names no jwks_uri (REQ-AUTH-082)", p.Issuer)
 	}
 	endpoint := provider.Endpoint()
@@ -256,7 +258,7 @@ func (c *providerVerifiers) runtimeFor(ctx context.Context, p config.OAuth2Provi
 			ClientSecret: p.ClientSecret,
 			Endpoint:     endpoint,
 			RedirectURL:  p.RedirectURI,
-			Scopes:       []string{"openid", "email", "profile"},
+			Scopes:       requestScopes(p), // OAUTH2_N_SCOPES, always with openid (REQ-CFG-039)
 		},
 		jwksURI:       discovered.JWKSURI,
 		userinfo:      discovered.UserInfoURL,
@@ -264,17 +266,86 @@ func (c *providerVerifiers) runtimeFor(ctx context.Context, p config.OAuth2Provi
 		endSession:    strings.TrimSpace(discovered.EndSession),
 		responseModes: discovered.ResponseModes,
 	}
-	c.byIssuer[p.Issuer] = runtime
+	c.byDiscovery[p.DiscoveryDocument()] = runtime
 	return runtime, nil
+}
+
+// requestScopes is the authorization request's scope list (REQ-CFG-039). Load always
+// fills it; the default covers a provider assembled without Load, as tests do.
+func requestScopes(p config.OAuth2Provider) []string {
+	if len(p.Scopes) == 0 {
+		return config.DefaultScopes
+	}
+	return p.Scopes
+}
+
+// discoveryDocumentLimit bounds a metadata document read from an OAUTH2_N_DISCOVERY_URL.
+// Real documents are a few kilobytes; the bound keeps a misdirected address from
+// streaming something unbounded into memory.
+const discoveryDocumentLimit = 1 << 20
+
+// discoverProvider reads provider p's metadata and returns the provider with the raw
+// document. Without OAUTH2_N_DISCOVERY_URL this is go-oidc's own discovery at
+// <issuer>/.well-known/openid-configuration. With it (REQ-CFG-040) the document comes
+// from that address instead, and its issuer must still equal the configured one exactly:
+// the override moves where metadata is read, never whom tokens are trusted from
+// (REQ-AUTH-082). A mismatch is reported as go-oidc's own IssuerMismatchError, so both
+// paths reach the administrator under the same reason. The HTTP client is the one the
+// context carries, as go-oidc's is, so the diagnostic's recorder observes either fetch.
+func discoverProvider(ctx context.Context, p config.OAuth2Provider) (*oidc.Provider, []byte, error) {
+	if p.DiscoveryURL == "" {
+		provider, err := oidc.NewProvider(ctx, p.Issuer)
+		if err != nil {
+			return nil, nil, err
+		}
+		var document json.RawMessage
+		if err := provider.Claims(&document); err != nil {
+			return nil, nil, err
+		}
+		return provider, document, nil
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.DiscoveryURL, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	client := http.DefaultClient
+	if c, ok := ctx.Value(oauth2.HTTPClient).(*http.Client); ok && c != nil {
+		client = c
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, nil, err // a *url.Error: reported as unreachable, not as a bad document
+	}
+	defer resp.Body.Close()
+	document, err := io.ReadAll(io.LimitReader(resp.Body, discoveryDocumentLimit+1))
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading the discovery document at %s: %w", p.DiscoveryURL, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil, fmt.Errorf("discovery document at %s answered %s", p.DiscoveryURL, resp.Status)
+	}
+	if len(document) > discoveryDocumentLimit {
+		return nil, nil, fmt.Errorf("discovery document at %s is larger than %d bytes", p.DiscoveryURL, discoveryDocumentLimit)
+	}
+	var metadata oidc.ProviderConfig
+	if err := json.Unmarshal(document, &metadata); err != nil {
+		return nil, nil, fmt.Errorf("discovery document at %s is not JSON: %w", p.DiscoveryURL, err)
+	}
+	if metadata.IssuerURL != p.Issuer {
+		return nil, nil, &oidc.IssuerMismatchError{Provided: p.Issuer, Discovered: metadata.IssuerURL}
+	}
+	return metadata.NewProvider(ctx), document, nil
 }
 
 // forget drops a cached verifier so the next attempt rediscovers. Called when a
 // provider could not be reached, so an outage does not fossilise into a permanent
 // refusal (REQ-AUTH-082's "honest failure" is about being honest *and* recoverable).
-func (c *providerVerifiers) forget(issuer string) {
+func (c *providerVerifiers) forget(p config.OAuth2Provider) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	delete(c.byIssuer, issuer)
+	delete(c.byDiscovery, p.DiscoveryDocument())
 }
 
 // reuseBoundedKeySet wraps go-oidc's remote key set so fetched keys are reused for at
@@ -471,7 +542,7 @@ func (h *Handler) verifyAssertion(ctx context.Context, issuer, rawAssertion, exp
 	}
 	runtime, err := h.assertions.runtimeFor(ctx, provider, reuse)
 	if err != nil {
-		h.assertions.forget(provider.Issuer)
+		h.assertions.forget(provider)
 		return nil, discoveryFailure(err)
 	}
 
@@ -481,7 +552,7 @@ func (h *Handler) verifyAssertion(ctx context.Context, issuer, rawAssertion, exp
 			// Keys could not be fetched: the provider is unreachable, which is neither
 			// this user's fault nor an invalid token. Drop the cached verifier so the
 			// next attempt starts from discovery again.
-			h.assertions.forget(provider.Issuer)
+			h.assertions.forget(provider)
 			return nil, newFailure(reasonProviderUnavail, http.StatusBadGateway,
 				"the authentication provider could not be reached")
 		}

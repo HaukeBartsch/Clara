@@ -159,7 +159,7 @@ func TestEndSessionRefusals(t *testing.T) {
 	}
 
 	idp.endSession = idp.issuer() + "/logout"
-	e.Handler.assertions.forget(idp.issuer())
+	e.Handler.assertions.forget(e.Cfg.OAuth2[0])
 	rec = e.do("POST", "/api/v1/auth/oauth/end-session", map[string]any{"provider": 9}, u)
 	if rec.Code != 400 || !strings.Contains(rec.Body.String(), "unknown_provider") {
 		t.Errorf("unknown provider: %d %s", rec.Code, rec.Body.String())

@@ -143,7 +143,9 @@ final class AccountController extends Controller
     /**
      * POST /logout — Sequence D: audit first, then destroy (REQ-UI-007). With single sign-out
      * an OAuth2 session then leaves through the provider's sign-out, which returns the browser
-     * to GET /auth/logged-out (Sequence L1, REQ-UI-088).
+     * to GET /auth/logged-out (Sequence L1, REQ-UI-088). Otherwise step 5 lands on the login
+     * page, or on LOGOUT_LANDING_URL when one is configured — the browser then leaves CLARA,
+     * so no sign-out line is queued for a page it will not see (REQ-CFG-043).
      */
     public function logout(): Response
     {
@@ -151,11 +153,11 @@ final class AccountController extends Controller
         if ($outcome['provider_url'] !== '') {
             return Response::redirect($outcome['provider_url']);
         }
-        if ($outcome['provider_failed']) {
+        if ($outcome['provider_failed'] && $this->config->logoutLandingUrl === '') {
             Session::flash('warning', $this->i18n->t('logout.provider_may_be_active'));
         }
 
-        return Response::redirect('/login');
+        return Response::redirect($this->config->afterSignOut());
     }
 
     /** POST /lang — persist the acting user's UI language (REQ-API-098). */

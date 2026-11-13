@@ -131,7 +131,7 @@ The API is stateless with respect to sessions: it MUST NOT create or store a ses
 3. PHP → API `POST /api/v1/auth/logout` (service token + `X-Internal-User-Id`) → the API records `logout` (audit) and returns 200.
 4. PHP destroys the session (cookie invalidated) and drops its id from the account's session index (§3).
 4.5. With an `end_session_url` from step 2.7, PHP starts a fresh **pre-authentication** session that holds only `oidc_logout_state` (§3) and answers `302` to `end_session_url`. The provider ends its own session and returns the browser to `GET /auth/logged-out?state=…` (Sequence L, §2.14).
-5. Otherwise `302` to `/login`, with the "provider may still be signed in" line when step 2.7 failed.
+5. Otherwise `302` to `/login`, with the "provider may still be signed in" line when step 2.7 failed — or, with `LOGOUT_LANDING_URL` configured, `302` there and no line, since the browser leaves the login page out (REQ-CFG-043). A client's sign-out address (step 2.5) still wins over it.
 
 Normative ordering: the audit call **precedes** session destruction (REQ-AUTH-015); REQ-API-045's assignment of destruction to the PHP layer is satisfied by step 4.
 
@@ -313,7 +313,7 @@ L2  Provider (server)    PHP (web)                          Go API
 
 1. **Address.** `POST /api/v1/auth/oauth/end-session` resolves provider N's discovery document through the same cache as Sequence A and reads `end_session_endpoint`. It appends `client_id`, `post_logout_redirect_uri` and a fresh 32-byte base64url `state` to it, keeping any query the endpoint already carries, and returns the address and the `state`. It sends no `id_token_hint` (DEV-AUTH-23) and stores nothing (GD-1).
 2. **The browser leaves.** PHP finishes CLARA's sign-out first (grants, audit, session destruction), so a provider that never sends the browser back leaves nothing of the CLARA session behind. The fresh pre-authentication session holds only `oidc_logout_state = {state, at, return}`. `return` is the registered `SSO_CLIENT_N_LOGOUT_URI` when the sign-out came from a client's sign-out link (`POST /sso/logout`, §2.13 step 6); otherwise it is empty.
-3. **The browser returns** to `GET /auth/logged-out?state=…` (guard `public`). PHP compares `state` with `oidc_logout_state.state` in constant time and clears the key whatever the outcome. A match within 10 minutes of `at` goes to `return`, or to `/login` with the "signed out of CLARA and of the provider" line. Anything else — no state, a wrong one, an expired one, no pre-authentication session — goes to `/login` with the plain "signed out of CLARA" line (REQ-UI-088). The return changes no session and no account: it only chooses a line of text, so a forged return gains nothing.
+3. **The browser returns** to `GET /auth/logged-out?state=…` (guard `public`). PHP compares `state` with `oidc_logout_state.state` in constant time and clears the key whatever the outcome. A match within 10 minutes of `at` goes to `return`, or to `/login` with the "signed out of CLARA and of the provider" line. With `LOGOUT_LANDING_URL` configured, every outcome without a `return` for a browser that is not signed in goes there instead, with no line (REQ-CFG-043). Anything else — no state, a wrong one, an expired one, no pre-authentication session — goes to `/login` with the plain "signed out of CLARA" line (REQ-UI-088). The return changes no session and no account: it only chooses a line of text, so a forged return gains nothing.
 
 **L2 — provider-initiated sign-out** (REQ-AUTH-098/099).
 

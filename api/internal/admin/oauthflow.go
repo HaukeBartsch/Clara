@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"regexp"
 	"slices"
 	"strconv"
@@ -27,10 +28,6 @@ const (
 	stageAssertion     = "assertion"
 )
 
-// discoveryPathSuffix is what go-oidc appends to the configured issuer, and what marks a
-// response as belonging to discovery rather than to a later call on the same client.
-const discoveryPathSuffix = "/.well-known/openid-configuration"
-
 // discoveryRecorder observes the HTTP status of the discovery request go-oidc makes on our
 // behalf, so that a failed discovery reaches the administrator as the 404 or 503 it was
 // instead of as "no information" — REQ-AUTH-085's useful connection stages, and the
@@ -42,13 +39,18 @@ const discoveryPathSuffix = "/.well-known/openid-configuration"
 // The recorder is attached only by the diagnostic. Login needs no status beyond success, so
 // that path keeps go-oidc's own client untouched; golang.org/x/oauth2 documents
 // oauth2.HTTPClient as the context key a caller hands one over with, and go-oidc honours it.
+//
+// A response belongs to discovery when its request went to the provider's discovery document
+// — the conventional address under the issuer or the OAUTH2_N_DISCOVERY_URL override
+// (REQ-CFG-040) — and not to a later call on the same client.
 type discoveryRecorder struct {
-	status int
+	document string
+	status   int
 }
 
 func (d *discoveryRecorder) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp, err := http.DefaultTransport.RoundTrip(req)
-	if resp != nil && d != nil && strings.HasSuffix(req.URL.Path, discoveryPathSuffix) {
+	if resp != nil && d != nil && req.URL.String() == d.document {
 		d.status = resp.StatusCode
 	}
 	return resp, err
@@ -67,8 +69,11 @@ func (d *discoveryRecorder) observed() int {
 // recorder holding what it saw. A successful discovery hands this same context to the key
 // set, so its JWKS responses are excluded by the request path rather than by luck; one
 // recorder serves one diagnostic, on its caller's goroutine, which is why no lock is held.
-func withDiscoveryRecorder(ctx context.Context) (context.Context, *discoveryRecorder) {
-	recorder := &discoveryRecorder{}
+func withDiscoveryRecorder(ctx context.Context, document string) (context.Context, *discoveryRecorder) {
+	recorder := &discoveryRecorder{document: document}
+	if u, err := url.Parse(document); err == nil {
+		recorder.document = u.String() // the form a request built from the same string carries
+	}
 	return context.WithValue(ctx, oauth2.HTTPClient, &http.Client{Transport: recorder}), recorder
 }
 
@@ -229,7 +234,7 @@ func (h *Handler) oauthTest(w http.ResponseWriter, r *http.Request) {
 	// Discovery is observed before it runs: an issuer that disagrees with the discovery
 	// document, a document that is not there, and a host that does not answer are three
 	// different faults and used to be reported as one number.
-	ctx, discovery := withDiscoveryRecorder(r.Context())
+	ctx, discovery := withDiscoveryRecorder(r.Context(), provider.DiscoveryDocument())
 	r = r.WithContext(ctx)
 	runtime, err := h.oauthRuntime(r, provider)
 	if err != nil {

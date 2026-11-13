@@ -97,7 +97,7 @@ func (h *Handler) oauthEndSession(w http.ResponseWriter, r *http.Request) {
 
 	runtime, err := h.oauthRuntime(r, provider)
 	if err != nil {
-		h.assertions.forget(provider.Issuer)
+		h.assertions.forget(provider)
 		failure := discoveryFailure(err)
 		APIError(w, failure.status, failure.reason, failure.message)
 		return
@@ -262,14 +262,14 @@ func (h *Handler) verifyLogoutToken(ctx context.Context, provider config.OAuth2P
 	// unknown kid.
 	runtime, err := h.assertions.runtimeFor(ctx, provider, h.jwksReuse())
 	if err != nil {
-		h.assertions.forget(provider.Issuer)
+		h.assertions.forget(provider)
 		slog.Warn("provider logout: discovery failed", "provider", provider.N, "error", err)
 		return nil, &logoutRefusal{unavailable: true}
 	}
 	payload, err := runtime.keys.VerifySignature(ctx, raw)
 	if err != nil {
 		if isTransportFailure(err) {
-			h.assertions.forget(provider.Issuer)
+			h.assertions.forget(provider)
 			slog.Warn("provider logout: key set unreachable", "provider", provider.N, "error", err)
 			return nil, &logoutRefusal{unavailable: true}
 		}

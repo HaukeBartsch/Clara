@@ -204,6 +204,8 @@ return [
     'admin.auth.response_mode' => 'Response mode',
     'admin.auth.response_mode.query' => 'the provider redirects back to the callback',
     'admin.auth.response_mode.form_post' => 'the provider posts back to the callback; the code never appears in an address',
+    'admin.auth.scopes' => 'Requested scopes',
+    'admin.auth.discovery_url' => 'Discovery document',
     'admin.auth.username' => 'Test username',
     'admin.auth.password' => 'Test password',
     'admin.auth.test' => 'Test LDAP connection',

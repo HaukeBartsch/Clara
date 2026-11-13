@@ -360,3 +360,93 @@ describe('Authentication Test: addresses to register at the provider (REQ-AUTH-1
         assert_contains('Single sign-out is off', $body);
     });
 });
+
+describe('post-logout landing page (REQ-CFG-043)', function (): void {
+    it('is the login page unless configured, and takes only an https address or a site path', function (): void {
+        assert_same('/login', slo_config()->afterSignOut());
+        foreach (['https://intranet.example.org/portal', '/', '/goodbye?from=clara'] as $landing) {
+            assert_same($landing, slo_config(['LOGOUT_LANDING_URL' => $landing])->afterSignOut());
+        }
+        foreach ([
+            'http://intranet.example.org/portal', '//evil.example.org', '/\\evil.example.org',
+            'intranet.example.org', 'https://intranet.example.org/#top', 'https://u:p@intranet.example.org/',
+            'javascript:alert(1)',
+        ] as $bad) {
+            $error = assert_throws(Throwable::class, static fn () => slo_config(['LOGOUT_LANDING_URL' => $bad]));
+            assert_contains('LOGOUT_LANDING_URL', $error->getMessage());
+        }
+    });
+
+    it('replaces the login page after a sign-out, and queues no line for a page not shown', function (): void {
+        $config = slo_config(['LOGOUT_LANDING_URL' => 'https://intranet.example.org/portal']);
+        foreach ([
+            'local session' => [['auth_source' => 'local'], null],
+            'provider address not built' => [[], ['error' => 'end_session_unsupported', 'message' => '', 'status' => 502]],
+        ] as [$session, $endSession]) {
+            resetApi();
+            slo_sign_in($session);
+            if ($session !== []) {
+                unset($_SESSION['oauth2_provider']);
+            }
+            if ($endSession !== null) {
+                api_route('/api/v1/auth/oauth/end-session', $endSession, 502);
+            }
+            api_route('/api/v1/auth/logout', ['status' => 'ok']);
+
+            $response = slo_logout($config);
+
+            assert_same('https://intranet.example.org/portal', $response->headers()['Location']);
+            assert_true(!Session::isAuthenticated());
+            assert_same([], slo_flash_texts());
+        }
+    });
+
+    it('takes the provider\'s return there too, but never in place of a client\'s address', function (): void {
+        $config = slo_config(['LOGOUT_LANDING_URL' => '/goodbye']);
+
+        Session::rememberLogoutReturn('end-state-1', '');
+        $own = router_for(http_request('GET', '/auth/logged-out', browser_headers(), [], ['state' => 'end-state-1']), $config)->dispatch();
+        assert_same('/goodbye', $own->headers()['Location']);
+        assert_same([], slo_flash_texts());
+
+        $_SESSION = ['csrf_token' => str_repeat('a', 64)];
+        Session::rememberLogoutReturn('end-state-2', 'https://fiona.example.org/index.php');
+        $client = router_for(http_request('GET', '/auth/logged-out', browser_headers(), [], ['state' => 'end-state-2']), $config)->dispatch();
+        assert_same('https://fiona.example.org/index.php', $client->headers()['Location']);
+
+        resetApi();
+        slo_sign_in(['auth_source' => 'local']);
+        unset($_SESSION['oauth2_provider']);
+        api_route('/api/v1/auth/logout', ['status' => 'ok']);
+        $registered = slo_logout($config, '/sso/logout', ['client_id' => 'fiona']);
+        assert_same('https://fiona.example.org/index.php', $registered->headers()['Location']);
+
+        resetApi();
+        slo_sign_in(['auth_source' => 'local']);
+        unset($_SESSION['oauth2_provider']);
+        api_route('/api/v1/auth/logout', ['status' => 'ok']);
+        $unknown = slo_logout($config, '/sso/logout', ['client_id' => 'nobody']);
+        assert_same('/goodbye', $unknown->headers()['Location']);
+    });
+});
+
+describe('Authentication Test: requested scopes and discovery document (REQ-CFG-039/040)', function (): void {
+    it('shows the defaults the API applies, and configured values as the API reads them', function (): void {
+        sign_in(['is_admin' => 1]);
+        queue_shell();
+        $body = router_for(http_request('GET', '/admin', browser_headers(), [], ['section' => 'auth']), slo_config())->dispatch()->body();
+        assert_contains('<code>openid email profile</code>', $body);
+        assert_contains('https://idp.example.org/.well-known/openid-configuration</code>', $body);
+
+        resetApi();
+        sign_in(['is_admin' => 1]);
+        queue_shell();
+        $config = slo_config([
+            'OAUTH2_1_SCOPES' => ' openid  email groups email ',
+            'OAUTH2_1_DISCOVERY_URL' => 'https://meta.example.org/tenant/metadata?p=signin',
+        ]);
+        $body = router_for(http_request('GET', '/admin', browser_headers(), [], ['section' => 'auth']), $config)->dispatch()->body();
+        assert_contains('<code>openid email groups</code>', $body);
+        assert_contains('https://meta.example.org/tenant/metadata?p=signin</code>', $body);
+    });
+});

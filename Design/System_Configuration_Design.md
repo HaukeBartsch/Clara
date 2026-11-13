@@ -77,6 +77,8 @@ Per provider `N` (1…3):
 | `OAUTH2_N_POST_LOGOUT_REDIRECT_URI` | api (web: display only) | absolute URL | — | if `OIDC_SINGLE_SIGN_OUT=1` | the address of CLARA's `GET /auth/logged-out` (normally `WEB_PUBLIC_URL + /auth/logged-out`), registered at the provider character for character; `https`, except `http` under `APP_ENV=development`; no fragment. Sent as `post_logout_redirect_uri` by Sequence L1 (REQ-CFG-036, REQ-AUTH-097, REQ-API-189) |
 | `OAUTH2_N_BACKCHANNEL_LOGOUT_PATH` | web | path | — | if `OIDC_SINGLE_SIGN_OUT=1` | where the provider POSTs its logout token: `/auth/backchannel-logout/` plus one segment of letters, digits, `-` or `_` (for example `/auth/backchannel-logout/ping`), distinct per provider. The provider is registered with `WEB_PUBLIC_URL` + this path (REQ-CFG-036, REQ-AUTH-098) |
 | `OAUTH2_N_RESPONSE_MODE` | both | `query`\|`form_post` | `query` | — | how the provider returns the authorization response (REQ-CFG-041). `form_post`: the API adds `response_mode=form_post` to the authorization request and refuses the start (`response_mode_unsupported`) when discovery does not list it; PHP opens `POST /auth/callback`, which hands the response to `GET /auth/callback` through a single-use handle (`Authentication_Authorization_Design.md` §2.1 step 3a). `GET /auth/callback` takes query responses either way |
+| `OAUTH2_N_SCOPES` | api (web: display only) | space-separated scope tokens | `openid email profile` | — | the complete scope list of the authorization request, repeats dropped, order kept (REQ-CFG-039). It must contain `openid`, and every token must match RFC 6749 §3.3's scope-token grammar (a comma is legal inside a token, so a comma-separated list reads as one token and fails the `openid` check); either fault refuses startup. Claims are still read only from the verified assertion through the configured attribute names (REQ-AUTH-076) |
+| `OAUTH2_N_DISCOVERY_URL` | api (web: display only) | absolute URL | `<issuer>/.well-known/openid-configuration` | — | where the provider's metadata document is read when it is not under the issuer (REQ-CFG-040): absolute, no credentials, no fragment, `https` except under `APP_ENV=development`; a query is kept. The document's `issuer` must equal `OAUTH2_N_ISSUER` exactly — a mismatch is the same `provider_issuer_mismatch` as at the conventional address (REQ-AUTH-082). Discovery is cached per document address, not per issuer; the response is bounded at 1 MiB |
 | `OAUTH2_N_NAMES` | web | comma-separated display names | unset → implicit default set | — | names this provider is selected by on the login page (master spec "Authentication order", REQ-CFG-032, REQ-AUTH-063/064); entries empty after trimming rejected at startup (§4.1) |
 
 Shared by all providers: `OAUTH2_JWKS_TTL` (api; positive integer seconds; default `3600`) bounds how long a fetched provider key set is reused before a scheduled refetch; an unknown `kid` refetches at once (REQ-CFG-035, REQ-AUTH-077).
@@ -122,6 +124,7 @@ Per server `N` (1…3):
 | `SESSION_IDLE_TIMEOUT` | web | seconds: `0` or ≥ 60 | `1800` (30 min) | — | ends a session with no request for this long; `0` = off (REQ-CFG-017, REQ-AUTH-015) |
 | `SESSION_ROTATE_INTERVAL` | web | seconds: `0` or ≥ 120 | `900` (15 min) | — | moves a signed-in session to a new id this often; the replaced id follows its successor for 60 s, after which it counts as a replay (REQ-AUTH-072/073); `0` = off, which also disables replay detection; the minimum is twice the grace window |
 | `SESSION_COOKIE_SECURE` | web | `0`\|`1` | dev: `0`, prod: `1` | — | `Secure` flag; `0` is refused under `APP_ENV=production` (REQ-CFG-007, REQ-TECH-019, REQ-AUTH-075) |
+| `LOGOUT_LANDING_URL` | web | absolute `https` URL or same-site path | empty → `/login` | — | where the browser goes after a sign-out with no client return — Sequence D step 5, Sequence L1 step 3, and `POST /sso/logout` for a client without `SSO_CLIENT_N_LOGOUT_URI` (REQ-CFG-043, `Authentication_Authorization_Design.md` §2.4/§2.14). It replaces only the `/login` default; a client's return address still wins. A same-site path follows `Response::isSameSitePath` (one leading `/`, no backslash, no control character); an absolute URL has a host and no credentials or fragment. Read from configuration only, never from a request. With it set, no sign-out line (REQ-UI-088) is queued, because the browser leaves the login page out |
 
 ### 3.9 Rate limiting (api, web)
 
@@ -207,6 +210,9 @@ Per client `N` (1…3); a client exists when its `ID` is set.
 | `OAUTH2_N_ROLES_ATTR`, when set, is one claim name — no whitespace, no comma | required | required (REQ-CFG-037) |
 | `OIDC_SINGLE_SIGN_OUT` ∈ {`0`,`1`} (default `0`), checked by both components | required | required (REQ-CFG-036) |
 | every `OAUTH2_N_RESPONSE_MODE` ∈ {`query`,`form_post`} (default `query`), checked by both components | required | required (REQ-CFG-041) |
+| **api**: every `OAUTH2_N_SCOPES`, when set, contains `openid` and only RFC 6749 scope tokens | required | required (REQ-CFG-039) |
+| **api**: every `OAUTH2_N_DISCOVERY_URL`, when set, is an absolute URL without credentials or fragment | required, `http` allowed | required, `https` only (REQ-CFG-040) |
+| **web**: `LOGOUT_LANDING_URL`, when set, is an absolute `https` URL (host, no credentials, no fragment) or a same-site path | required | required (REQ-CFG-043) |
 | **api**, with `OIDC_SINGLE_SIGN_OUT=1`: every provider with a set `ISSUER` has `POST_LOGOUT_REDIRECT_URI` set (absolute URL, no fragment) and `SUBJECT_ATTR` at `sub` | required | required, plus an `https` post-logout address (REQ-CFG-036) |
 | **web**, with `OIDC_SINGLE_SIGN_OUT=1`: every provider with a set `ISSUER` has `BACKCHANNEL_LOGOUT_PATH` set, matching the pattern of §3.4 and unique across providers | required | required (REQ-CFG-036) |
 | every client with `SSO_CLIENT_N_ID` set: the id matches its pattern and is not repeated; `SECRET` set; `REDIRECT_URI` an absolute URL without user info or fragment; `LOGOUT_URI` unset or the same | required | required, plus `https` addresses and a secret of at least 32 bytes (REQ-CFG-038) |
@@ -275,6 +281,10 @@ OAUTH2_1_NAMES=Hospital 1
 # how the provider returns the sign-in (REQ-CFG-041): query (default) or form_post — the
 # provider's discovery document must list form_post in response_modes_supported
 #OAUTH2_1_RESPONSE_MODE=query
+# the whole scope list (REQ-CFG-039); must include openid
+#OAUTH2_1_SCOPES=openid email profile
+# metadata address when not at <issuer>/.well-known/openid-configuration (REQ-CFG-040)
+#OAUTH2_1_DISCOVERY_URL=
 
 # local (table-based) source names — optional; unset everywhere = one implicit default set
 #LOCAL_LOGIN_NAMES=Clinic A
@@ -302,6 +312,8 @@ SESSION_LIFETIME=28800
 SESSION_IDLE_TIMEOUT=1800
 SESSION_ROTATE_INTERVAL=900
 SESSION_COOKIE_SECURE=0
+# after sign-out instead of /login (REQ-CFG-043): https URL or same-site path; a client's return wins
+#LOGOUT_LANDING_URL=
 
 # rate limiting (api, web) — thresholds live in system_settings, edited in the admin interface;
 # both components take a forwarded X-Real-IP only from these addresses
@@ -356,13 +368,7 @@ OTP_MAIL_FROM=
 
 ## 7. Open Items
 
-Drafted settings, not designed yet (`System_Configuration_Requirements.md` REQ-CFG-039, 040 and 043, owner request 2026-11-13). Each becomes a row of §3 and a line of §5 when it is designed; until then none of these variables is read:
-
-| Draft | Variable | Open question before design |
-|---|---|---|
-| REQ-CFG-039 | `OAUTH2_N_SCOPES` | none beyond the grammar check; `openid` stays mandatory |
-| REQ-CFG-040 | `OAUTH2_N_DISCOVERY_URL` | the discovery cache key becomes the URL, not the issuer; the issuer-equality check (REQ-AUTH-082) is unchanged |
-| REQ-CFG-043 | `LOGOUT_LANDING_URL` | whether a landing page outside CLARA replaces the client return of Sequence L1 or only the `/login` default (the draft says only the default) |
+None. The drafted settings of 2026-11-13 are designed in §3.4 (`OAUTH2_N_SCOPES`, `OAUTH2_N_DISCOVERY_URL`) and §3.8 (`LOGOUT_LANDING_URL`); the owner settled the landing page's open question the same day — it replaces only the `/login` default, never a client return (REQ-CFG-043).
 
 Login button texts need no setting: they come from the source names (`OAUTH2_N_NAMES`, `LDAP_SERVER_N_NAMES`, `LOCAL_LOGIN_NAMES`) and the translation catalog (`login.provider.submit`).
 

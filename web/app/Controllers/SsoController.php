@@ -190,7 +190,7 @@ final class SsoController extends Controller
             if ($outcome['provider_url'] !== '') {
                 return Response::redirect($outcome['provider_url']);
             }
-            if ($outcome['provider_failed'] && $returnTo === '') {
+            if ($outcome['provider_failed'] && $returnTo === '' && $this->config->logoutLandingUrl === '') {
                 Session::flash('warning', $this->i18n->t('logout.provider_may_be_active'));
             }
         }
@@ -292,6 +292,8 @@ final class SsoController extends Controller
     /** @param array{logout_uri: string}|null $client */
     private function afterLogout(?array $client): string
     {
-        return $client !== null && $client['logout_uri'] !== '' ? $client['logout_uri'] : '/login';
+        // A registered client's own address wins; LOGOUT_LANDING_URL replaces only the
+        // login-page default (REQ-CFG-043).
+        return $client !== null && $client['logout_uri'] !== '' ? $client['logout_uri'] : $this->config->afterSignOut();
     }
 }

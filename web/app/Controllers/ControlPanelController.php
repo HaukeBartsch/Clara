@@ -177,6 +177,8 @@ final class ControlPanelController extends Controller
             'roles_attr' => $provider['roles_attr'],
             'names' => $provider['names'],
             'response_mode' => $provider['response_mode'],
+            'scopes' => $provider['scopes'],
+            'discovery_url' => $provider['discovery_url'],
             'post_logout_redirect_uri' => $provider['post_logout_redirect_uri'] !== ''
                 ? $provider['post_logout_redirect_uri']
                 : $base . Config::LOGGED_OUT_PATH,

@@ -258,13 +258,17 @@ final class LoginController extends Controller
      * client's sign-out address, or to the login page saying the user is signed out of CLARA and
      * of the provider. Anything else — no state, a wrong or expired one, no session — says only
      * that the user is signed out of CLARA. The return proves nothing and changes no session or
-     * account: it only chooses a line of text.
+     * account: it only chooses a line of text. With LOGOUT_LANDING_URL configured, a return
+     * without a client address goes there instead and no line is shown (REQ-CFG-043).
      */
     public function loggedOut(): Response
     {
         $return = Session::takeLogoutReturn($this->request->query('state'), time());
         if ($return !== null && $return !== '') {
             return Response::redirect($return);
+        }
+        if ($this->config->logoutLandingUrl !== '' && !Session::isAuthenticated()) {
+            return Response::redirect($this->config->logoutLandingUrl);
         }
         if (!Session::isAuthenticated()) {
             Session::flash($return !== null ? 'success' : 'info', $this->i18n->t(

@@ -878,6 +878,8 @@ All of these are `.env` settings. Restart afterwards (`systemctl restart clara-a
 | Email (login codes, invitations, password resets) | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY` (`starttls`/`tls`/`none`), `SMTP_USERNAME`, `SMTP_PASSWORD`, `OTP_MAIL_FROM` | Without `SMTP_HOST` the email methods are unavailable. `OTP_MAIL_FROM` is required once `SMTP_HOST` is set. |
 | Mandatory two-factor | `AUTH_REQUIRE_2FA=1` | Local and LDAP accounts must enroll (TOTP or email code) after their password step. |
 | Default theme | `UI_THEME=bootstrap\|darkly\|yeti` | Users can override it personally. |
+| Provider scopes and discovery address | `OAUTH2_n_SCOPES`, `OAUTH2_n_DISCOVERY_URL` | `OAUTH2_n_SCOPES` is the whole space-separated scope list (default `openid email profile`; it must keep `openid`). `OAUTH2_n_DISCOVERY_URL` names the provider's metadata document when it is not at `<issuer>/.well-known/openid-configuration`; the document must still name `OAUTH2_n_ISSUER` as its issuer. The Authentication Test shows both values in effect. |
+| Page after sign-out | `LOGOUT_LANDING_URL` | An `https` address or a path on this site to send people to after they sign out, instead of the login page. A registered client's sign-out address still takes precedence. |
 | Monitoring chart span | `MONITORING_PERIOD_MINUTES=10` | How far back the Control Panel's Monitoring charts reach, in minutes (1–1440). The page samples once a second while it is open and drops every older timepoint, so a tab left open all day keeps ten minutes and not the day. Set `60` for the old hour. |
 | Rate limiting | *(no variable)* | Enable it and set the thresholds in the administration interface (system settings). It is off by default. |
 

@@ -859,3 +859,96 @@ func TestLoadResponseMode(t *testing.T) {
 		}
 	}
 }
+
+// TestLoadScopes covers OAUTH2_N_SCOPES (REQ-CFG-039): unset keeps the three default
+// scopes, a value is the whole list with repeats dropped, and a list without openid or
+// with a token outside RFC 6749 §3.3 refuses startup.
+func TestLoadScopes(t *testing.T) {
+	clearAuthEnv(t)
+	t.Setenv("ADMIN_BOOTSTRAP_EMAIL", "admin@example.org")
+	t.Setenv("OAUTH2_1_ISSUER", "https://idp.example.org")
+	t.Setenv("OAUTH2_1_CLIENT_ID", "csms")
+	t.Setenv("OAUTH2_1_CLIENT_SECRET", "s")
+
+	for value, want := range map[string]string{
+		"":                              "openid email profile",
+		"   ":                           "openid email profile",
+		"openid":                        "openid",
+		"openid email profile groups":   "openid email profile groups",
+		" groups  openid groups email":  "groups openid email",
+		"openid urn:example:scope/read": "openid urn:example:scope/read",
+	} {
+		t.Setenv("OAUTH2_1_SCOPES", value)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("%q: %v", value, err)
+		}
+		if got := strings.Join(cfg.OAuth2[0].Scopes, " "); got != want {
+			t.Errorf("%q: Scopes = %q, want %q", value, got, want)
+		}
+		if !strings.Contains(strings.Join(cfg.Dump(), "\n"), "OAUTH2_1_SCOPES="+want) {
+			t.Errorf("%q: the startup dump does not name the scopes", value)
+		}
+	}
+	for value, want := range map[string]string{
+		"email profile":         "leaves out openid",
+		"OpenID email":          "leaves out openid",
+		"openid,email,profile":  "leaves out openid", // a comma is legal inside one token
+		`openid "email"`:        "is not a scope token",
+		"openid email\\profile": "is not a scope token",
+	} {
+		t.Setenv("OAUTH2_1_SCOPES", value)
+		_, err := Load()
+		if err == nil || !strings.Contains(err.Error(), "OAUTH2_1_SCOPES") || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: err = %v, want an OAUTH2_1_SCOPES error saying %q", value, err, want)
+		}
+	}
+}
+
+// TestLoadDiscoveryURL covers OAUTH2_N_DISCOVERY_URL (REQ-CFG-040): unset reads the
+// conventional address under the issuer; a value must be an absolute URL without
+// credentials or fragment, and https outside development.
+func TestLoadDiscoveryURL(t *testing.T) {
+	clearAuthEnv(t)
+	t.Setenv("ADMIN_BOOTSTRAP_EMAIL", "admin@example.org")
+	t.Setenv("OAUTH2_1_ISSUER", "https://idp.example.org/tenant/")
+	t.Setenv("OAUTH2_1_CLIENT_ID", "csms")
+	t.Setenv("OAUTH2_1_CLIENT_SECRET", "s")
+
+	t.Setenv("OAUTH2_1_DISCOVERY_URL", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := cfg.OAuth2[0].DiscoveryDocument(), "https://idp.example.org/tenant/.well-known/openid-configuration"; got != want {
+		t.Errorf("default DiscoveryDocument = %q, want %q", got, want)
+	}
+
+	for _, ok := range []string{
+		"https://meta.example.org/tenant/v2.0/.well-known/openid-configuration?p=signin",
+		"http://localhost:9000/.well-known/openid-configuration", // development only
+	} {
+		t.Setenv("OAUTH2_1_DISCOVERY_URL", ok)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("%q: %v", ok, err)
+		}
+		if got := cfg.OAuth2[0].DiscoveryDocument(); got != ok {
+			t.Errorf("DiscoveryDocument = %q, want %q", got, ok)
+		}
+		if !strings.Contains(strings.Join(cfg.Dump(), "\n"), "OAUTH2_1_DISCOVERY_URL="+ok) {
+			t.Errorf("%q: the startup dump does not name the address", ok)
+		}
+	}
+	for _, bad := range []string{
+		"/.well-known/openid-configuration",
+		"ftp://meta.example.org/doc.json",
+		"https://meta.example.org/doc.json#frag",
+		"https://user:pw@meta.example.org/doc.json",
+	} {
+		t.Setenv("OAUTH2_1_DISCOVERY_URL", bad)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), "OAUTH2_1_DISCOVERY_URL") {
+			t.Errorf("%q: err = %v, want an OAUTH2_1_DISCOVERY_URL startup error", bad, err)
+		}
+	}
+}
