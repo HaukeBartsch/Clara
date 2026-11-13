@@ -580,7 +580,8 @@ func parseAuditFilter(q url.Values) (*auditFilter, string) {
 }
 
 // listAudit returns audit entries in reverse chronological order with
-// limit/cursor pagination (§1 convention). Audit reads are reserved to
+// limit/cursor pagination (§1 convention) — the read-only audit surface of
+// REQ-AUD-019, its filters served by the audit indexes (REQ-AUD-020). Audit reads are reserved to
 // is_admin (REQ-API-078, finding F2): view entries carry the live data-API
 // token and event details carry record values, neither of which a project
 // member is entitled to see. Filters: type=events|views, project, user,

@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// ProviderLink binds one provider subject to one account (REQ-DB-… / REQ-AUTH-080,
+// ProviderLink binds one provider subject to one account (REQ-DB-051 / REQ-AUTH-080,
 // DEV-AUTH-18, migration 0018). It is what lets a verified assertion resolve an
 // account without trusting the email address that travels beside it: an address
 // edited or reassigned at the identity provider then cannot move an account into

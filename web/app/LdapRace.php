@@ -1,6 +1,6 @@
 <?php
 // The LDAP half of the named-source credential race (Authentication_Authorization_Design.md
-// §2.2 and §2.9): every directory registered under the name the user selected is
+// §2.2 and §2.9, REQ-AUTH-003): every directory registered under the name the user selected is
 // attempted concurrently, each with its own timeout so one unreachable server cannot
 // stall the login, and the first attempt to report "login ok" supplies the identity.
 //

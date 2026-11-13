@@ -59,7 +59,7 @@ func (w odmWriter) end(name string) error {
 
 // plain writes `<name>value</name>` with character content rather than a
 // TranslatedText, which is what CheckValue holds in either dialect and what
-// FormalExpression holds in 1.3 (REQ-ODM-015).
+// FormalExpression holds in 1.3 (REQ-ODM-015, REQ-ODM-065).
 func (w odmWriter) plain(name, value string) error {
 	return w.enc.EncodeElement(value, odmStart(name))
 }
@@ -116,7 +116,7 @@ const (
 // odmMethodComputation is the MethodDef type for a computed value. Both dialects
 // enumerate it and neither admits the word "Calculation", which this exporter used to
 // write — and no validator saw it, because the conformance fixture held no calculated
-// field (REQ-ODM-047).
+// field (REQ-ODM-047, REQ-ODM-065).
 const odmMethodComputation = "Computation"
 
 // odmPlan is the export's view of a project's design.

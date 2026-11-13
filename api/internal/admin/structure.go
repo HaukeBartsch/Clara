@@ -48,7 +48,6 @@ func (h *Handler) registerStructure(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/v1/validationTypes", h.validationTypes)
 
-	mux.HandleFunc("GET /api/v1/projects/{id}/instruments/{iid}/fields/order", h.orderFields)
 	mux.HandleFunc("GET /api/v1/projects/{id}/instruments/{iid}/fields", h.listFields)
 	mux.HandleFunc("POST /api/v1/projects/{id}/instruments/{iid}/fields", h.createField)
 	mux.HandleFunc("POST /api/v1/projects/{id}/instruments/{iid}/fields/bulk", h.createFieldsBulk)
@@ -2916,7 +2915,7 @@ func (h *Handler) validateFieldDesign(ctx context.Context, f *db.Field, selfID i
 	if reservedFieldNames[f.FieldName] {
 		return nil, validationf("field_name %q is reserved", f.FieldName)
 	}
-	if dupe, taken := d.fields[f.FieldName]; taken && dupe.ID != selfID {
+	if dupe, taken := d.fields[f.FieldName]; taken && dupe.ID != selfID { // unique per project (REQ-VAL-012)
 		return nil, conflictf("field_name %q already exists in this project", f.FieldName)
 	}
 	if !fieldTypes[f.FieldType] {

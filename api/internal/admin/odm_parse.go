@@ -29,7 +29,8 @@ import (
 // already failed fatally. The file-level attributes — FileOID, CreationDateTime,
 // FileType, ODMVersion, SourceSystem — are accepted and ignored: they identify a
 // download, not a project (REQ-ODM-011), and the audit line records the request's
-// own counts (§9).
+// own counts (§9). A Transactional file is therefore read like a snapshot, never
+// refused (REQ-ODM-012).
 type odmDoc struct {
 	version      string
 	study        *odmStudy

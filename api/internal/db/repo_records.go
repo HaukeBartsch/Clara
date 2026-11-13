@@ -316,7 +316,7 @@ func (s *Store) DeleteRecordValuesTx(ctx context.Context, tx *sql.Tx, projectID 
 }
 
 // EnsureAnonOffset returns the record's persisted date-shift, computing and
-// persisting it on first use (REQ-DB-023): offset = min +
+// persisting it on first use (REQ-DB-023, REQ-EXP-034): offset = min +
 // SHA-256(project_id ':' record_id ':' salt) mod (max − min + 1). The range
 // comes from System_Configuration_Design.md §3.6; max < min degenerates to
 // a zero shift rather than a panic.

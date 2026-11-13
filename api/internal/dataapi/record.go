@@ -645,7 +645,9 @@ func (rv recordValues) rowEval(d *projectDict, event, instrument string, instanc
 
 // fieldHash is the §5.1 anonymization hash for personal fields:
 // HEX(SHA-256(ANON_SALT ':' project_id ':' field_name ':' value)), full
-// 64-character digest, deterministic per (project, field, value).
+// 64-character digest, deterministic per (project, field, value). One-way
+// without the salt (REQ-EXP-031); it transforms the output value only and never
+// the stored one (REQ-EXP-032).
 func fieldHash(salt string, projectID int64, fieldName, value string) string {
 	sum := sha256.Sum256([]byte(salt + ":" + strconv.FormatInt(projectID, 10) + ":" + fieldName + ":" + value))
 	return strings.ToUpper(hex.EncodeToString(sum[:]))
@@ -781,7 +783,7 @@ func abs(n int) int {
 }
 
 // shiftDatePart shifts the date part of a canonical value by offsetDays,
-// preserving the time part and the collection offset (§5.2 rule 3). Values
+// preserving the time part and the collection offset (§5.2 rule 3, REQ-EXP-035). Values
 // that do not parse are returned unchanged.
 func shiftDatePart(value string, offsetDays int) string {
 	if m := canonicalTimeRE.FindStringSubmatch(value); m != nil {

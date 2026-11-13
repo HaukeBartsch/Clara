@@ -377,7 +377,8 @@ func Int64Ptr(ni sql.NullInt64) *int64 {
 	return &v
 }
 
-// parseUTCTime parses the canonical DATETIME layout for filter parameters.
+// ParseUTCTime parses the canonical DATETIME layout for filter parameters;
+// system timestamps are UTC on both surfaces (REQ-API-004, GD-7).
 func ParseUTCTime(s string) (time.Time, bool) {
 	t, err := time.Parse("2006-01-02 15:04:05", s)
 	if err != nil {

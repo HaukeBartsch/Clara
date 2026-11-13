@@ -9,6 +9,15 @@ package dataapi
 // the export audit event (§8). Callers resolve authorization — what each pair
 // may be exported at, candidate arms/events, DAG scope — and hand the result to
 // streamExport as an ExportSpec.
+//
+// Requirements served here: both export surfaces (REQ-EXP-001); the level
+// applied per (instrument, event) pair, an export_none pair adding no columns
+// (REQ-EXP-002); the REDCap row shape — identifier under its field name,
+// redcap_event_name, empty strings for missing values — with flat normative and
+// wide a compatibility mode (REQ-EXP-011, REQ-API-014); one column per expanded
+// matrix row field, since each row is a field of its own (REQ-EXP-012, REQ-DB-014);
+// exactly the §4.2 steps per level (REQ-EXP-024). Branching logic is display-only
+// and is never consulted here (REQ-EXP-052, GD-13).
 
 import (
 	"context"
@@ -1433,6 +1442,8 @@ func (h *Handler) streamExport(w http.ResponseWriter, r *http.Request, d *projec
 		case <-auditCtx.Done():
 		}
 	}
+	// The applied level and the filters, never a value or the salt
+	// (REQ-EXP-050, REQ-EXP-051).
 	details := map[string]any{
 		"surface": surface,
 		// The most protective level among the pairs delivered, plus how many

@@ -1779,6 +1779,68 @@
         }
       }
     },
+    "/api/v1/projects/{id}/export/odm": {
+      "get": {
+        "tags": ["Admin: Records"],
+        "operationId": "exportProjectODM",
+        "summary": "Project as CDISC ODM 1.3 or 2.0 XML (REQ-API-169, REQ-ODM-001)",
+        "description": "`is_admin` only — a whole study in one file is above any project role (REQ-ODM-002); any other acting user gets the uniform 403 and writes no audit entry (REQ-AUD-004). One `Study` with one `MetaDataVersion` for the current structure, followed — unless `odm_content=project_only` — by `ClinicalData` for the records in scope, streamed metadata first and one `SubjectData` per record (REQ-TECH-011). Values come from the same sensitivity pipeline as `GET …/export` (REQ-ODM-021), so a de-identified level carries the same hashes and shifted dates the CSV carries (REQ-ODM-063); values leave as stored codes (REQ-ODM-022). Where the applied level removes the record identifier, records are keyed by a per-file surrogate (`S1`, `S2`, …) and the `X-CLARA-ODM-Key: surrogate` header says so (REQ-ODM-031). No byte-order mark (REQ-EXP-016). A store failure after the first byte truncates the stream without a synthesized closing element. Unknown query parameters are accepted and ignored (REQ-API-017). Audit `odm_export` with the selected version and content (REQ-ODM-061).",
+        "parameters": [
+          { "$ref": "#/components/parameters/ProjectId" },
+          { "name": "odm_version", "in": "query", "required": false, "schema": { "type": "string", "enum": ["1.3", "2.0"], "default": "1.3" }, "description": "Selects the namespace and `ODMVersion` (1.3 is written as 1.3.2). Any other value → 400 (REQ-ODM-064)." },
+          { "name": "odm_content", "in": "query", "required": false, "schema": { "type": "string", "enum": ["project_and_data", "project_only"], "default": "project_and_data" }, "description": "`project_only` writes `Study` and `MetaDataVersion` and no `ClinicalData` element, reads no record and therefore never answers 403 for want of a readable one. Any other value → 400 (REQ-ODM-066)." }
+        ],
+        "responses": {
+          "200": {
+            "description": "The ODM document, streamed as an attachment: `Content-Disposition: attachment; filename=\"<slug>_odm_<YYYY-MM-DD>.xml\"` for 1.3, `\"<slug>_odm_v2.0_<YYYY-MM-DD>.xml\"` for 2.0 (REQ-API-153).",
+            "headers": {
+              "X-CLARA-ODM-Key": { "description": "`surrogate` when the applied level removed the record identifier and `SubjectKey` is a per-file surrogate; absent otherwise and on a project-only document.", "schema": { "type": "string", "enum": ["surrogate"] } }
+            },
+            "content": { "application/xml": { "schema": { "type": "string" } } }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/projects/import/odm": {
+      "post": {
+        "tags": ["Admin: Projects"],
+        "operationId": "importProjectODM",
+        "summary": "Create a new project from a CDISC ODM 1.3 or 2.0 document (REQ-API-170, REQ-ODM-001)",
+        "description": "`is_admin` only (REQ-ODM-002). Always creates a **new** project and never modifies an existing one (REQ-ODM-004); the dialect is detected from the root namespace. The structure builds in one transaction; records load one transaction per record afterwards, every value passing the ordinary validation path (REQ-ODM-040/041/042). Query values for the project metadata override the document's (REQ-ODM-006), an empty optional value included. With `dry_run=1` the whole parse, resolution and validation run and nothing is written (REQ-ODM-046). A document outside both dialects (`not_odm`), carrying a `DOCTYPE` (`dtd_forbidden`), breaking a structural bound (`too_deep`, `too_large`) or contradicting itself (`duplicate_oid`, `dangling_ref`, `empty_itemgroup`, `no_metadataversion`) answers 400 `odm_import_rejected` with the problem list, and nothing is written or audited (REQ-ODM-054). Audit `odm_import` with counts and options only, dry runs included (REQ-ODM-061, REQ-AUD-014).",
+        "parameters": [
+          { "name": "project_name", "in": "query", "required": false, "schema": { "type": "string" }, "description": "The new project's name; defaults to the document's `StudyName`. A name already taken → 409, never a rename of the existing project (REQ-ODM-044)." },
+          { "name": "organization", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "pi_name", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "pi_email", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "participant_names", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "dm_name", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "dm_email", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "rek_number", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "rek_start_date", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "rek_end_date", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "start_date", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "end_date", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "dry_run", "in": "query", "required": false, "schema": { "type": "string", "enum": ["1"] }, "description": "Validate the whole document and answer the report without writing (REQ-ODM-046)." }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "The ODM document itself — not base64 in JSON — within the 32 MiB import bound (REQ-API-144, REQ-ODM-014).",
+          "content": { "application/xml": { "schema": { "type": "string" } } }
+        },
+        "responses": {
+          "200": { "description": "The dry run's report (`dry_run=1`).", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OdmImportReport" } } } },
+          "201": { "description": "The live import's report, with the new `project_id`.", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OdmImportReport" } } } },
+          "400": { "description": "An empty or oversized body (`invalid_request`), or a document refused before anything was written (`odm_import_rejected`, with `problems`)." },
+          "401": { "$ref": "#/components/responses/UnauthorizedServiceToken" },
+          "403": { "$ref": "#/components/responses/AdminForbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
     "/api/v1/audit": {
       "get": {
         "tags": ["Admin: Audit"],
@@ -3531,6 +3593,36 @@
                 "message": {
                   "type": "string"
                 }
+              }
+            }
+          }
+        }
+      },
+      "OdmImportReport": {
+        "type": "object",
+        "description": "The ODM import report (ODM_Interchange_Design.md §7, REQ-ODM-060). Problem codes — fatal: not_odm, dtd_forbidden, too_deep, too_large, duplicate_oid, dangling_ref, empty_itemgroup, no_metadataversion, validation_error; warning: name_renamed, type_mapped, validation_dropped, event_flattened, element_ignored, attribute_ignored, mdv_ignored; per record: value_invalid, unknown_item, unknown_event, record_failed. A list longer than 200 ends with one problems_truncated entry.",
+        "properties": {
+          "project_id": { "type": "integer", "description": "0 on a dry run." },
+          "project_name": { "type": "string" },
+          "dry_run": { "type": "boolean" },
+          "arms": { "type": "integer" },
+          "events": { "type": "integer" },
+          "instruments": { "type": "integer" },
+          "fields": { "type": "integer" },
+          "records_added": { "type": "integer" },
+          "records_updated": { "type": "integer" },
+          "records_failed": { "type": "integer" },
+          "problems": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["file", "code", "message"],
+              "properties": {
+                "file": { "type": "string" },
+                "row": { "type": "string", "description": "The record's SubjectKey, when the problem belongs to one." },
+                "field": { "type": "string" },
+                "code": { "type": "string" },
+                "message": { "type": "string" }
               }
             }
           }

@@ -5,7 +5,8 @@
 //
 // Controllers never inspect Accept or decide page-versus-JSON (that is the
 // router's single decision, REQ-UI-044); each declares one page handler and, if
-// its route serves one, a `data()` handler returning the region payload.
+// its route serves one, a `data()` handler returning the region payload — the FIONA style
+// of a server-rendered shell whose regions the client fills from JSON (REQ-TECH-025).
 
 declare(strict_types=1);
 

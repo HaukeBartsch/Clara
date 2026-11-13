@@ -1,6 +1,7 @@
 <?php
 // The front controller (Technology_Stack_Design.md §4): config → session →
-// router → response, and nothing else. Every browser request enters here; nginx
+// router → response, and nothing else. The PHP layer renders pages and owns the
+// session and the sign-in flows; all data comes from the API (REQ-TECH-002). Every browser request enters here; nginx
 // routes it with `try_files … /index.php` in production and the built-in server
 // with `php -S 127.0.0.1:8000 -t web/public web/public/index.php` in development.
 //

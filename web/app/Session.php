@@ -141,7 +141,7 @@ final class Session
         // notice prints before the doctype and drops every page into quirks mode.
 
         session_name($config->sessionCookieName);
-        session_set_cookie_params([
+        session_set_cookie_params([ // HttpOnly, Secure in production, Lax (REQ-TECH-019)
             // Browser-scoped cookie: the server-side timeout is authoritative,
             // and a persistent cookie would widen the fixation window.
             'lifetime' => 0,

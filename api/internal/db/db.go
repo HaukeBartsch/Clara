@@ -26,7 +26,8 @@ const (
 )
 
 // Store bundles the *sql.DB with its dialect and config. It is the single
-// writer to the data store.
+// writer to the data store; multi-row writes (imports, structure changes) run
+// in an explicit transaction the caller opens on it (REQ-DB-026).
 type Store struct {
 	DB      *sql.DB
 	Dialect Dialect
@@ -76,6 +77,9 @@ func Open(cfg *config.Config, reg *metrics.Registry) (*Store, error) {
 		dsn    string
 		d      Dialect
 	)
+	// The engine is configuration only: the same code and test suite run on
+	// either (REQ-TECH-008), and SQLite needs no server for development
+	// (REQ-TECH-009).
 	switch cfg.DBConnection {
 	case "sqlite":
 		driver = "sqlite"

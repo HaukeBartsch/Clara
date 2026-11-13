@@ -414,7 +414,7 @@ func (h *Handler) projectForRoles(w http.ResponseWriter, r *http.Request) (
 
 // --- POST /api/v1/projects/{id}/roles (REQ-API-057) ---
 
-// createRole creates a project role (is_admin). A duplicate name within the
+// createRole creates a project role under any name (is_admin, REQ-AUTH-021). A duplicate name within the
 // project is 409 conflict; unknown arm numbers, level values outside the fixed
 // vocabularies and unmapped pairs are 400 invalid_request. 201 — the role
 // object; audit role_created (§3.4) with the permission set.

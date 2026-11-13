@@ -1,5 +1,6 @@
 // Command server is the Go API entry point: config → migrations → routes
-// (Technology_Stack_Design.md §4/§5). It fails fast on invalid configuration
+// (Technology_Stack_Design.md §4/§5). The API owns all data access,
+// validation, authorization and audit writes (REQ-TECH-003). It fails fast on invalid configuration
 // (REQ-CFG-004) or an unreachable database (REQ-TECH-014), applies pending
 // migrations at startup (REQ-DB-003), and serves the data API at /api/ plus
 // the health endpoint (REQ-API-003). The administration surface (/api/v1/)

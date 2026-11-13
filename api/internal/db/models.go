@@ -220,7 +220,8 @@ type ValidationType struct {
 	Builtin bool
 }
 
-// DataValue is one EAV row (REQ-DB-015…020). The first instance of every form
+// DataValue is one EAV row (REQ-DB-015…020): new fields and projects add rows,
+// never columns, so neither needs a schema migration (REQ-TECH-012). The first instance of every form
 // is stored with an empty RepeatingInstrument and RepeatingInstanceNumber 1; instances
 // 2, 3, … of a repeating (instrument, event) pair carry the instrument's name
 // (REQ-DB-048). A zero instance number is written as 1 (REQ-DB-019).

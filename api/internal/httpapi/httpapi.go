@@ -40,6 +40,8 @@ func NewMux(store *db.Store, cfg *config.Config, aw *audit.Writer, reg *metrics.
 	data := &dataapi.Handler{Store: store, Cfg: cfg, Limiter: dataapi.NewRateLimiter(), Audit: aw, Metrics: reg}
 	mux.Handle("/api/", metrics.Middleware(reg, metrics.StaticRoute("/api/"), rolloverGuard(aw, data)))
 
+	// The administration surface is versioned in its path; a breaking change
+	// needs a new major prefix beside /api/v1/ (REQ-API-008).
 	adminAPI := admin.New(store, cfg, aw, reg, data.Limiter)
 	// Metrics outermost on the administration chain so rate-limit 429s and
 	// boundary 401/403 land inside the measured latency (REQ-API-163).

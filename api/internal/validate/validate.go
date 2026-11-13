@@ -171,8 +171,10 @@ func WithDecimal(v string, sep byte) string {
 
 // --- type validators (REQ-VAL-015…023, §4) ---
 
-// ValidateValue checks a single value against f. An empty value is a
-// no-op ("no value", REQ-VAL-024) and returns nil; the caller handles the
+// ValidateValue checks a single value against f. Every rule comes from the
+// field's dictionary entry alone (REQ-VAL-003), and no parameter names the
+// caller, so every entry path gets the same verdict (REQ-VAL-004). An empty
+// value is a no-op ("no value", REQ-VAL-024) and returns nil; the caller handles the
 // identifier case separately. reg resolves regex validation types (§4.2);
 // a type that is neither built-in nor in reg is rejected (a field must never
 // silently stop validating because its registry row went away). Date/datetime
@@ -182,10 +184,10 @@ func ValidateValue(f Field, value string, reg *Registry) *Violation {
 	if value == "" {
 		return nil
 	}
-	if f.Type == "description" || f.Type == "header" || f.Type == "transfer" {
+	if f.Type == "description" || f.Type == "header" || f.Type == "transfer" { // REQ-VAL-006
 		return &Violation{CodeNonValueField, fmt.Sprintf("field %q does not accept values", f.Name)}
 	}
-	if f.Type == "calculated" {
+	if f.Type == "calculated" { // system-managed (REQ-VAL-036, REQ-API-095)
 		return &Violation{CodeCalculatedRO, fmt.Sprintf("field %q is calculated and read-only", f.Name)}
 	}
 	if v := validateChoices(f, value); v != nil {

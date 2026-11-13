@@ -53,7 +53,10 @@ type Params struct {
 	HasData bool
 }
 
-// ParseParams extracts the protocol parameters from a POST form body. Other
+// ParseParams extracts the protocol parameters from a POST form body. Only the
+// parameters read below are interpreted; exportSurveyFields,
+// exportDataAccessGroups and every unknown name are accepted and ignored, never
+// rejected (REQ-EXP-014, REQ-API-016). Other
 // parameters may also arrive in the query string, which some callers append —
 // the token never does (REQ-API-009, REQ-API-010).
 //
@@ -202,7 +205,9 @@ func (s formSet) has(name string) bool {
 }
 
 // Encoding is the response encoding (REQ-API-013): a present
-// returnFormat wins, then format, then the REDCap default csv.
+// returnFormat wins, then format, then the REDCap default csv. The data API
+// has no ODM encoding — `odm` falls back to csv like any unknown value; ODM
+// lives on the administration API only (REQ-ODM-003).
 func (p Params) Encoding() string {
 	e := p.ReturnFormat
 	if e == "" {

@@ -73,7 +73,7 @@ final class SetupController extends StructureController
         }, $this->i18n->t('setup.arm.added', ['name' => $name]));
     }
 
-    /** PUT /api/v1/arms/{id} — the label only; id, arm_num and events are untouched (REQ-API-150). */
+    /** PUT /api/v1/arms/{id} — the label only; id, arm_num and events are untouched (REQ-API-150, REQ-UI-048). */
     public function renameArm(): Response
     {
         $armId = $this->objectId('arm_id');

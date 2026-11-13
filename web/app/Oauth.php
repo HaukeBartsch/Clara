@@ -1,7 +1,9 @@
 <?php
 // The web layer owns the browser session and callback state. Discovery, authorization
 // URL construction, PKCE exchange and ID-token verification live in the Go API
-// (Authentication_Authorization_Design.md §2.1/§2.10, REQ-AUTH-076/077).
+// (Authentication_Authorization_Design.md §2.1/§2.10, REQ-AUTH-076/077). Together they
+// are the authorization-code flow of REQ-AUTH-001, for any number of providers offered
+// by source name (REQ-AUTH-002).
 
 declare(strict_types=1);
 

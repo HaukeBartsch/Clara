@@ -335,7 +335,8 @@ final class RecordController extends DataEntryController
 
     /**
      * POST …?action=assign_group — `PUT …/records/{record}/data-access-group` (§8.7,
-     * REQ-API-091; `project_admin`). "No group" unassigns the record.
+     * REQ-API-091; `project_admin`). "No group" unassigns the record. This is the record
+     * half of REQ-API-094; the active-group switch (REQ-UI-010) is not built yet.
      */
     public function assignGroup(): Response
     {
@@ -1048,7 +1049,8 @@ final class RecordController extends DataEntryController
     // --- helpers ------------------------------------------------------------------------
 
     /**
-     * Sets or clears the user's completion assignment when the dropdown changed (§8.5):
+     * Sets or clears the user's completion assignment when the dropdown changed (§8.5,
+     * REQ-UI-036):
      * "unverified" or "finished" sets that state; leaving either for a derived state clears
      * it, after which record-status derives no data / some data from the values
      * (REQ-API-110). Moving between the two derived states is not an assignment and makes no

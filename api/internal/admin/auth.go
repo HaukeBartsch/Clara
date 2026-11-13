@@ -93,7 +93,7 @@ func (h *Handler) resolveLoginIdentifier(ctx context.Context, raw string) string
 	return u.Email
 }
 
-// login implements POST /api/v1/auth/login with the processing order of
+// login implements POST /api/v1/auth/login (REQ-AUTH-016) with the processing order of
 // Authentication_Authorization_Design.md §2.3 (Sequence C, step 0 for local).
 func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	var body loginRequest

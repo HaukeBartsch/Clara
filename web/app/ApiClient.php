@@ -1,6 +1,8 @@
 <?php
 // The only route from the web layer to the Go API (REQ-TECH-006: PHP holds no
-// SQL and no database driver — every read and write goes through here).
+// SQL and no database driver — every read and write goes through here). Calls are
+// made server-side with the session's context; the browser never reaches /api/v1/*
+// (REQ-AUTH-010, REQ-API-040).
 //
 // Identity on the internal boundary: X-Internal-Service-Token proves the caller
 // is this application, and X-Internal-User-Id names the acting user. The header

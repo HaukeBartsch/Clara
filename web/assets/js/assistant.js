@@ -89,7 +89,7 @@ const clipped = (text, limit) => (text.length > limit ? text.slice(0, limit) + "
  * truthiness test that then passes on the dead object at 12193, the sampling call that throws at
  * 13653). A browser takes the device back from a backgrounded or idle tab, so this appears between
  * two turns with nothing else changed. Both wordings are matched: the engine's own line when it
- * arrives first, and the freed-object error that usually hides it.
+ * arrives first, and the freed-object error that usually hides it (REQ-AI-014).
  */
 const DEVICE_LOST_SIGNALS = [/device was lost/i, /cannot pass deleted object/i]
 

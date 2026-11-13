@@ -310,6 +310,9 @@ func refusedRowsMessage(results []importRow) string {
 		" rows were refused. " + strings.Join(refused, "; ")
 }
 
+// aggregateUnknownEventValues collects every unknown event value of the batch
+// before any row is applied — one message per input key, values deduplicated
+// and sorted (REQ-API-140).
 func aggregateUnknownEventValues(rows []map[string]string, sub *subject, d *projectDict) string {
 	if !d.hasEvents || sub.isLink() {
 		return ""
@@ -409,7 +412,7 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 		// including for a record this call creates.
 		row[idKey] = recordID
 	}
-	if recordID == "" {
+	if recordID == "" { // a row must name its record (REQ-VAL-007, REQ-VAL-026)
 		return fail(idKey + ": CONTENT_INVALID — a record id is required")
 	}
 	// A row without form_name is flat (REQ-API-031): every supplied field
@@ -771,9 +774,11 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 		completions = append(completions, completionImport{instr: in, state: state})
 	}
 	sort.Strings(unknown)
-	for _, k := range unknown {
+	for _, k := range unknown { // never stored in the EAV table (REQ-VAL-005)
 		problems = append(problems, k+": "+string(validate.CodeUnknownField)+" — unknown field '"+k+"'")
 	}
+	// One failed value fails the record before anything is written, with
+	// per-field detail (REQ-VAL-008).
 	if len(problems) > 0 {
 		return fail(strings.Join(problems, "; "))
 	}
@@ -871,7 +876,7 @@ func (h *Handler) importOneRow(ctx context.Context, sub *subject, d *projectDict
 	}
 
 	// New records join the holder's active data access group — or none;
-	// an import never changes an existing record's group (REQ-API-093).
+	// an import never changes an existing record's group (REQ-API-093, REQ-AUTH-047).
 	if entity == nil {
 		groupID, err := h.activeGroupIDTx(ctx, tx, sub)
 		if err != nil {
@@ -1043,6 +1048,8 @@ func (*surveyUsedError) Error() string { return "survey already submitted" }
 // recomputeCalculated evaluates every calculated field of the project for
 // one record against its current values and stores changed results in tx,
 // returning each changed result with the event it is stored at (REQ-VAL-037).
+// A result is an ordinary EAV row, written only at events the field's
+// instrument is mapped to (REQ-DB-030).
 // An unchecked checkbox box reads as 0 (§6.3, REQ-DB-042).
 func (h *Handler) recomputeCalculated(ctx context.Context, tx *sql.Tx, projectID int64,
 	recordID string, rv recordValues, ri recordInstances, d *projectDict) ([]calculatedChange, error) {

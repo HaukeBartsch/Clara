@@ -1389,8 +1389,15 @@ func TestGD8IdentifierInvariant(t *testing.T) {
 	var f2 fieldObject
 	e.decode(rec, &f2)
 
-	// Without records the identifier may still move.
+	// A reorder is a PUT only: a GET carrying the same body must not reach the
+	// reorder handler — a safe method never changes the field order.
 	order := "/api/v1/projects/" + itoa(projectID) + "/instruments/" + itoa(instID) + "/fields/order"
+	rec = e.do("GET", order, map[string]any{"order": []int64{f2.ID, f1.ID}}, admin)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET fields/order: %d %s, want 405", rec.Code, rec.Body.String())
+	}
+
+	// Without records the identifier may still move.
 	rec = e.do("PUT", order, map[string]any{"order": []int64{f2.ID, f1.ID}}, admin)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("reorder empty project: %d %s", rec.Code, rec.Body.String())

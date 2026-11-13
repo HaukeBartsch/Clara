@@ -288,6 +288,8 @@ func EffectiveForAssignment(ctx context.Context, store *db.Store, user *db.User,
 		full()
 		return lv, nil
 	}
+	// One role per member: its grants replace the arm defaults above, with no
+	// union across roles (REQ-AUTH-025).
 	role, err := store.GetRole(ctx, asg.RoleID.Int64)
 	if err != nil {
 		return nil, err

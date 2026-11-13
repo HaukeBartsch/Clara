@@ -1,11 +1,12 @@
 // Package audit is the event catalog and the same-transaction writer for the
-// two audit tables (Audit_Logging_Design.md). The audit INSERT is issued
+// two audit tables (Audit_Logging_Design.md, REQ-AUD-001). The package exposes
+// inserts only — no operation updates or deletes an entry (REQ-AUD-002). The audit INSERT is issued
 // inside the transaction of the operation it describes (REQ-AUD-003,
 // DEV-AUD-1): a rollback of the operation rolls back the entry, and a failure
 // to write the entry fails the operation.
 //
 // Physical layout behind the stable names audit_events / audit_record_views
-// (§6): MariaDB uses yearly partitions on the table itself; SQLite uses
+// (§6, REQ-DB-022): MariaDB uses yearly partitions on the table itself; SQLite uses
 // per-year tables behind a UNION ALL view. Reads always use the stable name;
 // writes on SQLite target the current-year physical table directly, because
 // a UNION ALL view is not insertable.
@@ -59,7 +60,7 @@ const (
 	InstrumentUncompleted = "instrument_uncompleted" // REQ-AUD-026
 	TransferExecuted      = "transfer_executed"      // REQ-AUD-034, REQ-API-165: a cross-project transfer ran (source project)
 
-	// §3.3 project structure events
+	// §3.3 project structure events (REQ-AUD-010)
 	ProjectCreated      = "project_created"
 	ProjectUpdated      = "project_updated"
 	ArmCreated          = "arm_created"
@@ -83,7 +84,7 @@ const (
 	ProjectEnded        = "project_ended"
 	ProjectDeleted      = "project_deleted" // REQ-AUD-038: the whole project removed (REQ-EXP-044); its trail stays
 
-	// §3.4 administration events
+	// §3.4 administration events (REQ-AUD-012)
 	UserCreated       = "user_created"
 	UserUpdated       = "user_updated"
 	MembershipChanged = "membership_changed"
@@ -118,7 +119,7 @@ const (
 	SurveyLinkIssued  = "survey_link_issued"
 	SurveyLinkRevoked = "survey_link_revoked"
 
-	// §3.7 data access group events
+	// §3.7 data access group events (REQ-AUD-022)
 	DagCreated           = "dag_created"
 	DagDeleted           = "dag_deleted"
 	DagMembershipChanged = "dag_membership_changed"
@@ -144,8 +145,10 @@ const (
 	SourceSystem = "system"
 )
 
-// Entry is one audit row. Zero values mean "unset" for the optional fixed
-// columns; Details is marshaled as JSON (nil → NULL).
+// Entry is one audit row: the REQ-AUD-016 minimum — timestamp, acting user,
+// stable event code, target project, JSON details — plus the optional fixed
+// columns. Zero values mean "unset" for those; Details is marshaled as JSON
+// (nil → NULL).
 type Entry struct {
 	EventType    string
 	Source       string // SourceAPI | SourceUI | SourceSystem
@@ -184,9 +187,9 @@ func NewWriter(db *sql.DB, dialect string) *Writer {
 	return &Writer{DB: db, Dialect: dialect, ensured: map[string]bool{}}
 }
 
-// now is the single clock of this package: an entry always lands in the year
-// its own created_at reads back from (§6.2), so routing and stamping must not
-// read two different times.
+// now is the single clock of this package, always UTC (REQ-AUD-005): an entry
+// always lands in the year its own created_at reads back from (§6.2), so routing
+// and stamping must not read two different times.
 func (w *Writer) now() time.Time {
 	if w.Now != nil {
 		return w.Now().UTC()

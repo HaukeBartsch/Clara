@@ -255,7 +255,7 @@ final class Config
         // --- upstream API address ---
         // No variable names "the URL PHP calls" (System_Configuration_Design.md §3
         // gives API_ADDR to the API as its listen address), so it is derived here:
-        // same host or trusted internal segment (ASM-TECH-3) means the listen
+        // same host or trusted internal segment (ASM-TECH-3, REQ-AUTH-034) means the listen
         // address is reachable verbatim, except that a wildcard bind is not a
         // connect target — 0.0.0.0 and :: become loopback. If the two components
         // are ever split across hosts, a dedicated variable is a requirements-level

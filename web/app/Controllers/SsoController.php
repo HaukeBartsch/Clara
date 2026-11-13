@@ -157,7 +157,7 @@ final class SsoController extends Controller
 
     /**
      * GET /sso/logout?client_id=… — the client's "sign out" link. It only asks: a GET that
-     * signed out could be fired by any page that embeds it (REQ-AUTH-094). Nobody signed in
+     * signed out could be fired by any page that embeds it (REQ-AUTH-094, REQ-UI-083). Nobody signed in
      * means nothing to ask, and the browser goes straight on.
      */
     public function logoutForm(): Response
@@ -215,8 +215,8 @@ final class SsoController extends Controller
     }
 
     /**
-     * The page for a request CLARA cannot answer at the address it names (REQ-AUTH-093).
-     * In development the detail says which setting to look at.
+     * The page for a request CLARA cannot answer at the address it names (REQ-AUTH-093,
+     * REQ-UI-083). In development the detail says which setting to look at.
      *
      * @param array{index: int}|null $client
      */

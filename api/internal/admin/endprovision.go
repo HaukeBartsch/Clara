@@ -5,6 +5,11 @@ package admin
 // data or anonymize it in place (Data_Export_Anonymization_Design.md §7).
 // is_admin only: destroying or irrevocably anonymizing clinical data exceeds
 // project_admin (§7.2, REQ-AUTH-018).
+//
+// The provision arrives in the request body — the system holds no provision of
+// its own (REQ-EXP-040, REQ-EXP-041). Execution is one-shot, atomic in one
+// transaction, and audited with the provision and its scope (REQ-EXP-042); it is
+// an explicit operator call, never a background job (REQ-EXP-043).
 
 import (
 	"net/http"

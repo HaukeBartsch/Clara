@@ -1,5 +1,6 @@
 <?php
-// The addresses whose forwarded `X-Real-IP` this installation may believe: the parsed form of
+// The addresses whose forwarded `X-Real-IP` this installation may believe — what lets CLARA
+// run behind one reverse proxy / TLS termination point (REQ-TECH-015): the parsed form of
 // TRUSTED_PROXY_CIDRS (System_Configuration_Design.md §3.9). Both components consult that one
 // variable before treating a forwarded address as the caller's own — the API in
 // `dataapi.SourceIP`, the web layer in `Request::clientIp` (REQ-API-125) — because believing the

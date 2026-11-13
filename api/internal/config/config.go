@@ -9,6 +9,7 @@
 //   - read once at process start, immutable at runtime (REQ-CFG-006)
 //   - startup failure names every missing/invalid variable (REQ-CFG-004)
 //   - secrets never written to logs; the startup dump masks them (REQ-CFG-021/022)
+//   - secrets have no value in source; they come from the environment only (REQ-TECH-017)
 package config
 
 import (
@@ -312,7 +313,7 @@ func Load() (*Config, error) {
 	// service token proving the caller is this application, and an id naming the account to act
 	// as (Authentication_Authorization_Design.md §2.3). That makes one secret the entire
 	// credential: whoever reaches this port holding it may act as any account, root included.
-	// The default bind keeps that answerable only from the host itself. Rebinding is something an
+	// The default bind keeps that answerable only from the host itself (REQ-CFG-033). Rebinding is something an
 	// operator may genuinely want (the API on its own host), but in production it has to be asked
 	// for by name rather than arrive as a side effect of editing one line of .env.
 	if production && !isLoopbackAddr(cfg.APIAddr) && get("API_ALLOW_REMOTE") != "1" {

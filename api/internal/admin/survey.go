@@ -174,7 +174,7 @@ func (h *Handler) surveyLinkContext(w http.ResponseWriter, r *http.Request) (*db
 		errNotFound(w)
 		return nil, nil, 0, "", 0, false
 	}
-	if !instrument.IsSurvey {
+	if !instrument.IsSurvey { // only survey-marked instruments get a link (REQ-AUTH-038)
 		errBadRequest(w, "the instrument is not survey-marked")
 		return nil, nil, 0, "", 0, false
 	}
