@@ -148,7 +148,7 @@ func (h *Handler) startEmailFactor(w http.ResponseWriter, r *http.Request) {
 		errForbidden(w)
 		return
 	}
-	if !h.Mail.Enabled() {
+	if !h.mailConfigured() {
 		APIError(w, http.StatusConflict, "smtp_not_configured",
 			"email delivery is not configured on this installation")
 		return
@@ -342,7 +342,7 @@ func (h *Handler) secondFactor(w http.ResponseWriter, r *http.Request, body *log
 		return method, "", true
 	}
 	if body.MFACode == "" {
-		if method == "email" && h.Mail.Enabled() && h.tfaSends.allow(u.ID, time.Now()) {
+		if method == "email" && h.mailConfigured() && h.tfaSends.allow(u.ID, time.Now()) {
 			// Best effort: the challenge panel announces the send; a recovery
 			// code stays accepted even when delivery fails (REQ-AUTH-057).
 			_ = h.sendLoginCode(ctx, u)
@@ -471,7 +471,7 @@ func (h *Handler) sendLoginCode(ctx context.Context, u *db.User) error {
 			"It expires in %d minutes and can be used once. If you did not try to\n"+
 			"sign in, change your password and contact an administrator.\n",
 		h.Cfg.TotpIssuer, code, h.Cfg.TFAEmailCodeTTL/60)
-	return h.Mail.Send(u.Email, subject, message)
+	return h.mail(u.Email, subject, message)
 }
 
 // tooManySends answers the per-account send cap (REQ-AUTH-057).

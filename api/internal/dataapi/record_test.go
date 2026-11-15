@@ -669,6 +669,56 @@ func TestRecordExportNoneForbidden(t *testing.T) {
 	}
 }
 
+// TestRecordImportReadOnlyForbidden: writing records needs view_edit; a
+// read_only token is refused with the uniform 403 before any row is read, and
+// nothing reaches the data table (REQ-API-007).
+func TestRecordImportReadOnlyForbidden(t *testing.T) {
+	f := newRecordFixture(t)
+	var before int
+	if err := f.s.DB.QueryRow(`SELECT COUNT(*) FROM data WHERE project_id = ?`, f.pid).Scan(&before); err != nil {
+		t.Fatalf("count data: %v", err)
+	}
+
+	code, body := f.call(t, importForm("tok-de", map[string]string{
+		"record_id": "8DISC060", "form_name": "demo", "event_name": "baseline_arm_1", "age": "44",
+	}))
+	mustStatus(t, code, 403, body)
+	if !strings.Contains(body, "Permission denied") {
+		t.Errorf("body = %s, want Permission denied", body)
+	}
+	var after int
+	if err := f.s.DB.QueryRow(`SELECT COUNT(*) FROM data WHERE project_id = ?`, f.pid).Scan(&after); err != nil {
+		t.Fatalf("count data: %v", err)
+	}
+	if after != before {
+		t.Errorf("a refused import changed the data table: %d rows before, %d after", before, after)
+	}
+
+	// The permission is decided before the payload is read: a read_only holder
+	// learns nothing from validation — not that the body is malformed, and not
+	// which form names exist (the per-row checks alone would answer both).
+	for name, form := range map[string]url.Values{
+		"malformed data": {"token": {"tok-de"}, "content": {"record"}, "action": {"import"},
+			"returnFormat": {"json"}, "data": {"not json"}},
+		"unknown form": importForm("tok-de", map[string]string{
+			"record_id": "8DISC060", "form_name": "no_such_form", "event_name": "baseline_arm_1",
+		}),
+	} {
+		code, body := f.call(t, form)
+		if code != 403 || !strings.Contains(body, "Permission denied") {
+			t.Errorf("%s from a read_only token = %d %s, want 403 Permission denied", name, code, body)
+		}
+	}
+
+	// The same row from a view_edit holder goes through, so the refusal above is
+	// the permission and not the payload.
+	if res := f.importRows(t, importForm("tok-edit", map[string]string{
+		"record_id": "8DISC060", "form_name": "demo", "event_name": "baseline_arm_1", "age": "44",
+	})); len(res) != 1 || res[0].ImportRecordID != 1 {
+		t.Fatalf("view_edit import = %v, want one added record", res)
+	}
+}
+
 // TestRecordExportFilterMatchesNothing: a filter that leaves no value column in
 // scope — the ordinary case being a forms[] entry naming no instrument of the
 // project — answers with no rows at all, because every row names its record
