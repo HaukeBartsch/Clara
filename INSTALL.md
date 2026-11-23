@@ -106,6 +106,8 @@ SQLite (`DB_CONNECTION=sqlite`) is for development and tests only. Production us
 
 The API compiles to one static binary (`CGO_ENABLED=0`, pure-Go SQLite driver; REQ-TECH-013). The binary already contains the database migrations, the OpenAPI document and the Swagger UI. The web application needs no build step.
 
+For an x86_64 RHEL 9 server, `tools/build_release.sh` does all of the steps below from the committed `HEAD`. It writes `dist/clara-<rev>-rhel-amd64-kit.tar.gz`, which holds the release tarball `clara-<rev>.tar.gz`, `deploy/`, this guide and a `SHA256SUMS` file. Copy the kit to the server, unpack it and run `sha256sum -c SHA256SUMS` inside it, then continue with section 4. The manual steps are:
+
 ```bash
 git clone https://github.com/HaukeBartsch/Clara.git clara-src
 cd clara-src

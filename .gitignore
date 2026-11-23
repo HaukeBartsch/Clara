@@ -39,3 +39,6 @@ web/assets/models/
 # carries sources, not compiled artifacts.
 __pycache__/
 *.pyc
+
+# release kits built by tools/build_release.sh
+/dist/
