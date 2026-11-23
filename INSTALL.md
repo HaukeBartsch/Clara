@@ -34,7 +34,7 @@ The deployment rules come from [Design/Technology_Stack_Design.md](Design/Techno
 
 ```
               users and REDCap-API clients (e.g. Fiona)
-                              │ HTTPS :443
+                              │ HTTPS :4444
                        ┌──────▼──────┐
                        │    nginx    │  TLS, routing rules, /assets/
                        └──┬───────┬──┘
@@ -85,7 +85,7 @@ The deployment rules come from [Design/Technology_Stack_Design.md](Design/Techno
 | Operating system | **RHEL 9.6 or later** (PHP 8.3 is available as a module stream) or **RHEL 10** (PHP 8.3 is the default). x86_64 or aarch64. SELinux in enforcing mode is supported. |
 | Repositories | RHEL BaseOS and AppStream, plus the upstream MariaDB repository `rpm.mariadb.org` (or a local mirror of it). RHEL itself ships only MariaDB 10.x. |
 | Hardware | Reference host: 4 vCPU, 8 GB RAM, SSD ([Technology_Stack_Design.md](Design/Technology_Stack_Design.md) §7). |
-| Network | A DNS name (examples here use `clara.example.org`) and a TLS certificate for it. CLARA needs **no internet access at runtime**, because every browser asset is vendored. |
+| Network | A DNS name (examples here use `clara.example.org`) and a TLS certificate for it. CLARA answers on **port 4444, HTTPS only** (`https://clara.example.org:4444`); ports 80 and 443 stay free for other sites on the host. CLARA needs **no internet access at runtime**, because every browser asset is vendored. |
 | Build machine | Any OS with `git` and the Go version declared in [`api/go.mod`](api/go.mod) (currently Go 1.27.1). The server itself needs no Go toolchain. |
 | Optional | An OAuth2/OIDC identity provider, LDAP directories, an SMTP relay (for emailed login codes, invitations and password resets). |
 
@@ -248,7 +248,7 @@ API_ADDR=127.0.0.1:8080
 # design). Production refuses a non-loopback API_ADDR unless API_ALLOW_REMOTE=1 names that
 # exception — set it only behind mTLS or on a network you control end to end (REQ-CFG-033).
 #API_ALLOW_REMOTE=0
-WEB_PUBLIC_URL=https://clara.example.org
+WEB_PUBLIC_URL=https://clara.example.org:4444
 LOG_LEVEL_API=info
 LOG_LEVEL_WEB=info
 
@@ -340,7 +340,7 @@ The API reads configuration once at startup. After any change to `.env`, run `sy
 
 ## 7. SELinux
 
-Leave SELinux enforcing. nginx and PHP-FPM both run in the `httpd_t` domain. They need read access to the code, write access to the session directory, and permission to open network connections: nginx and PHP connect to the API on `127.0.0.1:8080`, and PHP connects to OAuth2/LDAP servers.
+Leave SELinux enforcing. nginx (or Apache httpd) and PHP-FPM all run in the `httpd_t` domain. They need read access to the code, write access to the session directory, permission to listen on CLARA's port 4444, and permission to open network connections: the web server and PHP connect to the API on `127.0.0.1:8080`, and PHP connects to OAuth2/LDAP servers.
 
 ```bash
 semanage fcontext -a -t bin_t                  '/opt/clara/bin(/.*)?'
@@ -348,6 +348,11 @@ semanage fcontext -a -t httpd_sys_content_t    '/opt/clara/web(/.*)?'
 semanage fcontext -a -t httpd_sys_content_t    '/opt/clara/\.env'
 semanage fcontext -a -t httpd_sys_rw_content_t '/var/lib/clara/sessions(/.*)?'
 restorecon -Rv /opt/clara /var/lib/clara
+
+# the web server listens on 4444; the policy may already give that port another type,
+# in which case -a reports "already defined" and -m reassigns it
+semanage port -a -t http_port_t -p tcp 4444 || semanage port -m -t http_port_t -p tcp 4444
+semanage port -l | grep -w 4444                 # http_port_t  tcp  4444, …
 
 setsebool -P httpd_can_network_connect on
 ```
@@ -549,6 +554,7 @@ user  = clara
 group = clara
 
 listen       = /run/php-fpm/clara.sock
+; the web server's user: nginx (§11.2), or apache with Apache httpd (§11.3)
 listen.owner = nginx
 listen.group = nginx
 listen.mode  = 0660
@@ -579,11 +585,12 @@ php_admin_value[upload_max_filesize] = 32M
 ```bash
 php-fpm -t
 systemctl enable --now php-fpm
-ls -l /run/php-fpm/clara.sock        # srw-rw---- nginx nginx
+ls -l /run/php-fpm/clara.sock        # srw-rw---- nginx nginx  (apache apache with httpd)
 ```
 
 Notes:
 
+- **The socket belongs to the web server's user.** The pool above is written for nginx. With Apache httpd (§11.3) set `listen.owner = apache` and `listen.group = apache` instead. With the wrong owner every page answers Apache's or nginx's own *503 Service Unavailable* (or *502 Bad Gateway*), and the web server's error log shows `Permission denied` on `clara.sock`.
 - **Keep `proc_open` enabled** (including in `disable_functions`, if configured). LDAP logins start their parallel directory attempts with it; see §4.2 for the recommended hardening list.
 - The RHEL default pool `www` (in `www.conf`) stays installed but CLARA does not use it. You may disable it if nothing else on the host needs PHP.
 - Size `pm.max_children` to the host. Each worker needs roughly 30–60 MB.
@@ -598,6 +605,13 @@ One reverse proxy stands in front of CLARA: it terminates TLS and owns the routi
 repository — `deploy/nginx/clara.conf` and `deploy/apache2/clara.conf` — and hold to the same rules, so
 a deployment answers identically either way, including every check in §13.1. Use one of them per host;
 never chain the application between both.
+
+CLARA listens on **port 4444, HTTPS only**, in both configurations. There is no plain-HTTP listener and
+no redirect from port 80, so ports 80 and 443 stay free for other sites on the host (FIONA, for
+example). Every address of CLARA — `WEB_PUBLIC_URL`, provider redirect URIs, client applications —
+therefore carries `:4444`. HSTS applies to a host name on every port: once a browser has seen CLARA,
+it opens any `http://` address of that name over HTTPS. Another site on the same name has to offer
+HTTPS too, or CLARA needs a DNS name of its own.
 
 ### 11.1 Certificate
 
@@ -631,19 +645,13 @@ upstream clara_api {
     keepalive 8;
 }
 
+# HTTPS on port 4444 is CLARA's only listener: no plain-HTTP server block, and ports 80 and 443
+# stay free for other sites on the host (Technology_Stack_Design.md §5).
 server {
-    listen 80;
-    listen [::]:80;
-    server_name clara.example.org;
-    access_log /var/log/nginx/clara.access.log clara_safe;
-    return 301 https://$host$request_uri;
-}
-
-server {
-    listen 443 ssl;
-    listen [::]:443 ssl;
+    listen 4444 ssl;
+    listen [::]:4444 ssl;
     # HTTP/2: nginx >= 1.25.1 (RHEL 10): add "http2 on;"
-    #         older nginx (RHEL 9):       use "listen 443 ssl http2;" instead
+    #         older nginx (RHEL 9):       use "listen 4444 ssl http2;" instead
     server_name clara.example.org;
 
     ssl_certificate     /etc/pki/tls/certs/clara.crt;
@@ -761,7 +769,7 @@ What the configuration enforces ([Technology_Stack_Design.md](Design/Technology_
 
 | Rule | Where |
 |---|---|
-| TLS termination; HTTP redirects to HTTPS | both `server` blocks |
+| TLS termination; HTTPS on port 4444 only, no plain-HTTP listener | `listen 4444 ssl` |
 | Only `POST /api/` reaches the API from outside; `GET /api/` is refused | `location = /api/` |
 | `/api/v1/*` (administration) is never routable | `location /api/` → 404 |
 | `/docs`, `/openapi.json`, `/healthz` never reach the API | not proxied; PHP answers 404 |
@@ -775,10 +783,22 @@ The stock `/etc/nginx/nginx.conf` still contains a default `server` on port 80. 
 
 ### 11.3 Apache httpd instead of nginx
 
-Apache httpd 2.4 implements the same routing rules and is an approved alternative to nginx. Nothing else
-in this guide changes: the certificate paths (§11.1), the PHP-FPM socket (§10), the SELinux labels and
-booleans (§7) and the firewall (§12) are identical, because httpd runs in the same `httpd_t` domain that
-§7 already provisions for nginx.
+Apache httpd 2.4 implements the same routing rules and is an approved alternative to nginx. The
+certificate paths (§11.1), the SELinux labels, port type and booleans (§7) and the firewall (§12) are
+identical, because httpd runs in the same `httpd_t` domain that §7 already provisions for nginx. One
+setting differs: the PHP-FPM socket (§10) must belong to httpd's user, `apache`. Set it before
+starting httpd:
+
+```bash
+sed -i -e 's/^listen.owner = nginx/listen.owner = apache/' \
+       -e 's/^listen.group = nginx/listen.group = apache/' /etc/php-fpm.d/clara.conf
+systemctl restart php-fpm
+ls -l /run/php-fpm/clara.sock        # srw-rw---- apache apache
+```
+
+With the nginx owner left in place, every page answers Apache's own *503 Service Unavailable* ("The
+server is temporarily unable to service your request…"), and `/var/log/httpd/clara_error.log` shows
+`Permission denied` for `clara.sock`.
 
 Its `clara_safe` access-log format uses `%U` (path only) and omits referrers; do not replace it with
 `combined`, whose request line includes query parameters such as OAuth callback codes.
@@ -789,12 +809,14 @@ install -m 0644 deploy/apache2/clara.conf /etc/httpd/conf.d/clara.conf
 apachectl -t && apachectl graceful
 ```
 
-Three host-level differences from the nginx setup, each noted in the file's header:
+Four host-level differences from the nginx setup, each noted in the file's header:
 
 | | nginx (§11.2) | Apache httpd (§11.3) |
 |---|---|---|
+| PHP-FPM socket owner (§10) | `nginx` | `apache` (`www-data` on Debian/Ubuntu) |
 | Modules | `http_ssl_module` | `mod_rewrite`, `mod_headers`, `mod_alias`, `mod_authz_core`, `mod_dir`, `mod_ssl`, `mod_proxy`, `mod_proxy_http`, `mod_proxy_fcgi` (unix-socket support needs httpd ≥ 2.4.7) |
-| The distribution's own default host | a harmless `server` on port 80 | RHEL's `conf.d/ssl.conf` ships a **second `*:443` vhost** serving the welcome page — remove that vhost and keep its `Listen 443`, or a request with no SNI, or any other name, can answer something that is not CLARA. `ServerTokens Prod` belongs in the main configuration |
+| Port 4444 | `listen 4444 ssl` in the `server` block | the file declares `Listen 4444 https` itself; keep CLARA the only vhost on `*:4444`, so a request with no SNI, or any other name, cannot answer something that is not CLARA |
+| The distribution's own default host | a harmless `server` on port 80 | RHEL's `conf.d/ssl.conf` ships its own `*:443` vhost with the welcome page; it does not share CLARA's port. `ServerTokens Prod` belongs in the main configuration |
 | Output compression | not enabled here | keep `mod_deflate` away from this vhost — a streamed export must not buffer (the file sets `no-gzip` for `/api/`) |
 
 The rule-for-rule mapping is short enough to keep in mind: `client_max_body_size` ↔ `LimitRequestBody`,
@@ -816,12 +838,13 @@ with `CLARA_DEPLOY_URL` and name the server with `CLARA_PROXY_KIND=nginx|apache`
 
 ## 12. Firewall
 
-Open only HTTP (for the redirect) and HTTPS. Ports 8080 (API) and 3306 (MariaDB) stay closed.
+Open only CLARA's HTTPS port, 4444. Ports 8080 (API) and 3306 (MariaDB) stay closed. Ports 80 and 443
+are not CLARA's; open them only for other sites on the host.
 
 ```bash
-firewall-cmd --permanent --add-service=http --add-service=https
+firewall-cmd --permanent --add-port=4444/tcp
 firewall-cmd --reload
-firewall-cmd --list-services
+firewall-cmd --list-ports                    # 4444/tcp
 ```
 
 ---
@@ -834,7 +857,7 @@ Run these from another machine (drop `-k` once a trusted certificate is installe
 reverse proxy — nginx (§11.2) or Apache (§11.3) — and `e2e/tests/deployment.spec.ts` automates them:
 
 ```bash
-H=https://clara.example.org
+H=https://clara.example.org:4444
 curl -sk -o /dev/null -w '%{http_code}\n' $H/login                          # 200
 curl -sk -o /dev/null -w '%{http_code}\n' $H/                               # 302 → /login
 curl -sk -o /dev/null -w '%{http_code} %{content_type}\n' \
@@ -846,7 +869,6 @@ curl -sk -o /dev/null -w '%{http_code}\n' $H/api/v1/health                  # 40
 curl -sk -o /dev/null -w '%{http_code}\n' $H/docs                           # 404
 curl -sk -o /dev/null -w '%{http_code}\n' --path-as-is $H/assets/../.env    # 404
 curl -sk -o /dev/null -w '%{http_code}\n' -X POST $H/auth/backchannel-logout/x  # 403 (provider only)
-curl -s  -o /dev/null -w '%{http_code} %{redirect_url}\n' http://clara.example.org/login   # 301 → https
 ```
 
 On the server:
@@ -858,10 +880,10 @@ curl -s http://127.0.0.1:8080/healthz                   # {"db":"ok","status":"o
 
 ### 13.2 First login
 
-1. Open `https://clara.example.org/`. You are sent to `/login`.
+1. Open `https://clara.example.org:4444/`. You are sent to `/login`.
 2. Sign in with `ADMIN_BOOTSTRAP_EMAIL` and the `ADMIN_BOOTSTRAP_PASSWORD` generated in section 6 (`grep ^ADMIN_BOOTSTRAP_PASSWORD= /opt/clara/.env`).
 3. Change that password right away at `/account/password`. Consider enrolling two-factor authentication at `/account/two-factor`.
-4. Create users and projects from the Control Panel. REDCap-API clients then call `POST https://clara.example.org/api/` with their project token.
+4. Create users and projects from the Control Panel. REDCap-API clients then call `POST https://clara.example.org:4444/api/` with their project token.
 5. Open **Control Panel → Configuration Check**. It checks most of this guide from inside the running installation (PHP, `.env`, the API service, MariaDB settings and privileges, and the web server's routing as your browser sees it) and names the section of this guide for every finding.
 
 ---
@@ -872,7 +894,7 @@ All of these are `.env` settings. Restart afterwards (`systemctl restart clara-a
 
 | Feature | Variables | Notes |
 |---|---|---|
-| OAuth2 / OpenID Connect (up to 3) | `OAUTH2_n_ISSUER`, `OAUTH2_n_CLIENT_ID`, `OAUTH2_n_CLIENT_SECRET`, `OAUTH2_n_EMAIL_ATTR`, `OAUTH2_n_NAMES`, `OAUTH2_n_ROLES_ATTR` | Register the redirect URI `https://clara.example.org/auth/callback` with the provider. It defaults to `WEB_PUBLIC_URL` + `/auth/callback`; Control Panel → **Authentication Test** lists it with the other addresses to register (§14.3). If the provider must post the sign-in back instead of redirecting (some PingFederate policies), set `OAUTH2_n_RESPONSE_MODE=form_post`; the same address is used, and the Authentication Test says so when the provider does not offer it. A person's first sign-in through the provider creates their CLARA account (not an administrator, in no project), named from the `name` claim or `given_name` and `family_name`. Anyone the provider lets in therefore gets an account: find them in Control Panel → Users with the source filter and **In no project**, and disable the ones that should not be there. |
+| OAuth2 / OpenID Connect (up to 3) | `OAUTH2_n_ISSUER`, `OAUTH2_n_CLIENT_ID`, `OAUTH2_n_CLIENT_SECRET`, `OAUTH2_n_EMAIL_ATTR`, `OAUTH2_n_NAMES`, `OAUTH2_n_ROLES_ATTR` | Register the redirect URI `https://clara.example.org:4444/auth/callback` with the provider. It defaults to `WEB_PUBLIC_URL` + `/auth/callback`; Control Panel → **Authentication Test** lists it with the other addresses to register (§14.3). If the provider must post the sign-in back instead of redirecting (some PingFederate policies), set `OAUTH2_n_RESPONSE_MODE=form_post`; the same address is used, and the Authentication Test says so when the provider does not offer it. A person's first sign-in through the provider creates their CLARA account (not an administrator, in no project), named from the `name` claim or `given_name` and `family_name`. Anyone the provider lets in therefore gets an account: find them in Control Panel → Users with the source filter and **In no project**, and disable the ones that should not be there. |
 | LDAP (up to 3) | `LDAP_SERVER_n_URL`, `LDAP_SERVER_n_SEARCH_BASE`, `LDAP_SERVER_n_BIND_DN`, `LDAP_SERVER_n_BIND_PASSWORD`, `…_UID_ATTR`, `…_EMAIL_ATTR`, `…_NAME_ATTR`, `…_NAMES` | Prefer `ldaps://`. Trust the directory's CA by copying it to `/etc/pki/ca-trust/source/anchors/` and running `update-ca-trust`. All directories under one login name are tried in parallel. A person's first directory sign-in creates their CLARA account (not an administrator, in no project); they see the "No projects yet" page until an administrator adds them to a project. |
 | Login-page names | `LOCAL_LOGIN_NAMES`, `OAUTH2_n_NAMES`, `LDAP_SERVER_n_NAMES` | Comma-separated names users pick on the login page (REQ-CFG-032). Leave them all unset for one implicit default. |
 | Email (login codes, invitations, password resets) | `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY` (`starttls`/`tls`/`none`), `SMTP_USERNAME`, `SMTP_PASSWORD`, `OTP_MAIL_FROM` | Without `SMTP_HOST` the email methods are unavailable. `OTP_MAIL_FROM` is required once `SMTP_HOST` is set. |
@@ -943,14 +965,14 @@ Another application on the same site (FIONA is the first) can use CLARA's sign-i
 
    | Step | Request |
    |---|---|
-   | sign in | browser → `GET https://clara.example.org/sso/authorize?response_type=code&client_id=fiona&redirect_uri=…&code_challenge=…&code_challenge_method=S256&state=…` (add `prompt=none` to check without showing CLARA's login) |
-   | redeem the code | server → `POST https://clara.example.org/sso/token` (form fields `grant_type=authorization_code`, `client_id`, `client_secret`, `code`, `code_verifier`, `redirect_uri`) → `{grant, expires_in, user: {id, email, display_name}}` |
-   | still signed in? | server → `POST https://clara.example.org/sso/check` (`client_id`, `client_secret`, `grant`) every few minutes → `{active, reason}`; a 503 means "ask again later", not "signed out" |
-   | sign out | browser → `GET https://clara.example.org/sso/logout?client_id=fiona` (CLARA asks before signing out) |
+   | sign in | browser → `GET https://clara.example.org:4444/sso/authorize?response_type=code&client_id=fiona&redirect_uri=…&code_challenge=…&code_challenge_method=S256&state=…` (add `prompt=none` to check without showing CLARA's login) |
+   | redeem the code | server → `POST https://clara.example.org:4444/sso/token` (form fields `grant_type=authorization_code`, `client_id`, `client_secret`, `code`, `code_verifier`, `redirect_uri`) → `{grant, expires_in, user: {id, email, display_name}}` |
+   | still signed in? | server → `POST https://clara.example.org:4444/sso/check` (`client_id`, `client_secret`, `grant`) every few minutes → `{active, reason}`; a 503 means "ask again later", not "signed out" |
+   | sign out | browser → `GET https://clara.example.org:4444/sso/logout?client_id=fiona` (CLARA asks before signing out) |
 
 Signing out of CLARA signs the user out of every application they entered through it, at that application's next check. So do disabling the account, setting its password and resetting its two-factor authentication. The application's own sign-in stays valid at most as long as the CLARA sign-in it came from (`SESSION_LIFETIME`).
 
-The server-to-server calls go to CLARA's public address like a browser's. If the application runs on the CLARA host, `https://clara.example.org` must resolve and its certificate must be trusted there.
+The server-to-server calls go to CLARA's public address like a browser's. If the application runs on the CLARA host, `https://clara.example.org:4444` must resolve and its certificate must be trusted there.
 
 ### 14.3 Single sign-out with the identity provider (optional)
 
@@ -965,7 +987,7 @@ they time out. The Configuration Check says so. With `OIDC_SINGLE_SIGN_OUT=1`:
 
 Steps, for every configured provider `n`:
 
-1. Set `OAUTH2_n_POST_LOGOUT_REDIRECT_URI=https://clara.example.org/auth/logged-out` and
+1. Set `OAUTH2_n_POST_LOGOUT_REDIRECT_URI=https://clara.example.org:4444/auth/logged-out` and
    `OAUTH2_n_BACKCHANNEL_LOGOUT_PATH=/auth/backchannel-logout/<name>` (one segment of letters, digits,
    `-` or `_`, different per provider). `OAUTH2_n_SUBJECT_ATTR` must stay `sub`. The API and PHP refuse
    to start with the switch on and any of this missing.
@@ -1108,8 +1130,8 @@ Control Panel → **Configuration Check** verifies most of these items automatic
 - [ ] `/opt/clara/.env` is `root:clara 0640`; the code under `/opt/clara` is owned by root.
 - [ ] `clara-db-grants runtime` has been applied, and `clara-api` restarted after it.
 - [ ] MariaDB listens on `127.0.0.1` only; `mariadb-secure-installation` has been run.
-- [ ] Only ports 80/443 are open; `/api/v1/*`, `/docs`, `/healthz` return 404 from outside (section 13.1).
-- [ ] A trusted TLS certificate is installed; HTTP redirects to HTTPS.
+- [ ] Only port 4444 is open for CLARA; `/api/v1/*`, `/docs`, `/healthz` return 404 from outside (section 13.1).
+- [ ] A trusted TLS certificate is installed; CLARA answers HTTPS on port 4444 and nothing else.
 - [ ] SELinux is enforcing.
 - [ ] `chronyd` is running.
 - [ ] Nightly backups run, are copied off the host, and a restore has been tried once.

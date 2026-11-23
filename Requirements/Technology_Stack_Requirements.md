@@ -54,6 +54,7 @@ Defines the mandatory technology constraints and the non-functional requirements
 | REQ-TECH-013 | The Go API MUST be deployable as a single static binary with no runtime language dependency beyond the OS. |
 | REQ-TECH-014 | The API MUST fail fast at startup when required configuration is missing or the database is unreachable. |
 | REQ-TECH-015 | The system MUST be operable behind a single reverse proxy / TLS termination point (see `Authentication_Authorization_Requirements.md` for the network trust model). |
+| REQ-TECH-029 | **Public port.** The reverse proxy MUST serve CLARA over HTTPS on TCP port 4444 — the `https://…:4444/api/` address of the origin document — and MUST NOT open a plain-HTTP listener for CLARA, so ports 80 and 443 stay free for other sites on the host (owner decision 2026-11-23). |
 | REQ-TECH-016 | All components MUST emit structured logs (timestamp, level, component, request/user context) to stdout or a configured sink. |
 
 ### 3.4 Security
