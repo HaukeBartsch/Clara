@@ -349,9 +349,9 @@ semanage fcontext -a -t httpd_sys_content_t    '/opt/clara/\.env'
 semanage fcontext -a -t httpd_sys_rw_content_t '/var/lib/clara/sessions(/.*)?'
 restorecon -Rv /opt/clara /var/lib/clara
 
-# the web server listens on 4444; the policy may already give that port another type,
-# in which case -a reports "already defined" and -m reassigns it
-semanage port -a -t http_port_t -p tcp 4444 || semanage port -m -t http_port_t -p tcp 4444
+# the web server listens on 4444; RHEL's policy already gives that port to kerberos_port_t,
+# so -m reassigns it (-a is the fallback for a policy that leaves 4444 untyped)
+semanage port -m -t http_port_t -p tcp 4444 || semanage port -a -t http_port_t -p tcp 4444
 semanage port -l | grep -w 4444                 # http_port_t  tcp  4444, …
 
 setsebool -P httpd_can_network_connect on

@@ -446,7 +446,7 @@ return [
     'admin.check.browser.hsts.missing' => 'No Strict-Transport-Security header. Add it as the guide\'s nginx configuration does.',
     'admin.check.browser.hsts.plain' => 'Not served over HTTPS, so not checked.',
     'admin.check.manual.intro' => 'These items cannot be seen from inside the installation.',
-    'admin.check.manual.firewall' => 'Only ports 80 and 443 are open; 8080 and 3306 stay closed.',
+    'admin.check.manual.firewall' => 'Only port 4444 (HTTPS) is open for CLARA; 8080 and 3306 stay closed.',
     'admin.check.manual.certificate' => 'A trusted TLS certificate is installed, and http:// redirects to https://.',
     'admin.check.manual.mariadb_secure' => 'mariadb-secure-installation has been run: no anonymous users, no remote root login, no test database.',
     'admin.check.manual.backups' => 'Nightly backups of the database and .env run, are copied off the host, and a restore has been tried once.',

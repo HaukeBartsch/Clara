@@ -47,7 +47,7 @@ relevance into five categories. A code appears under every category that applies
 - **resilience** — correct behavior under failure and protection of data integrity: transactions and atomicity, idempotence, immutability, health checks, enforced invariants.
 
 
-Totals across all documents: security 465, performance 50, workflow 442, scalability 69, resilience 184 (codes may carry more than one category).
+Totals across all documents: security 466, performance 50, workflow 442, scalability 69, resilience 184 (codes may carry more than one category).
 
 | Relevance | Codes |
 |---|------|
@@ -108,7 +108,7 @@ Totals across all documents: security 465, performance 50, workflow 442, scalabi
 | scalability | REQ-CFG-002, REQ-CFG-007, REQ-CFG-008, REQ-CFG-009, REQ-CFG-010 |
 | resilience | REQ-CFG-004, REQ-CFG-005, REQ-CFG-006, REQ-CFG-013, REQ-CFG-025, REQ-CFG-031, REQ-CFG-037, DEV-CFG-1 |
 | `Requirements/Technology_Stack_Requirements.md` ||
-| security | REQ-TECH-002, REQ-TECH-003, REQ-TECH-006, REQ-TECH-015, REQ-TECH-017, REQ-TECH-018, REQ-TECH-019, REQ-TECH-020, REQ-TECH-023, REQ-TECH-024, REQ-TECH-025, REQ-TECH-026, REQ-TECH-027, ASM-TECH-2, ASM-TECH-3, DEV-TECH-1, DEV-TECH-2 |
+| security | REQ-TECH-002, REQ-TECH-003, REQ-TECH-006, REQ-TECH-015, REQ-TECH-017, REQ-TECH-018, REQ-TECH-029, REQ-TECH-019, REQ-TECH-020, REQ-TECH-023, REQ-TECH-024, REQ-TECH-025, REQ-TECH-026, REQ-TECH-027, ASM-TECH-2, ASM-TECH-3, DEV-TECH-1, DEV-TECH-2 |
 | performance | REQ-TECH-010, REQ-TECH-011, REQ-TECH-013 |
 | workflow | REQ-TECH-001, REQ-TECH-004, REQ-TECH-005, REQ-TECH-008, REQ-TECH-009, REQ-TECH-013, REQ-TECH-021, REQ-TECH-022, REQ-TECH-025, REQ-TECH-028, ASM-TECH-1 |
 | scalability | REQ-TECH-003, REQ-TECH-005, REQ-TECH-007, REQ-TECH-008, REQ-TECH-011, REQ-TECH-012 |

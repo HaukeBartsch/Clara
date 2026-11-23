@@ -23,9 +23,10 @@ import url from "node:url"
 //   3. Reverse-proxy hardening — registered only when CLARA_PROXY_KIND names a server, since a
 //      rule like "GET /api/ is refused at the edge" has no meaning in front of `php -S`. Against
 //      a staging host:
-//        CLARA_DEPLOY_URL=https://clara.example.org CLARA_PROXY_KIND=nginx npx playwright test
-//      Add CLARA_DEPLOY_HTTP_URL to also check the redirect on port 80. Self-signed certificates
-//      need `ignoreHTTPSErrors` in the project that runs these (`playwright.config.ts`).
+//        CLARA_DEPLOY_URL=https://clara.example.org:4444 CLARA_PROXY_KIND=nginx npx playwright test
+//      CLARA answers HTTPS on port 4444 only (REQ-TECH-029), so there is no plain-HTTP redirect to
+//      check. Self-signed certificates need `ignoreHTTPSErrors` in the project that runs these
+//      (`playwright.config.ts`).
 
 const here = path.dirname(url.fileURLToPath(import.meta.url))
 const read = (rel: string): string => readFileSync(path.resolve(here, rel), "utf8")
@@ -46,10 +47,10 @@ type Rule = { id: string; why: string; nginx: string[]; apache: string[] }
 // a requirement says it enforces — not a formatting change.
 const RULES: Rule[] = [
   {
-    id: "tls-termination-and-redirect",
-    why: "TLS terminates here and plain HTTP redirects (§11.2)",
-    nginx: ["listen 80;", "return 301 https://$host$request_uri;"],
-    apache: ["RewriteCond %{HTTPS} !=on", "[R=301,L]"],
+    id: "tls-on-port-4444",
+    why: "TLS terminates here, on port 4444 (REQ-TECH-029, §11)",
+    nginx: ["listen 4444 ssl;", "listen [::]:4444 ssl;", "ssl_certificate "],
+    apache: ["Listen 4444 https", "<VirtualHost *:4444>", "SSLEngine on"],
   },
   {
     id: "hsts-on-every-response",
@@ -200,6 +201,19 @@ test.describe("reverse-proxy reference configurations", () => {
     expect(apache).not.toContain("CustomLog /var/log/httpd/clara_access.log combined")
   })
 
+  test("CLARA has no plain-HTTP listener and no port but 4444", () => {
+    // REQ-TECH-029: ports 80 and 443 stay free for other sites on the host, so neither file may
+    // claim them, and every listener is the TLS one.
+    const nginx = codeOnly(read(NGINX_FILE))
+    const nginxListens = nginx.match(/listen [^;]*;/g) ?? []
+    expect(nginxListens.length, "nginx declares no listener").toBeGreaterThan(0)
+    for (const listen of nginxListens) expect(listen, "nginx listener").toMatch(/^listen (\[::\]:)?4444 ssl[ ;]/)
+
+    const apache = codeOnly(read(APACHE_FILE))
+    expect(apache.match(/<VirtualHost [^>]*>/g), "Apache vhosts").toEqual(["<VirtualHost *:4444>"])
+    expect(apache.match(/(?:^| )Listen \S+/g)?.map((l) => l.trim()), "Apache Listen lines").toEqual(["Listen 4444"])
+  })
+
   test("Apache keeps the file-system probe inside <Directory>, where it works", () => {
     const block = directoryBlock(read(APACHE_FILE), "<Directory /opt/clara/web/public>")
     expect(block, "no <Directory /opt/clara/web/public> block").toContain("!-f")
@@ -345,6 +359,13 @@ const PROXY = process.env.CLARA_PROXY_KIND
 
 if (PROXY && BASE) {
   test.describe(`reverse-proxy hardening (${PROXY})`, () => {
+    test("the front door is HTTPS on port 4444", () => {
+      // REQ-TECH-029; URL drops a scheme's default port, so 443 would read as "".
+      const front = new URL(BASE)
+      expect(front.protocol).toBe("https:")
+      expect(front.port).toBe("4444")
+    })
+
     test("GET /api/ is refused at the edge", async ({ request }) => {
       expect(await request.get(at("/api/")).then((r) => r.status())).toBe(403)
     })
@@ -384,13 +405,5 @@ if (PROXY && BASE) {
       const response = await request.get(at("/login"))
       expect(response.headers()["strict-transport-security"] ?? "").toContain("max-age=31536000")
     })
-  })
-}
-
-if (process.env.CLARA_DEPLOY_HTTP_URL) {
-  test("plain HTTP redirects to HTTPS", async ({ request }) => {
-    const response = await request.get(process.env.CLARA_DEPLOY_HTTP_URL as string, { maxRedirects: 0 })
-    expect([301, 308]).toContain(response.status())
-    expect(response.headers().location ?? "").toMatch(/^https:\/\//)
   })
 }

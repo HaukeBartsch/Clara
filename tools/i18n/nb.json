@@ -317,7 +317,7 @@
     "admin.check.browser.hsts.missing": "Ingen Strict-Transport-Security-header. Legg den til slik nginx-konfigurasjonen i veiledningen gjør.",
     "admin.check.browser.hsts.plain": "Ikke levert over HTTPS, så ikke kontrollert.",
     "admin.check.manual.intro": "Disse punktene kan ikke ses fra innsiden av installasjonen.",
-    "admin.check.manual.firewall": "Bare portene 80 og 443 er åpne; 8080 og 3306 forblir stengt.",
+    "admin.check.manual.firewall": "Bare port 4444 (HTTPS) er åpen for CLARA; 8080 og 3306 forblir stengt.",
     "admin.check.manual.certificate": "Et klarert TLS-sertifikat er installert, og http:// omdirigeres til https://.",
     "admin.check.manual.mariadb_secure": "mariadb-secure-installation er kjørt: ingen anonyme brukere, ingen ekstern root-innlogging, ingen testdatabase.",
     "admin.check.manual.backups": "Nattlige sikkerhetskopier av databasen og .env kjøres og kopieres bort fra verten, og en gjenoppretting er prøvd én gang.",
